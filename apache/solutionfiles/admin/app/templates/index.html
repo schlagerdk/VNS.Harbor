@@ -75,6 +75,14 @@
       <span class="spacer"></span>
       <button id="sql-refresh" type="button" hidden>Refresh</button>
     </div>
+    <div id="sql-tools-required" class="sites-empty" hidden>
+      <div class="sites-empty-icon" aria-hidden="true">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v6H4zM4 14h16v6H4zM8 7h.01M8 17h.01M12 7h5M12 17h5"/></svg>
+      </div>
+      <h2>Install SQL tools first</h2>
+      <p>SQL administration requires sqlcmd on this admin server, even for remote connections. Install the Microsoft command-line tools before adding a connection.</p>
+      <button id="sql-install-tools" class="primary" type="button">Install SQL tools</button>
+    </div>
     <div id="sql-no-connections" class="sites-empty" hidden>
       <div class="sites-empty-icon" aria-hidden="true">
         <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v6H4zM4 14h16v6H4zM8 7h.01M8 17h.01M12 7h5M12 17h5"/></svg>

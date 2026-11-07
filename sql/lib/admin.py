@@ -149,9 +149,13 @@ def identifier(value):
     return "[" + value.replace("]", "]]") + "]"
 
 
+def sqlcmd_path():
+    return next((str(path) for path in (Path("/opt/mssql-tools18/bin/sqlcmd"), Path("/opt/mssql-tools/bin/sqlcmd"))
+                 if path.is_file() and os.access(path, os.X_OK)), None) or shutil.which("sqlcmd")
+
+
 def execute(settings, query, table=False, timeout=3600):
-    tool = next((str(path) for path in (Path("/opt/mssql-tools18/bin/sqlcmd"), Path("/opt/mssql-tools/bin/sqlcmd"))
-                 if path.is_file()), None) or shutil.which("sqlcmd")
+    tool = sqlcmd_path()
     if not tool:
         raise ValueError("sqlcmd is not installed on the admin server. Install the Microsoft SQL command-line tools.")
     descriptor, filename = tempfile.mkstemp(prefix="vns-sql-", suffix=".sql")

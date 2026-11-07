@@ -1749,12 +1749,12 @@ function connectTerminal(t) {
 			t.exitCode = message.x;
 			if (t.autoClose && message.x === 0 && message.output_problem === false && t.remove) {
 				t.remove();
-				run(loadSites);
+				run(currentView === "sql" ? loadSqlConnections : loadSites);
 				return;
 			}
 			t.term.write(`\r\n\x1b[33m[Process exited with code ${message.x}]\x1b[0m\r\n`);
 			t.title.textContent += message.x === 0 && !message.output_problem ? " ✓" : " !";
-			run(loadSites).finally(() => {
+			run(currentView === "sql" ? loadSqlConnections : loadSites).finally(() => {
 				if (activeTerminal === t.id && !$("#dock").hidden && !document.querySelector("dialog[open]")) {
 					requestAnimationFrame(fitActive);
 				}
@@ -1849,6 +1849,7 @@ run(async () => {
 
 // ------------------------------------------------------------------ settings menu
 let sqlConnections = [];
+let sqlToolsAvailable = false;
 let sqlSnapshot = { databases: [], backups: [] };
 let sqlLoadGeneration = 0;
 
@@ -1895,6 +1896,7 @@ function sqlSelected() {
 async function loadSqlConnections(selected = $("#sql-connection").value) {
 	const data = await api("/api/sql/connections");
 	sqlConnections = data.connections;
+	sqlToolsAvailable = data.tools_available === true;
 	const select = $("#sql-connection");
 	select.replaceChildren(el("option", { value: "", textContent: "Choose a connection..." }),
 		...sqlConnections.map((item) => el("option", { value: item.id, textContent: item.name })));
@@ -1903,12 +1905,13 @@ async function loadSqlConnections(selected = $("#sql-connection").value) {
 }
 
 async function refreshSql() {
-	const id = $("#sql-connection").value;
+	const id = sqlToolsAvailable ? $("#sql-connection").value : "";
 	const selectedConnection = sqlConnections.find((item) => item.id === id);
 	$("#sql-connection").title = selectedConnection ? `${selectedConnection.host}:${selectedConnection.port}` : "";
 	const generation = ++sqlLoadGeneration;
-	const hasConnections = sqlConnections.length > 0;
-	$("#sql-no-connections").hidden = hasConnections;
+	const hasConnections = sqlToolsAvailable && sqlConnections.length > 0;
+	$("#sql-tools-required").hidden = sqlToolsAvailable;
+	$("#sql-no-connections").hidden = !sqlToolsAvailable || hasConnections;
 	$("#sql-heading").hidden = !hasConnections;
 	$("#sql-connection-bar").hidden = !hasConnections;
 	for (const key of ["sql-status", "sql-databases-panel"]) $("#" + key).hidden = !id;
@@ -2047,6 +2050,7 @@ function askRestoreLogin(database, action = "Restore") {
 function decorateSql() {
 	const styles = {
 		"Add connection": ["server", "blue"], "Remove connection": ["trash", "red"],
+		"Install SQL tools": ["download", "blue"],
 		"Edit connection": ["server", "blue"],
 		"Create database": ["server", "green"], "Backup": ["download", "blue"],
 		"Backup all": ["download", "blue"], "Copy": ["sync", "purple"],
@@ -2085,6 +2089,7 @@ $("#sql-remove-connection").onclick = () => run(async () => {
 	await loadSqlConnections();
 });
 function openSqlConnection(connection = null) {
+	if (!sqlToolsAvailable) throw new Error("Install SQL command-line tools on the admin server first.");
 	editingSqlConnection = connection?.id || null;
 	const form = $("#form-sql-connection");
 	form.reset();
@@ -2114,6 +2119,7 @@ $("#form-sql-connection").elements.ssh_enabled.onchange = updateSqlSshFields;
 $("#form-sql-connection").elements.host.oninput = updateSqlSshFields;
 $("#sql-add-connection").onclick = () => openSqlConnection();
 $("#sql-empty-add-connection").onclick = () => openSqlConnection();
+$("#sql-install-tools").onclick = () => run(() => openTask({ kind: "install_sql_tools" }));
 $("#sql-edit-connection").onclick = () => run(() => {
 	const connection = sqlConnections.find((item) => item.id === sqlSelected());
 	if (!connection) throw new Error("SQL connection no longer exists.");

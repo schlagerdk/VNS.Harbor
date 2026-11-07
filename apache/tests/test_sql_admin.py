@@ -11,7 +11,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from flask import Flask, abort, jsonify, request
-from werkzeug.exceptions import BadRequest
+from werkzeug.exceptions import BadRequest, InternalServerError
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -21,6 +21,15 @@ spec.loader.exec_module(sql)
 
 
 class SqlAdminTests(unittest.TestCase):
+    def test_sqlcmd_detection_requires_executable_file_or_path_lookup(self):
+        with patch.object(sql.Path, "is_file", return_value=True), \
+                patch.object(sql.os, "access", return_value=False), \
+                patch.object(sql.shutil, "which", return_value=None):
+            self.assertIsNone(sql.sqlcmd_path())
+        with patch.object(sql.Path, "is_file", return_value=True), \
+                patch.object(sql.os, "access", return_value=True):
+            self.assertEqual(sql.sqlcmd_path(), "/opt/mssql-tools18/bin/sqlcmd")
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
@@ -528,19 +537,46 @@ class SqlAdminTests(unittest.TestCase):
 
 class SqlApiTests(unittest.TestCase):
     def setUp(self):
+        tool = patch.object(sql, "sqlcmd_path", return_value="/test/sqlcmd")
+        tool.start()
+        self.addCleanup(tool.stop)
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.store = str(Path(self.directory.name) / "connections.json")
         self.app = Flask(__name__)
         self.ns = dict(app=self.app, request=request, jsonify=jsonify, abort=abort, subprocess=subprocess,
                        SQL_LOCK=threading.Lock(), SQL_CONNECTIONS=self.store, SQL_HELPER=str(ROOT / "sql/lib/admin.py"),
-                       _sql_module=sql, sys=sys, json=json,
+                       _sql_module=sql, sys=sys, json=json, os=os, APACHE_DIR=str(ROOT / "apache"),
                        error=lambda message, status=400: (jsonify(error=message), status))
         source = ROOT / "apache/solutionfiles/admin/app/app.py"
         names = {"api_sql_connections", "api_sql_status", "build_command"}
         nodes = [node for node in ast.parse(source.read_text()).body if isinstance(node, ast.FunctionDef) and node.name in names]
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "sql API", "exec"), self.ns)
         self.client = self.app.test_client()
+
+    def test_missing_tools_blocks_connection_setup_and_allows_installer(self):
+        with patch.object(sql, "sqlcmd_path", return_value=None):
+            response = self.client.get("/api/sql/connections")
+            self.assertFalse(response.json["tools_available"])
+            for method in ("post", "put"):
+                response = getattr(self.client, method)("/api/sql/connections", json={})
+                self.assertEqual(response.status_code, 409)
+                self.assertIn("Install SQL", response.json["error"])
+            _, argv, cwd = self.ns["build_command"]({"kind": "install_sql_tools"})
+            self.assertEqual(argv, ["/bin/bash", str(ROOT / "sql/install_tools.sh")])
+            self.assertEqual(cwd, str(ROOT / "sql"))
+
+    def test_tools_installer_is_client_only_and_shared_with_server_setup(self):
+        installer = (ROOT / "sql/install_tools.sh").read_text()
+        shared = (ROOT / "sql/lib/install_tools.sh").read_text()
+        server = (ROOT / "sql/install_server.sh").read_text()
+        self.assertIn('source "${_sqlDir}/lib/install_tools.sh"', installer)
+        self.assertIn('source "${_sqlDir}/lib/install_tools.sh"', server)
+        self.assertNotIn("mssql-conf setup", installer)
+        self.assertNotIn("apt-get install -y mssql-server", installer + shared)
+        self.assertIn("ACCEPT_EULA=Y apt-get install -y mssql-tools18 unixodbc-dev", shared)
+        with patch.object(os.path, "isfile", return_value=False), self.assertRaises(InternalServerError):
+            self.ns["build_command"]({"kind": "install_sql_tools"})
 
     def test_connection_api_redacts_credentials_and_builds_allowlisted_task(self):
         response = self.client.post("/api/sql/connections", json={

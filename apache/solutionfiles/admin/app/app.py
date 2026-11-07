@@ -604,6 +604,9 @@ def own_like_parent(path):
 @app.route("/api/sql/connections", methods=["GET", "POST", "PUT", "DELETE"])
 def api_sql_connections():
     try:
+        tools_available = bool(_sql_module.sqlcmd_path())
+        if request.method in ("POST", "PUT") and not tools_available:
+            return error("Install SQL command-line tools on the admin server first.", 409)
         with SQL_LOCK:
             if request.method in ("POST", "PUT"):
                 data = request.get_json(silent=True)
@@ -615,13 +618,14 @@ def api_sql_connections():
                     identifier = _sql_module.edit_connection(SQL_CONNECTIONS, data, data["id"])
                 else:
                     identifier = _sql_module.add_connection(SQL_CONNECTIONS, data)
-                return jsonify(connections=_sql_module.public_connections(SQL_CONNECTIONS), id=identifier)
+                return jsonify(connections=_sql_module.public_connections(SQL_CONNECTIONS), id=identifier,
+                               tools_available=tools_available)
             elif request.method == "DELETE":
                 data = request.get_json(silent=True)
                 if not isinstance(data, dict):
                     abort(400, "Expected a connection object")
                 _sql_module.remove_connection(SQL_CONNECTIONS, data.get("id"))
-            return jsonify(connections=_sql_module.public_connections(SQL_CONNECTIONS))
+            return jsonify(connections=_sql_module.public_connections(SQL_CONNECTIONS), tools_available=tools_available)
     except (OSError, ValueError) as exc:
         app.logger.error("SQL connection operation failed: %s", exc)
         return error(str(exc))
@@ -1170,6 +1174,11 @@ def build_command(data):
     """Validate a terminal request and return (title, argv, cwd). User input is never shell code."""
     kind = data.get("kind")
     bash = "/bin/bash"
+    if kind == "install_sql_tools":
+        script = os.path.join(os.path.dirname(APACHE_DIR), "sql", "install_tools.sh")
+        if not os.path.isfile(script):
+            abort(500, "SQL tools installer is missing. Update VNS.Linux first.")
+        return "Install SQL tools", [bash, script], os.path.dirname(script)
     if kind == "sql_action":
         identifier = data.get("connection")
         if not isinstance(identifier, str):

@@ -21,7 +21,7 @@ The Packages group's first action, **Check**, runs `dotnet list package --outdat
 The file editor and file-browser dialogs share the same responsive outer dimensions, so opening an editor above the browser does not change window size.
 
 Form and confirmation modal footers consistently show Cancel as a text-only control at the far left, with primary actions on the right.
-The SQL connection footer centers Remove connection independently of the side controls; on narrow screens it occupies a centered second row to avoid overlap.
+The SQL connection footer centers Remove connection in the free space between Cancel and Save connection; on narrow screens it occupies a centered second row to avoid overlap.
 
 Detail-card activity indicators are scoped to the targeted environment: local tasks mark only local, production tasks only production, and Publish both marks both. Overview indicators still represent activity anywhere on the site.
 
@@ -142,6 +142,7 @@ Fetches the latest version from GitHub and synchronizes it to `/vns`. Local file
 - At mobile widths (800px or less), site details hide Change bindings, Change environment, Edit service, Edit config, Edit appsettings.json, Edit web.config, Shell and Files for local and remote environments. Other actions remain available. Package names wrap within their column, keeping the version beside the name rather than below it.
 - SQL administration uses stacked database and backup cards at mobile widths (800px or less). All columns, including state and recovery, remain visible with field labels; action buttons wrap, and older backup history uses the same layout.
 - With no saved SQL connections, SQL administration shows the same large-icon empty state as the site overview, with introductory text and a single Add connection button. The connection selector and regular heading appear after a connection is saved.
+- SQL administration first checks for an executable `sqlcmd` on the admin server (including for remote SQL connections). If missing, it shows Install SQL tools instead of connection setup. The button runs `/vns/sql/install_tools.sh` in the interactive terminal, installing only Microsoft client tools, not SQL Server. Availability is checked again when the terminal exits. The installer supports Ubuntu and accepts Microsoft's package EULA.
 - C#/Umbraco environment cards offer Edit appsettings.json and Edit web.config shortcuts in the existing editor. Local shortcuts use the service WorkingDirectory and appear for existing files; remote shortcuts use the production file API and report missing files explicitly. Saving does not automatically restart the application.
 - Sites with both test and production publish scripts offer **Publish both** at the top. After confirmation, it runs the existing test publish script followed by the production publish script in one terminal, for local or remote production. A failed test publish prevents the production publish from running.
 - Initial publishes during C#/Umbraco site creation also establish the main environment's publish baseline on success, so newly published sites do not show **Publish status unknown**.

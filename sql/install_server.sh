@@ -5,6 +5,7 @@ clear
 
 _sqlDir="$(cd "$(dirname "$0")" && pwd)"
 source "${_sqlDir}/lib/microsoft_repo.sh"
+source "${_sqlDir}/lib/install_tools.sh"
 _baseUrl=https://packages.microsoft.com
 # Newest first. The first version with a repository for this Ubuntu version is used.
 _sqlVersions=(2025 2022 2019)
@@ -76,27 +77,6 @@ install_server() {
 	${_sudo} chmod -R 757 /var/opt/mssql/backup
 
 	${_sudo} systemctl status mssql-server --no-pager || true
-}
-
-install_tools() {
-	# The tools repository matches the actual Ubuntu version (also available for 26.04)
-	echo "Add Microsoft tools repository"
-	curl -fsSL "${_baseUrl}/config/ubuntu/${VERSION_ID}/prod.list" | ${_sudo} tee /etc/apt/sources.list.d/mssql-release.list >/dev/null
-
-	echo "Install mssql-tools18"
-	${_sudo} apt-get update
-	${_sudo} env ACCEPT_EULA=Y apt-get install -y mssql-tools18 unixodbc-dev
-
-	echo "Add sqlcmd to PATH for all users"
-	echo 'export PATH="$PATH:/opt/mssql-tools18/bin"' | ${_sudo} tee /etc/profile.d/mssql-tools.sh >/dev/null
-
-	if [[ ! -x /opt/mssql-tools18/bin/sqlcmd ]]; then
-		echo "Installation finished, but /opt/mssql-tools18/bin/sqlcmd was not found." >&2
-		echo "Candidate version:" >&2
-		apt-cache policy mssql-tools18 >&2 || true
-		exit 1
-	fi
-	echo "sqlcmd installed - open a new shell to get it on PATH"
 }
 
 _serverInstalled=0
