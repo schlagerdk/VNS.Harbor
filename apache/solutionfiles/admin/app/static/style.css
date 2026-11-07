@@ -6,6 +6,9 @@
 	--shadow: 0 4px 14px rgba(0, 0, 0, .4);
 }
 * { box-sizing: border-box; }
+html { scrollbar-gutter: stable; }
+html:has(dialog:modal), body:has(dialog:modal) { overflow: hidden; }
+dialog:modal, dialog:modal * { overscroll-behavior: contain; }
 body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; }
 [hidden] { display: none !important; }
 #system-update-overlay { width: 100vw; height: 100dvh; max-width: none; max-height: none; margin: 0; border: 0; border-radius: 0; background: rgba(13, 17, 23, .97); color: var(--text); text-align: center; padding: 24px; }
@@ -178,10 +181,15 @@ a.link:hover { text-decoration: underline; }
 #files th:first-child, #files td:first-child { width: 100%; white-space: nowrap; }
 #files th:nth-child(2), #files td:nth-child(2), #files th:nth-child(3), #files td:nth-child(3) { text-align: right; white-space: nowrap; }
 #files .file-folder-row { cursor: pointer; }
+#files .file-empty-row:hover { background: transparent; }
+#files .file-empty-row { cursor: default; }
+#files-search { width: 100%; box-sizing: border-box; margin-bottom: 12px; }
 #files .file-entry { display: inline-flex; align-items: center; gap: 10px; }
 #files .file-entry .ico { width: 20px; height: 20px; flex: none; margin: 0; }
 #files .file-name { padding: 0; border: 0; background: transparent; color: var(--blue); text-align: left; }
-#files .file-name:hover { background: transparent; text-decoration: underline; }
+#files .file-folder { color: #d29922; }
+#files .file-document.file-name { color: var(--blue); }
+#files .file-name:hover { background: transparent; }
 #files .tools { cursor: default; }
 #files .file-tools { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
 #files .file-action { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 34px; height: 34px; padding: 0; margin: 0; border-radius: 8px; }
@@ -191,7 +199,7 @@ a.link:hover { text-decoration: underline; }
 .file-uneditable { color: var(--muted); opacity: .65; cursor: default; }
 #files-filter[aria-pressed=true] { border-color: var(--blue); color: var(--blue); }
 .list.dragging { border-color: var(--blue); box-shadow: 0 0 0 2px var(--blue); }
-.drop-hint { display: none; position: absolute; inset: 0; background: rgba(13, 17, 23, .85); align-items: center; justify-content: center; font-size: 18px; color: var(--blue); }
+.drop-hint { display: none; position: absolute; inset: 0; pointer-events: none; background: rgba(13, 17, 23, .85); align-items: center; justify-content: center; font-size: 18px; color: var(--blue); }
 .list.dragging .drop-hint { display: flex; }
 .crumbs { font-size: 14px; }
 table { width: 100%; border-collapse: collapse; }

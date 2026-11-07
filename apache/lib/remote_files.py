@@ -51,7 +51,7 @@ def handle(root, data):
                           "modified": int(info.st_mtime), "editable": not is_dir and not entry.is_symlink()
                           and entry.is_file() and editable_file(entry, info.st_size),
                           "has_editable_files": contains_editable_files(entry) if is_dir else False})
-        return {"path": relative, "items": sorted(items, key=lambda item: (not item["dir"], item["name"].lower()))}
+        return {"path": relative, "items": sorted(items, key=lambda item: (item["name"].lower(), item["name"]))}
     if action in ("read", "download"):
         if action == "read" and path.stat().st_size > 2 * 1024 * 1024:
             raise ValueError("The file is too large to edit here. Download it instead.")

@@ -81,6 +81,26 @@ class ServerFilesTests(unittest.TestCase):
         self.assertEqual(response.data, b"updated\n")
         response.close()
 
+    def test_local_and_server_listings_sort_names_without_folders_first(self):
+        for root, endpoint in ((self.outside, "/api/server-fs/list"), (self.web, "/api/fs/list")):
+            (root / "a-file.txt").write_text("text")
+            (root / "Z-folder").mkdir()
+            path = str(root) if root == self.outside else ""
+            response = self.client.get(endpoint, query_string={"path": path})
+            self.assertEqual(response.status_code, 200)
+            names = [item["name"] for item in response.json["items"]]
+            self.assertEqual(names, sorted(names, key=lambda name: (name.lower(), name)))
+            self.assertLess(names.index("a-file.txt"), names.index("Z-folder"))
+
+    def test_remote_listing_sorts_names_without_folders_first(self):
+        from apache.lib.remote_files import handle
+        (self.outside / "a-file.txt").write_text("text")
+        (self.outside / "Z-folder").mkdir()
+        result = handle(self.outside, {"action": "list"})
+        names = [item["name"] for item in result["items"]]
+        self.assertEqual(names, sorted(names, key=lambda name: (name.lower(), name)))
+        self.assertLess(names.index("a-file.txt"), names.index("Z-folder"))
+
     def test_create_upload_rename_delete_outside_web_root(self):
         self.assertEqual(self.post("mkdir", path=str(self.outside), name="new").status_code, 200)
         folder = self.outside / "new"

@@ -341,6 +341,7 @@ const iconPaths = {
 	unlock: "M5 11h14v10H5zM8 11V7a4 4 0 0 1 7.5-2",
 	terminal: "M4 17l6-6-6-6M12 19h8",
 	folder: "M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z",
+	back: "M19 12H5M12 19l-7-7 7-7",
 	upload: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12",
 	download: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3",
 	sync: "M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8M21 3v5h-5M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16M8 16H3v5",
@@ -1202,6 +1203,7 @@ async function discardOk() {
 
 let hideNonEditableFiles = true;
 let listedFiles = [];
+$("#files-search").oninput = renderFiles;
 $("#files-filter").onclick = () => {
 	hideNonEditableFiles = !hideNonEditableFiles;
 	$("#files-filter").textContent = hideNonEditableFiles ? "Show all files" : "Hide non-editable files";
@@ -1211,6 +1213,7 @@ $("#files-filter").onclick = () => {
 
 async function loadFiles(path) {
 	const data = await api(fsUrl("list") + "?path=" + encodeURIComponent(path));
+	if (currentPath !== data.path) $("#files-search").value = "";
 	currentPath = data.path;
 	const crumbs = $("#crumbs");
 	crumbs.replaceChildren(el("a", { className: "link", textContent: remoteFilesSite ? "Remote production · " + remoteFilesSite : serverFiles ? "/" : "/var/www", onclick: () => run(() => loadFiles("")) }));
@@ -1225,20 +1228,22 @@ async function loadFiles(path) {
 }
 
 function renderFiles() {
-	const items = listedFiles.filter((item) => !hideNonEditableFiles || (item.dir ? item.has_editable_files : item.editable));
+	const query = $("#files-search").value.trim().toLocaleLowerCase();
+	const items = listedFiles.filter((item) => (!hideNonEditableFiles || (item.dir ? item.has_editable_files : item.editable))
+		&& item.name.toLocaleLowerCase().includes(query));
 	const body = $("#files tbody");
 	body.replaceChildren();
 	if (currentPath) {
 		const openParent = () => run(() => loadFiles(parentOf(currentPath)));
 		body.append(el("tr", { className: "file-folder-row", onclick: (event) => {
 			if (!event.target.closest("button")) openParent();
-		} }, el("td", {}, el("button", { type: "button", className: "file-name", textContent: "↰ ..", title: "Open parent folder", onclick: openParent })), el("td"), el("td"), el("td")));
+		} }, el("td", {}, el("button", { type: "button", className: "file-entry file-name", title: "Open parent folder", ariaLabel: "Open parent folder", onclick: openParent }, svgIcon("back"), el("span", { textContent: ".." }))), el("td"), el("td"), el("td")));
 	}
 	for (const item of items) {
 		const full = join(currentPath, item.name);
 		const canOpen = item.dir || item.editable;
 		const link = el(canOpen ? "button" : "span", {
-			className: canOpen ? "file-entry file-name" : "file-entry file-uneditable",
+			className: `file-entry ${item.dir ? "file-folder" : "file-document"} ${canOpen ? "file-name" : "file-uneditable"}`,
 			title: canOpen ? item.name : "Not editable. Download this file instead.",
 			...(canOpen ? { type: "button", onclick: () => run(() => (item.dir ? loadFiles(full) : editFile(full))) } : {}),
 		}, svgIcon(item.dir ? "folder" : "file"), el("span", { textContent: item.name }));
@@ -1262,12 +1267,13 @@ function renderFiles() {
 			if (!event.target.closest(".tools, button, a")) run(() => loadFiles(full));
 		} } : {}, el("td", {}, link), el("td", { className: "num muted", textContent: item.dir ? "" : sizeText(item.size) }), el("td", { className: "muted", textContent: formatDate(item.modified * 1000) }), tools));
 	}
-	if (!items.length) body.append(el("tr", {}, el("td", { colSpan: 4, className: "empty", textContent: listedFiles.length ? "No editable files in this folder." : "This folder is empty." })));
+	if (!items.length) body.append(el("tr", { className: "file-empty-row" }, el("td", { colSpan: 4, className: "empty", textContent: query ? "No matching files or folders." : listedFiles.length ? "No editable files in this folder." : "This folder is empty." })));
 }
 
 async function openFiles(path, remoteSite = "", server = false) {
 	remoteFilesSite = remoteSite;
 	serverFiles = server && !remoteSite;
+	$("#files-search").value = "";
 	await loadFiles(path);
 	$("#files-title").textContent = remoteSite ? "Remote files · " + remoteSite : serverFiles ? "Server files" : "Files";
 	if (!filesDialog.open) filesDialog.showModal();
@@ -1456,11 +1462,26 @@ $("#upload-input").onchange = (event) => {
 	run(() => uploadFiles(files));
 };
 
-for (const type of ["dragenter", "dragover"]) drop.addEventListener(type, (event) => { event.preventDefault(); drop.classList.add("dragging"); });
-drop.addEventListener("dragleave", () => drop.classList.remove("dragging"));
+let fileDragDepth = 0;
+function resetFileDrag() {
+	fileDragDepth = 0;
+	drop.classList.remove("dragging");
+}
+drop.addEventListener("dragenter", (event) => {
+	event.preventDefault();
+	fileDragDepth++;
+	drop.classList.add("dragging");
+});
+drop.addEventListener("dragover", (event) => { event.preventDefault(); });
+drop.addEventListener("dragleave", () => {
+	fileDragDepth = Math.max(0, fileDragDepth - 1);
+	if (!fileDragDepth) resetFileDrag();
+});
+document.addEventListener("dragend", resetFileDrag);
+filesDialog.addEventListener("close", resetFileDrag);
 drop.addEventListener("drop", (event) => {
 	event.preventDefault();
-	drop.classList.remove("dragging");
+	resetFileDrag();
 	run(() => uploadFiles([...event.dataTransfer.files]));
 });
 $("#editor-save").onclick = () => run(saveFile);

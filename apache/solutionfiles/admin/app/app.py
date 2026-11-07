@@ -1631,7 +1631,7 @@ def fs_list():
             has_editable_files = is_dir
         items.append({"name": entry.name, "dir": is_dir, "size": 0 if is_dir else info.st_size,
                       "modified": int(info.st_mtime), "editable": editable, "has_editable_files": has_editable_files})
-    items.sort(key=lambda i: (not i["dir"], i["name"].lower()))
+    items.sort(key=lambda i: (i["name"].lower(), i["name"]))
     return jsonify(path=fs_relative(full), items=items)
 
 
