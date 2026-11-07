@@ -2,6 +2,9 @@ import ast
 import hmac
 import io
 import os
+import grp
+import pwd
+import stat
 from pathlib import Path
 import re
 import shutil
@@ -14,7 +17,7 @@ from urllib.parse import urlparse
 from flask import Flask, abort, jsonify, redirect, request, send_file, session
 from werkzeug.exceptions import BadRequest
 
-from apache.lib.remote_files import contains_editable_files, editable_file
+from apache.lib.remote_files import contains_editable_files, editable_file, file_metadata
 
 
 APP = Path(__file__).resolve().parents[1] / "solutionfiles/admin/app"
@@ -39,7 +42,8 @@ class ServerFilesTests(unittest.TestCase):
                        abort=abort, jsonify=jsonify, request=request, send_file=send_file,
                        session=session, hmac=hmac, urlparse=urlparse, redirect=redirect,
                        WEB_ROOT=str(self.web), MAX_EDIT_BYTES=2 * 1024 * 1024,
-                       editable_file=editable_file, contains_editable_files=contains_editable_files)
+                       editable_file=editable_file, contains_editable_files=contains_editable_files,
+                       file_metadata=file_metadata)
         names = {"protect", "error", "safe_path", "rel", "server_files", "fs_path", "fs_relative",
                  "is_site_root", "own_like_parent", "valid_name", "build_command",
                  "fs_list", "fs_read", "fs_save", "fs_create", "fs_rename", "fs_delete",
@@ -100,6 +104,43 @@ class ServerFilesTests(unittest.TestCase):
         names = [item["name"] for item in result["items"]]
         self.assertEqual(names, sorted(names, key=lambda name: (name.lower(), name)))
         self.assertLess(names.index("a-file.txt"), names.index("Z-folder"))
+
+    def test_local_server_and_remote_listings_include_unix_metadata(self):
+        from apache.lib.remote_files import handle
+        for root, endpoint in ((self.outside, "/api/server-fs/list"), (self.web, "/api/fs/list")):
+            file = root / "permissions.txt"
+            file.write_text("text")
+            file.chmod(0o640)
+            folder = root / "restricted"
+            folder.mkdir(mode=0o750)
+            link = root / "linked"
+            link.symlink_to(file)
+            path = str(root) if root == self.outside else ""
+            listings = [self.client.get(endpoint, query_string={"path": path}).json,
+                        handle(root, {"action": "list"})]
+            for listing in listings:
+                items = {item["name"]: item for item in listing["items"]}
+                self.assertEqual(items[file.name]["permissions"], "-rw-r-----")
+                self.assertEqual(items[folder.name]["permissions"], "drwxr-x---")
+                self.assertTrue(items[link.name]["permissions"].startswith("l"))
+                for entry in (file, folder, link):
+                    info = entry.lstat()
+                    item = items[entry.name]
+                    self.assertEqual(item["permissions"], stat.filemode(info.st_mode))
+                    self.assertEqual(item["uid"], info.st_uid)
+                    self.assertEqual(item["gid"], info.st_gid)
+                    self.assertEqual(item["owner"], pwd.getpwuid(info.st_uid).pw_name)
+                    self.assertEqual(item["group"], grp.getgrgid(info.st_gid).gr_name)
+
+    def test_metadata_preserves_special_bits_and_unnamed_account_ids(self):
+        info = Mock(st_mode=stat.S_IFREG | 0o6750, st_uid=123456, st_gid=234567)
+        with patch("apache.lib.remote_files.pwd.getpwuid", side_effect=KeyError), \
+                patch("apache.lib.remote_files.grp.getgrgid", side_effect=KeyError):
+            self.assertEqual(file_metadata(info), {
+                "permissions": "-rwsr-s---", "owner": "123456", "group": "234567",
+                "uid": 123456, "gid": 234567})
+        self.assertEqual(file_metadata(Mock(st_mode=stat.S_IFDIR | 0o1777, st_uid=os.getuid(),
+                                            st_gid=os.getgid()))["permissions"], "drwxrwxrwt")
 
     def test_create_upload_rename_delete_outside_web_root(self):
         self.assertEqual(self.post("mkdir", path=str(self.outside), name="new").status_code, 200)

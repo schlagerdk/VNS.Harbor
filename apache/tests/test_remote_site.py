@@ -93,6 +93,7 @@ class RemoteApiTests(unittest.TestCase):
             io=io, send_file=send_file, sys=sys, site_units=lambda site: [site, "local-prod.test"],
             Path=Path, editable_file=remote_files.editable_file,
             contains_editable_files=remote_files.contains_editable_files,
+            file_metadata=remote_files.file_metadata,
             safe_path=lambda path: path, rel=lambda path: path,
             HTTPException=HTTPException, APACHE_DIR=str(APACHE), WEB_ROOT="/var/www",
             REMOTE_STATUS={}, site_dirs=lambda: ["example.test"],

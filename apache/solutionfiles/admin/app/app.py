@@ -46,6 +46,7 @@ _files_module = importlib.util.module_from_spec(_files_spec)
 _files_spec.loader.exec_module(_files_module)
 editable_file = _files_module.editable_file
 contains_editable_files = _files_module.contains_editable_files
+file_metadata = _files_module.file_metadata
 _publish_spec = importlib.util.spec_from_file_location("vns_publish_status", os.path.join(APACHE_DIR, "lib", "publish_status.py"))
 _publish_module = importlib.util.module_from_spec(_publish_spec)
 _publish_spec.loader.exec_module(_publish_module)
@@ -1630,7 +1631,8 @@ def fs_list():
             editable = False
             has_editable_files = is_dir
         items.append({"name": entry.name, "dir": is_dir, "size": 0 if is_dir else info.st_size,
-                      "modified": int(info.st_mtime), "editable": editable, "has_editable_files": has_editable_files})
+                      "modified": int(info.st_mtime), "editable": editable, "has_editable_files": has_editable_files,
+                      **file_metadata(info)})
     items.sort(key=lambda i: (i["name"].lower(), i["name"]))
     return jsonify(path=fs_relative(full), items=items)
 

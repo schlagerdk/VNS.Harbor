@@ -2,9 +2,25 @@
 import base64
 import json
 import os
+import grp
+import pwd
+import stat
 from pathlib import Path
 import shutil
 import sys
+
+
+def file_metadata(info):
+    try:
+        owner = pwd.getpwuid(info.st_uid).pw_name
+    except KeyError:
+        owner = str(info.st_uid)
+    try:
+        group = grp.getgrgid(info.st_gid).gr_name
+    except KeyError:
+        group = str(info.st_gid)
+    return {"permissions": stat.filemode(info.st_mode), "owner": owner, "group": group,
+            "uid": info.st_uid, "gid": info.st_gid}
 
 
 def editable_file(path, size):
@@ -50,7 +66,8 @@ def handle(root, data):
             items.append({"name": entry.name, "dir": is_dir, "size": 0 if is_dir else info.st_size,
                           "modified": int(info.st_mtime), "editable": not is_dir and not entry.is_symlink()
                           and entry.is_file() and editable_file(entry, info.st_size),
-                          "has_editable_files": contains_editable_files(entry) if is_dir else False})
+                          "has_editable_files": contains_editable_files(entry) if is_dir else False,
+                          **file_metadata(info)})
         return {"path": relative, "items": sorted(items, key=lambda item: (item["name"].lower(), item["name"]))}
     if action in ("read", "download"):
         if action == "read" and path.stat().st_size > 2 * 1024 * 1024:
