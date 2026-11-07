@@ -414,6 +414,15 @@ function renderMultiSelection() {
 }
 
 function renderSites() {
+	const siteCount = listedSites().length;
+	const hideFilters = siteCount <= 1;
+	if (hideFilters) {
+		filter = "all";
+		query = "";
+		$("#search").value = "";
+	}
+	$("#search").hidden = hideFilters;
+	$("#stats").hidden = hideFilters;
 	renderStats();
 	for (const name of multiSites) {
 		if (!listedSites().some((site) => site.name === name && canMultiSelect(site))) multiSites.delete(name);
@@ -424,8 +433,7 @@ function renderSites() {
 	const visible = overviewSites().filter(matches);
 	$("#no-sites").hidden = visible.length > 0;
 	$("#btn-new-site").hidden = visible.length === 0;
-	const firstSite = listedSites().length === 0;
-	$("#search").hidden = firstSite;
+	const firstSite = siteCount === 0;
 	$("#empty-sites-title").textContent = firstSite ? "Your first site starts here" : "Make room for your next idea";
 	$("#empty-sites-description").textContent = firstSite
 		? "Create a home for your next idea. Set up your first site in just a few steps."
