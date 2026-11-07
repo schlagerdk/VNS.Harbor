@@ -175,7 +175,19 @@ a.link:hover { text-decoration: underline; }
 .package-name > span { min-width: 0; }
 .package-version { max-width: 100%; padding: 5px 12px; border: 1px solid rgba(88, 166, 255, .5); border-radius: 6px; background: rgba(88, 166, 255, .15); color: var(--blue); font: 600 14px ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; }
 .package-error { margin: 12px 20px; color: var(--orange); font-size: 12px; }
-#files td:first-child { white-space: nowrap; }
+#files th:first-child, #files td:first-child { width: 100%; white-space: nowrap; }
+#files th:nth-child(2), #files td:nth-child(2), #files th:nth-child(3), #files td:nth-child(3) { text-align: right; white-space: nowrap; }
+#files .file-folder-row { cursor: pointer; }
+#files .file-entry { display: inline-flex; align-items: center; gap: 10px; }
+#files .file-entry .ico { width: 20px; height: 20px; flex: none; margin: 0; }
+#files .file-name { padding: 0; border: 0; background: transparent; color: var(--blue); text-align: left; }
+#files .file-name:hover { background: transparent; text-decoration: underline; }
+#files .tools { cursor: default; }
+#files .file-tools { display: flex; align-items: center; justify-content: flex-end; gap: 8px; }
+#files .file-action { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 34px; height: 34px; padding: 0; margin: 0; border-radius: 8px; }
+#files .file-action .ico { width: 16px; height: 16px; margin: 0; }
+#files .file-download { box-sizing: border-box; vertical-align: middle; color: var(--blue); border: 1px solid color-mix(in srgb, var(--blue) 35%, var(--line)); background: color-mix(in srgb, var(--blue) 9%, var(--panel2)); text-decoration: none; }
+#files .file-download:hover { background: color-mix(in srgb, var(--blue) 20%, var(--panel2)); border-color: var(--blue); }
 .file-uneditable { color: var(--muted); opacity: .65; cursor: default; }
 #files-filter[aria-pressed=true] { border-color: var(--blue); color: var(--blue); }
 .list.dragging { border-color: var(--blue); box-shadow: 0 0 0 2px var(--blue); }
@@ -212,6 +224,7 @@ dialog legend { color: var(--muted); font-size: 12px; padding: 0 6px; }
 dialog menu { display: flex; justify-content: flex-end; gap: 8px; padding: 0; margin: 14px 0 0; }
 dialog.danger h2 { color: var(--red); }
 dialog.danger .primary { background: #da3633; border-color: var(--red); }
+#prompt-ok:disabled { opacity: .4; cursor: not-allowed; background: var(--panel2); border-color: var(--line); color: var(--muted); }
 #dlg-prompt { width: min(520px, 92vw); min-width: 0; }
 #prompt-message { overflow-wrap: anywhere; }
 #dlg-prompt .confirmation-copy { white-space: normal; }

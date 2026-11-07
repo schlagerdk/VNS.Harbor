@@ -11,6 +11,14 @@ function el(tag, props, ...children) {
 	return node;
 }
 
+function formatDate(value) {
+	if (value === null || value === undefined || value === "") return "Unavailable";
+	const date = new Date(value);
+	if (Number.isNaN(date.getTime())) throw new Error("Invalid date: " + value);
+	const pad = (number) => String(number).padStart(2, "0");
+	return `${pad(date.getDate())}.${pad(date.getMonth() + 1)}.${String(date.getFullYear()).padStart(4, "0")} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 async function api(url, options = {}) {
 	options.headers = Object.assign({ "X-CSRF-Token": csrf }, options.headers || {});
 	if (options.json !== undefined) {
@@ -155,9 +163,14 @@ function ask({ title, message = "", value = "", placeholder = "", ok = "OK", dan
 	}
 	okButton.value = "ok";
 	okButton.textContent = ok;
-	okButton.disabled = match !== null;
+	const updateConfirmation = () => { okButton.disabled = match !== null && field.value !== match; };
+	updateConfirmation();
 	dlg.classList.toggle("danger", danger);
-	field.oninput = () => { if (match !== null) okButton.disabled = field.value !== match; };
+	field.oninput = updateConfirmation;
+	$("#form-prompt").onsubmit = (event) => {
+		updateConfirmation();
+		if (okButton.disabled) event.preventDefault();
+	};
 	$("#prompt-cancel").onclick = () => dlg.close("cancel");
 	dlg.returnValue = "";
 	return new Promise((resolve) => {
@@ -1216,22 +1229,38 @@ function renderFiles() {
 	const body = $("#files tbody");
 	body.replaceChildren();
 	if (currentPath) {
-		body.append(el("tr", { onclick: () => run(() => loadFiles(parentOf(currentPath))), style: "cursor:pointer" }, el("td", { textContent: "↰ .." }), el("td"), el("td"), el("td")));
+		const openParent = () => run(() => loadFiles(parentOf(currentPath)));
+		body.append(el("tr", { className: "file-folder-row", onclick: (event) => {
+			if (!event.target.closest("button")) openParent();
+		} }, el("td", {}, el("button", { type: "button", className: "file-name", textContent: "↰ ..", title: "Open parent folder", onclick: openParent })), el("td"), el("td"), el("td")));
 	}
 	for (const item of items) {
 		const full = join(currentPath, item.name);
 		const canOpen = item.dir || item.editable;
-		const link = el(canOpen ? "a" : "span", {
-			className: canOpen ? "link" : "file-uneditable",
-			textContent: (item.dir ? "📁 " : "📄 ") + item.name,
+		const link = el(canOpen ? "button" : "span", {
+			className: canOpen ? "file-entry file-name" : "file-entry file-uneditable",
 			title: canOpen ? item.name : "Not editable. Download this file instead.",
-			...(canOpen ? { onclick: () => run(() => (item.dir ? loadFiles(full) : editFile(full))) } : {}),
-		});
-		const tools = el("td", { className: "tools" });
-		if (!item.dir) tools.append(el("a", { className: "link", textContent: "Download", href: fsUrl("download") + "?path=" + encodeURIComponent(full) }));
-		tools.append(el("a", { className: "link", textContent: "Rename", onclick: () => run(() => renameItem(full, item.name)) }));
-		tools.append(el("a", { className: "link", textContent: "Delete", onclick: () => run(() => deleteItem(full, item.name)) }));
-		body.append(el("tr", {}, el("td", {}, link), el("td", { className: "num muted", textContent: item.dir ? "" : sizeText(item.size) }), el("td", { className: "muted", textContent: new Date(item.modified * 1000).toLocaleString() }), tools));
+			...(canOpen ? { type: "button", onclick: () => run(() => (item.dir ? loadFiles(full) : editFile(full))) } : {}),
+		}, svgIcon(item.dir ? "folder" : "file"), el("span", { textContent: item.name }));
+		const actions = el("div", { className: "file-tools" });
+		const tools = el("td", { className: "tools" }, actions);
+		if (!item.dir) {
+			const download = el("a", { className: "file-action file-download", title: `Download ${item.name}`, href: fsUrl("download") + "?path=" + encodeURIComponent(full) }, svgIcon("download"));
+			download.setAttribute("aria-label", `Download ${item.name}`);
+			actions.append(download);
+		}
+		for (const [label, icon, tone, action] of [
+			["Rename", "pencil", "amber", () => renameItem(full, item.name)],
+			["Delete", "trash", "red", () => deleteItem(full, item.name)],
+		]) {
+			const button = el("button", { type: "button", className: "file-action", title: `${label} ${item.name}`, onclick: () => run(action) }, svgIcon(icon));
+			button.setAttribute("aria-label", `${label} ${item.name}`);
+			button.dataset.tone = tone;
+			actions.append(button);
+		}
+		body.append(el("tr", item.dir ? { className: "file-folder-row", onclick: (event) => {
+			if (!event.target.closest(".tools, button, a")) run(() => loadFiles(full));
+		} } : {}, el("td", {}, link), el("td", { className: "num muted", textContent: item.dir ? "" : sizeText(item.size) }), el("td", { className: "muted", textContent: formatDate(item.modified * 1000) }), tools));
 	}
 	if (!items.length) body.append(el("tr", {}, el("td", { colSpan: 4, className: "empty", textContent: listedFiles.length ? "No editable files in this folder." : "This folder is empty." })));
 }
@@ -1363,7 +1392,7 @@ async function saveFile() {
 		});
 		if (configuration) configuration.encoding = "utf-8";
 		setDirty(editorValue() !== content);
-		$("#editor-status").textContent = "Saved " + new Date().toLocaleTimeString();
+		$("#editor-status").textContent = "Saved " + formatDate(new Date());
 		if (configuration) {
 			const service = configuration.kind === "service";
 			const apply = await ask({
@@ -1657,7 +1686,7 @@ function groupSqlBackups(backups) {
 
 function sqlBackupRow(backup, allowDelete = true) {
 	return el("tr", {}, el("td", { textContent: backup.database_name }),
-		el("td", { textContent: backup.finished || "Unavailable" }), el("td", { textContent: backup.size_mb === null ? "Unavailable" : backup.size_mb + " MB" }),
+		el("td", { textContent: formatDate(backup.finished) }), el("td", { textContent: backup.size_mb === null ? "Unavailable" : backup.size_mb + " MB" }),
 		el("td", { textContent: backup.path }), el("td", {}, el("div", { className: "actions" }, el("button", {
 			textContent: "Restore", disabled: backup.media_count !== 1,
 			title: backup.error || (backup.media_count !== 1 ? "Striped or damaged backups are not supported" : "Restore this full backup"),
