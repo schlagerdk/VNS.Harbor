@@ -19,6 +19,11 @@ function formatDate(value) {
 	return `${pad(date.getDate())}.${pad(date.getMonth() + 1)}.${String(date.getFullYear()).padStart(4, "0")} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+function formatSqlSize(megabytes) {
+	if (megabytes === null) return "Unavailable";
+	return megabytes >= 1000 ? Number((megabytes / 1000).toFixed(2)) + " GB" : megabytes + " MB";
+}
+
 async function api(url, options = {}) {
 	options.headers = Object.assign({ "X-CSRF-Token": csrf }, options.headers || {});
 	if (options.json !== undefined) {
@@ -1719,7 +1724,7 @@ function groupSqlBackups(backups) {
 
 function sqlBackupRow(backup, allowDelete = true) {
 	return el("tr", {}, el("td", { textContent: backup.database_name }),
-		el("td", { textContent: formatDate(backup.finished) }), el("td", { textContent: backup.size_mb === null ? "Unavailable" : backup.size_mb + " MB" }),
+		el("td", { textContent: formatDate(backup.finished) }), el("td", { className: "num", textContent: formatSqlSize(backup.size_mb) }),
 		el("td", { textContent: backup.path }), el("td", {}, el("div", { className: "actions" }, el("button", {
 			textContent: "Restore", disabled: backup.media_count !== 1,
 			title: backup.error || (backup.media_count !== 1 ? "Striped or damaged backups are not supported" : "Restore this full backup"),
@@ -1797,7 +1802,7 @@ async function refreshSql() {
 				}
 			}
 			$(database.id <= 4 ? "#sql-system-rows" : "#sql-databases").append(el("tr", {}, el("td", { textContent: database.name }),
-				el("td", { textContent: database.size_mb + " MB" }), el("td", { textContent: database.state }),
+				el("td", { className: "num", textContent: formatSqlSize(database.size_mb) }), el("td", { textContent: database.state }),
 				el("td", { textContent: database.recovery }), ...(database.id > 4 ? [el("td", {}, actions)] : [])));
 		}
 		for (const [latest, ...older] of groupSqlBackups(data.backups)) {
@@ -1806,7 +1811,7 @@ async function refreshSql() {
 				const history = el("details", { className: "sql-backup-history" },
 					el("summary", { textContent: `${older.length} older backup${older.length === 1 ? "" : "s"} for ${latest.database_name}` }),
 					el("table", {},
-						el("thead", {}, el("tr", {}, ...["Database", "Finished", "Size", "Server path", "Actions"].map((label) => el("th", { textContent: label })))),
+						el("thead", {}, el("tr", {}, ...["Database", "Finished", "Size", "Server path", "Actions"].map((label) => el("th", { textContent: label, className: label === "Size" ? "num" : "" })))),
 						el("tbody", {}, ...older.map((backup) => sqlBackupRow(backup, false)))));
 				$("#sql-backups").append(el("tr", {}, el("td", { colSpan: 5 }, history)));
 			}

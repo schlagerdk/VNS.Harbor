@@ -62,7 +62,7 @@
     <div class="toolbar">
       <a class="link back" href="#sites"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>All sites</a>
     </div>
-    <div class="toolbar">
+    <div class="detail-title sql-heading">
       <h2>SQL Server</h2><span class="spacer"></span>
       <button id="sql-add-connection" type="button" class="primary">Add connection</button>
     </div>
@@ -81,15 +81,15 @@
           <button id="sql-backup-all" type="button" hidden>Backup all</button>
         </div>
       </div>
-      <table id="sql-user-databases-table" hidden><thead><tr><th>Name</th><th>Size</th><th>State</th><th>Recovery</th><th>Actions</th></tr></thead><tbody id="sql-databases"></tbody></table>
+      <table id="sql-user-databases-table" hidden><thead><tr><th>Name</th><th class="num">Size</th><th>State</th><th>Recovery</th><th>Actions</th></tr></thead><tbody id="sql-databases"></tbody></table>
       <details id="sql-system-databases" class="sql-system-databases">
         <summary id="sql-system-summary">System databases</summary>
-        <table><thead><tr><th>Name</th><th>Size</th><th>State</th><th>Recovery</th></tr></thead><tbody id="sql-system-rows"></tbody></table>
+        <table><thead><tr><th>Name</th><th class="num">Size</th><th>State</th><th>Recovery</th></tr></thead><tbody id="sql-system-rows"></tbody></table>
       </details>
     </div>
     <div id="sql-backups-panel" class="panel sql-table" hidden><h3>Full backups</h3>
       <p class="hint">Latest 200 full disk backups from SQL Server history, plus .bak files in the connection's backup directory that are not in that history. Grouped by database; expand older backups to see more. Paths are on the SQL server; historical files may have been overwritten, moved or deleted.</p>
-      <table><thead><tr><th>Database</th><th>Finished</th><th>Size</th><th>Server path</th><th>Actions</th></tr></thead><tbody id="sql-backups"></tbody></table>
+      <table><thead><tr><th>Database</th><th>Finished</th><th class="num">Size</th><th>Server path</th><th>Actions</th></tr></thead><tbody id="sql-backups"></tbody></table>
     </div>
   </section>
   <dialog id="dlg-sql-connection">

@@ -298,6 +298,7 @@ body.login { display: grid; place-items: center; min-height: 100vh; background: 
 
 .detail-title { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 12px; }
 .detail-title h2 { margin: 0; font-size: 26px; }
+.sql-heading { margin-bottom: 16px; }
 #site-head > .detail-title:last-child { margin-bottom: 16px; }
 #site-head > .actions { display: flex; gap: 8px; flex-wrap: wrap; padding-top: 20px; margin-bottom: 20px; }
 .envs { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 16px; }
