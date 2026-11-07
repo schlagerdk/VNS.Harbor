@@ -68,6 +68,13 @@ class TerminalCompletionTests(unittest.TestCase):
                      "/var/log/apache2/site-error.log", "ErrorLog /var/log/apache2/example.log"):
             self.assertFalse(problem(text), text)
 
+    def test_sql_tools_installation_auto_closes_only_with_clean_output(self):
+        self.assertTrue(self.ns["terminal_auto_close"]({"kind": "install_sql_tools"}))
+        output = "Install mssql-tools18\nsqlcmd installed - open a new shell to get it on PATH\n"
+        self.assertFalse(self.ns["terminal_output_problem"](output))
+        self.assertTrue(self.ns["terminal_output_problem"](output + "Warning: package needs attention\n"))
+        self.assertTrue(self.ns["terminal_output_problem"](output + "Error: installation failed\n"))
+
     def test_outdated_closes_after_declining_upgrade_without_errors(self):
         self.assertTrue(self.ns["terminal_auto_close"]({"kind": "script", "script": "outdated.sh"}))
         output = """Running dotnet outdated...
@@ -173,12 +180,15 @@ const location = {protocol: "https:", host: "admin.test"};
 class WebSocket { constructor() { this.send = () => {}; } }
 const terminals = {};
 const activeTerminal = null;
-const run = async () => {};
-const loadSites = () => {};
+let currentView = "sites";
+const refreshed = [];
+const run = async fn => fn();
+const loadSites = () => {refreshed.push("sites");};
+const loadSqlConnections = () => {refreshed.push("sql");};
 const updateSiteActivity = () => {};
 """
         test += function + r"""
-for (const [autoClose, exit, problem, expected] of [
+for (currentView of ["sites", "sql"]) for (const [autoClose, exit, problem, expected] of [
     [true, 0, false, true], [true, 1, false, false],
     [true, 0, true, false], [false, 0, false, false],
     [true, 0, undefined, false]
@@ -192,6 +202,7 @@ for (const [autoClose, exit, problem, expected] of [
     assert.equal(removed, expected);
     assert.equal(t.exited, true);
     assert.equal(writes.some(text => text.includes("Process exited")), !expected);
+    assert.equal(refreshed.pop(), currentView);
 }
 """
         result = subprocess.run(["node", "-e", test], capture_output=True, text=True)
