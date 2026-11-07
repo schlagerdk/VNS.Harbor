@@ -1217,7 +1217,44 @@ async function discardOk() {
 
 let hideNonEditableFiles = true;
 let listedFiles = [];
-$("#files-search").oninput = renderFiles;
+let filesLoadGeneration = 0;
+function filesPathPrefix() {
+	return remoteFilesSite || serverFiles ? "/" : "/var/www/";
+}
+function filesSearchName() {
+	return $("#files-search").value.split("/").pop();
+}
+async function navigateFilesInput(enter = false) {
+	const field = $("#files-search");
+	const value = field.value;
+	renderFiles();
+	if (!enter && !value.includes("/")) return;
+	const split = value.lastIndexOf("/");
+	let path = enter ? value : value.slice(0, split + 1);
+	const suffix = enter ? "" : value.slice(split + 1);
+	if (path.startsWith("/")) {
+		const prefix = filesPathPrefix();
+		if (prefix !== "/" && path !== "/var/www" && !path.startsWith(prefix)) {
+			throw new Error("This file browser is confined to /var/www.");
+		}
+		path = prefix === "/" ? path.slice(1) : path.slice("/var/www".length).replace(/^\//, "");
+	} else {
+		path = join(currentPath, path);
+	}
+	path = path.replace(/\/+$/, "");
+	if (!enter && path === currentPath) return;
+	await loadFiles(path, suffix);
+}
+$("#files-search").oninput = () => {
+	filesLoadGeneration++;
+	run(() => navigateFilesInput());
+};
+$("#files-search").onkeydown = (event) => {
+	if (event.key === "Enter") {
+		event.preventDefault();
+		run(() => navigateFilesInput(true));
+	}
+};
 $("#files-filter").onclick = () => {
 	hideNonEditableFiles = !hideNonEditableFiles;
 	$("#files-filter").textContent = hideNonEditableFiles ? "Show all files" : "Hide non-editable files";
@@ -1225,10 +1262,12 @@ $("#files-filter").onclick = () => {
 	renderFiles();
 };
 
-async function loadFiles(path) {
+async function loadFiles(path, suffix = "") {
+	const generation = ++filesLoadGeneration;
 	const data = await api(fsUrl("list") + "?path=" + encodeURIComponent(path));
-	if (currentPath !== data.path) $("#files-search").value = "";
+	if (generation !== filesLoadGeneration) return;
 	currentPath = data.path;
+	$("#files-search").value = filesPathPrefix() + (currentPath ? currentPath + "/" : "") + suffix;
 	const crumbs = $("#crumbs");
 	crumbs.replaceChildren(el("a", { className: "link", textContent: remoteFilesSite ? "Remote production · " + remoteFilesSite : serverFiles ? "/" : "/var/www", onclick: () => run(() => loadFiles("")) }));
 	let accumulated = "";
@@ -1242,7 +1281,7 @@ async function loadFiles(path) {
 }
 
 function renderFiles() {
-	const query = $("#files-search").value.trim().toLocaleLowerCase();
+	const query = filesSearchName().trim().toLocaleLowerCase();
 	const items = listedFiles.filter((item) => (!hideNonEditableFiles || (item.dir ? item.has_editable_files : item.editable))
 		&& item.name.toLocaleLowerCase().includes(query));
 	const body = $("#files tbody");
