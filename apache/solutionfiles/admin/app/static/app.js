@@ -1253,6 +1253,31 @@ function filesPathPrefix() {
 function filesSearchName() {
 	return $("#files-search").value.split("/").pop();
 }
+$("#files-search").addEventListener("beforeinput", (event) => {
+	const field = event.target;
+	const limit = filesPathPrefix().length;
+	const start = field.selectionStart;
+	const end = field.selectionEnd;
+	const deleting = event.inputType.startsWith("delete");
+	if (start >= limit && !(deleting && event.inputType.includes("Backward") && start === limit && start === end)) return;
+	event.preventDefault();
+	if (deleting) {
+		if (end > limit) field.setRangeText("", limit, end, "end");
+	} else if (event.data !== null) {
+		field.setRangeText(event.data, Math.max(limit, start), Math.max(limit, end), "end");
+	}
+	field.dispatchEvent(new Event("input", { bubbles: true }));
+});
+$("#files-search").addEventListener("paste", (event) => {
+	const field = event.target;
+	const prefix = filesPathPrefix();
+	if (field.selectionStart >= prefix.length) return;
+	event.preventDefault();
+	const text = event.clipboardData.getData("text");
+	field.setRangeText(text.startsWith(prefix) ? text.slice(prefix.length) : text,
+		prefix.length, Math.max(prefix.length, field.selectionEnd), "end");
+	field.dispatchEvent(new Event("input", { bubbles: true }));
+});
 function focusFilesPath() {
 	if (!filesDialog.open || [...document.querySelectorAll("dialog:modal")].some((dialog) => dialog !== filesDialog)) return;
 	const field = $("#files-search");
@@ -1275,7 +1300,8 @@ document.addEventListener("keydown", (event) => {
 });
 async function navigateFilesInput(enter = false) {
 	const field = $("#files-search");
-	if (!field.value.startsWith("/")) field.value = "/" + field.value;
+	if (!field.value) field.value = filesPathPrefix();
+	if (!field.value.startsWith("/")) field.value = filesPathPrefix() + field.value;
 	const value = field.value;
 	renderFiles();
 	if (!enter && !value.includes("/")) return;
