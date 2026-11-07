@@ -172,6 +172,20 @@ class DomainNameTests(unittest.TestCase):
 
 
 class CreateScriptTests(unittest.TestCase):
+    def test_all_standard_html_pages_and_python_response_use_utf8(self):
+        for template in (APACHE / "solutionfiles").rglob("*.html"):
+            with self.subTest(template=template):
+                html = template.read_text(encoding="utf-8")
+                self.assertIn('<meta charset="utf-8">', html[:1024])
+                self.assertLess(html.index('<meta charset="utf-8">'), html.index("<title>"))
+        source = (APACHE / "solutionfiles/python/app/app.py").read_text()
+        source = source.replace("@SITE@", "æøå.dk").replace("@PORT_HTTP@", "4100")
+        ns = {"__name__": "test_standard_python_site"}
+        exec(compile(source, "standard Python site", "exec"), ns)
+        response = ns["app"].test_client().get("/")
+        self.assertEqual(response.content_type, "text/html; charset=utf-8")
+        self.assertEqual(response.data.decode("utf-8"), "Hello world from æøå.dk!")
+
     def test_html_site_declares_utf8_before_unicode_title(self):
         template = APACHE / "solutionfiles/html/site/index.html"
         result = subprocess.run(

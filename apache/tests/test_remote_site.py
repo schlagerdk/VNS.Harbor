@@ -31,6 +31,15 @@ database_spec.loader.exec_module(database_info)
 
 
 class RemoteFilesTests(unittest.TestCase):
+    def test_editor_preserves_danish_characters_as_utf8(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            content = '<meta charset="utf-8">\nHello world! - æøå'
+            remote_files.handle(root, {"action": "save", "path": "index.html", "content": content})
+            self.assertEqual((root / "index.html").read_bytes(), content.encode("utf-8"))
+            self.assertEqual(remote_files.handle(root, {"action": "read", "path": "index.html"})["content"],
+                             content)
+
     def test_unicode_folder_names_are_preserved_on_disk_and_in_listing(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()

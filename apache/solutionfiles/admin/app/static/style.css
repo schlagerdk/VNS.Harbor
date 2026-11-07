@@ -348,6 +348,20 @@ dialog.files-dialog { padding: 18px; }
 	.package-copy { flex: 1; }
 	.package-versions { flex: 0 0 auto; max-width: 55%; justify-content: flex-end; }
 	.package-version { white-space: nowrap; overflow-wrap: normal; }
+	#view-sql { min-width: 0; }
+	#sql-status { overflow-wrap: anywhere; }
+	.sql-connection-bar label { min-width: 0; width: 100%; }
+	#sql-connection { width: 100%; }
+	.sql-connection-bar .spacer { display: none; }
+	.sql-table { padding: 12px; overflow-x: visible; min-width: 0; }
+	#view-sql table, #view-sql tbody { display: block; width: 100%; }
+	#view-sql thead { display: none; }
+	#view-sql tbody > tr { display: block; margin-top: 12px; padding: 8px; border: 1px solid var(--line); border-radius: 8px; }
+	#view-sql td:not([colspan]) { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 10px; width: 100%; padding: 6px 0; border: 0; white-space: normal; text-align: left; overflow-wrap: anywhere; }
+	#view-sql td[data-label]::before { content: attr(data-label); color: var(--muted); font-weight: 400; }
+	#view-sql td[colspan] { display: block; padding: 0; border: 0; }
+	#view-sql .actions { flex-wrap: wrap; justify-content: flex-start; min-width: 0; margin: 0; }
+	#view-sql .sql-backup-history { min-width: 0; overflow-wrap: anywhere; }
 }
 
 .list { position: relative; overflow-x: auto; }

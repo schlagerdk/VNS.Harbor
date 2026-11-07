@@ -1864,10 +1864,16 @@ function groupSqlBackups(backups) {
 	return [...groups.values()];
 }
 
+function sqlCell(label, props, ...children) {
+	const cell = el("td", props, ...children);
+	cell.dataset.label = label;
+	return cell;
+}
+
 function sqlBackupRow(backup, allowDelete = true) {
-	return el("tr", {}, el("td", { textContent: backup.database_name }),
-		el("td", { textContent: formatDate(backup.finished) }), el("td", { className: "num", textContent: formatSqlSize(backup.size_mb) }),
-		el("td", { textContent: backup.path }), el("td", {}, el("div", { className: "actions" }, el("button", {
+	return el("tr", {}, sqlCell("Database", { textContent: backup.database_name }),
+		sqlCell("Finished", { textContent: formatDate(backup.finished) }), sqlCell("Size", { className: "num", textContent: formatSqlSize(backup.size_mb) }),
+		sqlCell("Server path", { textContent: backup.path }), sqlCell("Actions", {}, el("div", { className: "actions" }, el("button", {
 			textContent: "Restore", disabled: backup.media_count !== 1,
 			title: backup.error || (backup.media_count !== 1 ? "Striped or damaged backups are not supported" : "Restore this full backup"),
 			onclick: () => run(() => sqlRestore(backup)),
@@ -1943,12 +1949,12 @@ async function refreshSql() {
 					actions.append(el("button", { textContent: label, onclick: () => run(() => sqlDatabaseAction(action, database)) }));
 				}
 			}
-			$(database.id <= 4 ? "#sql-system-rows" : "#sql-databases").append(el("tr", {}, el("td", { textContent: database.name }),
-				el("td", { className: "num", textContent: formatSqlSize(database.size_mb) }), el("td", {
+			$(database.id <= 4 ? "#sql-system-rows" : "#sql-databases").append(el("tr", {}, sqlCell("Name", { textContent: database.name }),
+				sqlCell("Size", { className: "num", textContent: formatSqlSize(database.size_mb) }), sqlCell("State", {
 					className: "sql-state-" + database.state.toLowerCase(),
 					textContent: database.state,
 				}),
-				el("td", { textContent: database.recovery }), ...(database.id > 4 ? [el("td", {}, actions)] : [])));
+				sqlCell("Recovery", { textContent: database.recovery }), ...(database.id > 4 ? [sqlCell("Actions", {}, actions)] : [])));
 		}
 		for (const [latest, ...older] of groupSqlBackups(data.backups)) {
 			$("#sql-backups").append(sqlBackupRow(latest));

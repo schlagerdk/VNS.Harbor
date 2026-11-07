@@ -59,6 +59,18 @@ class ServerFilesTests(unittest.TestCase):
         return self.client.post("/api/server-fs/" + action, json=data,
                                 headers={"X-CSRF-Token": "test-csrf"})
 
+    def test_editor_preserves_danish_characters_as_utf8(self):
+        content = '<meta charset="utf-8">\nHello world! - æøå'
+        for prefix, path in (("/api/server-fs/", self.file),
+                             ("/api/fs/", self.web / "index.html")):
+            relative = str(path) if prefix == "/api/server-fs/" else "index.html"
+            response = self.client.post(prefix + "save", json={"path": relative, "content": content},
+                                        headers={"X-CSRF-Token": "test-csrf"})
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(path.read_bytes(), content.encode("utf-8"))
+            response = self.client.get(prefix + "read", query_string={"path": relative})
+            self.assertEqual(response.json["content"], content)
+
     def test_root_listing_and_no_recursive_system_scan(self):
         with patch("os.scandir", return_value=[]) as scan:
             response = self.client.get("/api/server-fs/list")
