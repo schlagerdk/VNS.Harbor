@@ -101,10 +101,13 @@ class SitePermissionsTests(unittest.TestCase):
                 command({"kind": "fix_permissions", "site": site, "scope": scope})
 
     def test_change_bindings_passes_validated_aliases_to_both_scopes(self):
+        from apache.lib.domain_names import normalize_dns_name
+
         source = APACHE / "solutionfiles/admin/app/app.py"
         nodes = [node for node in ast.parse(source.read_text()).body
-                 if isinstance(node, ast.FunctionDef) and node.name == "build_command"]
+                 if isinstance(node, ast.FunctionDef) and node.name in ("build_command", "dns_name")]
         namespace = {"os": os, "re": __import__("re"), "abort": abort, "site_arg": lambda data: data["site"],
+                     "_normalize_dns_name": normalize_dns_name,
                      "BINDING_RE": __import__("re").compile(
                          r"^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$"),
                      "ADMIN_SITE": "admin.test", "APACHE_DIR": str(APACHE), "WEB_ROOT": str(self.base)}
@@ -126,6 +129,11 @@ class SitePermissionsTests(unittest.TestCase):
                 "scope": scope,
             })
             self.assertEqual(legacy_argv, argv[:4])
+            _, idn_argv, _ = command({
+                "kind": "change_binding", "site": "example.test", "binding": "ÆØÅ.dk",
+                "aliases": "www.æøå.dk, www.xn--5cab8c.dk æøå.dk", "scope": scope,
+            })
+            self.assertEqual(idn_argv[3:], ["xn--5cab8c.dk", "www.xn--5cab8c.dk", "--yes"])
         for aliases in ("not-a-domain", "*.example.test", "https://example.test", "a" * 254 + ".test"):
             with self.subTest(aliases=aliases), self.assertRaises(BadRequest):
                 command({"kind": "change_binding", "site": "example.test",

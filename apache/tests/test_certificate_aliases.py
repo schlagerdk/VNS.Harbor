@@ -80,6 +80,7 @@ class CertificateAliasTests(unittest.TestCase):
                             return text
 
                         (root / "lib/common.sh").write_text(fixture_source((APACHE / "lib/common.sh").read_text()))
+                        shutil.copy(APACHE / "lib/domain_names.py", root / "lib")
                         templates = root / "solutionfiles/common"
                         templates.mkdir(parents=True)
                         shutil.copy(APACHE / "solutionfiles/common/apache-temp.conf.tpl", templates)
@@ -268,7 +269,7 @@ class CertificateAliasTests(unittest.TestCase):
     def test_alias_list_normalization_and_config_replacement(self):
         common = (APACHE / "lib/common.sh").read_text()
         functions = "\n".join(shell_function(common, name) for name in (
-            "validate_binding", "normalize_server_aliases", "replace_server_aliases"))
+            "normalize_dns_name", "validate_binding", "normalize_server_aliases", "replace_server_aliases"))
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / "site.conf"
             config.write_text(
@@ -287,7 +288,7 @@ class CertificateAliasTests(unittest.TestCase):
                   'replace_server_aliases "$1" "${_normalizedAliases}"\n')
             result = subprocess.run(
                 ["bash", "-c", command, "test", str(config)],
-                capture_output=True, text=True)
+                env=os.environ | {"_apacheDir": str(APACHE)}, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("aliases=www.example.test api.example.test", result.stdout)
             self.assertEqual(config.read_text().count("ServerAlias www.example.test api.example.test"), 2)
@@ -304,14 +305,24 @@ class CertificateAliasTests(unittest.TestCase):
 
     def test_alias_normalization_rejects_invalid_domains(self):
         common = (APACHE / "lib/common.sh").read_text()
-        functions = "\n".join(shell_function(common, name) for name in ("validate_binding", "normalize_server_aliases"))
+        functions = "\n".join(shell_function(common, name) for name in (
+            "normalize_dns_name", "validate_binding", "normalize_server_aliases"))
         for alias in ("*.example.test", "https://example.test", "localhost", "-bad.example.test"):
             with self.subTest(alias=alias):
                 result = subprocess.run(
                     ["bash", "-c", functions + '\nnormalize_server_aliases example.test "$1"', "test", alias],
-                    capture_output=True, text=True)
+                    env=os.environ | {"_apacheDir": str(APACHE)}, capture_output=True, text=True)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn("Invalid alias", result.stderr)
+
+    def test_danish_aliases_use_punycode_and_deduplicate(self):
+        result = subprocess.run(
+            ["bash", "-c",
+             'source "$1/lib/common.sh"; normalize_server_aliases xn--5cab8c.dk '
+             '"ÆØÅ.dk www.æøå.dk, www.xn--5cab8c.dk"; printf "%s" "$_normalizedAliases"',
+             "test", str(APACHE)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "www.xn--5cab8c.dk")
 
     def test_aliases_are_used_by_every_supported_certificate_flow(self):
         common = (APACHE / "lib/common.sh").read_text()

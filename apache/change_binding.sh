@@ -27,6 +27,7 @@ fi
 _oldBinding=${_oldBinding,,}
 
 ask _newBinding "Enter new site URL binding" "${_oldBinding}"
+_newBinding=$(normalize_dns_name "${_newBinding}" binding)
 validate_binding "${_newBinding}"
 _newBinding=${_newBinding,,}
 _binding=${_newBinding}

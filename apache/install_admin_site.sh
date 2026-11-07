@@ -19,6 +19,7 @@ _binding=${2:-}
 _adminUser=${3:-}
 
 ask _site "Enter admin site folder name"
+_site=$(normalize_dns_name "${_site}")
 validate_site_name "${_site}"
 
 if [[ -z ${_binding} && ${_site} == *.* ]]; then
@@ -26,6 +27,7 @@ if [[ -z ${_binding} && ${_site} == *.* ]]; then
 else
 	ask _binding "Enter admin site URL binding"
 fi
+_binding=$(normalize_dns_name "${_binding}" binding)
 validate_binding "${_binding}"
 _binding=${_binding,,}
 

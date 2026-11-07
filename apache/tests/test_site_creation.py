@@ -11,6 +11,7 @@ import unittest
 from flask import abort
 from werkzeug.exceptions import BadRequest
 
+from apache.lib.domain_names import normalize_dns_name
 
 APACHE = Path(__file__).resolve().parents[1]
 APP = APACHE / "solutionfiles/admin/app"
@@ -25,13 +26,13 @@ class CreateCommandTests(unittest.TestCase):
     def setUp(self):
         source = ast.parse((APP / "app.py").read_text())
         nodes = [node for node in source.body if
-                 isinstance(node, ast.FunctionDef) and node.name == "build_command" or
+                 isinstance(node, ast.FunctionDef) and node.name in ("build_command", "dns_name") or
                  isinstance(node, ast.Assign) and any(
                      isinstance(target, ast.Name) and target.id in
                      ("NAME_RE", "BINDING_RE", "PROJECT_RE", "FOLDER_RE", "VERSION_RE")
                      for target in node.targets)]
         self.ns = {"re": re, "os": os, "abort": abort, "APACHE_DIR": str(APACHE),
-                   "site_dirs": lambda: []}
+                   "site_dirs": lambda: [], "_normalize_dns_name": normalize_dns_name}
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "create command", "exec"), self.ns)
         self.data = dict(kind="create_site", site="example.test", binding="example.test",
                          type="csharp", csharp="empty", certificate="n")
@@ -67,8 +68,80 @@ class CreateCommandTests(unittest.TestCase):
     def test_html_command_is_unchanged(self):
         self.assertEqual(self.command(type="html")[-1], "n")
 
+    def test_danish_names_are_converted_before_creating_every_site_type(self):
+        for site_type in ("html", "python", "csharp"):
+            with self.subTest(site_type=site_type):
+                args = self.command(site="æøå.dk", binding="ÆØÅ.dk", type=site_type)
+                self.assertEqual(args[2], "xn--5cab8c.dk")
+                self.assertEqual(args[7], "xn--5cab8c.dk")
+                if site_type == "csharp":
+                    self.assertEqual(args[6], "xn--5cab8c.dk")
+        self.assertEqual(self.command(site="æøå.dk", project="æøå.dk")[6], "xn--5cab8c.dk")
+        self.assertEqual(self.command(site="æøå.dk", project="Example")[6], "Example")
+
+    def test_idn_duplicates_and_invalid_inputs_are_rejected(self):
+        self.ns["site_dirs"] = lambda: ["xn--5cab8c.dk"]
+        with self.assertRaisesRegex(BadRequest, "already exists"):
+            self.command(site="æøå.dk")
+        for field in ("site", "binding"):
+            for value in (None, 42, "../æøå.dk", "https://æøå.dk", "æøå.dk\n",
+                          "æ" * 60 + ".dk"):
+                with self.subTest(field=field, value=value), self.assertRaises(BadRequest):
+                    self.command(**{field: value})
+
+
+class DomainNameTests(unittest.TestCase):
+    def test_idn_canonicalization(self):
+        for value, expected in (("æøå.dk", "xn--5cab8c.dk"),
+                                ("ÆØÅ.dk", "xn--5cab8c.dk"),
+                                ("blåbær.dk", "xn--blbr-roah.dk"),
+                                ("bla\u030abaer.dk", "xn--blbaer-jua.dk"),
+                                ("www.æøå.dk", "www.xn--5cab8c.dk"),
+                                ("xn--5cab8c.dk", "xn--5cab8c.dk")):
+            with self.subTest(value=value):
+                self.assertEqual(normalize_dns_name(value, fully_qualified=True), expected)
+        self.assertEqual(normalize_dns_name("Example.test"), "Example.test")
+        self.assertEqual(normalize_dns_name("Example.test", fully_qualified=True), "example.test")
+        self.assertEqual(normalize_dns_name("æøå"), "xn--5cab8c")
+
+    def test_dns_limits_and_invalid_names(self):
+        valid = ".".join(["a" * 63] * 3 + ["a" * 61])
+        self.assertEqual(len(normalize_dns_name(valid)), 253)
+        for value in ("", None, 42, "localhost", "a" * 64 + ".dk",
+                      valid + "a", "æ" * 60 + ".dk", "-bad.dk", "bad-.dk",
+                      "a..dk", "a.dk.", "*.æøå.dk", "æøå.dk/path", "æøå.dk:443",
+                      "æøå.dk\n", "æ øå.dk", "a\x00.dk"):
+            with self.subTest(value=value), self.assertRaises(ValueError):
+                normalize_dns_name(value, fully_qualified=True)
+
+    def test_shell_normalization_matches_admin(self):
+        for value, mode in (("æøå.dk", "binding"), ("blåbær.dk", "binding"),
+                            ("æøå", "site"), ("Example.test", "site")):
+            result = subprocess.run(
+                ["bash", "-c", 'source "$1/lib/common.sh"; normalize_dns_name "$2" "$3"',
+                 "test", str(APACHE), value, mode], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout.strip(),
+                             normalize_dns_name(value, fully_qualified=mode == "binding"))
+
 
 class CreateScriptTests(unittest.TestCase):
+    def test_cli_converts_names_before_setting_site_paths(self):
+        prefix = CREATE.split("\nset_site_vars\n", 1)[0]
+        prefix = re.sub(r"\$\{(\w+),,\}",
+                        r"""$(printf '%s' "${\1}" | tr '[:upper:]' '[:lower:]')""", prefix)
+        for site_type in ("html", "python", "csharp"):
+            with self.subTest(site_type=site_type):
+                result = subprocess.run(
+                    ["bash", "-c", prefix + '\nprintf "site=%s binding=%s project=%s\\n" '
+                     '"$_site" "$_binding" "$_projectName"', str(APACHE / "create_site.sh"),
+                     "æøå.dk", site_type, "empty", "", "", "ÆØÅ.dk", "", "", "n"],
+                    cwd=APACHE, input="\n", capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertIn("site=xn--5cab8c.dk binding=xn--5cab8c.dk", result.stdout)
+                if site_type == "csharp":
+                    self.assertIn("project=xn--5cab8c.dk", result.stdout)
+
     def run_creation(self, kind="empty", version="18.3.1", template="", extra=""):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

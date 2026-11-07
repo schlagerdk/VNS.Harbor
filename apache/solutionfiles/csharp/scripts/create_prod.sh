@@ -89,6 +89,8 @@ case "${_prodEnvironment}" in
 	*) echo "Environment must be Development, Test, Staging or Production." >&2; exit 1 ;;
 esac
 [[ ${_target} == remote || ${_target} == local ]] || { echo "Target must be remote or local." >&2; exit 1; }
+_prodFolder=$(normalize_dns_name "${_prodFolder}")
+_prodBinding=$(normalize_dns_name "${_prodBinding}" binding)
 validate_site_name "${_prodFolder}"
 validate_binding "${_prodBinding}"
 if [[ ${_target} == remote ]]; then

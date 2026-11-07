@@ -28,6 +28,10 @@ ask() {
 	fi
 }
 
+normalize_dns_name() {
+	python3 "${_apacheDir}/lib/domain_names.py" "$1" "${2:-site}"
+}
+
 validate_site_name() {
 	local _name=$1
 	if [[ -z ${_name} ]]; then
@@ -65,6 +69,10 @@ normalize_server_aliases() {
 	_primary=$(printf '%s' "${_primary}" | tr '[:upper:]' '[:lower:]')
 	while IFS= read -r _alias; do
 		[[ -n ${_alias} ]] || continue
+		_alias=$(normalize_dns_name "${_alias}" binding) || {
+			echo "Invalid alias '${_alias}'." >&2
+			return 1
+		}
 		_alias=$(printf '%s' "${_alias}" | tr '[:upper:]' '[:lower:]')
 		validate_binding "${_alias}" || {
 			echo "Invalid alias '${_alias}'. Enter fully qualified DNS names separated by commas." >&2

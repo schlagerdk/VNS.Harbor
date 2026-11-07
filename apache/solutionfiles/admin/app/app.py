@@ -47,6 +47,10 @@ _files_spec.loader.exec_module(_files_module)
 editable_file = _files_module.editable_file
 contains_editable_files = _files_module.contains_editable_files
 file_metadata = _files_module.file_metadata
+_domains_spec = importlib.util.spec_from_file_location("vns_domain_names", os.path.join(APACHE_DIR, "lib", "domain_names.py"))
+_domains_module = importlib.util.module_from_spec(_domains_spec)
+_domains_spec.loader.exec_module(_domains_module)
+_normalize_dns_name = _domains_module.normalize_dns_name
 _publish_spec = importlib.util.spec_from_file_location("vns_publish_status", os.path.join(APACHE_DIR, "lib", "publish_status.py"))
 _publish_module = importlib.util.module_from_spec(_publish_spec)
 _publish_spec.loader.exec_module(_publish_module)
@@ -1026,16 +1030,18 @@ def site_arg(data):
     return site
 
 
+def dns_name(value, label, fully_qualified=False):
+    try:
+        return _normalize_dns_name(value, fully_qualified=fully_qualified)
+    except ValueError as error:
+        abort(400, "Invalid " + label + ": " + str(error))
+
+
 def production_setup_env(data, site):
     """Validate modal input for create_prod.sh and keep credentials out of argv."""
-    folder = data.get("folder", "")
-    binding = data.get("binding", "")
+    folder = dns_name(data.get("folder", ""), "production site name")
+    binding = dns_name(data.get("binding", ""), "production binding", fully_qualified=True)
     target = data.get("target", "")
-    if not isinstance(folder, str) or not isinstance(binding, str):
-        abort(400, "Invalid production site name or binding")
-    binding = binding.lower()
-    if not NAME_RE.match(folder) or not BINDING_RE.match(binding):
-        abort(400, "Invalid production site name or binding")
     if target not in ("local", "remote"):
         abort(400, "Invalid production target")
     environment = data.get("environment", "Production")
@@ -1345,8 +1351,10 @@ def build_command(data):
             return "Apache config test", [bash, "-c", "clear; apache2ctl configtest"], WEB_ROOT
         abort(400, "Unknown tool")
     if kind == "create_site":
-        site, site_type, binding = data.get("site", ""), data.get("type", ""), (data.get("binding") or "").lower()
-        if not NAME_RE.match(site) or site_type not in ("html", "python", "csharp") or not BINDING_RE.match(binding):
+        site = dns_name(data.get("site", ""), "site name")
+        site_type = data.get("type", "")
+        binding = dns_name(data.get("binding", ""), "binding", fully_qualified=True)
+        if site_type not in ("html", "python", "csharp"):
             abort(400, "Invalid site name, type or binding")
         if site in site_dirs():
             abort(400, "The site already exists")
@@ -1357,6 +1365,8 @@ def build_command(data):
         if site_type == "csharp":
             csharp = data.get("csharp") or "umbraco"
             project = data.get("project") or site
+            if project == data.get("site"):
+                project = site
             publish = data.get("publish") or "_publish"
             build = data.get("build") or "Debug"
             environment = data.get("environment") or ("Production" if build == "Release" else "Test")
@@ -1384,9 +1394,7 @@ def build_command(data):
         return "Fix permissions: " + site, [bash, os.path.join(APACHE_DIR, "fix_permissions.sh"), site, scope], APACHE_DIR
     if kind == "change_binding":
         site = site_arg(data)
-        binding = (data.get("binding") or "").lower()
-        if not BINDING_RE.match(binding):
-            abort(400, "Invalid binding")
+        binding = dns_name(data.get("binding", ""), "binding", fully_qualified=True)
         argv = [bash, os.path.join(APACHE_DIR, "change_binding.sh"), site, binding]
         if "aliases" in data:
             aliases = data["aliases"]
@@ -1396,10 +1404,7 @@ def build_command(data):
             for alias in re.split(r"[\s,]+", aliases.strip()):
                 if not alias:
                     continue
-                alias = alias.lower()
-                if (len(alias) > 253 or not BINDING_RE.fullmatch(alias)
-                        or any(len(label) > 63 for label in alias.split("."))):
-                    abort(400, "Invalid alias: " + alias)
+                alias = dns_name(alias, "alias", fully_qualified=True)
                 if alias != binding and alias not in alias_names:
                     alias_names.append(alias)
             if len(alias_names) > 99:

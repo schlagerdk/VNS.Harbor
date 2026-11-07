@@ -34,6 +34,9 @@ case "${_createCertificate,,}" in
 esac
 
 ask _site "Enter folder name"
+_originalSite=${_site}
+_site=$(normalize_dns_name "${_site}")
+[[ ${_projectName} != "${_originalSite}" ]] || _projectName=${_site}
 validate_site_name "${_site}"
 
 if [[ -z ${_type} ]]; then
@@ -60,6 +63,7 @@ if [[ -z ${_binding} && ${_site} == *.* ]]; then
 else
 	ask _binding "Enter site URL binding"
 fi
+_binding=$(normalize_dns_name "${_binding}" binding)
 validate_binding "${_binding}"
 _binding=${_binding,,}
 

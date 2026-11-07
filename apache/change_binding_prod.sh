@@ -19,6 +19,7 @@ load_prod_settings
 _oldBinding=${PROD_BINDING,,}
 validate_binding "${_oldBinding}"
 ask _newBinding "Enter new production binding" "${_oldBinding}"
+_newBinding=$(normalize_dns_name "${_newBinding}" binding)
 validate_binding "${_newBinding}"
 _newBinding=${_newBinding,,}
 _remoteConf="/etc/apache2/sites-available/${PROD_FOLDER}.conf"

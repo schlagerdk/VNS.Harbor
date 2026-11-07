@@ -9,6 +9,7 @@ import unittest
 from flask import abort
 from werkzeug.exceptions import BadRequest
 
+from apache.lib.domain_names import normalize_dns_name
 
 APACHE = Path(__file__).resolve().parents[1]
 
@@ -17,7 +18,7 @@ class ProductionEnvironmentTests(unittest.TestCase):
     def test_modal_environment_for_local_and_remote_targets(self):
         source = (APACHE / "solutionfiles/admin/app/app.py").read_text()
         nodes = [node for node in ast.parse(source).body
-                 if isinstance(node, ast.FunctionDef) and node.name == "production_setup_env"]
+                 if isinstance(node, ast.FunctionDef) and node.name in ("production_setup_env", "dns_name")]
         with tempfile.TemporaryDirectory() as directory:
             scripts = Path(directory) / "example.test/scripts"
             scripts.mkdir(parents=True)
@@ -25,7 +26,7 @@ class ProductionEnvironmentTests(unittest.TestCase):
             ns = {"os": os, "re": re, "abort": abort, "WEB_ROOT": directory,
                   "NAME_RE": re.compile(r"^[A-Za-z0-9.-]+$"),
                   "BINDING_RE": re.compile(r"^[A-Za-z0-9.-]+$"),
-                  "conf_binding": lambda site: "example.test"}
+                  "conf_binding": lambda site: "example.test", "_normalize_dns_name": normalize_dns_name}
             exec(compile(ast.Module(body=nodes, type_ignores=[]), "production env", "exec"), ns)
             for target in ("local", "remote"):
                 data = dict(target=target, folder="prod.test", binding="prod.test",
@@ -36,6 +37,10 @@ class ProductionEnvironmentTests(unittest.TestCase):
                     self.assertEqual(result["VNS_PROD_ENVIRONMENT"], environment)
                 self.assertEqual(ns["production_setup_env"](data, "example.test")["VNS_PROD_ENVIRONMENT"],
                                  "Production")
+                idn = ns["production_setup_env"](
+                    data | {"folder": "æøå.dk", "binding": "ÆØÅ.dk"}, "example.test")
+                self.assertEqual(idn["VNS_PROD_FOLDER"], "xn--5cab8c.dk")
+                self.assertEqual(idn["VNS_PROD_BINDING"], "xn--5cab8c.dk")
                 with self.assertRaises(BadRequest):
                     ns["production_setup_env"](data | {"environment": "invalid"}, "example.test")
 
