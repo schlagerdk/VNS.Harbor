@@ -7,11 +7,12 @@ import shlex
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import Mock
 
 from flask import abort
 from werkzeug.exceptions import BadRequest
 
-from apache.lib.domain_names import normalize_dns_name
+from apache.lib.domain_names import display_dns_name, normalize_dns_name, normalize_site_name, service_name
 
 APACHE = Path(__file__).resolve().parents[1]
 APP = APACHE / "solutionfiles/admin/app"
@@ -32,7 +33,8 @@ class CreateCommandTests(unittest.TestCase):
                      ("NAME_RE", "BINDING_RE", "PROJECT_RE", "FOLDER_RE", "VERSION_RE")
                      for target in node.targets)]
         self.ns = {"re": re, "os": os, "abort": abort, "APACHE_DIR": str(APACHE),
-                   "site_dirs": lambda: [], "_normalize_dns_name": normalize_dns_name}
+                   "site_dirs": lambda: [], "_normalize_dns_name": normalize_dns_name,
+                   "_normalize_site_name": normalize_site_name, "service_name": service_name}
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "create command", "exec"), self.ns)
         self.data = dict(kind="create_site", site="example.test", binding="example.test",
                          type="csharp", csharp="empty", certificate="n")
@@ -72,7 +74,7 @@ class CreateCommandTests(unittest.TestCase):
         for site_type in ("html", "python", "csharp"):
             with self.subTest(site_type=site_type):
                 args = self.command(site="æøå.dk", binding="ÆØÅ.dk", type=site_type)
-                self.assertEqual(args[2], "xn--5cab8c.dk")
+                self.assertEqual(args[2], "æøå.dk")
                 self.assertEqual(args[7], "xn--5cab8c.dk")
                 if site_type == "csharp":
                     self.assertEqual(args[6], "xn--5cab8c.dk")
@@ -91,6 +93,49 @@ class CreateCommandTests(unittest.TestCase):
 
 
 class DomainNameTests(unittest.TestCase):
+    def test_unicode_site_discovery_and_service_lookup(self):
+        source = ast.parse((APP / "app.py").read_text())
+        nodes = [node for node in source.body if
+                 isinstance(node, ast.FunctionDef) and node.name in (
+                     "site_dirs", "unit_of", "service_states", "service_port") or
+                 isinstance(node, ast.Assign) and any(
+                     isinstance(target, ast.Name) and target.id == "NAME_RE" for target in node.targets)]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            name = "æøå.linux-01.vns.dk"
+            (root / name).mkdir()
+            (root / "services").mkdir()
+            unit = service_name(name)
+            (root / "services" / (unit + ".service")).write_text(
+                "WorkingDirectory=/var/www/" + name + "\nExecStart=app --urls http://localhost:4100")
+            runner = Mock(return_value=Mock(stdout="active\n"))
+            ns = {"os": os, "re": re, "WEB_ROOT": directory, "service_name": service_name,
+                  "SERVICE_DIR": str(root / "services"), "subprocess": Mock(run=runner),
+                  "read_text": lambda path: Path(path).read_text()}
+            exec(compile(ast.Module(body=nodes, type_ignores=[]), "unicode sites", "exec"), ns)
+            self.assertIn(name, ns["site_dirs"]())
+            self.assertTrue(ns["unit_of"](name))
+            self.assertEqual(ns["service_port"](name), "4100")
+            self.assertEqual(ns["service_states"]([name]), {name: "active"})
+            self.assertEqual(runner.call_args.args[0], ["systemctl", "is-active", unit + ".service"])
+
+    def test_unicode_folders_are_not_converted_to_punycode(self):
+        self.assertEqual(normalize_site_name("æøå.linux-01.vns.dk"), "æøå.linux-01.vns.dk")
+        self.assertEqual(normalize_site_name("bla\u030abaer.dk"), "blåbaer.dk")
+        self.assertEqual(service_name("æøå.linux-01.vns.dk"), "xn--5cab8c.linux-01.vns.dk")
+        for name in ("../æøå", "a_b.dk", "a/b", "a;echo", "a\n", "a..dk"):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                normalize_site_name(name)
+
+    def test_display_names_preserve_unicode_and_ascii_labels(self):
+        for value, expected in (("xn--5cab8c.linux-01.vns.dk", "æøå.linux-01.vns.dk"),
+                                ("www.xn--blbr-roah.dk", "www.blåbær.dk"),
+                                ("Example.test", "Example.test"), ("æøå.dk", "æøå.dk"), ("", "")):
+            with self.subTest(value=value):
+                self.assertEqual(display_dns_name(value), expected)
+        with self.assertRaises(UnicodeError):
+            display_dns_name("xn--.dk")
+
     def test_idn_canonicalization(self):
         for value, expected in (("æøå.dk", "xn--5cab8c.dk"),
                                 ("ÆØÅ.dk", "xn--5cab8c.dk"),
@@ -122,10 +167,27 @@ class DomainNameTests(unittest.TestCase):
                  "test", str(APACHE), value, mode], capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(result.stdout.strip(),
-                             normalize_dns_name(value, fully_qualified=mode == "binding"))
+                             normalize_dns_name(value, fully_qualified=True) if mode == "binding"
+                             else normalize_site_name(value))
 
 
 class CreateScriptTests(unittest.TestCase):
+    def test_unicode_paths_and_ascii_service_are_rendered_together(self):
+        with tempfile.TemporaryDirectory() as directory:
+            template = Path(directory) / "fixture.tpl"
+            template.write_text("@SITE@\n@SITE_ROOT@\n@SERVICE_NAME@\n")
+            result = subprocess.run(
+                ["bash", "-c", 'set -eu; source "$1/lib/common.sh"; _rootPath="$2"; '
+                 '_site=æøå.dk; set_site_vars; mkdir -p "$_siteRoot"; '
+                 'render "$3"; printf "service=%s\\n" "$_servicePath"',
+                 "test", str(APACHE), directory, str(template)],
+                capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue((Path(directory) / "æøå.dk").is_dir())
+            self.assertIn(directory + "/æøå.dk", result.stdout)
+            self.assertIn("service=/etc/systemd/system/xn--5cab8c.dk.service", result.stdout)
+            self.assertNotIn("@SERVICE_NAME@", result.stdout)
+
     def test_cli_converts_names_before_setting_site_paths(self):
         prefix = CREATE.split("\nset_site_vars\n", 1)[0]
         prefix = re.sub(r"\$\{(\w+),,\}",
@@ -138,7 +200,7 @@ class CreateScriptTests(unittest.TestCase):
                      "æøå.dk", site_type, "empty", "", "", "ÆØÅ.dk", "", "", "n"],
                     cwd=APACHE, input="\n", capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
-                self.assertIn("site=xn--5cab8c.dk binding=xn--5cab8c.dk", result.stdout)
+                self.assertIn("site=æøå.dk binding=xn--5cab8c.dk", result.stdout)
                 if site_type == "csharp":
                     self.assertIn("project=xn--5cab8c.dk", result.stdout)
 

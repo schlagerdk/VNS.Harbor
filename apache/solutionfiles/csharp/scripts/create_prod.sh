@@ -100,7 +100,7 @@ if [[ ${_target} == remote ]]; then
 	}
 else
 	[[ ${_localPath} == /* ]] || { echo "The local production folder must be an absolute path." >&2; exit 1; }
-	if [[ ${_prodFolder} == "${_site}" || ${_prodBinding} == "${_binding}" ]]; then
+	if [[ $(normalize_dns_name "${_prodFolder}" unit) == "$(normalize_dns_name "${_site}" unit)" || ${_prodBinding} == "${_binding}" ]]; then
 		echo "A local production site needs a different name and binding than this site." >&2
 		exit 1
 	fi

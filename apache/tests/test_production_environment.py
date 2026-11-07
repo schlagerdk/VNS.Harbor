@@ -9,7 +9,7 @@ import unittest
 from flask import abort
 from werkzeug.exceptions import BadRequest
 
-from apache.lib.domain_names import normalize_dns_name
+from apache.lib.domain_names import normalize_dns_name, normalize_site_name, service_name
 
 APACHE = Path(__file__).resolve().parents[1]
 
@@ -26,7 +26,8 @@ class ProductionEnvironmentTests(unittest.TestCase):
             ns = {"os": os, "re": re, "abort": abort, "WEB_ROOT": directory,
                   "NAME_RE": re.compile(r"^[A-Za-z0-9.-]+$"),
                   "BINDING_RE": re.compile(r"^[A-Za-z0-9.-]+$"),
-                  "conf_binding": lambda site: "example.test", "_normalize_dns_name": normalize_dns_name}
+                  "conf_binding": lambda site: "example.test", "_normalize_dns_name": normalize_dns_name,
+                  "_normalize_site_name": normalize_site_name, "service_name": service_name}
             exec(compile(ast.Module(body=nodes, type_ignores=[]), "production env", "exec"), ns)
             for target in ("local", "remote"):
                 data = dict(target=target, folder="prod.test", binding="prod.test",
@@ -39,7 +40,7 @@ class ProductionEnvironmentTests(unittest.TestCase):
                                  "Production")
                 idn = ns["production_setup_env"](
                     data | {"folder": "æøå.dk", "binding": "ÆØÅ.dk"}, "example.test")
-                self.assertEqual(idn["VNS_PROD_FOLDER"], "xn--5cab8c.dk")
+                self.assertEqual(idn["VNS_PROD_FOLDER"], "æøå.dk")
                 self.assertEqual(idn["VNS_PROD_BINDING"], "xn--5cab8c.dk")
                 with self.assertRaises(BadRequest):
                     ns["production_setup_env"](data | {"environment": "invalid"}, "example.test")

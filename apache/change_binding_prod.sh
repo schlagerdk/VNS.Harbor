@@ -59,6 +59,7 @@ _vars="SITE='${PROD_FOLDER}' OLD='${_oldBinding}' NEW='${_newBinding}' ALIASES='
 prod_run "${_vars}" <<'REMOTE'
 set -euo pipefail
 source /vns/apache/lib/common.sh
+unit=$(normalize_dns_name "${SITE}" unit)
 conf=/etc/apache2/sites-available/${SITE}.conf
 acme=/etc/acmesh/acme.sh
 oldcert=/etc/ssl/certs/${OLD}_ecc
@@ -103,7 +104,7 @@ rollback() {
 	[[ -f ${backup}/appsettings.json ]] && cp "${backup}/appsettings.json" "${settings}"
 	apache2ctl configtest && systemctl reload apache2 || true
 	if [[ ${app_restart_attempted} == y ]]; then
-		systemctl restart "${SITE}" 2>/dev/null || true
+		systemctl restart "${unit}" 2>/dev/null || true
 	fi
 }
 
@@ -156,7 +157,7 @@ apache2ctl configtest || { rollback; exit 1; }
 systemctl reload apache2
 if [[ -f ${backup}/appsettings.json ]] && ! cmp -s "${backup}/appsettings.json" "${settings}"; then
 	app_restart_attempted=y
-	systemctl restart "${SITE}" || { rollback; exit 1; }
+	systemctl restart "${unit}" || { rollback; exit 1; }
 fi
 
 # 4. Remove the old certificate unless another site still uses that name

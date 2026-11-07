@@ -1,7 +1,7 @@
 #!/bin/bash
 clear
 
-_service=/etc/systemd/system/@SITE@.service
+_service=/etc/systemd/system/@SERVICE_NAME@.service
 _env=${1:-}
 
 if [[ ! -f ${_service} ]]; then
@@ -35,5 +35,5 @@ echo "Environment is now:"
 grep "_ENVIRONMENT" "${_service}"
 
 sudo systemctl daemon-reload
-sudo systemctl restart @SITE@
-sudo systemctl status @SITE@ --no-pager
+sudo systemctl restart @SERVICE_NAME@
+sudo systemctl status @SERVICE_NAME@ --no-pager

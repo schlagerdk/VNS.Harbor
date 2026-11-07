@@ -348,7 +348,7 @@ function renderStats() {
 
 function matchesQuery(site) {
 	const text = query.trim().toLowerCase();
-	const haystack = site.name + " " + site.environments.map((e) => e.binding + " " + (e.host || "")).join(" ");
+	const haystack = site.name + " " + siteLabel(site) + " " + site.environments.map((e) => e.binding + " " + bindingLabel(e) + " " + (e.host || "")).join(" ");
 	return !text || haystack.toLowerCase().includes(text);
 }
 
@@ -500,6 +500,9 @@ const bindingLink = (binding, asButton) => binding
 	? openLink(binding, "https://" + binding + "/", "", asButton)
 	: el("span", { className: "muted", textContent: "no binding" });
 const backofficeLink = (binding, asButton) => openLink(binding + "/umbraco", "https://" + binding + "/umbraco", "Umbraco backoffice", asButton);
+const siteLabel = (site) => site.display_name || site.name;
+const bindingLabel = (env) => env.display_binding || env.binding;
+const aliasLabels = (env) => env?.display_aliases || env?.aliases || [];
 
 function environmentAddress(env) {
 	const hostname = env.binding || (env.mode === "remote" ? env.host : $("meta[name=server-hostname]")?.content) || "";
@@ -507,7 +510,7 @@ function environmentAddress(env) {
 	return {
 		hostname,
 		url: hostname ? `${env.scheme || "https"}://${authority}/` : "",
-		title: env.binding ? hostname : `Default / wildcard: ${hostname}. Apache chooses the site for this address.`,
+		title: env.binding ? bindingLabel(env) : `Default / wildcard: ${hostname}. Apache chooses the site for this address.`,
 	};
 }
 
@@ -553,7 +556,7 @@ function siteCard(site) {
 	for (const env of site.environments) {
 		const production = env.key === "prod";
 		const environment = environmentLabel(site, env);
-		const group = el("div", { className: "site-link-group" + (production ? " production" : ""), role: "group", ariaLabel: environment + " · " + (env.binding || site.name) });
+		const group = el("div", { className: "site-link-group" + (production ? " production" : ""), role: "group", ariaLabel: environment + " · " + (bindingLabel(env) || siteLabel(site)) });
 		const heading = el("div", { className: "site-environment-head" },
 			httpsLock(env.https),
 			el("span", { className: "badge env-" + environment.toLowerCase(), textContent: environment }));
@@ -587,7 +590,7 @@ function siteCard(site) {
 	badges.append(updateStatus);
 	const selection = multiSelecting && canMultiSelect(site)
 		? el("label", { className: "multi-select", onclick: (event) => event.stopPropagation() },
-			el("input", { type: "checkbox", checked: multiSites.has(site.name), ariaLabel: "Select " + site.name,
+			el("input", { type: "checkbox", checked: multiSites.has(site.name), ariaLabel: "Select " + siteLabel(site),
 				onchange: (event) => {
 					if (event.target.checked) multiSites.add(site.name); else multiSites.delete(site.name);
 					renderMultiSelection();
@@ -597,7 +600,7 @@ function siteCard(site) {
 		...(selection ? [selection] : []),
 		el("div", { className: "site-head" },
 			el("span", { className: "site-emblem" }, svgIcon("globe")),
-			el("div", { className: "site-identity" }, el("h3", { className: "site-title", textContent: site.name }), badges),
+			el("div", { className: "site-identity" }, el("h3", { className: "site-title", textContent: siteLabel(site) }), badges),
 			el("span", { className: "dot " + state, title: state || "Static site" })),
 		actions);
 }
@@ -668,11 +671,11 @@ function renderSite(name) {
 		const target = site.environments.find((env) => env.key === "prod");
 		const label = "Sync to " + (target.environment || "target");
 		actions.append(el("button", { textContent: label, title: "sync_prod.sh", onclick: () => run(async () => {
-			if (await ask({ title: label + "?", message: `Sync content to ${target.binding || target.host || site.name}.`, input: false, ok: label })) await openTask({ kind: "script", site: site.name, script: "sync_prod.sh" });
+			if (await ask({ title: label + "?", message: `Sync content to ${bindingLabel(target) || target.host || siteLabel(site)}.`, input: false, ok: label })) await openTask({ kind: "script", site: site.name, script: "sync_prod.sh" });
 		}) }));
 	}
 	if (!site.admin && hasProd(site)) add("Delete everything", () => deleteSite(site, "all"), "danger");
-	head.append(el("div", { className: "detail-title" }, el("h2", { textContent: site.name }), kindBadges(site)));
+	head.append(el("div", { className: "detail-title" }, el("h2", { textContent: siteLabel(site) }), kindBadges(site)));
 	if (actions.childElementCount) head.append(actions);
 	for (const env of site.environments) envs.append(envPanel(site, env));
 	if (site.has_project && (site.kind === "csharp" || site.kind === "umbraco")) {
@@ -776,17 +779,17 @@ function envPanel(site, env) {
 	const scheme = env.scheme || "https";
 	const address = environmentAddress(env);
 	const binding = !address.url ? bindingLink("") : site.admin && env.key !== "prod"
-		? el("span", { textContent: env.binding })
-		: openLink(env.binding || address.hostname, address.url, address.title);
+		? el("span", { textContent: bindingLabel(env) })
+		: openLink(bindingLabel(env) || address.hostname, address.url, address.title);
 	const meta = el("dl", { className: "meta" }, el("dt", { textContent: "Binding" }), el("dd", {}, binding));
 	if (env.aliases && env.aliases.length) {
 		meta.append(el("dt", { textContent: "Aliases" }), el("dd", { className: "database-name aliases" },
 			...env.aliases.flatMap((alias, index) => [
 				...(index ? [", "] : []),
-				openLink(alias, scheme + "://" + alias + "/"),
+				openLink(aliasLabels(env)[index], scheme + "://" + alias + "/"),
 			])));
 	}
-	if (site.kind === "umbraco" && address.url) meta.append(el("dt", { textContent: "Backoffice" }), el("dd", {}, openLink(address.hostname + "/umbraco", address.url + "umbraco", address.title)));
+	if (site.kind === "umbraco" && address.url) meta.append(el("dt", { textContent: "Backoffice" }), el("dd", {}, openLink((bindingLabel(env) || address.hostname) + "/umbraco", address.url + "umbraco", address.title)));
 	if (site.kind === "csharp" || site.kind === "umbraco") {
 		meta.append(el("dt", { textContent: "Datasource" }), el("dd", {
 			className: "database-name",
@@ -844,7 +847,7 @@ function envPanel(site, env) {
 		if (action && env.key !== "prod" && (!env.unit || site.admin) && action === "change_env") continue;
 		(action ? settings : quick).append(el("button", { textContent: label, className: "small", title: file || action, onclick: () => run(async () => {
 			if (action === "change_env") { openEnvironmentDialog(site, env); return; }
-			if (confirm && !(await ask({ title: `${label}?`, message: `${confirm} (${site.name})`, input: false, ok: label }))) return;
+			if (confirm && !(await ask({ title: `${label}?`, message: `${confirm} (${siteLabel(site)})`, input: false, ok: label }))) return;
 			await openTask(action ? { kind: "prod_action", site: site.name, action, scope: env.key === "prod" ? "prod" : "test" } : { kind: "script", site: site.name, script: file });
 		}) }));
 	}
@@ -880,7 +883,7 @@ function envPanel(site, env) {
 
 async function serviceAction(site, env, action) {
 	const unit = env.unit || env.folder;
-	if (action !== "start" && !(await ask({ title: `${action === "stop" ? "Stop" : "Restart"} ${unit}?`, message: env.binding || site.name, input: false, ok: action === "stop" ? "Stop" : "Restart", danger: action === "stop" }))) return;
+	if (action !== "start" && !(await ask({ title: `${action === "stop" ? "Stop" : "Restart"} ${bindingLabel(env) || siteLabel(site)}?`, message: bindingLabel(env) || siteLabel(site), input: false, ok: action === "stop" ? "Stop" : "Restart", danger: action === "stop" }))) return;
 	await api(`/api/sites/${encodeURIComponent(site.name)}/service`, { json: { action, unit: env.unit, scope: env.mode === "remote" ? "prod" : "local" } });
 	toast(`${unit}: ${action} done`, "ok");
 	await loadSites();
@@ -905,19 +908,19 @@ $("#logs-refresh").onclick = () => run(refreshLogs);
 $("#logs-close").onclick = () => logsDialog.close();
 
 async function changeBinding(site, scope, env) {
-	const current = env ? env.binding : site.binding;
+	const current = env ? bindingLabel(env) : site.binding;
 	const label = scope === "prod" ? "production site" : "test site";
 	const bindings = await ask({
 		title: `Change ${label} bindings`,
-		message: `Set the primary domain and aliases for the ${label} of ${site.name}. Aliases must resolve to the same server. HTTP-only sites remain HTTP-only; certificates are updated only for HTTPS sites.`,
+		message: `Set the primary domain and aliases for the ${label} of ${siteLabel(site)}. Aliases must resolve to the same server. HTTP-only sites remain HTTP-only; certificates are updated only for HTTPS sites.`,
 		value: current,
-		extra: { label: "Aliases (one per line)", value: (env?.aliases || []).join("\n"), placeholder: "www.example.com\napi.example.com" },
+		extra: { label: "Aliases (one per line)", value: aliasLabels(env).join("\n"), placeholder: "www.example.com\napi.example.com" },
 		ok: "Change",
 	});
 	if (!bindings) return;
 	const binding = bindings.value.trim();
 	const aliases = bindings.extra.trim();
-	const currentAliases = (env?.aliases || []).join(" ").toLowerCase();
+	const currentAliases = aliasLabels(env).join(" ").toLowerCase();
 	if (binding !== current || aliases.replace(/,/g, " ").trim().replace(/\s+/g, " ").toLowerCase() !== currentAliases) {
 		await openTask({ kind: "change_binding", site: site.name, binding, aliases, scope });
 	}
@@ -929,7 +932,7 @@ async function deleteSite(site, scope) {
 	const mainEnvironment = environmentLabel(site, main);
 	const prodEnvironment = prod ? environmentLabel(site, prod) : "";
 	const remote = prod && prod.mode === "remote";
-	const target = scope === "prod" ? (prod.binding || prod.unit || prod.folder || site.name) : site.name;
+	const target = scope === "prod" ? (bindingLabel(prod) || prod.unit || prod.folder || siteLabel(site)) : siteLabel(site);
 	const what = {
 		all: remote
 			? `This deletes the site and its remote ${prodEnvironment} site on ${prod.host}: files, services, Apache configs and logs on both servers.`
@@ -1064,14 +1067,15 @@ function syncProdForm() {
 function openCreateProdDialog(site) {
 	prodForm.reset();
 	delete prodForm.binding.dataset.edited;
-	const binding = site.environments.find((env) => env.key === "test")?.binding || site.name;
-	prodForm.folder.value = site.name;
+	const main = site.environments.find((env) => env.key !== "prod");
+	const binding = (main && bindingLabel(main)) || siteLabel(site);
+	prodForm.folder.value = siteLabel(site);
 	prodForm.binding.value = binding;
 	prodForm.local_path.value = `/var/www/${site.name}/_prod`;
-	prodForm.dataset.remoteFolder = site.name;
+	prodForm.dataset.remoteFolder = siteLabel(site);
 	prodForm.dataset.remoteBinding = binding;
-	prodForm.dataset.localFolder = `prod-${site.name}`;
-	prodForm.dataset.localBinding = `prod-${site.name}`;
+	prodForm.dataset.localFolder = `prod-${siteLabel(site)}`;
+	prodForm.dataset.localBinding = `prod-${siteLabel(site)}`;
 	prodForm.elements.target.value = "remote";
 	delete prodForm.dataset.target;
 	syncProdForm();
@@ -1106,7 +1110,7 @@ function openEnvironmentDialog(site, env) {
 	const choices = [...environmentForm.querySelectorAll("input[name=environment]")];
 	const selected = choices.find((input) => input.value.toLowerCase() === (env.environment || "").toLowerCase());
 	if (selected) selected.checked = true;
-	$("#environment-site").textContent = env.binding || site.name;
+	$("#environment-site").textContent = bindingLabel(env) || siteLabel(site);
 	$("#environment-current").textContent = env.environment || "Unknown";
 	$("#environment-current").className = "badge env-" + (env.environment || "unknown").toLowerCase();
 	environmentDialog.showModal();
@@ -1150,7 +1154,7 @@ function syncMultiAction() {
 	const skipped = action === "prod" || action === "both"
 		? selected.filter((site) => !site.scripts.includes("publish_prod.sh")) : [];
 	$("#multi-skipped").textContent = skipped.length
-		? "Will be skipped (no production): " + skipped.map((site) => site.name).join(", ") : "";
+		? "Will be skipped (no production): " + skipped.map(siteLabel).join(", ") : "";
 	$("#multi-submit").disabled = !action || submittingMulti || !selected.length || skipped.length === selected.length;
 }
 $("#btn-multi-action").onclick = () => {

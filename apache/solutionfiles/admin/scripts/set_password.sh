@@ -3,5 +3,5 @@
 set -euo pipefail
 cd "@SITE_ROOT@/app"
 sudo "@SITE_ROOT@/venv/bin/python" manage.py set-password
-sudo systemctl restart "@SITE@"
+sudo systemctl restart "@SERVICE_NAME@"
 echo "Password changed. Log in again."

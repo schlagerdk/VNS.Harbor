@@ -1,6 +1,7 @@
 """Canonical DNS names shared by the admin application and shell scripts."""
 import re
 import sys
+import unicodedata
 
 
 def normalize_dns_name(value, fully_qualified=False):
@@ -18,8 +19,28 @@ def normalize_dns_name(value, fully_qualified=False):
     return name.lower() if fully_qualified else name
 
 
+def display_dns_name(value):
+    return ".".join(label.encode("ascii").decode("idna") if label.lower().startswith("xn--") else label
+                    for label in value.split("."))
+
+
+def normalize_site_name(value):
+    normalize_dns_name(value)
+    name = unicodedata.normalize("NFC", value)
+    if (len(name.encode("utf-8")) > 255
+            or not re.fullmatch(r"[^\W_](?:[^\W_]|[.-])*", name)):
+        raise ValueError("Invalid site folder name.")
+    return name
+
+
+def service_name(value):
+    return normalize_dns_name(value)
+
+
 if __name__ == "__main__":
     try:
-        print(normalize_dns_name(sys.argv[1], fully_qualified=sys.argv[2] == "binding"))
+        mode = sys.argv[2]
+        print(normalize_site_name(sys.argv[1]) if mode == "site"
+              else normalize_dns_name(sys.argv[1], fully_qualified=mode == "binding"))
     except ValueError as error:
         sys.exit(str(error))

@@ -1,7 +1,7 @@
 #!/bin/bash
 clear
 
-_site=@SITE@
+_site=@SERVICE_NAME@
 
 sudo nano "/etc/systemd/system/${_site}.service"
 

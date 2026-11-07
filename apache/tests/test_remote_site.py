@@ -17,6 +17,7 @@ from unittest.mock import Mock, patch
 
 from flask import Flask, abort, jsonify, request, send_file
 from werkzeug.exceptions import HTTPException
+from apache.lib.domain_names import service_name
 
 
 APACHE = Path(__file__).resolve().parents[1]
@@ -30,6 +31,16 @@ database_spec.loader.exec_module(database_info)
 
 
 class RemoteFilesTests(unittest.TestCase):
+    def test_unicode_folder_names_are_preserved_on_disk_and_in_listing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            remote_files.handle(root, {"action": "mkdir", "name": "æøå.dk"})
+            self.assertTrue((root / "æøå.dk").is_dir())
+            items = remote_files.handle(root, {"action": "list"})["items"]
+            self.assertEqual(items[0]["name"], "æøå.dk")
+            remote_files.handle(root, {"action": "newfile", "path": "æøå.dk", "name": "test.txt"})
+            self.assertTrue((root / "æøå.dk/test.txt").is_file())
+
     def test_editability_metadata(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory).resolve()
@@ -87,6 +98,7 @@ class RemoteApiTests(unittest.TestCase):
         self.ns = dict(
             app=self.app, os=os, json=json, subprocess=subprocess, time=time, shlex=shlex,
             _database_module=database_info,
+            service_name=service_name,
             re=re, SERVICE_DIR="/etc/systemd/system", APACHE_SITES="/etc/apache2/sites-available",
             read_text=lambda path: "",
             base64=base64, abort=abort, jsonify=jsonify, request=request,
@@ -274,7 +286,7 @@ class RemoteStatusTests(unittest.TestCase):
                 if not has_certificate:
                     certificate.unlink()
                 output = io.StringIO()
-                with patch.dict(os.environ, SITE="production.test", DATABASE_CODE=helper), redirect_stdout(output), \
+                with patch.dict(os.environ, SITE="production.test", UNIT="production.test", DATABASE_CODE=helper), redirect_stdout(output), \
                         patch("subprocess.run", side_effect=[
                             Mock(returncode=0, stdout="active\n"),
                             Mock(stdout='"ASPNETCORE_ENVIRONMENT=Production" "DOTNET_ENVIRONMENT=Production"\n')]):
@@ -295,7 +307,7 @@ class RemoteStatusTests(unittest.TestCase):
             ):
                 with self.subTest(environment=expected):
                     output = io.StringIO()
-                    with patch.dict(os.environ, SITE="production.test", DATABASE_CODE=helper), redirect_stdout(output), \
+                    with patch.dict(os.environ, SITE="production.test", UNIT="production.test", DATABASE_CODE=helper), redirect_stdout(output), \
                             patch("subprocess.run", side_effect=[
                                 Mock(returncode=0, stdout="active\n"), Mock(stdout=variables)]) as run:
                         exec(compile(tree, "remote status", "exec"), {"Path": remote_path})
@@ -314,7 +326,7 @@ class RemoteTransportTests(unittest.TestCase):
             (root / "remote_site.sh").write_text((APACHE / "remote_site.sh").read_text())
             (root / "lib/common.sh").write_text((APACHE / "lib/common.sh").read_text()
                                                    + '\n_rootPath="' + str(root / "sites") + '"\n')
-            for name in ("prod.sh", "remote_files.py", "managed_config.py", "database_info.py"):
+            for name in ("prod.sh", "remote_files.py", "managed_config.py", "database_info.py", "domain_names.py"):
                 (root / "lib" / name).write_text((APACHE / "lib" / name).read_text())
             # macOS Bash cannot source a process substitution; test transport with trusted fixture settings.
             with (root / "lib/prod.sh").open("a") as source:

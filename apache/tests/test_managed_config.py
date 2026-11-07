@@ -12,6 +12,17 @@ spec.loader.exec_module(config)
 
 
 class ManagedConfigTests(unittest.TestCase):
+    def test_unicode_folder_uses_ascii_service_and_unicode_apache_config(self):
+        root = Path(self.directory.name)
+        (root / "xn--5cab8c.dk.service").write_text("[Service]\nWorkingDirectory=/var/www/æøå.dk\n")
+        (root / "æøå.dk.conf").write_text("ServerName xn--5cab8c.dk\n")
+        self.assertIn("æøå.dk", config.handle("æøå.dk", {"kind": "service", "action": "read"})["content"])
+        self.assertEqual(config.handle("æøå.dk", {"kind": "conf", "action": "read"})["path"],
+                         str(root / "æøå.dk.conf"))
+        with patch.object(config.subprocess, "run", return_value=Mock(stdout="", stderr="")) as run:
+            config.handle("æøå.dk", {"kind": "service", "action": "apply"})
+        self.assertEqual(run.call_args.args[0], ["systemctl", "restart", "xn--5cab8c.dk.service"])
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)

@@ -51,6 +51,9 @@ _domains_spec = importlib.util.spec_from_file_location("vns_domain_names", os.pa
 _domains_module = importlib.util.module_from_spec(_domains_spec)
 _domains_spec.loader.exec_module(_domains_module)
 _normalize_dns_name = _domains_module.normalize_dns_name
+_display_dns_name = _domains_module.display_dns_name
+_normalize_site_name = _domains_module.normalize_site_name
+service_name = _domains_module.service_name
 _publish_spec = importlib.util.spec_from_file_location("vns_publish_status", os.path.join(APACHE_DIR, "lib", "publish_status.py"))
 _publish_module = importlib.util.module_from_spec(_publish_spec)
 _publish_spec.loader.exec_module(_publish_module)
@@ -79,7 +82,7 @@ app.config.update(
 )
 sock = Sock(app)
 
-NAME_RE = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$")
+NAME_RE = re.compile(r"^[^\W_](?:(?:[^\W_]|-)*[^\W_])?(?:\.[^\W_](?:(?:[^\W_]|-)*[^\W_])?)*$")
 BINDING_RE = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$")
 PROJECT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 FOLDER_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._-]*$")
@@ -210,7 +213,7 @@ def error(message, status=400):
 def site_dirs():
     names = []
     for name in sorted(os.listdir(WEB_ROOT)):
-        if name.startswith(".") or not NAME_RE.match(name):
+        if name.startswith(".") or not NAME_RE.fullmatch(name):
             continue
         if os.path.isdir(os.path.join(WEB_ROOT, name)) and not os.path.islink(os.path.join(WEB_ROOT, name)):
             names.append(name)
@@ -248,12 +251,12 @@ def conf_binding(unit):
 
 
 def service_port(unit):
-    match = re.search(r"(?:localhost|127\.0\.0\.1):(\d+)", read_text(os.path.join(SERVICE_DIR, unit + ".service")))
+    match = re.search(r"(?:localhost|127\.0\.0\.1):(\d+)", read_text(os.path.join(SERVICE_DIR, service_name(unit) + ".service")))
     return match.group(1) if match else ""
 
 
 def unit_of(name):
-    return os.path.isfile(os.path.join(SERVICE_DIR, name + ".service"))
+    return os.path.isfile(os.path.join(SERVICE_DIR, service_name(name) + ".service"))
 
 
 def https_status(unit):
@@ -314,7 +317,7 @@ def remote_status(site):
 def service_environment(unit):
     try:
         result = subprocess.run(
-            ["systemctl", "show", unit + ".service", "--property=Environment", "--value"],
+            ["systemctl", "show", service_name(unit) + ".service", "--property=Environment", "--value"],
             capture_output=True, text=True, timeout=10, check=True)
         variables = dict(item.split("=", 1) for item in shlex.split(result.stdout) if "=" in item)
     except (OSError, subprocess.SubprocessError, ValueError) as exc:
@@ -349,7 +352,7 @@ def environment_info(key, label, unit, binding, port, path, states, **extra):
     info["environment"] = service_environment(unit) if service else ""
     info.update(https_status(unit=unit))
     if service:
-        service_text = read_text(os.path.join(SERVICE_DIR, unit + ".service"))
+        service_text = read_text(os.path.join(SERVICE_DIR, service_name(unit) + ".service"))
         match = re.search(r'^WorkingDirectory=(.+)$', service_text, re.M)
         if match:
             working = os.path.realpath(match.group(1).strip().strip('"'))
@@ -361,7 +364,7 @@ def environment_info(key, label, unit, binding, port, path, states, **extra):
                     if info["environment"] == "Unknown":
                         raise ValueError("Service environment unavailable")
                     settings = subprocess.run(
-                        ["systemctl", "show", unit + ".service", "--property=Environment", "--value"],
+                        ["systemctl", "show", service_name(unit) + ".service", "--property=Environment", "--value"],
                         capture_output=True, text=True, timeout=10, check=True)
                     variables = dict(item.split("=", 1) for item in shlex.split(settings.stdout) if "=" in item)
                     info.update(_database_module.database_details(working, info["environment"], variables))
@@ -448,7 +451,7 @@ def published_project_info(root, service_text):
 def site_info(name, states):
     root = os.path.join(WEB_ROOT, name)
     conf = os.path.join(APACHE_SITES, name + ".conf")
-    service_text = read_text(os.path.join(SERVICE_DIR, name + ".service"))
+    service_text = read_text(os.path.join(SERVICE_DIR, service_name(name) + ".service"))
     conf_text = read_text(conf)
 
     binding = ""
@@ -528,8 +531,12 @@ def site_info(name, states):
                 except (OSError, ValueError) as exc:
                     app.logger.warning("Could not read %s publish status for %s: %s", scope, name, exc)
 
+    for environment in environments:
+        environment["display_binding"] = display_dns_name(environment.get("binding", ""))
+        environment["display_aliases"] = [display_dns_name(alias) for alias in environment.get("aliases", [])]
     return {
         "name": name,
+        "display_name": display_dns_name(name),
         "kind": kind,
         "has_project": bool(projects),
         "updates": updates,
@@ -544,14 +551,15 @@ def site_info(name, states):
 
 
 def service_states(names):
-    units = [n + ".service" for n in names if os.path.isfile(os.path.join(SERVICE_DIR, n + ".service"))]
+    site_names = [n for n in names if unit_of(n)]
+    units = [service_name(n) + ".service" for n in site_names]
     if not units:
         return {}
     try:
         out = subprocess.run(["systemctl", "is-active", *units], capture_output=True, text=True, timeout=10).stdout.split()
     except (OSError, subprocess.SubprocessError):
         return {}
-    return {u[: -len(".service")]: s for u, s in zip(units, out)}
+    return dict(zip(site_names, out))
 
 
 def safe_path(relative):
@@ -781,7 +789,7 @@ def api_service(name):
         return error("The site has no service")
     if unit == ADMIN_SITE and action != "restart":
         return error("The admin site cannot stop itself")
-    result = subprocess.run(["systemctl", action, unit], capture_output=True, text=True, timeout=60)
+    result = subprocess.run(["systemctl", action, service_name(unit)], capture_output=True, text=True, timeout=60)
     if result.returncode != 0:
         return error((result.stderr or result.stdout).strip() or "systemctl failed", 500)
     return jsonify(ok=True)
@@ -795,7 +803,7 @@ def api_logs(name):
     unit = request.args.get("unit") or name
     if name not in site_dirs() or unit not in site_units(name):
         return error("Unknown site or service")
-    result = subprocess.run(["journalctl", "-u", unit, "-n", "300", "--no-pager", "-o", "short-iso"], capture_output=True, text=True, timeout=20)
+    result = subprocess.run(["journalctl", "-u", service_name(unit), "-n", "300", "--no-pager", "-o", "short-iso"], capture_output=True, text=True, timeout=20)
     return jsonify(text=result.stdout or result.stderr)
 
 
@@ -1032,9 +1040,17 @@ def site_arg(data):
 
 def dns_name(value, label, fully_qualified=False):
     try:
-        return _normalize_dns_name(value, fully_qualified=fully_qualified)
+        return _normalize_dns_name(value, fully_qualified=True) if fully_qualified else _normalize_site_name(value)
     except ValueError as error:
         abort(400, "Invalid " + label + ": " + str(error))
+
+
+def display_dns_name(value):
+    try:
+        return _display_dns_name(value)
+    except UnicodeError as error:
+        app.logger.warning("Could not decode DNS label %s: %s", value, error)
+        return value
 
 
 def production_setup_env(data, site):
@@ -1077,7 +1093,7 @@ def production_setup_env(data, site):
             within_site = False
         if not within_site or target_path == site_root:
             abort(400, "Local production files must be stored in a subfolder of this site's folder")
-        if folder == site or binding == test_binding:
+        if service_name(folder) == service_name(site) or binding == test_binding:
             abort(400, "A local production site needs a different name and binding than the test site")
         values["VNS_PROD_LOCAL_PATH"] = target_path
     else:
@@ -1111,7 +1127,7 @@ def render_create_prod_script(site):
     binding = conf_binding(site)
     if not binding:
         abort(400, "Could not find this site's Apache binding")
-    service_text = read_text(os.path.join(SERVICE_DIR, site + ".service"))
+    service_text = read_text(os.path.join(SERVICE_DIR, service_name(site) + ".service"))
     working = re.search(r"^WorkingDirectory=(\S+)", service_text, re.M)
     publish_folder = os.path.basename(working.group(1).rstrip("/")) if working else ""
     if not FOLDER_RE.match(publish_folder):
@@ -1330,14 +1346,14 @@ def build_command(data):
         tool = data.get("tool", "")
         if unit not in site_units(site):
             abort(400, "Unknown service")
-        service = "/etc/systemd/system/%s.service" % unit
+        service = "/etc/systemd/system/%s.service" % service_name(unit)
         conf = "/etc/apache2/sites-available/%s.conf" % unit
         if tool == "check_service":
-            return "Service: " + unit, [bash, "-c", 'clear; systemctl status "$1" --no-pager -l', "x", unit], WEB_ROOT
+            return "Service: " + unit, [bash, "-c", 'clear; systemctl status "$1" --no-pager -l', "x", service_name(unit)], WEB_ROOT
         if tool == "edit_service":
             code = ('clear; nano "$1"; read -r -p "Reload daemon and restart service? [Y/n]: " a; '
                     'if [[ ! $a =~ ^[nN] ]]; then systemctl daemon-reload && systemctl restart "$2"; systemctl status "$2" --no-pager; fi')
-            return "Edit service: " + unit, [bash, "-c", code, "x", service, unit], WEB_ROOT
+            return "Edit service: " + unit, [bash, "-c", code, "x", service, service_name(unit)], WEB_ROOT
         if tool == "edit_conf":
             code = ('clear; nano "$1"; read -r -p "Test config and reload apache? [Y/n]: " a; '
                     'if [[ ! $a =~ ^[nN] ]]; then apache2ctl configtest && systemctl reload apache2; fi')
@@ -1356,7 +1372,7 @@ def build_command(data):
         binding = dns_name(data.get("binding", ""), "binding", fully_qualified=True)
         if site_type not in ("html", "python", "csharp"):
             abort(400, "Invalid site name, type or binding")
-        if site in site_dirs():
+        if any(service_name(existing) == service_name(site) for existing in site_dirs()):
             abort(400, "The site already exists")
         certificate = data.get("certificate", "y")
         if certificate not in ("y", "n"):
@@ -1364,9 +1380,9 @@ def build_command(data):
         args = [site, site_type, "", "", "", binding, "", "", certificate]
         if site_type == "csharp":
             csharp = data.get("csharp") or "umbraco"
-            project = data.get("project") or site
+            project = data.get("project") or service_name(site)
             if project == data.get("site"):
-                project = site
+                project = service_name(site)
             publish = data.get("publish") or "_publish"
             build = data.get("build") or "Debug"
             environment = data.get("environment") or ("Production" if build == "Release" else "Test")

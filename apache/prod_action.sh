@@ -29,6 +29,7 @@ set -euo pipefail
 acme=/etc/acmesh/acme.sh
 certdir=/etc/ssl/certs/${BINDING}_ecc
 source /vns/apache/lib/common.sh
+unit=$(normalize_dns_name "${SITE}" unit)
 conf=/etc/apache2/sites-available/${SITE}.conf
 [[ -x ${acme} ]] || { echo "acme.sh not found (${acme}). Run apache/init.sh there first." >&2; exit 1; }
 [[ -f ${conf} ]] || { echo "Apache config for ${SITE} not found. Publish to production first." >&2; exit 1; }
@@ -56,7 +57,7 @@ fi
 mkdir -p "${certdir}"
 "${acme}" --install-cert -d "${BINDING}" --key-file "${certdir}/${BINDING}.key" \
 	--fullchain-file "${certdir}/fullchain.cer" --reloadcmd "systemctl reload apache2"
-ensure_production_tls_config "${conf}" "/etc/systemd/system/${SITE}.service" "${SITE}" \
+ensure_production_tls_config "${conf}" "/etc/systemd/system/${unit}.service" "${SITE}" \
 	"${BINDING}" "${ROOT}" "${certdir}" "${MAIL}" "${UMBRACO}"
 apache2ctl configtest
 systemctl reload apache2
@@ -81,7 +82,9 @@ REMOTE
 		esac
 		prod_run "SITE='${PROD_FOLDER}' ENVIRONMENT='${_env}'" <<'REMOTE'
 set -euo pipefail
-service=/etc/systemd/system/${SITE}.service
+source /vns/apache/lib/common.sh
+unit=$(normalize_dns_name "${SITE}" unit)
+service=/etc/systemd/system/${unit}.service
 [[ -f ${service} ]] || { echo "Service file not found: ${service}. Publish to production first." >&2; exit 1; }
 echo "Current:"
 grep "_ENVIRONMENT" "${service}" || true
@@ -89,8 +92,8 @@ sed -i -E "s/^(Environment=(ASPNETCORE|DOTNET)_ENVIRONMENT=).*/\1${ENVIRONMENT}/
 echo "Now:"
 grep "_ENVIRONMENT" "${service}"
 systemctl daemon-reload
-systemctl restart "${SITE}"
-systemctl status "${SITE}" --no-pager
+systemctl restart "${unit}"
+systemctl status "${unit}" --no-pager
 REMOTE
 		# publish_prod.sh only reads PROD_ENVIRONMENT when it creates a new service; keep it in sync
 		sudo env NEW_ENV="${_env}" perl -pi -e 's/^(PROD_ENVIRONMENT=)(["\x27]?)[^"\x27\s]*\2/$1$2$ENV{NEW_ENV}$2/' "${_prodScript}"

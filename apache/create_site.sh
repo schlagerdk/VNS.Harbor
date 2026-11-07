@@ -36,7 +36,7 @@ esac
 ask _site "Enter folder name"
 _originalSite=${_site}
 _site=$(normalize_dns_name "${_site}")
-[[ ${_projectName} != "${_originalSite}" ]] || _projectName=${_site}
+[[ ${_projectName} != "${_originalSite}" ]] || _projectName=$(normalize_dns_name "${_site}" unit)
 validate_site_name "${_site}"
 
 if [[ -z ${_type} ]]; then
@@ -54,7 +54,7 @@ if [[ -z ${_type} ]]; then
 fi
 
 if [[ ${_type} == csharp ]]; then
-	ask _projectName "Enter C# project name" "${_site}"
+	ask _projectName "Enter C# project name" "$(normalize_dns_name "${_site}" unit)"
 	validate_project_name "${_projectName}"
 fi
 
@@ -68,6 +68,10 @@ validate_binding "${_binding}"
 _binding=${_binding,,}
 
 set_site_vars
+if [[ -e ${_servicePath} ]]; then
+	echo "A service already uses this site's canonical name: ${_serviceName}" >&2
+	exit 1
+fi
 
 create_html() {
 	_docRoot="${_siteRoot}"

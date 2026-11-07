@@ -1,22 +1,27 @@
 """Read, save and apply allowlisted site configuration files."""
 import json
+import importlib.util
 import os
 from pathlib import Path
 import re
 import subprocess
 import sys
+_spec = importlib.util.spec_from_file_location("vns_domain_names", Path(__file__).with_name("domain_names.py"))
+_domains = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_domains)
+normalize_site_name = _domains.normalize_site_name
+service_name = _domains.service_name
 
 SERVICE_DIR = Path("/etc/systemd/system")
 APACHE_DIR = Path("/etc/apache2/sites-available")
 
 
 def handle(unit, data):
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]*", unit):
-        raise ValueError("Invalid site unit")
+    normalize_site_name(unit)
     kind = data.get("kind")
     if kind not in ("service", "conf"):
         raise ValueError("Unknown configuration type")
-    path = SERVICE_DIR / (unit + ".service") if kind == "service" else APACHE_DIR / (unit + ".conf")
+    path = SERVICE_DIR / (service_name(unit) + ".service") if kind == "service" else APACHE_DIR / (unit + ".conf")
     if not path.is_file():
         raise ValueError("Configuration file not found: " + str(path))
     action = data.get("action")
@@ -40,7 +45,7 @@ def handle(unit, data):
         path.write_text(content, encoding="utf-8")
         return {"ok": True}
     if action == "apply":
-        commands = ([["systemctl", "daemon-reload"], ["systemctl", "restart", unit + ".service"]]
+        commands = ([["systemctl", "daemon-reload"], ["systemctl", "restart", service_name(unit) + ".service"]]
                     if kind == "service" else [["apache2ctl", "configtest"], ["systemctl", "reload", "apache2"]])
         output = []
         for command in commands:

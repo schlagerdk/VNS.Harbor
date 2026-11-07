@@ -1,7 +1,7 @@
 #!/bin/bash
 clear
 
-_site=@SITE@
+_site=@SERVICE_NAME@
 
 sudo systemctl daemon-reload
 sudo systemctl restart "${_site}"

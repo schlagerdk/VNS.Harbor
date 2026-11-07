@@ -40,12 +40,13 @@ if [[ ${_scope} == prod && ${_hasProd} -eq 0 ]]; then
 fi
 
 remove_service_and_config() {
-	local _name=$1
-	if [[ -f /etc/systemd/system/${_name}.service ]]; then
+	local _name=$1 _unit
+	_unit=$(normalize_dns_name "${_name}" unit) || return 1
+	if [[ -f /etc/systemd/system/${_unit}.service ]]; then
 		echo "Stop, disable and delete service ${_name}"
-		sudo systemctl stop "${_name}" || true
-		sudo systemctl disable "${_name}" || true
-		sudo rm -f "/etc/systemd/system/${_name}.service"
+		sudo systemctl stop "${_unit}" || true
+		sudo systemctl disable "${_unit}" || true
+		sudo rm -f "/etc/systemd/system/${_unit}.service"
 	fi
 	echo "Delete apache config and logs for ${_name}"
 	sudo rm -f "/etc/apache2/sites-available/${_name}.conf" "/etc/apache2/sites-enabled/${_name}.conf"
@@ -86,7 +87,7 @@ fi
 if [[ ${_scope} != test && ${_hasProd} -eq 1 ]]; then
 	if [[ -n ${_prodLocalPath} ]]; then
 		_prodLocalPath=${_prodLocalPath%/}
-		[[ ${_prodFolder} =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ && ${_prodFolder} != "${_site}" ]] || { echo "Invalid production site name: ${_prodFolder}" >&2; exit 1; }
+		validate_site_name "${_prodFolder}" && [[ ${_prodFolder} != "${_site}" ]] || { echo "Invalid production site name: ${_prodFolder}" >&2; exit 1; }
 		case "${_prodLocalPath}" in
 			"${_rootPath}"/?*) ;;
 			*) echo "The production folder must be inside ${_rootPath}: ${_prodLocalPath}" >&2; exit 1 ;;
@@ -110,15 +111,17 @@ if [[ ${_scope} != test && ${_hasProd} -eq 1 ]]; then
 		printf -v _remoteVars 'SITE=%q BINDING=%q DELETE_CERTIFICATE=%q' "${PROD_FOLDER}" "${PROD_BINDING}" "${_deleteCertificate}"
 		prod_run "${_remoteVars}" <<'REMOTE'
 set -euo pipefail
-[[ ${SITE} =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$ ]] || { echo "Invalid remote site name." >&2; exit 1; }
+source /vns/apache/lib/common.sh
+validate_site_name "${SITE}"
+unit=$(normalize_dns_name "${SITE}" unit)
 [[ ${BINDING} =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$ ]] || { echo "Invalid remote binding." >&2; exit 1; }
 root="/var/www/${SITE}"
 [[ ${root} == "/var/www/${SITE}" && ${root} != /var/www ]] || { echo "Unsafe remote site path." >&2; exit 1; }
-if [[ -f /etc/systemd/system/${SITE}.service ]]; then
-	systemctl stop "${SITE}.service"
-	systemctl disable "${SITE}.service"
+if [[ -f /etc/systemd/system/${unit}.service ]]; then
+	systemctl stop "${unit}.service"
+	systemctl disable "${unit}.service"
 fi
-rm -f -- "/etc/systemd/system/${SITE}.service"
+rm -f -- "/etc/systemd/system/${unit}.service"
 rm -f -- "/etc/apache2/sites-available/${SITE}.conf" "/etc/apache2/sites-enabled/${SITE}.conf"
 rm -f -- "/var/log/apache2/${SITE}-80-error.log" "/var/log/apache2/${SITE}-443-error.log" "/var/log/apache2/${SITE}-rewrite-error.log"
 rm -rf -- "/var/lib/vns-roots/${SITE}"

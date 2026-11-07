@@ -112,10 +112,12 @@ _vars="SITE='${PROD_FOLDER}' BINDING='${PROD_BINDING}' ENVIRONMENT='${PROD_ENVIR
 echo "Prepare ${PROD_FOLDER} on ${PROD_IP:-this server}"
 run_script <<'REMOTE'
 set -euo pipefail
+source /vns/apache/lib/common.sh
+unit=$(normalize_dns_name "${SITE}" unit)
 root=${ROOT}
 docroot=${root}/wwwroot
 conf=/etc/apache2/sites-available/${SITE}.conf
-service=/etc/systemd/system/${SITE}.service
+service=/etc/systemd/system/${unit}.service
 certdir=/etc/ssl/certs/${BINDING}_ecc
 acme=/etc/acmesh/acme.sh
 source /vns/apache/lib/common.sh
@@ -142,7 +144,7 @@ echo "Using production port ${PORT}"
 mkdir -p "${docroot}" "/var/lib/vns-roots/${SITE}"
 if [[ -e ${service} ]]; then
 	echo "Stop service"
-	systemctl stop "${SITE}" || true
+	systemctl stop "${unit}" || true
 fi
 
 if [[ ! -e ${service} ]]; then
@@ -185,7 +187,7 @@ ReadWritePaths=${root}
 WantedBy=multi-user.target
 EOF
 	systemctl daemon-reload
-	systemctl enable "${SITE}"
+	systemctl enable "${unit}"
 fi
 
 server_aliases=()
@@ -389,9 +391,9 @@ if [[ -f ${file} ]] && grep -q "UmbracoApplicationUrl" "${file}"; then
 	sed -i -E 's/("UseHttps"[[:space:]]*:[[:space:]]*)false/\1true/' "${file}"
 fi
 chown -R www-data:www-data "${dir}"
-systemctl start "${SITE}"
+systemctl start "$(python3 /vns/apache/lib/domain_names.py "${SITE}" unit)"
 sleep 2
-systemctl status "${SITE}" --no-pager
+systemctl status "$(python3 /vns/apache/lib/domain_names.py "${SITE}" unit)" --no-pager
 REMOTE
 
 echo "Delete schema files and bin"

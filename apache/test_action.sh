@@ -41,7 +41,7 @@ case "${_action}" in
 		if [[ -n ${_working} && -f ${_working}/appsettings.json ]]; then
 			_settingsChanged=$(configure_umbraco_https "${_working}/appsettings.json" "${_binding}" y)
 			if [[ ${_settingsChanged} == changed ]]; then
-				sudo systemctl restart "${_site}"
+				sudo systemctl restart "${_serviceName}"
 			fi
 		fi
 		echo "Certificate installed in ${_certificateDirectory}"
@@ -68,8 +68,8 @@ case "${_action}" in
 		echo "Now:"
 		grep "_ENVIRONMENT" "${_servicePath}"
 		sudo systemctl daemon-reload
-		sudo systemctl restart "${_site}"
-		sudo systemctl status "${_site}" --no-pager
+		sudo systemctl restart "${_serviceName}"
+		sudo systemctl status "${_serviceName}" --no-pager
 		;;
 	*)
 		echo "Unknown action: ${_action}" >&2

@@ -27,6 +27,8 @@ class UpdatePublishScriptsTests(unittest.TestCase):
         self.root = Path(self.temp.name) / "www"
         self.apache = Path(self.temp.name) / "apache"
         self.apache.mkdir()
+        (self.apache / "lib").mkdir()
+        shutil.copy(APACHE / "lib/domain_names.py", self.apache / "lib")
         templates = self.apache / "solutionfiles/csharp/scripts"
         templates.mkdir(parents=True)
         shutil.copy(APACHE / "solutionfiles/csharp/scripts/publish.sh", templates)
@@ -157,7 +159,7 @@ class UpdatePublishScriptsTests(unittest.TestCase):
         result = self.run_updater()
         self.assertEqual(result.returncode, 0, result.stderr)
         helper = self.apache / "lib/dotnet.sh"
-        helper.parent.mkdir()
+        helper.parent.mkdir(exist_ok=True)
         helper.write_text('linux_runtime_identifier() { echo linux-x64; }\n')
         binary = self.apache / "bin"
         binary.mkdir()

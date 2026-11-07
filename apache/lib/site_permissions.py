@@ -64,8 +64,9 @@ def repair(root, service, uid, gid, web_root=Path("/var/www")):
 
 
 if __name__ == "__main__":
+    from domain_names import normalize_site_name, service_name
+
     site = os.environ["SITE"]
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]*", site):
-        raise ValueError("Invalid site name")
-    repair(Path(os.environ["ROOT"]), Path("/etc/systemd/system") / (site + ".service"),
+    normalize_site_name(site)
+    repair(Path(os.environ["ROOT"]), Path("/etc/systemd/system") / (service_name(site) + ".service"),
            pwd.getpwnam("www-data").pw_uid, grp.getgrnam("www-data").gr_gid)

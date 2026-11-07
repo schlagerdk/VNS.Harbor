@@ -1,3 +1,3 @@
 #!/bin/bash
 clear
-sudo systemctl status @SITE@
+sudo systemctl status @SERVICE_NAME@

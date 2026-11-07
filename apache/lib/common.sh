@@ -38,7 +38,7 @@ validate_site_name() {
 		echo "No site given." >&2
 		return 1
 	fi
-	if [[ ! ${_name} =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$ ]]; then
+	if ! normalize_dns_name "${_name}" site >/dev/null; then
 		echo "Invalid site name. Use a DNS name containing only letters, numbers, dots and hyphens." >&2
 		return 1
 	fi
@@ -261,13 +261,15 @@ set_site_vars() {
 	_certificateFile="${_certificateDirectory}/fullchain.cer"
 	_keyFile="${_certificateDirectory}/${_site}.key"
 	_configPath="/etc/apache2/sites-available/${_site}.conf"
-	_servicePath="/etc/systemd/system/${_site}.service"
+	_serviceName=$(normalize_dns_name "${_site}" unit)
+	_servicePath="/etc/systemd/system/${_serviceName}.service"
 }
 
 # Print a template with placeholders replaced
 render() {
 	sed \
 		-e "s|@SITE@|${_site}|g" \
+		-e "s|@SERVICE_NAME@|$(normalize_dns_name "${_site}" unit)|g" \
 		-e "s|@BINDING@|${_binding:-${_site}}|g" \
 		-e "s|@PROJECT_NAME@|${_projectName:-${_site}}|g" \
 		-e "s|@ROOT_PATH@|${_rootPath}|g" \
@@ -504,7 +506,7 @@ install_service() {
 	echo "Create service"
 	render_to "$1" "${_servicePath}"
 	sudo systemctl daemon-reload
-	sudo systemctl enable "${_site}"
-	sudo systemctl restart "${_site}"
-	sudo systemctl status "${_site}" --no-pager || true
+	sudo systemctl enable "${_serviceName}"
+	sudo systemctl restart "${_serviceName}"
+	sudo systemctl status "${_serviceName}" --no-pager || true
 }

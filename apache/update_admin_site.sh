@@ -18,6 +18,8 @@ import tempfile
 from pathlib import Path
 
 root, apache = map(Path, sys.argv[1:])
+sys.path.insert(0, str(apache / "lib"))
+from domain_names import service_name
 helper = shlex.quote(str(apache / "lib/dotnet.sh"))
 local_source = f'source {helper}\n'
 production_source = f'source {helper}\n'
@@ -85,7 +87,8 @@ def upgrade_legacy_local(path, text):
     if environment is not None and not re.fullmatch(r"[A-Za-z0-9_-]+", environment):
         raise RuntimeError(f"Unrecognized environment name in {path}")
     template = (apache / "solutionfiles/csharp/scripts/publish.sh").read_text()
-    values = {"SITE": shlex.quote(site.name), "PROJECT_NAME": shlex.quote(projects[0].stem),
+    values = {"SITE": shlex.quote(site.name), "SERVICE_NAME": shlex.quote(service_name(site.name)),
+              "PROJECT_NAME": shlex.quote(projects[0].stem),
               "PUBLISH_FOLDER": shlex.quote(folder), "BUILD_CONFIG": configuration,
               "APACHE_DIR": str(apache).replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`")}
     for key, value in values.items():
@@ -223,5 +226,5 @@ install_scripts "${_solutionFolder}/admin/scripts"
 
 echo "Restart the admin site"
 # The service uses KillMode=process, so terminals opened in the admin site keep running
-sudo systemctl restart "${_site}"
+sudo systemctl restart "$(python3 "${_apacheDir}/lib/domain_names.py" "${_site}" unit)"
 echo "Admin site '${_site}' updated."

@@ -14,7 +14,7 @@ validate_site_name "${PROD_FOLDER}"
 [[ ${PROD_IP} =~ ^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$ ]] || { echo "Invalid remote host." >&2; exit 1; }
 [[ ${PROD_USER} =~ ^[A-Za-z_][A-Za-z0-9_.-]{0,63}$ ]] || { echo "Invalid SSH username." >&2; exit 1; }
 [[ ${PROD_SSH_PORT} =~ ^[0-9]+$ && ${PROD_SSH_PORT} -ge 1 && ${PROD_SSH_PORT} -le 65535 ]] || { echo "Invalid SSH port." >&2; exit 1; }
-printf -v _vars 'SITE=%q' "${PROD_FOLDER}"
+printf -v _vars 'SITE=%q UNIT=%q' "${PROD_FOLDER}" "$(normalize_dns_name "${PROD_FOLDER}" unit)"
 case "${_action}" in
 	status)
 		_database_code=$(cat lib/database_info.py)
@@ -29,11 +29,12 @@ import shlex
 import subprocess
 from pathlib import Path
 site = os.environ["SITE"]
-service = Path("/etc/systemd/system", site + ".service")
+unit = os.environ["UNIT"]
+service = Path("/etc/systemd/system", unit + ".service")
 conf = Path("/etc/apache2/sites-available", site + ".conf")
 text = conf.read_text() if conf.is_file() else ""
 service_text = service.read_text() if service.is_file() else ""
-state = subprocess.run(["systemctl", "is-active", site + ".service"], capture_output=True, text=True)
+state = subprocess.run(["systemctl", "is-active", unit + ".service"], capture_output=True, text=True)
 if state.returncode not in (0, 3, 4):
     raise RuntimeError(state.stderr or "Could not read remote service status")
 secure = bool(re.search(r"<VirtualHost\s+[^>]*:443>", text))
@@ -41,7 +42,7 @@ certificate = re.search(r'^\s*SSLCertificateFile\s+"?([^"\s]+)', text, re.M)
 environment = ""
 variables = {}
 if service.is_file():
-    settings = subprocess.run(["systemctl", "show", site + ".service", "--property=Environment", "--value"],
+    settings = subprocess.run(["systemctl", "show", unit + ".service", "--property=Environment", "--value"],
                               capture_output=True, text=True, check=True)
     variables = dict(item.split("=", 1) for item in shlex.split(settings.stdout) if "=" in item)
     environment = variables.get("DOTNET_ENVIRONMENT") or variables.get("ASPNETCORE_ENVIRONMENT", "")
@@ -80,17 +81,17 @@ REMOTE
 	start|stop|restart)
 		prod_run "${_vars} ACTION=${_action}" <<'REMOTE'
 set -euo pipefail
-systemctl "${ACTION}" "${SITE}.service"
+systemctl "${ACTION}" "${UNIT}.service"
 REMOTE
 		;;
 	logs|check_service)
 		prod_run "${_vars} ACTION=${_action}" <<'REMOTE'
 set -euo pipefail
 if [[ ${ACTION} == logs ]]; then
-	journalctl -u "${SITE}.service" -n 300 --no-pager -o short-iso
+	journalctl -u "${UNIT}.service" -n 300 --no-pager -o short-iso
 else
 	rc=0
-	TERM=xterm-256color SYSTEMD_COLORS=1 systemctl status "${SITE}.service" --no-pager -l || rc=$?
+	TERM=xterm-256color SYSTEMD_COLORS=1 systemctl status "${UNIT}.service" --no-pager -l || rc=$?
 	[[ ${rc} -eq 0 || ${rc} -eq 3 ]]
 fi
 REMOTE
@@ -98,7 +99,7 @@ REMOTE
 	edit_service|edit_conf|shell)
 		case "${_action}" in
 			edit_service)
-				_code='set -e; nano "/etc/systemd/system/$SITE.service"; read -r -p "Reload daemon and restart service? [Y/n]: " answer; if [[ ! $answer =~ ^[nN] ]]; then systemctl daemon-reload; systemctl restart "$SITE.service"; systemctl status "$SITE.service" --no-pager; fi'
+				_code='set -e; nano "/etc/systemd/system/$UNIT.service"; read -r -p "Reload daemon and restart service? [Y/n]: " answer; if [[ ! $answer =~ ^[nN] ]]; then systemctl daemon-reload; systemctl restart "$UNIT.service"; systemctl status "$UNIT.service" --no-pager; fi'
 				;;
 			edit_conf)
 				_code='set -e; nano "/etc/apache2/sites-available/$SITE.conf"; read -r -p "Test config and reload Apache? [Y/n]: " answer; if [[ ! $answer =~ ^[nN] ]]; then apache2ctl configtest; systemctl reload apache2; fi'

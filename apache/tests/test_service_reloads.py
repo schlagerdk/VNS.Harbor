@@ -88,6 +88,7 @@ class ApplicationReloadTests(unittest.TestCase):
 _working=/fixture
 _binding=example.test
 _site=example.test
+_serviceName=example.test
 configure_umbraco_https() { OUTPUT; }
 sudo() { echo "CALL:$*"; }
 """.replace("OUTPUT", "echo changed" if changed else ":")
@@ -118,6 +119,8 @@ rollback() { echo rollback; }
 _rollback() { echo rollback; }
 SITE=example.test
 _site=example.test
+_serviceName=example.test
+unit=example.test
 app_restart_attempted=n
 _appRestartAttempted=n
 """

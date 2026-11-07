@@ -11,7 +11,7 @@ cd "$(dirname "$0")"
 cd ..
 source "@APACHE_DIR@/lib/dotnet.sh"
 
-_site=@SITE@
+_site=@SERVICE_NAME@
 _projectName=@PROJECT_NAME@
 _publishFolder=@PUBLISH_FOLDER@
 _configuration=${1:-@BUILD_CONFIG@}

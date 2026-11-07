@@ -115,7 +115,7 @@ _rollback() {
 	sudo apache2ctl configtest
 	sudo systemctl reload apache2
 	if [[ ${_appRestartAttempted} == y ]]; then
-		sudo systemctl restart "${_site}" || true
+		sudo systemctl restart "${_serviceName}" || true
 	fi
 }
 
@@ -191,7 +191,7 @@ fi
 if [[ -f ${_backupDir}/appsettings.json ]] &&
 	! sudo cmp -s "${_backupDir}/appsettings.json" "${_appSettings}"; then
 	_appRestartAttempted=y
-	if ! sudo systemctl restart "${_site}"; then
+	if ! sudo systemctl restart "${_serviceName}"; then
 		_rollback
 		exit 1
 	fi

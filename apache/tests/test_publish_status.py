@@ -145,6 +145,8 @@ class PublishStatusTests(unittest.TestCase):
                     self.assertEqual(self.status(), "current" if exit_code == 0 else "unknown")
 
     def test_site_api_exposes_per_environment_state_and_logs_corruption(self):
+        from apache.lib.domain_names import display_dns_name, service_name
+
         nodes = [node for node in ast.parse((APP / "app.py").read_text()).body
                  if isinstance(node, ast.FunctionDef) and node.name == "site_info"]
         ns = dict(os=os, glob=glob, re=re, _publish_module=tracking, WEB_ROOT=str(self.root.parent),
@@ -152,13 +154,23 @@ class PublishStatusTests(unittest.TestCase):
                   SCRIPT_RE=re.compile(r".*\.sh$"), ADMIN_SITE="admin.test",
                   read_text=lambda path: Path(path).read_text() if Path(path).is_file() else "",
                   package_references=lambda projects: ([], []),
-                  environment_info=lambda key, *args, **kwargs: {"key": key},
+                  display_dns_name=display_dns_name,
+                  service_name=service_name,
+                  environment_info=lambda key, *args, **kwargs: {
+                      "key": key, "binding": "xn--5cab8c.test",
+                      "aliases": ["www.xn--5cab8c.test"]},
                   parse_prod=lambda root: dict(PROD_LOCAL_PATH="", PROD_BINDING="prod.test",
                                               PROD_PORT_HTTP="4001", PROD_IP="remote.test",
                                               PROD_USER="root", PROD_SSH_PORT="22", PROD_FOLDER="prod.test"),
                   remote_status=lambda name: {}, app=SimpleNamespace(logger=logging.getLogger(__name__)))
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "site publish status", "exec"), ns)
         site = ns["site_info"]("example.test", {})
+        self.assertEqual(site["name"], "example.test")
+        self.assertEqual(site["display_name"], "example.test")
+        self.assertEqual(site["environments"][0]["binding"], "xn--5cab8c.test")
+        self.assertEqual(site["environments"][0]["display_binding"], "æøå.test")
+        self.assertEqual(site["environments"][0]["display_aliases"], ["www.æøå.test"])
+        self.assertEqual(site["environments"][1]["display_binding"], "prod.test")
         self.assertEqual([env["publish_status"] for env in site["environments"]], ["unknown", "unknown"])
         self.publish()
         site = ns["site_info"]("example.test", {})

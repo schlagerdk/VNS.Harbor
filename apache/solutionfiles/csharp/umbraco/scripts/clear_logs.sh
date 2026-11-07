@@ -1,6 +1,6 @@
 #!/bin/bash
 clear
-systemctl stop @SITE@
+systemctl stop @SERVICE_NAME@
 sudo rm -rf @SITE_ROOT@/@PUBLISH_FOLDER@/umbraco/Logs
-systemctl start @SITE@
-systemctl status @SITE@
+systemctl start @SERVICE_NAME@
+systemctl status @SERVICE_NAME@
