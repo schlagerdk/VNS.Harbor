@@ -336,11 +336,12 @@ function renderStats() {
 		const n = count((s) => s.kind === kind);
 		if (n) chips.push([kind, kindLabel[kind], n]);
 	}
-	if (!chips.some(([key, , n]) => key === filter && n > 0)) filter = "all";
+	const usefulChips = chips.filter(([key, , n]) => key === "all" || (n > 0 && n < searched.length));
+	if (!usefulChips.some(([key]) => key === filter)) filter = "all";
 	const box = $("#stats");
+	box.hidden = listedSites().length <= 1 || usefulChips.length <= 1;
 	box.replaceChildren();
-	for (const [key, label, n] of chips) {
-		if (!n && key !== "all") continue;
+	for (const [key, label, n] of usefulChips) {
 		box.append(el("div", { className: "chip" + (filter === key ? " active" : ""), onclick: () => { filter = key; renderSites(); } },
 			el("b", { textContent: n }), el("span", { textContent: label })));
 	}
@@ -450,7 +451,6 @@ function renderSites() {
 		$("#search").value = "";
 	}
 	$("#search").hidden = hideFilters;
-	$("#stats").hidden = hideFilters;
 	renderStats();
 	for (const name of multiSites) {
 		if (!listedSites().some((site) => site.name === name && canMultiSelect(site))) multiSites.delete(name);
