@@ -126,7 +126,7 @@
         <p class="hint">Like production setup: an empty password uses the admin server's SSH key. During editing, leave blank to keep a saved password; disable SSH access and save to remove its credentials. First connection accepts a new host key; changed keys are rejected.</p>
       </fieldset>
       <p class="hint">Saved on the admin server in a root-only file. The login needs database and backup administration privileges. sqlcmd must be installed on the admin server.</p>
-      <menu><button id="sql-remove-connection" type="button" class="danger" tabindex="-1" hidden>Remove connection</button><button type="submit" class="primary">Save connection</button><button id="sql-connection-cancel" type="button">Cancel</button></menu>
+      <menu><button id="sql-connection-cancel" type="button" class="cancel-link">Cancel</button><button id="sql-remove-connection" type="button" class="danger" tabindex="-1" hidden>Remove connection</button><button type="submit" class="primary">Save connection</button></menu>
     </form>
   </dialog>
   <dialog id="dlg-sql-restore-login">
@@ -137,7 +137,7 @@
       <label>Password <input name="password" type="password" required minlength="8" maxlength="128" autocomplete="new-password"></label>
       <label>Repeat password <input name="confirmation" type="password" required minlength="8" maxlength="128" autocomplete="new-password"></label>
       <p id="sql-restore-login-error" class="error" role="alert"></p>
-      <menu><button id="sql-restore-login-cancel" type="button">Cancel</button><button id="sql-login-submit" type="submit" class="primary">Restore and create login</button></menu>
+      <menu><button id="sql-restore-login-cancel" type="button" class="cancel-link">Cancel</button><button id="sql-login-submit" type="submit" class="primary">Restore and create login</button></menu>
     </form>
   </dialog>
   <section id="view-sites">
@@ -188,7 +188,7 @@
       </div>
       <p id="multi-skipped" class="hint"></p>
       <p class="hint">Sites run in parallel. Failures do not stop other sites. Terminal output is labelled by site and ends with a summary. Package changes require a separate publish.</p>
-      <menu><button id="multi-close" type="button">Cancel</button><button id="multi-submit" class="primary" type="submit" disabled>Run action</button></menu>
+      <menu><button id="multi-close" type="button" class="cancel-link">Cancel</button><button id="multi-submit" class="primary" type="submit" disabled>Run action</button></menu>
     </form>
   </dialog>
 
@@ -247,7 +247,7 @@
     <label id="prompt-login-row" hidden><input id="prompt-login-checkbox" type="checkbox"><span>Also delete associated SQL logins used only by this database</span></label>
     <label id="prompt-checkbox-row" class="sql-trust-certificate" hidden><input id="prompt-checkbox" type="checkbox"><span id="prompt-checkbox-label"></span></label>
     <label id="prompt-extra-row" class="prompt-extra-row" hidden><span id="prompt-extra-label"></span><textarea id="prompt-extra" rows="4" autocomplete="off" spellcheck="false"></textarea></label>
-    <menu><li id="prompt-copy-status" class="hint" role="status"></li><li><button type="button" id="prompt-cancel">Cancel</button></li><li><button type="submit" id="prompt-ok" class="primary">OK</button></li></menu>
+    <menu><li class="cancel-action"><button type="button" id="prompt-cancel" class="cancel-link">Cancel</button></li><li id="prompt-copy-status" class="hint" role="status"></li><li><button type="submit" id="prompt-ok" class="primary">OK</button></li></menu>
   </form>
 </dialog>
 
@@ -314,7 +314,7 @@
       <label>Absolute folder path <input name="local_path" required autocomplete="off" spellcheck="false"></label>
       <p class="hint">The folder must be inside this site's directory.</p>
     </div>
-    <menu><button type="button" id="prod-cancel">Cancel</button><button type="submit" value="ok" class="primary">Create production site</button></menu>
+    <menu><button type="button" id="prod-cancel" class="cancel-link">Cancel</button><button type="submit" value="ok" class="primary">Create production site</button></menu>
   </form>
 </dialog>
 
@@ -324,7 +324,7 @@
     <p id="package-description">Add a NuGet package to this site's project.</p>
     <label>Package name <input name="package" required maxlength="128" pattern="[A-Za-z0-9][A-Za-z0-9._-]*" autocomplete="off" spellcheck="false" placeholder="Package.Name"></label>
     <label id="package-version-row">Version (optional) <input name="version" maxlength="128" pattern="[0-9][0-9A-Za-z.+-]*" autocomplete="off" spellcheck="false" placeholder="1.2.3"></label>
-    <menu><button type="button" id="package-cancel">Cancel</button><button type="submit" id="package-submit" class="primary">Add package</button></menu>
+    <menu><button type="button" id="package-cancel" class="cancel-link">Cancel</button><button type="submit" id="package-submit" class="primary">Add package</button></menu>
   </form>
 </dialog>
 
@@ -343,7 +343,7 @@
       <label class="type-card environment-option env-production"><input type="radio" name="environment" value="Production"><span class="tc-title">Production</span><span class="tc-sub">Live application configuration</span></label>
     </fieldset>
     <p class="environment-notice">The service will restart to apply the selected environment.</p>
-    <menu><button type="button" id="environment-cancel">Cancel</button><button type="submit" class="primary">Change environment</button></menu>
+    <menu><button type="button" id="environment-cancel" class="cancel-link">Cancel</button><button type="submit" class="primary">Change environment</button></menu>
   </form>
 </dialog>
 
@@ -355,7 +355,7 @@
     <label>Repeat new password <input name="repeat" type="password" autocomplete="new-password"></label>
     <label>Current password (required) <input name="current_password" type="password" autocomplete="current-password" required></label>
     <p class="hint">Passwords need at least 12 characters. Changing the password signs out all other sessions.</p>
-    <menu><button type="button" id="profile-cancel">Cancel</button><button type="submit" value="ok" class="primary">Save</button></menu>
+    <menu><button type="button" id="profile-cancel" class="cancel-link">Cancel</button><button type="submit" value="ok" class="primary">Save</button></menu>
   </form>
 </dialog>
 
@@ -371,7 +371,7 @@
       </select>
     </label>
     <p class="hint">Verify the decoded characters in the editor. Nothing changes until you save; saving converts the file to UTF-8.</p>
-    <menu><button value="cancel">Cancel</button><button value="open" class="primary">Open</button></menu>
+    <menu><button value="cancel" class="cancel-link">Cancel</button><button value="open" class="primary">Open</button></menu>
   </form>
 </dialog>
 

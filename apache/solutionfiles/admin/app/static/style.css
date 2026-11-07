@@ -243,7 +243,9 @@ dialog label, .card label { display: flex; flex-direction: column; gap: 4px; mar
 dialog label input, dialog label select { color: var(--text); font-size: 14px; }
 dialog fieldset { border: 1px solid var(--line); border-radius: 8px; margin: 0 0 12px; padding: 10px 12px 0; }
 dialog legend { color: var(--muted); font-size: 12px; padding: 0 6px; }
-dialog menu { display: flex; justify-content: flex-end; gap: 8px; padding: 0; margin: 14px 0 0; }
+dialog menu { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8px; padding: 0; margin: 14px 0 0; }
+dialog menu .cancel-link { margin-right: auto; align-self: center; padding: 8px 0; border: 0; background: transparent; color: var(--blue); font: inherit; text-decoration: none; cursor: pointer; }
+dialog menu .cancel-link:hover { background: transparent; text-decoration: underline; }
 dialog.danger h2 { color: var(--red); }
 dialog.danger .primary { background: #da3633; border-color: var(--red); }
 #prompt-ok:disabled { opacity: .4; cursor: not-allowed; background: var(--panel2); border-color: var(--line); color: var(--muted); }
@@ -392,10 +394,8 @@ button[data-tone="gray"] { --tone: #9da7b3; }
 .menu button[data-tone] .ico { color: var(--tone); }
 .menu button[data-tone]:hover { background: var(--hover); border-color: transparent; }
 button.primary[data-tone] { background: #238636; border-color: #2ea043; color: #fff; }
-#sql-remove-connection { margin-right: auto; padding-left: 0; padding-right: 0; border: 0; background: transparent; color: var(--red); align-self: center; }
+#sql-remove-connection { padding-left: 0; padding-right: 0; border: 0; background: transparent; color: var(--red); align-self: center; }
 #sql-remove-connection:hover { background: transparent; text-decoration: underline; }
-#sql-connection-cancel { order: 1; }
-#form-sql-connection menu > button[type="submit"] { order: 2; }
 /* Delete buttons stand alone at the far right of their row */
 .actions > button.danger, #site-head .actions > button.danger { margin-left: auto; }
 dialog.editor #editor-box { flex: 1; min-height: 0; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
@@ -461,7 +461,7 @@ a.btn-link .ico { width: 13px; height: 13px; flex: none; }
 .https-lock { display: inline-flex; align-items: center; flex: none; }
 .confirmation-copy { display: inline; padding: 0; border: 0; border-radius: 2px; background: transparent; color: inherit; font: inherit; overflow-wrap: anywhere; }
 .confirmation-copy:hover { background: transparent; text-decoration: underline; text-decoration-color: var(--muted); text-underline-offset: 3px; }
-#form-prompt menu { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; list-style: none; }
+#form-prompt menu { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; list-style: none; }
 #prompt-copy-status { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .clipboard-transfer { position: fixed; top: 0; left: 0; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .https-lock.secure { color: #e3b341; }
@@ -481,4 +481,3 @@ a.btn-link .ico { width: 13px; height: 13px; flex: none; }
 .env-row > a.btn-link { justify-self: start; }
 .env-tags { justify-self: end; }
 #btn-new-site { margin-right: 14px; padding: 7px 18px; font-weight: 600; box-shadow: 0 2px 10px rgba(63, 185, 80, .25); }
-dialog.newsite .cancel-link { margin-right: auto; align-self: center; }
