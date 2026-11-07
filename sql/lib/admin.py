@@ -194,10 +194,10 @@ def query_json(settings, query, *, preamble=""):
 
 def databases(settings):
     return query_json(settings, """
-SELECT d.name, d.database_id AS id, d.state_desc AS state, d.recovery_model_desc AS recovery,
+SELECT d.name, d.database_id AS id, d.state_desc AS state, d.recovery_model_desc AS recovery, d.is_in_standby,
  CAST(COALESCE(SUM(CAST(f.size AS bigint)),0)*8.0/1024 AS decimal(18,1)) AS size_mb
 FROM sys.databases d LEFT JOIN sys.master_files f ON f.database_id=d.database_id
-GROUP BY d.name,d.database_id,d.state_desc,d.recovery_model_desc ORDER BY d.name""")
+GROUP BY d.name,d.database_id,d.state_desc,d.recovery_model_desc,d.is_in_standby ORDER BY d.name""")
 
 
 def backups(settings):
@@ -283,9 +283,13 @@ def backup_table(settings, query):
 
 def backup(settings, name):
     identifier(name)
+    if any(char in name for char in '/\\:*?"<>|'):
+        raise ValueError("Database name cannot be used as a backup filename: " + name)
     separator = "\\" if "\\" in settings["backup_directory"] else "/"
-    path = settings["backup_directory"].rstrip("/\\") + separator + "vns-" + uuid.uuid4().hex + ".bak"
-    execute(settings, f"BACKUP DATABASE {identifier(name)} TO DISK={literal(path)} WITH COPY_ONLY, CHECKSUM;")
+    if separator == "\\" and re.fullmatch(r"(?i)(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])", name.split(".")[0]):
+        raise ValueError("Database name is a reserved Windows backup filename: " + name)
+    path = settings["backup_directory"].rstrip("/\\") + separator + name + ".bak"
+    execute(settings, f"BACKUP DATABASE {identifier(name)} TO DISK={literal(path)} WITH INIT;")
     print(f"Backup complete: {name} -> {path}", flush=True)
     return path
 
@@ -495,7 +499,7 @@ def run_action(settings, data):
     if action == "backup_all":
         count = 0
         for row in rows:
-            if row["id"] > 4 and row["state"] == "ONLINE":
+            if row["id"] > 4 and row["state"] == "ONLINE" and not row.get("is_in_standby", False):
                 backup(settings, row["name"])
                 count += 1
         print(f"Backup complete: {count} online user database(s).", flush=True)
@@ -516,7 +520,9 @@ def run_action(settings, data):
             raise ValueError("Database already exists")
         execute(settings, f"CREATE DATABASE {identifier(name)};")
     elif action == "backup":
-        backup(settings, name)
+        if current["state"] != "ONLINE" or current.get("is_in_standby", False):
+            raise ValueError("Backups require an online database that is not in standby")
+        backup(settings, current["name"])
     elif action == "drop":
         if data.get("confirmation") != name:
             raise ValueError("Type the exact database name to confirm deletion")

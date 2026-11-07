@@ -271,9 +271,44 @@ class SqlAdminTests(unittest.TestCase):
             self.assertIn("SET MULTI_USER", execute.call_args.args[1])
 
     def test_backup_all_skips_system_and_offline_databases(self):
-        with patch.object(sql, "databases", return_value=self.rows), patch.object(sql, "backup") as backup:
+        rows = self.rows + [{"id": 7, "name": "Standby", "state": "ONLINE", "is_in_standby": True}]
+        with patch.object(sql, "databases", return_value=rows), patch.object(sql, "backup") as backup:
             sql.run_action(self.settings, {"action": "backup_all"})
         backup.assert_called_once_with(self.settings, "Example")
+
+    def test_backup_uses_database_filename_and_overwrites_backup_sets(self):
+        for directory, expected in (
+                ("/var/opt/mssql/backup", "/var/opt/mssql/backup/test.example.dk.bak"),
+                ("D:\\SQL_Server\\Backup", "D:\\SQL_Server\\Backup\\test.example.dk.bak")):
+            with self.subTest(directory=directory), patch.object(sql, "execute") as execute:
+                settings = self.settings | {"backup_directory": directory}
+                self.assertEqual(sql.backup(settings, "test.example.dk"), expected)
+                query = execute.call_args.args[1]
+                self.assertIn("TO DISK=" + sql.literal(expected), query)
+                self.assertTrue(query.endswith("WITH INIT;"))
+                self.assertNotIn("COPY_ONLY", query)
+                self.assertNotIn("CHECKSUM", query)
+                self.assertEqual(sql.backup(settings, "test.example.dk"), expected)
+
+    def test_single_backup_uses_actual_database_name_and_rejects_offline_or_standby(self):
+        with patch.object(sql, "databases", return_value=self.rows), patch.object(sql, "backup") as backup:
+            sql.run_action(self.settings, {"action": "backup", "database": "example"})
+            backup.assert_called_once_with(self.settings, "Example")
+        for state, standby in (("OFFLINE", False), ("ONLINE", True)):
+            rows = [{"id": 5, "name": "Example", "state": state, "is_in_standby": standby}]
+            with patch.object(sql, "databases", return_value=rows), patch.object(sql, "backup") as backup:
+                with self.assertRaisesRegex(ValueError, "not in standby"):
+                    sql.run_action(self.settings, {"action": "backup", "database": "Example"})
+                backup.assert_not_called()
+
+    def test_backup_rejects_unsafe_database_filenames_before_execution(self):
+        with patch.object(sql, "execute") as execute:
+            for name in ("../escape", "folder\\escape", "drive:name", "bad*name", "bad?name"):
+                with self.subTest(name=name), self.assertRaisesRegex(ValueError, "backup filename"):
+                    sql.backup(self.settings, name)
+            with self.assertRaisesRegex(ValueError, "reserved Windows"):
+                sql.backup(self.settings | {"backup_directory": "D:\\Backup"}, "CON")
+            execute.assert_not_called()
 
     def test_restore_rechecks_destination_backup_and_confirmation(self):
         record = dict(id=10, path="/backup/example.bak", position=2, media_count=1)
