@@ -30,6 +30,10 @@
   <div class="user">
     <button id="btn-settings" class="ghost" title="Settings" aria-haspopup="true">⚙ Settings <span id="system-update-badge" class="badge system-update-available" hidden>Update available</span></button>
     <div id="settings-menu" class="menu" hidden>
+      <div id="settings-update-group" class="menu-group" role="group" aria-label="Updates" hidden>
+        <div class="menu-group-title">Updates</div>
+        <button id="settings-update" type="button" hidden>Update</button>
+      </div>
       <div class="menu-group" role="group" aria-label="Server">
         <div class="menu-group-title">Server</div>
         <button id="btn-server-shell" type="button">Server shell</button>
@@ -43,7 +47,6 @@
       </div>
       <div id="settings-admin-group" class="menu-group" role="group" aria-label="Administration" hidden>
         <div class="menu-group-title">Administration</div>
-        <button id="settings-update" type="button" hidden>Update</button>
         <button id="settings-admin-site" type="button" hidden>Admin site</button>
       </div>
     </div>

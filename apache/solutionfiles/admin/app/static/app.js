@@ -1249,8 +1249,33 @@ $("#files-search").oninput = () => {
 	filesLoadGeneration++;
 	run(() => navigateFilesInput());
 };
+async function completeFilesInput() {
+	const field = $("#files-search");
+	const value = field.value;
+	await navigateFilesInput();
+	if (field.value !== value) return;
+	const name = filesSearchName();
+	const candidates = listedFiles.filter((item) => item.name.startsWith(name));
+	if (!candidates.length) return;
+	let completion = candidates[0].name;
+	for (const item of candidates.slice(1)) {
+		let length = 0;
+		while (length < completion.length && completion[length] === item.name[length]) length++;
+		completion = completion.slice(0, length);
+	}
+	field.value = value.slice(0, value.length - name.length) + completion
+		+ (candidates.length === 1 && candidates[0].dir ? "/" : "");
+	field.setSelectionRange(field.value.length, field.value.length);
+	filesLoadGeneration++;
+	await navigateFilesInput();
+}
 $("#files-search").onkeydown = (event) => {
-	if (event.key === "Enter") {
+	if (event.key === "Tab" && !event.shiftKey
+		&& event.target.selectionStart === event.target.value.length
+		&& event.target.selectionEnd === event.target.value.length) {
+		event.preventDefault();
+		run(completeFilesInput);
+	} else if (event.key === "Enter") {
 		event.preventDefault();
 		run(() => navigateFilesInput(true));
 	}
@@ -2088,6 +2113,7 @@ async function checkSystemUpdate(refresh = false) {
 	badge.textContent = unknown ? "Version unknown" : "Update available";
 	badge.classList.toggle("system-update-available", available);
 	$("#settings-update").hidden = !available && !unknown;
+	$("#settings-update-group").hidden = $("#settings-update").hidden;
 	$("#settings-update").replaceChildren(svgIcon("sync"), unknown ? "Initialize / update" : "Update");
 	$("#btn-settings").title = unknown ? "Installed version unknown. Use Initialize / update to install the latest version and record it."
 		: result.status === "error" ? result.error
