@@ -180,7 +180,7 @@ a.link:hover { text-decoration: underline; }
 .package-error { margin: 12px 20px; color: var(--orange); font-size: 12px; }
 #files th:first-child, #files td:first-child { width: 100%; white-space: nowrap; }
 #files .file-size, #files .file-modified { text-align: right; white-space: nowrap; }
-#files .file-permissions, #files .file-owner, #files .file-group { white-space: nowrap; }
+#files .file-permissions, #files .file-owner { white-space: nowrap; }
 #files .file-permissions { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
 #files .file-folder-row, #files .file-open-row { cursor: pointer; }
 #files .file-empty-row:hover { background: transparent; }

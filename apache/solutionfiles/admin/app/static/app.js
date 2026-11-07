@@ -1245,20 +1245,19 @@ function renderFiles() {
 		const openParent = () => run(() => loadFiles(parentOf(currentPath)));
 		body.append(el("tr", { className: "file-folder-row", onclick: (event) => {
 			if (!event.target.closest("button")) openParent();
-		} }, el("td", {}, el("button", { type: "button", className: "file-entry file-name", title: "Open parent folder", ariaLabel: "Open parent folder", onclick: openParent }, svgIcon("back"), el("span", { textContent: ".." }))), ...Array.from({ length: 6 }, () => el("td"))));
+		} }, el("td", {}, el("button", { type: "button", className: "file-entry file-name", ariaLabel: "Open parent folder", onclick: openParent }, svgIcon("back"), el("span", { textContent: ".." }))), ...Array.from({ length: 5 }, () => el("td"))));
 	}
 	for (const item of items) {
 		const full = join(currentPath, item.name);
 		const canOpen = item.dir || item.editable;
 		const link = el(canOpen ? "button" : "span", {
 			className: `file-entry ${item.dir ? "file-folder" : "file-document"} ${canOpen ? "file-name" : "file-uneditable"}`,
-			title: canOpen ? item.name : "Not editable. Download this file instead.",
 			...(canOpen ? { type: "button", onclick: () => run(() => (item.dir ? loadFiles(full) : editFile(full))) } : {}),
 		}, svgIcon(item.dir ? "folder" : "file"), el("span", { textContent: item.name }));
 		const actions = el("div", { className: "file-tools" });
 		const tools = el("td", { className: "tools" }, actions);
 		if (!item.dir) {
-			const download = el("a", { className: "file-action file-download", title: `Download ${item.name}`, href: fsUrl("download") + "?path=" + encodeURIComponent(full) }, svgIcon("download"));
+			const download = el("a", { className: "file-action file-download", href: fsUrl("download") + "?path=" + encodeURIComponent(full) }, svgIcon("download"));
 			download.setAttribute("aria-label", `Download ${item.name}`);
 			actions.append(download);
 		}
@@ -1266,7 +1265,7 @@ function renderFiles() {
 			["Rename", "pencil", "amber", () => renameItem(full, item.name)],
 			["Delete", "trash", "red", () => deleteItem(full, item.name)],
 		]) {
-			const button = el("button", { type: "button", className: "file-action", title: `${label} ${item.name}`, onclick: () => run(action) }, svgIcon(icon));
+			const button = el("button", { type: "button", className: "file-action", onclick: () => run(action) }, svgIcon(icon));
 			button.setAttribute("aria-label", `${label} ${item.name}`);
 			button.dataset.tone = tone;
 			actions.append(button);
@@ -1274,13 +1273,12 @@ function renderFiles() {
 		body.append(el("tr", canOpen ? { className: "file-open-row", onclick: (event) => {
 			if (!event.target.closest(".tools, button, a")) run(() => item.dir ? loadFiles(full) : editFile(full));
 		} } : {}, el("td", {}, link),
-		el("td", { className: "file-permissions muted", textContent: item.permissions }),
-		el("td", { className: "file-owner muted", textContent: item.owner, title: `UID: ${item.uid}` }),
-		el("td", { className: "file-group muted", textContent: item.group, title: `GID: ${item.gid}` }),
 		el("td", { className: "file-size num muted", textContent: item.dir ? "" : sizeText(item.size) }),
-		el("td", { className: "file-modified muted", textContent: formatDate(item.modified * 1000) }), tools));
+		el("td", { className: "file-modified muted", textContent: formatDate(item.modified * 1000) }),
+		el("td", { className: "file-permissions muted", textContent: item.permissions }),
+		el("td", { className: "file-owner muted", textContent: item.owner }), tools));
 	}
-	if (!items.length) body.append(el("tr", { className: "file-empty-row" }, el("td", { colSpan: 7, className: "empty", textContent: query ? "No matching files or folders." : listedFiles.length ? "No editable files in this folder." : "This folder is empty." })));
+	if (!items.length) body.append(el("tr", { className: "file-empty-row" }, el("td", { colSpan: 6, className: "empty", textContent: query ? "No matching files or folders." : listedFiles.length ? "No editable files in this folder." : "This folder is empty." })));
 }
 
 async function openFiles(path, remoteSite = "", server = false) {
