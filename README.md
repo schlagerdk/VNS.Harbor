@@ -21,6 +21,7 @@ The Packages group's first action, **Check**, runs `dotnet list package --outdat
 The file editor and file-browser dialogs share the same responsive outer dimensions, so opening an editor above the browser does not change window size.
 
 Form and confirmation modal footers consistently show Cancel as a text-only control at the far left, with primary actions on the right.
+The SQL connection footer centers Remove connection independently of the side controls; on narrow screens it occupies a centered second row to avoid overlap.
 
 Detail-card activity indicators are scoped to the targeted environment: local tasks mark only local, production tasks only production, and Publish both marks both. Overview indicators still represent activity anywhere on the site.
 
