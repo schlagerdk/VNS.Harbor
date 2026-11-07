@@ -254,6 +254,7 @@ let defaultUmbracoVersion = "";
 let sitesLoaded = false;
 let updateCheckTimer = null;
 let updateCheckPending = new Set();
+let updateCheckFeedback = false;
 const updateCheckCurrent = new Map();
 function renderCardUpdateChecks() {
 	for (const node of document.querySelectorAll(".card-update-check")) {
@@ -267,9 +268,10 @@ function renderCardUpdateChecks() {
 	}
 }
 function monitorUpdateCheck(state) {
+	if (state.running) updateCheckFeedback = true;
 	updateCheckPending = new Set(state.running ? state.pending || [] : []);
 	for (const [name, result] of Object.entries(state.results || {})) {
-		if (result === "current" && !updateCheckCurrent.has(name)) {
+		if (updateCheckFeedback && result === "current" && !updateCheckCurrent.has(name)) {
 			updateCheckCurrent.set(name, Date.now() + 4000);
 			setTimeout(renderCardUpdateChecks, 4000);
 		}
@@ -966,6 +968,7 @@ $("#btn-check-updates").onclick = () => run(async () => {
 	$("#btn-check-updates").disabled = true;
 	try {
 		updateCheckCurrent.clear();
+		updateCheckFeedback = true;
 		monitorUpdateCheck(await api("/api/package-updates", { method: "POST" }));
 	} catch (error) {
 		$("#btn-check-updates").disabled = false;
@@ -1272,6 +1275,7 @@ document.addEventListener("keydown", (event) => {
 });
 async function navigateFilesInput(enter = false) {
 	const field = $("#files-search");
+	if (!field.value.startsWith("/")) field.value = "/" + field.value;
 	const value = field.value;
 	renderFiles();
 	if (!enter && !value.includes("/")) return;
@@ -1280,10 +1284,14 @@ async function navigateFilesInput(enter = false) {
 	const suffix = enter ? "" : value.slice(split + 1);
 	if (path.startsWith("/")) {
 		const prefix = filesPathPrefix();
-		if (prefix !== "/" && path !== "/var/www" && !path.startsWith(prefix)) {
-			throw new Error("This file browser is confined to /var/www.");
+		if (path === "/") {
+			path = "";
+		} else {
+			if (prefix !== "/" && path !== "/var/www" && !path.startsWith(prefix)) {
+				throw new Error("This file browser is confined to /var/www.");
+			}
+			path = prefix === "/" ? path.slice(1) : path.slice("/var/www".length).replace(/^\//, "");
 		}
-		path = prefix === "/" ? path.slice(1) : path.slice("/var/www".length).replace(/^\//, "");
 	} else {
 		path = join(currentPath, path);
 	}
