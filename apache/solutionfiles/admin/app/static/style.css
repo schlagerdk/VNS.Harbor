@@ -146,6 +146,15 @@ a.link:hover { text-decoration: underline; }
 .sql-table td { overflow-wrap: anywhere; }
 .sql-table .actions { flex-wrap: wrap; gap: 6px; justify-content: flex-end; border-top: 0; padding-top: 0; }
 .sql-table > table th:last-child, .sql-table > table td:last-child:not([colspan]) { text-align: right; }
+#sql-databases-panel table th:first-child, #sql-databases-panel table td:first-child { width: 100%; }
+#sql-databases-panel table th:not(:first-child), #sql-databases-panel table td:not(:first-child) { white-space: nowrap; }
+#sql-databases-panel .actions { flex-wrap: nowrap; }
+#sql-databases-panel .sql-state-online { color: var(--green); }
+#sql-databases-panel .sql-state-offline, #sql-databases-panel .sql-state-offline_secondary, #sql-databases-panel .sql-state-suspect { color: var(--red); }
+#sql-databases-panel .sql-state-restoring, #sql-databases-panel .sql-state-copying { color: var(--blue); }
+#sql-databases-panel .sql-state-recovering { color: #39c5cf; }
+#sql-databases-panel .sql-state-recovery_pending { color: #d29922; }
+#sql-databases-panel .sql-state-emergency { color: var(--orange); }
 #form-sql-connection input[type=checkbox] { width: auto; }
 #dlg-sql-connection { width: min(520px, 92vw); min-width: 0; max-height: 90vh; overflow-y: auto; }
 #dlg-sql-restore-login { width: min(520px, 92vw); min-width: 0; max-height: 90vh; overflow-y: auto; }

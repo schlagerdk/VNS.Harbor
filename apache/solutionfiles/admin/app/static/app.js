@@ -1802,7 +1802,10 @@ async function refreshSql() {
 				}
 			}
 			$(database.id <= 4 ? "#sql-system-rows" : "#sql-databases").append(el("tr", {}, el("td", { textContent: database.name }),
-				el("td", { className: "num", textContent: formatSqlSize(database.size_mb) }), el("td", { textContent: database.state }),
+				el("td", { className: "num", textContent: formatSqlSize(database.size_mb) }), el("td", {
+					className: "sql-state-" + database.state.toLowerCase(),
+					textContent: database.state,
+				}),
 				el("td", { textContent: database.recovery }), ...(database.id > 4 ? [el("td", {}, actions)] : [])));
 		}
 		for (const [latest, ...older] of groupSqlBackups(data.backups)) {
