@@ -87,13 +87,18 @@ else
 	_serverInstalled=1
 fi
 
-if dpkg -s mssql-tools18 >/dev/null 2>&1; then
-	echo "mssql-tools18 is already installed (use update_server.sh to update it) - skipping tools install"
-else
-	install_tools
-fi
-
 if ((_serverInstalled)) || grep -rqF "'@SA_PASSWORD@'" "${_sqlDir}" --include='*.sh'; then
 	source "${_sqlDir}/lib/sa_password.sh"
 	sa_prompt_and_apply "${_sqlDir}"
+fi
+
+read -r -p "Install SQL command-line tools (sqlcmd)? [y/N]: " _answer
+if [[ ${_answer} == [yY] || ${_answer} == [yY][eE][sS] ]]; then
+	if dpkg -s mssql-tools18 >/dev/null 2>&1; then
+		echo "mssql-tools18 is already installed (use update_server.sh to update it) - skipping tools install"
+	else
+		install_tools
+	fi
+else
+	echo "SQL tools installation skipped"
 fi
