@@ -817,11 +817,11 @@ function envPanel(site, env) {
 		add("Logs", () => showLogs(site, env));
 	}
 	if (env.mode === "remote") {
-		add("Shell", () => openTask({ kind: "remote_tool", site: site.name, tool: "shell" }));
-		add("Files", () => openFiles("", site.name));
+		add("Shell", () => openTask({ kind: "remote_tool", site: site.name, tool: "shell" }), "desktop-only");
+		add("Files", () => openFiles("", site.name), "desktop-only");
 	} else {
-		add("Shell", () => openTask({ kind: "shell", site: site.name, path: env.path, scope: env.key === "prod" ? "prod" : "main" }));
-		add("Files", () => openFiles(env.path));
+		add("Shell", () => openTask({ kind: "shell", site: site.name, path: env.path, scope: env.key === "prod" ? "prod" : "main" }), "desktop-only");
+		add("Files", () => openFiles(env.path), "desktop-only");
 	}
 
 	const quick = el("div", { className: "actions quick" });
@@ -836,7 +836,7 @@ function envPanel(site, env) {
 		}) }));
 	}
 	if (!hasProd(site) || !site.admin) {
-		settings.append(el("button", { textContent: "Change bindings", className: "small", onclick: () => run(() => changeBinding(site, env.key === "prod" ? "prod" : "test", env)) }));
+		settings.append(el("button", { textContent: "Change bindings", className: "small desktop-only", onclick: () => run(() => changeBinding(site, env.key === "prod" ? "prod" : "test", env)) }));
 	}
 	let extraTools = null;
 	for (const [files, label, confirm, action] of quickActions(env)) {
@@ -845,7 +845,7 @@ function envPanel(site, env) {
 		if (!action && !file) continue;
 		if (action && env.mode === "remote" && !env.host) continue;
 		if (action && env.key !== "prod" && (!env.unit || site.admin) && action === "change_env") continue;
-		(action ? settings : quick).append(el("button", { textContent: label, className: "small", title: file || action, onclick: () => run(async () => {
+		(action ? settings : quick).append(el("button", { textContent: label, className: "small" + (action === "change_env" ? " desktop-only" : ""), title: file || action, onclick: () => run(async () => {
 			if (action === "change_env") { openEnvironmentDialog(site, env); return; }
 			if (confirm && !(await ask({ title: `${label}?`, message: `${confirm} (${siteLabel(site)})`, input: false, ok: label }))) return;
 			await openTask(action ? { kind: "prod_action", site: site.name, action, scope: env.key === "prod" ? "prod" : "test" } : { kind: "script", site: site.name, script: file });
@@ -855,14 +855,14 @@ function envPanel(site, env) {
 		const tools = el("div", { className: "actions quick" });
 		for (const [tool, label] of [["check_service", "Check service"], ["edit_service", "Edit service"], ["edit_conf", "Edit config"]]) {
 			if (tool !== "edit_conf" && !env.unit && env.mode !== "remote") continue;
-			tools.append(el("button", { textContent: label, className: "small", onclick: () => run(() => tool === "check_service"
+			tools.append(el("button", { textContent: label, className: "small" + (tool === "check_service" ? "" : " desktop-only"), onclick: () => run(() => tool === "check_service"
 				? openTask({ kind: env.mode === "remote" ? "remote_tool" : "unit_tool", site: site.name, unit: env.unit, tool, scope: env.key === "prod" ? "prod" : "main" })
 				: editConfiguration(site, env, tool === "edit_service" ? "service" : "conf")) }));
 		}
 		if (site.kind === "csharp" || site.kind === "umbraco") {
 			for (const filename of ["appsettings.json", "web.config"]) {
 				if (env.mode !== "remote" && !(env.editable_configs || []).includes(filename)) continue;
-				tools.append(el("button", { textContent: "Edit " + filename, className: "small", onclick: () => run(() =>
+				tools.append(el("button", { textContent: "Edit " + filename, className: "small desktop-only", onclick: () => run(() =>
 					editFile(env.mode === "remote" ? filename : join(env.publish_path, filename), env.mode === "remote" ? site.name : "")) }));
 			}
 		}

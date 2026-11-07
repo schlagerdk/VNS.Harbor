@@ -9,6 +9,7 @@
   ServerAdmin @ADMIN_MAIL@
   ServerName @BINDING@
   DocumentRoot @DOC_ROOT@
+  AddDefaultCharset UTF-8
 
   AllowEncodedSlashes NoDecode
   SSLEngine On

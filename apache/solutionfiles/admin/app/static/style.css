@@ -342,6 +342,13 @@ dialog.files-dialog { padding: 18px; }
 .files-dialog #drop { flex: 1; min-height: 0; overflow: auto; }
 #logs-text { max-height: 60vh; overflow: auto; background: #000; padding: 10px; border-radius: 6px; font: 12px/1.4 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; }
 @media (max-width: 800px) { .page-header #search { min-width: 0; flex: 1; } .brand h1, .brand .host { display: none; } .envs { grid-template-columns: 1fr; } }
+@media (max-width: 800px) {
+	.env .desktop-only, .env .actions:not(:has(> button:not(.desktop-only))) { display: none; }
+	.package-row { flex-wrap: nowrap; gap: 10px; }
+	.package-copy { flex: 1; }
+	.package-versions { flex: 0 0 auto; max-width: 55%; justify-content: flex-end; }
+	.package-version { white-space: nowrap; overflow-wrap: normal; }
+}
 
 .list { position: relative; overflow-x: auto; }
 .env .actions.quick { margin-top: 12px; }

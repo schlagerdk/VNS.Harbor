@@ -172,6 +172,19 @@ class DomainNameTests(unittest.TestCase):
 
 
 class CreateScriptTests(unittest.TestCase):
+    def test_html_site_declares_utf8_before_unicode_title(self):
+        template = APACHE / "solutionfiles/html/site/index.html"
+        result = subprocess.run(
+            ["bash", "-c", 'set -eu; source "$1/lib/common.sh"; _site=æøå.linux-01.vns.dk; '
+             'set_site_vars; render "$2"', "test", str(APACHE), str(template)],
+            capture_output=True, check=True)
+        html = result.stdout.decode("utf-8")
+        self.assertIn("Welcome to æøå.linux-01.vns.dk", html)
+        self.assertLess(html.index('<meta charset="utf-8">'), html.index("<title>"))
+        self.assertLess(html.index('<meta charset="utf-8">'), 1024)
+        config = (APACHE / "solutionfiles/html/apache.conf.tpl").read_text()
+        self.assertIn("AddDefaultCharset UTF-8", config)
+
     def test_unicode_paths_and_ascii_service_are_rendered_together(self):
         with tempfile.TemporaryDirectory() as directory:
             template = Path(directory) / "fixture.tpl"
