@@ -640,7 +640,8 @@ function renderSite(name) {
 		}) }));
 	}
 	if (!site.admin && hasProd(site)) add("Delete everything", () => deleteSite(site, "all"), "danger");
-	head.append(el("div", { className: "detail-title" }, el("h2", { textContent: site.name }), kindBadges(site)), actions);
+	head.append(el("div", { className: "detail-title" }, el("h2", { textContent: site.name }), kindBadges(site)));
+	if (actions.childElementCount) head.append(actions);
 	for (const env of site.environments) envs.append(envPanel(site, env));
 	if (site.has_project && (site.kind === "csharp" || site.kind === "umbraco")) {
 		packagesPanel.hidden = false;
@@ -1901,7 +1902,6 @@ function decorateSql() {
 }
 
 $("#settings-sql").onclick = () => go("#sql");
-$("#sql-back").onclick = () => go("#sites");
 $("#sql-refresh").onclick = () => run(refreshSql);
 $("#sql-connection").onchange = () => run(refreshSql);
 $("#sql-create").onclick = () => run(async () => {
