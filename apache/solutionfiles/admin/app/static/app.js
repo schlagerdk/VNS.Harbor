@@ -1907,6 +1907,10 @@ async function refreshSql() {
 	const selectedConnection = sqlConnections.find((item) => item.id === id);
 	$("#sql-connection").title = selectedConnection ? `${selectedConnection.host}:${selectedConnection.port}` : "";
 	const generation = ++sqlLoadGeneration;
+	const hasConnections = sqlConnections.length > 0;
+	$("#sql-no-connections").hidden = hasConnections;
+	$("#sql-heading").hidden = !hasConnections;
+	$("#sql-connection-bar").hidden = !hasConnections;
 	for (const key of ["sql-status", "sql-databases-panel"]) $("#" + key).hidden = !id;
 	for (const key of ["sql-refresh", "sql-edit-connection", "sql-create", "sql-backup-all"]) {
 		$("#" + key).hidden = !id;
@@ -2109,6 +2113,7 @@ function updateSqlSshFields() {
 $("#form-sql-connection").elements.ssh_enabled.onchange = updateSqlSshFields;
 $("#form-sql-connection").elements.host.oninput = updateSqlSshFields;
 $("#sql-add-connection").onclick = () => openSqlConnection();
+$("#sql-empty-add-connection").onclick = () => openSqlConnection();
 $("#sql-edit-connection").onclick = () => run(() => {
 	const connection = sqlConnections.find((item) => item.id === sqlSelected());
 	if (!connection) throw new Error("SQL connection no longer exists.");

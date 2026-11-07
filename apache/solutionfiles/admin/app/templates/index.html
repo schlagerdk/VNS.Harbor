@@ -65,15 +65,23 @@
     <div class="toolbar">
       <a class="link back" href="#sites"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>All sites</a>
     </div>
-    <div class="detail-title sql-heading">
+    <div id="sql-heading" class="detail-title sql-heading" hidden>
       <h2>SQL Server</h2><span class="spacer"></span>
       <button id="sql-add-connection" type="button" class="primary">Add connection</button>
     </div>
-    <div class="panel sql-connection-bar">
+    <div id="sql-connection-bar" class="panel sql-connection-bar" hidden>
       <label>Connection <select id="sql-connection"><option value="">Choose a connection...</option></select></label>
       <button id="sql-edit-connection" type="button" hidden>Edit connection</button>
       <span class="spacer"></span>
       <button id="sql-refresh" type="button" hidden>Refresh</button>
+    </div>
+    <div id="sql-no-connections" class="sites-empty" hidden>
+      <div class="sites-empty-icon" aria-hidden="true">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v6H4zM4 14h16v6H4zM8 7h.01M8 17h.01M12 7h5M12 17h5"/></svg>
+      </div>
+      <h2>Your first SQL connection starts here</h2>
+      <p>Connect to a local or remote SQL Server to manage databases and backups.</p>
+      <button id="sql-empty-add-connection" class="primary" type="button">Add connection</button>
     </div>
     <p id="sql-status" role="status" hidden></p>
     <div id="sql-databases-panel" class="panel sql-table" hidden>
