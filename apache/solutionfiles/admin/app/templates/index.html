@@ -200,18 +200,16 @@
     <div class="toolbar files-heading">
       <h2 id="files-title">Files</h2>
       <span class="spacer"></span>
+      <button id="files-filter" type="button" aria-pressed="true">Show all files</button>
       <button id="files-close" type="button">Close</button>
     </div>
-    <div class="toolbar">
-      <div id="crumbs" class="crumbs"></div>
-      <span class="spacer"></span>
-      <button id="files-filter" type="button" aria-pressed="true">Show all files</button>
+    <div class="toolbar files-navigation">
+      <input id="files-search" type="text" placeholder="Folder path or filter..." aria-label="Folder path or filename filter" autocomplete="off" spellcheck="false" autofocus>
       <button id="btn-new-file">New file</button>
       <button id="btn-new-folder">New folder</button>
       <button id="btn-upload">Upload</button>
       <input type="file" id="upload-input" multiple hidden>
     </div>
-    <input id="files-search" type="text" placeholder="Folder path or filter..." aria-label="Folder path or filename filter" autocomplete="off" spellcheck="false">
     <div class="panel list" id="drop">
       <table id="files"><thead><tr><th>Name</th><th class="file-size num">Size</th><th class="file-modified">Modified</th><th>Rights</th><th>Owner</th><th></th></tr></thead><tbody></tbody></table>
       <div class="drop-hint">Drop files here to upload</div>

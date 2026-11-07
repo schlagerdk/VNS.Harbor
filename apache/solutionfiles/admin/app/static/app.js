@@ -253,7 +253,28 @@ const kindLabel = { umbraco: "Umbraco", csharp: "C# / .NET", python: "Python", h
 let defaultUmbracoVersion = "";
 let sitesLoaded = false;
 let updateCheckTimer = null;
+let updateCheckPending = new Set();
+const updateCheckCurrent = new Map();
+function renderCardUpdateChecks() {
+	for (const node of document.querySelectorAll(".card-update-check")) {
+		const name = node.dataset.site;
+		const checking = updateCheckPending.has(name);
+		const current = (updateCheckCurrent.get(name) || 0) > Date.now();
+		node.hidden = !checking && !current;
+		node.classList.toggle("up-to-date", !checking && current);
+		node.replaceChildren(...(checking ? [el("span", { className: "activity-spinner", ariaHidden: "true" })] : []),
+			el("span", { textContent: checking ? "Checking updates…" : "All is up to date" }));
+	}
+}
 function monitorUpdateCheck(state) {
+	updateCheckPending = new Set(state.running ? state.pending || [] : []);
+	for (const [name, result] of Object.entries(state.results || {})) {
+		if (result === "current" && !updateCheckCurrent.has(name)) {
+			updateCheckCurrent.set(name, Date.now() + 4000);
+			setTimeout(renderCardUpdateChecks, 4000);
+		}
+	}
+	renderCardUpdateChecks();
 	const button = $("#btn-check-updates");
 	button.disabled = state.running;
 	button.replaceChildren(svgIcon("download"), el("span", { textContent: state.running ? `Checking updates (${state.completed}/${state.total})…` : "Check for updates" }));
@@ -445,6 +466,7 @@ function renderSites() {
 		: "Try a different search or filter, or bring something new to life by creating a site.";
 	for (const site of visible) box.append(siteCard(site));
 	updateSiteActivity();
+	renderCardUpdateChecks();
 	decorate(box);
 }
 
@@ -558,6 +580,9 @@ function siteCard(site) {
 
 	const badges = kindBadges(site);
 	badges.append(siteActivity(site));
+	const updateStatus = el("span", { className: "card-update-check", hidden: true, role: "status" });
+	updateStatus.dataset.site = site.name;
+	badges.append(updateStatus);
 	const selection = multiSelecting && canMultiSelect(site)
 		? el("label", { className: "multi-select", onclick: (event) => event.stopPropagation() },
 			el("input", { type: "checkbox", checked: multiSites.has(site.name), ariaLabel: "Select " + site.name,
@@ -940,6 +965,7 @@ $("#btn-browse").onclick = () => run(() => openFiles("", "", true));
 $("#btn-check-updates").onclick = () => run(async () => {
 	$("#btn-check-updates").disabled = true;
 	try {
+		updateCheckCurrent.clear();
 		monitorUpdateCheck(await api("/api/package-updates", { method: "POST" }));
 	} catch (error) {
 		$("#btn-check-updates").disabled = false;
@@ -1224,6 +1250,26 @@ function filesPathPrefix() {
 function filesSearchName() {
 	return $("#files-search").value.split("/").pop();
 }
+function focusFilesPath() {
+	if (!filesDialog.open || [...document.querySelectorAll("dialog:modal")].some((dialog) => dialog !== filesDialog)) return;
+	const field = $("#files-search");
+	field.focus({ preventScroll: true });
+	field.setSelectionRange(field.value.length, field.value.length);
+}
+$("#drop").addEventListener("click", () => setTimeout(focusFilesPath, 0));
+document.addEventListener("close", () => setTimeout(focusFilesPath, 0), true);
+document.addEventListener("keydown", (event) => {
+	if (!filesDialog.open || event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey
+		|| [...document.querySelectorAll("dialog:modal")].some((dialog) => dialog !== filesDialog)
+		|| event.target.closest("input, textarea, select, [contenteditable]")
+		|| (event.key.length !== 1 && event.key !== "Backspace")) return;
+	event.preventDefault();
+	focusFilesPath();
+	const field = $("#files-search");
+	const end = field.value.length;
+	field.setRangeText(event.key === "Backspace" ? "" : event.key, event.key === "Backspace" ? Math.max(0, end - 1) : end, end, "end");
+	field.dispatchEvent(new Event("input", { bubbles: true }));
+});
 async function navigateFilesInput(enter = false) {
 	const field = $("#files-search");
 	const value = field.value;
@@ -1293,16 +1339,9 @@ async function loadFiles(path, suffix = "") {
 	if (generation !== filesLoadGeneration) return;
 	currentPath = data.path;
 	$("#files-search").value = filesPathPrefix() + (currentPath ? currentPath + "/" : "") + suffix;
-	const crumbs = $("#crumbs");
-	crumbs.replaceChildren(el("a", { className: "link", textContent: remoteFilesSite ? "Remote production · " + remoteFilesSite : serverFiles ? "/" : "/var/www", onclick: () => run(() => loadFiles("")) }));
-	let accumulated = "";
-	for (const part of currentPath ? currentPath.split("/") : []) {
-		accumulated = join(accumulated, part);
-		const target = accumulated;
-		crumbs.append(" / ", el("a", { className: "link", textContent: part, onclick: () => run(() => loadFiles(target)) }));
-	}
 	listedFiles = data.items;
 	renderFiles();
+	focusFilesPath();
 }
 
 function renderFiles() {
@@ -1358,6 +1397,7 @@ async function openFiles(path, remoteSite = "", server = false) {
 	await loadFiles(path);
 	$("#files-title").textContent = remoteSite ? "Remote files · " + remoteSite : serverFiles ? "Server files" : "Files";
 	if (!filesDialog.open) filesDialog.showModal();
+	focusFilesPath();
 }
 
 // Monaco is downloaded into static/vendor by install/update_admin_site.sh; without it a plain textarea is used

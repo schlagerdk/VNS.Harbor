@@ -166,6 +166,7 @@ class PackageUpdateTests(unittest.TestCase):
         badges = source[source.index("function kindBadges("):source.index("function httpsLock(")]
         harness = r"""
 const assert = require("node:assert/strict");
+const document = {querySelectorAll: () => []};
 const button = {replaceChildren(...children) {this.children = children;}};
 const $ = () => button;
 const el = (tag, properties, ...children) => Object.assign({children, append(child) {this.children.push(child);}}, properties);
@@ -250,7 +251,7 @@ class UpdateCheckApiTests(unittest.TestCase):
             (self.root / name).mkdir()
         self.app = Flask(__name__)
         self.app.logger = logging.getLogger(__name__)
-        self.state = {"running": False, "total": 0, "completed": 0, "errors": []}
+        self.state = {"running": False, "total": 0, "completed": 0, "errors": [], "pending": [], "results": {}}
         self.ns = dict(app=self.app, request=request, jsonify=jsonify, os=os, glob=glob,
                        WEB_ROOT=str(self.root), ADMIN_SITE="admin.test",
                        UPDATE_CHECK=self.state, UPDATE_CHECK_LOCK=threading.Lock(),
@@ -269,6 +270,7 @@ class UpdateCheckApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json["running"])
         self.assertEqual(response.json["total"], 2)
+        self.assertEqual(response.json["pending"], ["other.test", "source.test"])
         thread = self.ns["threading"].Thread
         self.assertEqual(thread.call_args.kwargs["args"], (["other.test", "source.test"],))
         self.client.post("/api/package-updates")
@@ -276,13 +278,15 @@ class UpdateCheckApiTests(unittest.TestCase):
         self.assertEqual(self.client.get("/api/package-updates").json["completed"], 0)
 
     def test_worker_progress_and_errors(self):
-        self.state.update(running=True, total=2)
-        self.ns["_publish_module"].check_updates.side_effect = [None, RuntimeError("failed")]
+        self.state.update(running=True, total=2, pending=["source.test", "other.test"])
+        self.ns["_publish_module"].check_updates.side_effect = ["current", RuntimeError("failed")]
         with self.assertLogs(__name__, level="ERROR"):
             self.ns["check_all_updates"](["source.test", "other.test"])
         self.assertFalse(self.state["running"])
         self.assertEqual(self.state["completed"], 2)
         self.assertEqual(len(self.state["errors"]), 1)
+        self.assertEqual(self.state["pending"], [])
+        self.assertEqual(list(self.state["results"].values()), ["current"])
 
     def test_four_sites_can_run_in_parallel(self):
         barrier = threading.Barrier(4, timeout=5)

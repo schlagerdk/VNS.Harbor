@@ -695,18 +695,22 @@ def api_system_update():
 
 
 UPDATE_CHECK_LOCK = threading.Lock()
-UPDATE_CHECK = {"running": False, "completed": 0, "total": 0, "errors": []}
+UPDATE_CHECK = {"running": False, "completed": 0, "total": 0, "errors": [], "pending": [], "results": {}}
 
 
 def check_site_updates(name):
     try:
-        _publish_module.check_updates(os.path.join(WEB_ROOT, name))
+        result = _publish_module.check_updates(os.path.join(WEB_ROOT, name))
+        with UPDATE_CHECK_LOCK:
+            UPDATE_CHECK["results"][name] = result
     except (OSError, ValueError, RuntimeError) as exc:
         app.logger.error("Package update check failed for %s: %s", name, exc, exc_info=True)
         with UPDATE_CHECK_LOCK:
             UPDATE_CHECK["errors"].append(name)
     finally:
         with UPDATE_CHECK_LOCK:
+            if name in UPDATE_CHECK["pending"]:
+                UPDATE_CHECK["pending"].remove(name)
             UPDATE_CHECK["completed"] += 1
 
 
@@ -725,7 +729,7 @@ def api_package_updates():
         if request.method == "POST" and not UPDATE_CHECK["running"]:
             names = [name for name in site_dirs() if name != ADMIN_SITE
                      and any(os.path.isfile(path) for path in glob.glob(os.path.join(WEB_ROOT, name, "*.csproj")))]
-            UPDATE_CHECK.update(running=True, completed=0, total=len(names), errors=[])
+            UPDATE_CHECK.update(running=True, completed=0, total=len(names), errors=[], pending=list(names), results={})
             try:
                 threading.Thread(target=check_all_updates, args=(names,), daemon=True).start()
             except RuntimeError:
@@ -750,7 +754,8 @@ def api_sites():
     with ThreadPoolExecutor(max_workers=8) as executor:
         sites = list(executor.map(lambda name: site_info(name, states), names))
     with UPDATE_CHECK_LOCK:
-        update_check = dict(UPDATE_CHECK)
+        update_check = dict(UPDATE_CHECK, pending=list(UPDATE_CHECK["pending"]),
+                            results=dict(UPDATE_CHECK["results"]), errors=list(UPDATE_CHECK["errors"]))
     return jsonify(sites=sites, defaults={"umbraco_version": default_umbraco_version()}, update_check=update_check)
 
 
