@@ -114,9 +114,12 @@
       <table><thead><tr><th>Database</th><th>Finished</th><th class="num">Size</th><th>Server path</th><th>Actions</th></tr></thead><tbody id="sql-backups"></tbody></table>
     </div>
   </section>
-  <dialog id="dlg-sql-connection">
+  <dialog id="dlg-sql-connection" class="newsite">
     <form id="form-sql-connection">
-      <h2 id="sql-connection-title">Add SQL connection</h2>
+      <header class="ns-head">
+        <span class="ns-icon" data-header-icon="server" aria-hidden="true"></span>
+        <div><h2 id="sql-connection-title">Add SQL connection</h2><p>Configure SQL Server access and optional backup file access.</p></div>
+      </header>
       <label>Name <input name="name" required maxlength="100" placeholder="Local SQL Server"></label>
       <label>Hostname / IP <input name="host" required value="localhost"></label>
       <label>Port <input name="port" type="number" min="1" max="65535" required value="1433"></label>
@@ -140,9 +143,12 @@
       <menu><button id="sql-connection-cancel" type="button" class="cancel-link">Cancel</button><button id="sql-remove-connection" type="button" class="danger" tabindex="-1" hidden>Remove connection</button><button type="submit" class="primary">Save connection</button></menu>
     </form>
   </dialog>
-  <dialog id="dlg-sql-restore-login">
+  <dialog id="dlg-sql-restore-login" class="newsite">
     <form id="form-sql-restore-login">
-      <h2>SQL login for new database</h2>
+      <header class="ns-head">
+        <span class="ns-icon" data-header-icon="lock" aria-hidden="true"></span>
+        <div><h2>SQL login for new database</h2><p>Set credentials for the restored database.</p></div>
+      </header>
       <p class="hint">Create a new SQL login and map its database user to db_owner. An existing login cannot be reused. Password policy and expiration are disabled, matching the restore script.</p>
       <label>SQL username <input name="login" required maxlength="128" autocomplete="off"></label>
       <label>Password <input name="password" type="password" required minlength="8" maxlength="128" autocomplete="new-password"></label>
@@ -252,8 +258,10 @@
 
 <dialog id="dlg-prompt">
   <form method="dialog" id="form-prompt">
-    <h2 id="prompt-title"></h2>
-    <p id="prompt-message"></p>
+    <header id="prompt-header">
+      <span class="ns-icon" id="prompt-icon" aria-hidden="true" hidden></span>
+      <div><h2 id="prompt-title"></h2><p id="prompt-message"></p></div>
+    </header>
     <input id="prompt-input" autocomplete="off" spellcheck="false">
     <label id="prompt-login-row" hidden><input id="prompt-login-checkbox" type="checkbox"><span>Also delete associated SQL logins used only by this database</span></label>
     <label id="prompt-checkbox-row" class="sql-trust-certificate" hidden><input id="prompt-checkbox" type="checkbox"><span id="prompt-checkbox-label"></span></label>
@@ -379,10 +387,12 @@
   </form>
 </dialog>
 
-<dialog id="dlg-package">
+<dialog id="dlg-package" class="newsite">
   <form method="dialog" id="form-package">
-    <h2 id="package-title">Add package</h2>
-    <p id="package-description">Add a NuGet package to this site's project.</p>
+    <header class="ns-head">
+      <span class="ns-icon" data-header-icon="package" aria-hidden="true"></span>
+      <div><h2 id="package-title">Add package</h2><p id="package-description">Add a NuGet package to this site's project.</p></div>
+    </header>
     <label>Package name <input name="package" required maxlength="128" pattern="[A-Za-z0-9][A-Za-z0-9._-]*" autocomplete="off" spellcheck="false" placeholder="Package.Name"></label>
     <label id="package-version-row">Version (optional) <input name="version" maxlength="128" pattern="[0-9][0-9A-Za-z.+-]*" autocomplete="off" spellcheck="false" placeholder="1.2.3"></label>
     <menu><button type="button" id="package-cancel" class="cancel-link">Cancel</button><button type="submit" id="package-submit" class="primary">Add package</button></menu>
@@ -408,9 +418,12 @@
   </form>
 </dialog>
 
-<dialog id="dlg-profile">
+<dialog id="dlg-profile" class="newsite">
   <form method="dialog" id="form-profile">
-    <h2>Profile</h2>
+    <header class="ns-head">
+      <span class="ns-icon" data-header-icon="pencil" aria-hidden="true"></span>
+      <div><h2>Profile</h2><p>Update your username and password.</p></div>
+    </header>
     <label>Username <input name="username" autocomplete="username" required></label>
     <label>New password <input name="new_password" type="password" autocomplete="new-password" placeholder="leave empty to keep"></label>
     <label>Repeat new password <input name="repeat" type="password" autocomplete="new-password"></label>

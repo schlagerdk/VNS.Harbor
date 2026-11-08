@@ -119,6 +119,12 @@ function ask({ title, message = "", value = "", placeholder = "", ok = "OK", dan
 	const extraField = $("#prompt-extra");
 	const okButton = $("#prompt-ok");
 	$("#prompt-title").textContent = title;
+	const styledHeader = /^(add|edit|copy|create|new|change|rename|restore|site keep-alive)\b/i.test(title);
+	dlg.classList.toggle("newsite", styledHeader);
+	$("#prompt-header").classList.toggle("ns-head", styledHeader);
+	$("#prompt-icon").hidden = !styledHeader;
+	if (styledHeader) $("#prompt-icon").replaceChildren(svgIcon(
+		/^(copy|restore)\b/i.test(title) ? "sync" : /^(add|create|new)\b/i.test(title) ? "file" : "pencil"));
 	const messageBox = $("#prompt-message");
 	const copyStatus = $("#prompt-copy-status");
 	clearTimeout(copyStatusTimer);
@@ -420,6 +426,10 @@ function svgIcon(name) {
 	path.setAttribute("d", iconPaths[name]);
 	svg.append(path);
 	return svg;
+}
+
+for (const icon of document.querySelectorAll("[data-header-icon]")) {
+	icon.replaceChildren(svgIcon(icon.dataset.headerIcon));
 }
 
 function decorate(root) {
