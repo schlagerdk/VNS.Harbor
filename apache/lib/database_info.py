@@ -4,6 +4,11 @@ from pathlib import Path
 import re
 
 
+def local_sql_server(server):
+    host = re.sub(r"^tcp:", "", server.strip(), flags=re.I).split(",", 1)[0].lower()
+    return host in (".", "localhost", "127.0.0.1", "::1", "[::1]")
+
+
 def configuration_json(text):
     # ASP.NET configuration permits comments and trailing commas outside strings.
     tokens = r'"(?:\\.|[^"\\])*"|//[^\r\n]*|/\*[\s\S]*?\*/'
@@ -53,7 +58,7 @@ def connection_type(connection, provider):
     return "MS SQL"
 
 
-def database_details(root, environment="", variables=None):
+def configuration_values(root, environment="", variables=None):
     values = {}
     environment = environment or "Production"
 
@@ -76,6 +81,11 @@ def database_details(root, environment="", variables=None):
         flatten(configuration_json(text))
     for key, value in (variables or {}).items():
         values[key.replace(":", "__").lower()] = value
+    return values
+
+
+def database_details(root, environment="", variables=None):
+    values = configuration_values(root, environment, variables)
     connections = {key: value for key, value in values.items()
                    if key.startswith("connectionstrings__") and isinstance(value, str)}
     providers = set()

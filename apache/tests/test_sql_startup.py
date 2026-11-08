@@ -24,6 +24,9 @@ class SqlStartupTests(unittest.TestCase):
         self.unit_text = "[Unit]\nAfter=custom.service\n[Service]\nExecStart=/usr/lib/dotnet/dotnet app.dll\n"
         self.service.write_text(self.unit_text)
         self.drop_in = self.root / (self.service.name + ".d") / module.DROP_IN
+        tools = patch.object(module, "sqlcmd_path", return_value="/opt/mssql-tools18/bin/sqlcmd")
+        tools.start()
+        self.addCleanup(tools.stop)
 
     def settings(self, connection, name="appsettings.json"):
         import json
@@ -36,6 +39,9 @@ class SqlStartupTests(unittest.TestCase):
         self.assertIn("After=custom.service\n", self.service.read_text())
         self.assertIn("Wants=mssql-server.service\n", self.service.read_text())
         self.assertIn("After=network-online.target mssql-server.service\n", self.service.read_text())
+        self.assertIn('ExecStartPre=/usr/bin/python3 "', self.service.read_text())
+        self.assertIn("sql_ready.py", self.service.read_text())
+        self.assertIn("TimeoutStartSec=150", self.service.read_text())
         self.assertFalse(module.configure(self.service, self.root, {}))
 
     def test_environment_file_and_variables_override_base_settings(self):
@@ -114,6 +120,22 @@ class SqlStartupTests(unittest.TestCase):
         self.assertFalse(self.drop_in.exists())
         self.assertFalse(self.drop_in.parent.exists())
         self.assertIn("Wants=mssql-server.service", self.service.read_text())
+
+    def test_missing_sql_tools_does_not_modify_service(self):
+        self.settings("Server=.;Database=db")
+        with patch.object(module, "sqlcmd_path", side_effect=ValueError("Install SQL tools")):
+            with self.assertRaisesRegex(ValueError, "SQL tools"):
+                module.configure(self.service, self.root, {})
+        self.assertEqual(self.service.read_text(), self.unit_text)
+
+    def test_chroot_retained_for_web_process_but_not_readiness_precommand(self):
+        self.settings("Server=.;Database=db")
+        self.service.write_text(self.unit_text + "RootDirectory=/var/lib/vns-roots/example.test\n")
+        module.configure(self.service, self.root, {})
+        self.assertIn("RootDirectory=/var/lib/vns-roots/example.test\n", self.service.read_text())
+        self.assertIn("RootDirectoryStartOnly=true\n", self.service.read_text())
+        self.assertNotIn("ExecStartPre=+", self.service.read_text())
+        self.assertFalse(module.configure(self.service, self.root, {}))
 
     def test_scan_restarts_changed_site_once_and_skips_cached_site(self):
         web = self.root / "www"

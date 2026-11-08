@@ -10,17 +10,14 @@ import shlex
 import subprocess
 import sys
 
-from database_info import database_details
+from database_info import database_details, local_sql_server
 from domain_names import service_name
+from sql_ready import sqlcmd_path
 
 
 DROP_IN = "vns-local-sql.conf"
+READINESS_VERSION = 2
 ORDERING = "[Unit]\nWants=mssql-server.service\nAfter=network-online.target mssql-server.service\n"
-
-
-def local_sql_server(server):
-    host = re.sub(r"^tcp:", "", server.strip(), flags=re.I).split(",", 1)[0].lower()
-    return host in (".", "localhost", "127.0.0.1", "::1", "[::1]")
 
 
 def configure(service, root, variables):
@@ -35,6 +32,7 @@ def configure(service, root, variables):
         raise ValueError("The legacy SQL drop-in has unexpected content; inspect it before migration")
     changed = False
     if local_sql:
+        sqlcmd_path()
         section = re.search(r"(?m)^\[Unit\]\s*$", text)
         if section is None:
             raise ValueError("The service has no [Unit] section")
@@ -56,6 +54,30 @@ def configure(service, root, variables):
             if missing:
                 block = block.rstrip("\n") + "\n" + directive + "=" + " ".join(missing) + "\n\n"
         updated = text[:start] + block + text[end:]
+        service_section = re.search(r"(?m)^\[Service\]\s*$", updated)
+        if service_section is None:
+            raise ValueError("The service has no [Service] section")
+        helper = Path(__file__).with_name("sql_ready.py").resolve()
+        pre_start = f'ExecStartPre=/usr/bin/python3 "{helper}" "{Path(root)}"'
+        if not any(line.startswith("ExecStartPre=") and "sql_ready.py" in line
+                   for line in updated.splitlines()):
+            if re.search(r"(?m)^RootDirectory=", updated) and re.search(
+                    r"(?m)^Exec(?:StartPre|StartPost|Reload|ReloadPost|Stop|StopPost)=", updated):
+                raise ValueError("Custom service hooks require manual review before enabling host-side SQL readiness.")
+            additions = "\n" + pre_start + "\n"
+            # Only the readiness pre-command runs outside chroot; the web process keeps its sandbox.
+            if re.search(r"(?m)^RootDirectory=", updated):
+                if re.search(r"(?m)^RootDirectoryStartOnly=", updated):
+                    updated = re.sub(r"(?m)^RootDirectoryStartOnly=.*$", "RootDirectoryStartOnly=true", updated)
+                    service_section = re.search(r"(?m)^\[Service\]\s*$", updated)
+                else:
+                    additions += "RootDirectoryStartOnly=true\n"
+            additions += "TimeoutStartSec=150\nRestart=always\nRestartSec=10\n"
+            # Append after existing Service directives so these values are effective.
+            start = service_section.end()
+            following = re.search(r"(?m)^\[", updated[start:])
+            end = start + following.start() if following else len(updated)
+            updated = updated[:end].rstrip("\n") + additions + "\n" + updated[end:]
         if updated != text:
             service.write_text(updated, encoding="utf-8")
             changed = True
@@ -101,7 +123,7 @@ def scan(web_root, services, state_path, excluded=""):
                     continue
                 digest = hashlib.sha256(service.read_bytes()).hexdigest()
                 previous = state.get(unit, {})
-                if previous.get("hash") == digest and not previous.get("pending"):
+                if previous.get("hash") == digest and previous.get("version") == READINESS_VERSION and not previous.get("pending"):
                     continue
                 root, variables = service_configuration(unit)
                 environment = variables.get("DOTNET_ENVIRONMENT") or variables.get("ASPNETCORE_ENVIRONMENT", "")
@@ -112,9 +134,10 @@ def scan(web_root, services, state_path, excluded=""):
                     state[unit] = {"pending": True}
                     save()
                     subprocess.run(["systemctl", "daemon-reload"], check=True, timeout=30)
-                    subprocess.run(["systemctl", "restart", unit], check=True, timeout=120)
+                    subprocess.run(["systemctl", "restart", unit], check=True, timeout=180)
                 if eligible:
-                    state[unit] = {"hash": hashlib.sha256(service.read_bytes()).hexdigest(), "pending": False}
+                    state[unit] = {"hash": hashlib.sha256(service.read_bytes()).hexdigest(),
+                                   "pending": False, "version": READINESS_VERSION}
                 else:
                     state.pop(unit, None)
                 save()
