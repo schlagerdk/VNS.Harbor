@@ -406,7 +406,6 @@ const buttonStyles = {
 	"Stop": ["stop", "red"], "Clear logs": ["eraser", "gray"], "Logs": ["file", "gray"],
 	"Admin app log": ["file", "gray"], "Apache error logs": ["file", "teal"],
 	"Copy site": ["file", "blue"],
-	"Configure SQL startup": ["server", "blue"],
 	"Issue certificate": ["shield", "teal"], "Change environment": ["sliders", "purple"], "Change bindings": ["globe", "blue"],
 	"Check service": ["activity", "teal"], "Test Apache config": ["activity", "teal"], "Admin site": ["manage", "gray"],
 	"Edit service": ["pencil", "amber"], "Edit config": ["pencil", "amber"], "Edit appsettings.json": ["pencil", "amber"], "Delete*": ["trash", "red"],
@@ -844,14 +843,6 @@ function envPanel(site, env) {
 		settings.append(el("button", { textContent: "Change bindings", className: "small desktop-only", onclick: () => run(() => changeBinding(site, env.key === "prod" ? "prod" : "test", env)) }));
 	}
 	let extraTools = null;
-	if (!site.admin && env.unit && (site.kind === "csharp" || site.kind === "umbraco")) {
-		settings.append(el("button", { textContent: "Configure SQL startup", className: "small", onclick: () => run(async () => {
-			if (await ask({ title: "Configure SQL startup?", message: "Update managed startup ordering when the active datasource is MS SQL (.). This does not restart the site or wait for database readiness.", input: false, ok: "Configure" })) {
-				await openTask({ kind: env.mode === "remote" ? "remote_tool" : "unit_tool", site: site.name,
-					unit: env.unit, tool: "configure_sql_startup", scope: env.key === "prod" ? "prod" : "main" });
-			}
-		}) }));
-	}
 	for (const [files, label, confirm, action] of quickActions(env)) {
 		if (label === "Publish" && !site.has_project) continue;
 		let file = files && files.find((f) => site.scripts.includes(f));

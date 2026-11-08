@@ -58,8 +58,6 @@ class TerminalCompletionTests(unittest.TestCase):
 
     def test_mutations_close_and_diagnostics_remain(self):
         auto_close = self.ns["terminal_auto_close"]
-        for kind in ("unit_tool", "remote_tool"):
-            self.assertTrue(auto_close({"kind": kind, "tool": "configure_sql_startup"}))
         for kind in ("create_site", "delete_site", "create_prod", "change_binding", "prod_action",
                      "shell", "dotnet_package", "publish_both", "bulk", "sql_action"):
             self.assertTrue(auto_close({"kind": kind}), kind)

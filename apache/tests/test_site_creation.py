@@ -22,22 +22,17 @@ CREATE = (APACHE / "create_site.sh").read_text()
 
 
 class UnicodeScriptTests(unittest.TestCase):
-    def test_existing_site_sql_startup_task_validates_unit(self):
+    def test_sql_startup_button_tasks_are_removed(self):
         self.ns.update(WEB_ROOT="/var/www", site_units=lambda site: ["æøå.test"])
-        _, argv, _ = self.ns["build_command"]({
-            "kind": "unit_tool", "site": "æøå.test", "unit": "æøå.test",
-            "tool": "configure_sql_startup"})
-        self.assertEqual(argv, [sys.executable, str(APACHE / "lib/sql_startup.py"), "xn--5cab8c.test"])
         with self.assertRaises(BadRequest):
             self.ns["build_command"]({"kind": "unit_tool", "site": "æøå.test",
                                       "unit": "other.test", "tool": "configure_sql_startup"})
 
-    def test_remote_sql_startup_task_is_allowlisted(self):
+    def test_remote_sql_startup_task_is_removed(self):
         self.ns.update(WEB_ROOT="/var/www", remote_site=Mock(), REMOTE_STATUS={})
-        _, argv, _ = self.ns["build_command"]({
-            "kind": "remote_tool", "site": "example.test", "tool": "configure_sql_startup"})
-        self.assertEqual(argv, ["/bin/bash", str(APACHE / "remote_site.sh"),
-                                "example.test", "configure_sql_startup"])
+        with self.assertRaises(BadRequest):
+            self.ns["build_command"]({
+                "kind": "remote_tool", "site": "example.test", "tool": "configure_sql_startup"})
     def test_acme_redirect_exclusions_escape_literal_dot(self):
         templates = [
             APACHE / "solutionfiles" / kind / "apache.conf.tpl"

@@ -1,4 +1,5 @@
 import importlib.util
+import ast
 from pathlib import Path
 import sys
 import tempfile
@@ -28,11 +29,13 @@ class SqlStartupTests(unittest.TestCase):
         import json
         (self.root / name).write_text(json.dumps({"ConnectionStrings": {"db": connection}}))
 
-    def test_local_sql_ordering_is_idempotent_and_preserves_unit(self):
+    def test_local_sql_ordering_is_idempotent_and_preserves_dependencies(self):
         self.settings("Server=.;Database=example;Password=not-for-output")
         self.assertTrue(module.configure(self.service, self.root, {}))
-        self.assertEqual(self.drop_in.read_text(), module.ORDERING)
-        self.assertEqual(self.service.read_text(), self.unit_text)
+        self.assertFalse(self.drop_in.exists())
+        self.assertIn("After=custom.service\n", self.service.read_text())
+        self.assertIn("Wants=mssql-server.service\n", self.service.read_text())
+        self.assertIn("After=network-online.target mssql-server.service\n", self.service.read_text())
         self.assertFalse(module.configure(self.service, self.root, {}))
 
     def test_environment_file_and_variables_override_base_settings(self):
@@ -41,12 +44,12 @@ class SqlStartupTests(unittest.TestCase):
         variables = {"DOTNET_ENVIRONMENT": "Test"}
         self.assertTrue(module.configure(self.service, self.root, variables))
         variables["ConnectionStrings__db"] = "Server=remote.test;Database=db"
-        self.assertTrue(module.configure(self.service, self.root, variables))
+        self.assertFalse(module.configure(self.service, self.root, variables))
         self.assertFalse(self.drop_in.exists())
         self.assertFalse(module.configure(self.service, self.root, variables))
 
     def test_nonlocal_and_non_mssql_do_not_add_ordering(self):
-        for connection in ("Server=localhost;Database=db", "Server=sql.example.test;Database=db",
+        for connection in ("Server=sql.example.test;Database=db",
                            "Data Source=Umbraco.sqlite.db", "Server=.\\SQLEXPRESS;Database=db"):
             with self.subTest(connection=connection):
                 self.settings(connection)
@@ -64,7 +67,7 @@ class SqlStartupTests(unittest.TestCase):
         (self.root / "appsettings.json").write_text("{invalid")
         with self.assertRaises(ValueError):
             module.configure(self.service, self.root, {})
-        self.assertEqual(self.drop_in.read_text(), module.ORDERING)
+        self.assertIn("Wants=mssql-server.service", self.service.read_text())
 
     def test_non_dotnet_service_rejected(self):
         self.service.write_text("[Service]\nExecStart=/usr/bin/python3 app.py\n")
@@ -96,3 +99,85 @@ class SqlStartupTests(unittest.TestCase):
         self.assertLess(publish.index("sql_startup.py"), publish.rindex("\nstart_service\n"))
         production = (apache / "solutionfiles/csharp/prod-scripts/publish_prod.sh").read_text()
         self.assertLess(production.index("sql_startup.py"), production.index("systemctl start"))
+
+    def test_local_host_variants(self):
+        for host in (".", "localhost", "127.0.0.1", "::1", "[::1]", "tcp:localhost,1433"):
+            self.assertTrue(module.local_sql_server(host), host)
+        for host in ("sql.test", "localhost.test", ".\\SQLEXPRESS"):
+            self.assertFalse(module.local_sql_server(host), host)
+
+    def test_legacy_dropin_migrates_into_main_unit(self):
+        self.settings("Server=.;Database=db")
+        self.drop_in.parent.mkdir()
+        self.drop_in.write_text(module.ORDERING)
+        self.assertTrue(module.configure(self.service, self.root, {}))
+        self.assertFalse(self.drop_in.exists())
+        self.assertFalse(self.drop_in.parent.exists())
+        self.assertIn("Wants=mssql-server.service", self.service.read_text())
+
+    def test_scan_restarts_changed_site_once_and_skips_cached_site(self):
+        web = self.root / "www"
+        folder = web / "example.test"
+        folder.mkdir(parents=True)
+        self.settings("Server=.;Database=db")
+        state = self.root / "state/checked.json"
+        with patch.object(module, "service_configuration", return_value=(str(self.root), {})) as config, \
+                patch.object(module.subprocess, "run") as run:
+            module.scan(web, self.root, state)
+            module.scan(web, self.root, state)
+        self.assertEqual(config.call_count, 1)
+        self.assertEqual(sum(call.args[0] == ["systemctl", "restart", "example.test.service"]
+                             for call in run.call_args_list), 1)
+
+    def test_failed_restart_is_retried_on_next_scan(self):
+        web = self.root / "www"
+        (web / "example.test").mkdir(parents=True)
+        self.settings("Server=.;Database=db")
+        state = self.root / "state/checked.json"
+        def fail_restart(command, **kwargs):
+            if command[1] == "restart":
+                raise module.subprocess.CalledProcessError(1, command)
+            return Mock()
+        with patch.object(module, "service_configuration", return_value=(str(self.root), {})), \
+                patch.object(module.subprocess, "run", side_effect=fail_restart):
+            with self.assertRaises(RuntimeError):
+                module.scan(web, self.root, state)
+        with patch.object(module, "service_configuration", return_value=(str(self.root), {})), \
+                patch.object(module.subprocess, "run") as run:
+            module.scan(web, self.root, state)
+        self.assertIn(["systemctl", "restart", "example.test.service"],
+                      [call.args[0] for call in run.call_args_list])
+
+    def test_correct_unit_does_not_restart_and_ignores_other_services(self):
+        web = self.root / "www"
+        for name in ("example.test", "static.test", "admin.test"):
+            (web / name).mkdir(parents=True)
+        self.settings("Server=127.0.0.1;Database=db")
+        module.configure(self.service, self.root, {})
+        (self.root / "static.test.service").write_text("ExecStart=/usr/bin/python3 app.py")
+        state = self.root / "state/checked.json"
+        with patch.object(module, "service_configuration", return_value=(str(self.root), {})), \
+                patch.object(module.subprocess, "run") as run:
+            module.scan(web, self.root, state, "admin.test")
+        self.assertFalse(any(call.args[0][1] == "restart" for call in run.call_args_list))
+
+    def test_admin_startup_runs_scan_and_logs_failures(self):
+        path = LIB.parent / "solutionfiles/admin/app/app.py"
+        source = path.read_text()
+        node = next(node for node in ast.parse(source).body
+                    if isinstance(node, ast.FunctionDef) and node.name == "configure_sql_startup_on_admin_start")
+        runner = Mock()
+        logger = Mock()
+        ns = {"subprocess": module.subprocess, "sys": sys, "os": module.os,
+              "APACHE_DIR": str(LIB.parent), "WEB_ROOT": "/var/www",
+              "ADMIN_SITE": "admin.test", "app": Mock(logger=logger)}
+        exec(compile(ast.Module(body=[node], type_ignores=[]), "admin startup", "exec"), ns)
+        with patch.object(module.subprocess, "run", runner):
+            ns[node.name]()
+            runner.assert_called_once_with(
+                [sys.executable, str(LIB / "sql_startup.py"), "--scan", "/var/www",
+                 "--exclude", "admin.test"], check=True, timeout=600)
+            runner.side_effect = module.subprocess.CalledProcessError(1, ["scan"])
+            ns[node.name]()
+        logger.exception.assert_called_once()
+        self.assertIn("threading.Thread(target=configure_sql_startup_on_admin_start, daemon=True).start()", source)

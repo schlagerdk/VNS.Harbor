@@ -1,5 +1,5 @@
 #!/bin/bash
-# Usage: remote_site.sh <site> <status|start|stop|restart|logs|check_service|configure_sql_startup|edit_service|edit_conf|shell|files|config>
+# Usage: remote_site.sh <site> <status|start|stop|restart|logs|check_service|edit_service|edit_conf|shell|files|config>
 set -euo pipefail
 cd "$(dirname "$0")"
 source lib/common.sh
@@ -82,12 +82,6 @@ REMOTE
 		prod_run "${_vars} ACTION=${_action}" <<'REMOTE'
 set -euo pipefail
 systemctl "${ACTION}" "${UNIT}.service"
-REMOTE
-		;;
-	configure_sql_startup)
-		prod_run "${_vars}" <<'REMOTE'
-set -euo pipefail
-python3 /vns/apache/lib/sql_startup.py "${UNIT}"
 REMOTE
 		;;
 	logs|check_service)
