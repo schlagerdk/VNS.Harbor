@@ -438,8 +438,13 @@ const canMultiSelect = (site) => !site.admin && site.has_project && (site.kind =
 const overviewSites = () => listedSites().filter((site) => !multiSelecting || canMultiSelect(site));
 
 function renderMultiSelection() {
-	$("#btn-check-updates").hidden = !listedSites().some(canMultiSelect);
-	$("#btn-multi").hidden = multiSelecting || !listedSites().some(canMultiSelect);
+	const multipleProjects = listedSites().filter(canMultiSelect).length > 1;
+	if (!multipleProjects) {
+		multiSelecting = false;
+		multiSites.clear();
+	}
+	$("#btn-check-updates").hidden = !multipleProjects;
+	$("#btn-multi").hidden = multiSelecting || !multipleProjects;
 	$("#btn-multi-action").hidden = !multiSelecting;
 	$("#btn-multi-action").disabled = multiSites.size === 0;
 	$("#btn-multi-action").textContent = `Choose action (${multiSites.size})`;
