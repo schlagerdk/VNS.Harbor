@@ -38,6 +38,8 @@
         <div class="menu-group-title">Server</div>
         <button id="btn-server-shell" type="button">Server shell</button>
         <button id="btn-browse" type="button">Browse /</button>
+        <button id="settings-admin-logs" type="button">Admin app log</button>
+        <button id="settings-apache-logs" type="button">Apache error logs</button>
         <button id="settings-sql" type="button">SQL Server</button>
       </div>
       <div class="menu-group" role="group" aria-label="Apache">
@@ -267,7 +269,7 @@
     </header>
     <div class="ns-section">What kind of site?</div>
     <div class="type-cards">
-      <label class="type-card"><input type="radio" name="type" value="csharp" checked><span class="tc-title">C# / .NET</span><span class="tc-sub">Umbraco or empty project</span></label>
+      <label class="type-card"><input type="radio" name="type" value="csharp" checked><span class="tc-title">C# / .NET</span><span class="tc-sub">Umbraco or from template</span></label>
       <label class="type-card"><input type="radio" name="type" value="python"><span class="tc-title">Python</span><span class="tc-sub">Flask / gunicorn</span></label>
       <label class="type-card"><input type="radio" name="type" value="html"><span class="tc-title">HTML</span><span class="tc-sub">Static files</span></label>
     </div>
@@ -280,18 +282,18 @@
     <div id="csharp-options">
       <div class="ns-section">C# options</div>
       <div class="ns-grid">
-        <label>Kind <select name="csharp"><option>umbraco</option><option>empty</option></select></label>
+        <label>Kind <select name="csharp"><option value="umbraco">Umbraco</option><option value="empty">From template</option></select></label>
         <label id="umbraco-version-option">Umbraco version <input name="version" placeholder="version"></label>
         <label id="template-name-option" hidden>Template (optional)
-          <input name="template" list="dotnet-templates" placeholder="Search installed templates (default: web)" autocomplete="off" spellcheck="false" pattern="[A-Za-z0-9][A-Za-z0-9._-]*" aria-describedby="template-status">
+          <input name="template" list="dotnet-templates" placeholder="Search templates…" autocomplete="off" spellcheck="false" pattern="[A-Za-z0-9][A-Za-z0-9._-]*" aria-describedby="template-status">
           <datalist id="dotnet-templates"></datalist>
-          <span id="template-status" class="hint" role="status"></span>
         </label>
         <label>C# project name <input name="project" placeholder="same as folder name"></label>
         <label>Build <select name="build"><option>Debug</option><option>Release</option></select></label>
         <label>Environment <select name="environment"><option>Development</option><option selected>Test</option><option>Staging</option><option>Production</option></select></label>
         <label>Local publish folder <input name="publish" value="_publish"></label>
       </div>
+      <p id="template-status" class="hint template-status" role="status" hidden></p>
     </div>
     <p class="hint">The script runs in a terminal, so you can answer any extra prompt there.</p>
     <menu><a href="#" id="site-cancel" class="link cancel-link">Cancel</a><button type="submit" value="ok" class="primary">Create site</button></menu>

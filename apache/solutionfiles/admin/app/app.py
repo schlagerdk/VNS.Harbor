@@ -801,7 +801,7 @@ def parse_dotnet_templates(output):
             raise ValueError("Incomplete template entry in dotnet new list.")
         for short_name in short_names.split(","):
             short_name = short_name.strip()
-            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", short_name):
+            if not re.fullmatch(r"[A-Za-z0-9.][A-Za-z0-9._-]*", short_name):
                 raise ValueError("Invalid template short name in dotnet new list.")
             if short_name not in seen:
                 seen.add(short_name)
@@ -867,6 +867,35 @@ def api_service(name):
     if result.returncode != 0:
         return error((result.stderr or result.stdout).strip() or "systemctl failed", 500)
     return jsonify(ok=True)
+
+
+@app.route("/api/server-logs")
+def api_server_logs():
+    source = request.args.get("source", "admin")
+    if source not in ("admin", "apache"):
+        return error("Unknown log source")
+    try:
+        if source == "admin":
+            if not ADMIN_SITE:
+                return error("The admin service is not configured.", 409)
+            argv = ["journalctl", "-u", service_name(ADMIN_SITE), "-n", "300", "--no-pager", "-o", "short-iso"]
+        else:
+            paths = ["/var/log/apache2/error.log"]
+            if ADMIN_SITE:
+                paths += ["/var/log/apache2/" + ADMIN_SITE + suffix
+                          for suffix in ("-rewrite-error.log", "-443-error.log")]
+            paths = [path for path in paths if os.path.isfile(path)]
+            if not paths:
+                return error("No Apache error logs were found.", 404)
+            argv = ["tail", "-v", "-n", "300", "--", *paths]
+        result = subprocess.run(argv, capture_output=True, text=True, timeout=20)
+        if result.returncode:
+            app.logger.error("Could not read %s logs: %s", source, result.stderr)
+            return error("Could not read server logs. Check server permissions.", 502)
+        return jsonify(text=result.stdout)
+    except (OSError, subprocess.SubprocessError) as exc:
+        app.logger.error("Could not read %s logs: %s", source, exc)
+        return error("Could not read server logs.", 502)
 
 
 @app.route("/api/sites/<name>/logs")

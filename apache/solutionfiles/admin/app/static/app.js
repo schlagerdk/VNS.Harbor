@@ -900,13 +900,28 @@ async function showLogs(site, env) {
 }
 async function refreshLogs() {
 	$("#logs-text").textContent = "Loading…";
-	const data = await api(`/api/sites/${encodeURIComponent(logsTarget.site.name)}/logs?unit=${encodeURIComponent(logsTarget.env.unit)}&scope=${logsTarget.env.mode === "remote" ? "prod" : "local"}`);
+	let data;
+	try {
+		data = await api(logsTarget.source ? `/api/server-logs?source=${logsTarget.source}`
+			: `/api/sites/${encodeURIComponent(logsTarget.site.name)}/logs?unit=${encodeURIComponent(logsTarget.env.unit)}&scope=${logsTarget.env.mode === "remote" ? "prod" : "local"}`);
+	} catch (error) {
+		$("#logs-text").textContent = error.message;
+		throw error;
+	}
 	const box = $("#logs-text");
 	box.textContent = data.text || "(no log lines)";
 	box.scrollTop = box.scrollHeight;
 }
 $("#logs-refresh").onclick = () => run(refreshLogs);
 $("#logs-close").onclick = () => logsDialog.close();
+for (const source of ["admin", "apache"]) {
+	$(`#settings-${source}-logs`).onclick = () => run(async () => {
+		logsTarget = { source };
+		$("#logs-title").textContent = source === "admin" ? "Admin app log" : "Apache error logs";
+		if (!logsDialog.open) logsDialog.showModal();
+		await refreshLogs();
+	});
+}
 
 async function changeBinding(site, scope, env) {
 	const current = env ? bindingLabel(env) : site.binding;
@@ -1029,9 +1044,9 @@ async function loadDotnetTemplates() {
 			const data = await api("/api/dotnet/templates");
 			$("#dotnet-templates").replaceChildren(...data.templates.map((template) =>
 				el("option", { value: template.short_name, label: `${template.name} · ${template.language} · ${template.tags}` })));
-			$("#template-status").textContent = "Search by short name or description, or enter a template short name. A runnable C# project is required.";
+			$("#template-status").textContent = "Default: web. Choose a template that creates a runnable C# project.";
 		} catch (error) {
-			$("#template-status").textContent = "Templates could not be loaded. You can still enter a template short name.";
+			$("#template-status").textContent = "Could not load templates. Enter a short name manually (default: web).";
 			throw error;
 		} finally {
 			templateRequest = null;
@@ -1045,6 +1060,7 @@ function syncSiteForm() {
 	$("#csharp-options").hidden = !csharp;
 	$("#umbraco-version-option").hidden = !umbraco;
 	$("#template-name-option").hidden = umbraco;
+	$("#template-status").hidden = !csharp || umbraco;
 	siteForm.version.disabled = !csharp || !umbraco;
 	siteForm.elements.template.disabled = !csharp || umbraco;
 	if (csharp && !umbraco) run(loadDotnetTemplates);

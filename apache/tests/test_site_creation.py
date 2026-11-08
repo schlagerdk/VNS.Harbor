@@ -38,6 +38,7 @@ class DotnetTemplateTests(unittest.TestCase):
             ("ASP.NET Core Web API", "webapi", "[C#],F#", "Web/WebAPI"),
             ("Console App", "console", "[C#],F#,VB", "Common/Console"),
             ("Custom Template", "custom,alias", "C#", "Custom"),
+            ("dotnet gitignore file", "gitignore,.gitignore", "", "Config"),
         ]
         self.output = "Installed templates:\n\n" + "\n".join(
             "  ".join(value.ljust(width) for value, width in zip(row, columns)).rstrip() for row in rows) + "\n"
@@ -47,7 +48,8 @@ class DotnetTemplateTests(unittest.TestCase):
         response = self.app.test_client().get("/api/dotnet/templates")
         self.assertEqual(response.status_code, 200)
         templates = response.json["templates"]
-        self.assertEqual([item["short_name"] for item in templates], ["web", "webapi", "console", "custom", "alias"])
+        self.assertEqual([item["short_name"] for item in templates],
+                         ["web", "webapi", "console", "custom", "alias", "gitignore", ".gitignore"])
         self.assertEqual(templates[0], dict(name="ASP.NET Core Empty", short_name="web",
                                             language="[C#],F#", tags="Web/Empty"))
         args, kwargs = self.runner.call_args
