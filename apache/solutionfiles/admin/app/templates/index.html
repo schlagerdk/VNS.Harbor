@@ -282,7 +282,11 @@
       <div class="ns-grid">
         <label>Kind <select name="csharp"><option>umbraco</option><option>empty</option></select></label>
         <label id="umbraco-version-option">Umbraco version <input name="version" placeholder="version"></label>
-        <label id="template-name-option" hidden>Template name (optional) <input name="template" placeholder="web" autocomplete="off" spellcheck="false" pattern="[A-Za-z0-9][A-Za-z0-9._-]*"></label>
+        <label id="template-name-option" hidden>Template (optional)
+          <input name="template" list="dotnet-templates" placeholder="Search installed templates (default: web)" autocomplete="off" spellcheck="false" pattern="[A-Za-z0-9][A-Za-z0-9._-]*" aria-describedby="template-status">
+          <datalist id="dotnet-templates"></datalist>
+          <span id="template-status" class="hint" role="status"></span>
+        </label>
         <label>C# project name <input name="project" placeholder="same as folder name"></label>
         <label>Build <select name="build"><option>Debug</option><option>Release</option></select></label>
         <label>Environment <select name="environment"><option>Development</option><option selected>Test</option><option>Staging</option><option>Production</option></select></label>

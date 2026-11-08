@@ -1020,6 +1020,25 @@ profileForm.onsubmit = (event) => {
 
 const dialog = $("#dlg-site");
 const siteForm = $("#form-site");
+let templateRequest = null;
+async function loadDotnetTemplates() {
+	if (templateRequest) return templateRequest;
+	$("#template-status").textContent = "Loading installed templates…";
+	templateRequest = (async () => {
+		try {
+			const data = await api("/api/dotnet/templates");
+			$("#dotnet-templates").replaceChildren(...data.templates.map((template) =>
+				el("option", { value: template.short_name, label: `${template.name} · ${template.language} · ${template.tags}` })));
+			$("#template-status").textContent = "Search by short name or description, or enter a template short name. A runnable C# project is required.";
+		} catch (error) {
+			$("#template-status").textContent = "Templates could not be loaded. You can still enter a template short name.";
+			throw error;
+		} finally {
+			templateRequest = null;
+		}
+	})();
+	return templateRequest;
+}
 function syncSiteForm() {
 	const csharp = siteForm.type.value === "csharp";
 	const umbraco = siteForm.csharp.value === "umbraco";
@@ -1028,6 +1047,7 @@ function syncSiteForm() {
 	$("#template-name-option").hidden = umbraco;
 	siteForm.version.disabled = !csharp || !umbraco;
 	siteForm.elements.template.disabled = !csharp || umbraco;
+	if (csharp && !umbraco) run(loadDotnetTemplates);
 }
 siteForm.addEventListener("change", (event) => { if (["type", "csharp"].includes(event.target.name)) syncSiteForm(); });
 siteForm.site.oninput = () => { if (!siteForm.binding.dataset.edited) siteForm.binding.value = siteForm.site.value; };

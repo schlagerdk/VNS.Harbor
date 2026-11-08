@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import Mock
 
-from flask import abort
+from flask import Flask, abort, jsonify
 from werkzeug.exceptions import BadRequest
 
 from apache.lib.domain_names import display_dns_name, normalize_dns_name, normalize_site_name, service_name
@@ -17,6 +17,63 @@ from apache.lib.domain_names import display_dns_name, normalize_dns_name, normal
 APACHE = Path(__file__).resolve().parents[1]
 APP = APACHE / "solutionfiles/admin/app"
 CREATE = (APACHE / "create_site.sh").read_text()
+
+
+class DotnetTemplateTests(unittest.TestCase):
+    def setUp(self):
+        self.app = Flask(__name__)
+        self.runner = Mock()
+        self.ns = dict(app=self.app, re=re, os=os, jsonify=jsonify,
+                       subprocess=Mock(run=self.runner, SubprocessError=subprocess.SubprocessError),
+                       dotnet_root_dir=lambda: "/usr/share/dotnet",
+                       error=lambda message, status: (jsonify(error=message), status))
+        nodes = [node for node in ast.parse((APP / "app.py").read_text()).body
+                 if isinstance(node, ast.FunctionDef) and node.name in ("parse_dotnet_templates", "api_dotnet_templates")]
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), "dotnet templates", "exec"), self.ns)
+        columns = (42, 20, 18, 30)
+        rows = [
+            ("Template Name", "Short Name", "Language", "Tags"),
+            tuple("-" * width for width in columns),
+            ("ASP.NET Core Empty", "web", "[C#],F#", "Web/Empty"),
+            ("ASP.NET Core Web API", "webapi", "[C#],F#", "Web/WebAPI"),
+            ("Console App", "console", "[C#],F#,VB", "Common/Console"),
+            ("Custom Template", "custom,alias", "C#", "Custom"),
+        ]
+        self.output = "Installed templates:\n\n" + "\n".join(
+            "  ".join(value.ljust(width) for value, width in zip(row, columns)).rstrip() for row in rows) + "\n"
+
+    def test_lists_installed_templates_and_aliases(self):
+        self.runner.return_value = Mock(returncode=0, stdout=self.output)
+        response = self.app.test_client().get("/api/dotnet/templates")
+        self.assertEqual(response.status_code, 200)
+        templates = response.json["templates"]
+        self.assertEqual([item["short_name"] for item in templates], ["web", "webapi", "console", "custom", "alias"])
+        self.assertEqual(templates[0], dict(name="ASP.NET Core Empty", short_name="web",
+                                            language="[C#],F#", tags="Web/Empty"))
+        args, kwargs = self.runner.call_args
+        self.assertEqual(args[0], ["dotnet", "new", "list"])
+        self.assertEqual(kwargs["env"]["HOME"], "/root")
+        self.assertEqual(kwargs["env"]["DOTNET_ROOT"], "/usr/share/dotnet")
+        self.assertEqual(kwargs["env"]["DOTNET_CLI_UI_LANGUAGE"], "en-US")
+        self.assertEqual(kwargs["timeout"], 60)
+
+    def test_failures_are_reported_instead_of_empty_success(self):
+        for result in (Mock(returncode=1, stdout="", stderr="SDK missing"),
+                       Mock(returncode=0, stdout="Unexpected output")):
+            self.runner.return_value = result
+            response = self.app.test_client().get("/api/dotnet/templates")
+            self.assertEqual(response.status_code, 502)
+            self.assertIn("error", response.json)
+        for exc in (FileNotFoundError("dotnet"), subprocess.TimeoutExpired("dotnet", 60)):
+            self.runner.side_effect = exc
+            self.assertEqual(self.app.test_client().get("/api/dotnet/templates").status_code, 502)
+
+    def test_invalid_names_and_empty_tables_are_rejected(self):
+        parser = self.ns["parse_dotnet_templates"]
+        with self.assertRaises(ValueError):
+            parser(self.output.replace("custom,alias", "../bad"))
+        with self.assertRaises(ValueError):
+            parser("\n".join(self.output.splitlines()[:4]))
 
 
 def shell_function(name):

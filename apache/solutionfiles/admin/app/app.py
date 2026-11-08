@@ -781,6 +781,55 @@ def default_umbraco_version():
     return match.group(1) if match else ""
 
 
+def parse_dotnet_templates(output):
+    lines = output.splitlines()
+    for index, line in enumerate(lines):
+        columns = list(re.finditer(r"-{2,}", line))
+        if len(columns) >= 4 and not line.replace("-", "").strip():
+            break
+    else:
+        raise ValueError("Could not parse the dotnet new list table.")
+    templates = []
+    seen = set()
+    for line in lines[index + 1:]:
+        if not line.strip():
+            continue
+        values = [line[column.start():columns[position + 1].start() if position + 1 < len(columns) else None].strip()
+                  for position, column in enumerate(columns)]
+        name, short_names, language, tags = values[:4]
+        if not name or not short_names:
+            raise ValueError("Incomplete template entry in dotnet new list.")
+        for short_name in short_names.split(","):
+            short_name = short_name.strip()
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", short_name):
+                raise ValueError("Invalid template short name in dotnet new list.")
+            if short_name not in seen:
+                seen.add(short_name)
+                templates.append({"name": name, "short_name": short_name, "language": language, "tags": tags})
+    if not templates:
+        raise ValueError("dotnet new list returned no installed templates.")
+    return templates
+
+
+@app.route("/api/dotnet/templates")
+def api_dotnet_templates():
+    env = dict(os.environ, HOME="/root", DOTNET_CLI_UI_LANGUAGE="en-US",
+               LANG="C.UTF-8", DOTNET_NOLOGO="1", TERM="dumb")
+    root = dotnet_root_dir()
+    if root:
+        env["DOTNET_ROOT"] = root
+    try:
+        result = subprocess.run(["dotnet", "new", "list"], capture_output=True, text=True,
+                                timeout=60, env=env)
+        if result.returncode:
+            app.logger.error("dotnet new list failed: %s", result.stderr or result.stdout)
+            return error("Could not list .NET templates. Check that the .NET SDK is installed.", 502)
+        return jsonify(templates=parse_dotnet_templates(result.stdout))
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        app.logger.error("Could not list .NET templates: %s", exc)
+        return error("Could not load installed .NET templates. Check the .NET SDK and server logs.", 502)
+
+
 @app.route("/api/sites")
 def api_sites():
     names = site_dirs()
