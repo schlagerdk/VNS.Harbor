@@ -123,6 +123,8 @@ class SystemUpdateTests(unittest.TestCase):
 
     def test_deployment_records_commit_only_on_success_and_for_clean_sources(self):
         target = self.root / "deployed"
+        (target / "apache").mkdir(parents=True)
+        (target / "apache/install_tls_policy.sh").write_text("#!/bin/bash\nexit \"${FAIL_TLS:-0}\"\n")
         source = self.root / "source"
         source.mkdir()
         binary = self.root / "bin"
@@ -140,12 +142,16 @@ class SystemUpdateTests(unittest.TestCase):
             path = binary / name
             path.write_text("#!/bin/bash\n" + body + "\n")
             path.chmod(0o700)
-        for dirty, failure, expected in (("", "0", self.installed), (" M file", "0", ""), ("", "7", "")):
-            with self.subTest(dirty=dirty, failure=failure):
+        for dirty, failure, tls_failure, expected in (("", "0", "0", self.installed),
+                                                      (" M file", "0", "0", ""),
+                                                      ("", "7", "0", ""),
+                                                      ("", "0", "9", "")):
+            with self.subTest(dirty=dirty, failure=failure, tls_failure=tls_failure):
                 result = subprocess.run(["bash", str(updater), str(source)], capture_output=True, text=True,
                                         env=os.environ | {"PATH": str(binary) + ":" + os.environ["PATH"],
-                                                          "DIRTY": dirty, "FAIL_RSYNC": failure})
-                self.assertEqual(result.returncode, int(failure), result.stderr)
+                                                          "DIRTY": dirty, "FAIL_RSYNC": failure,
+                                                          "FAIL_TLS": tls_failure})
+                self.assertEqual(result.returncode, int(failure) or int(tls_failure), result.stderr)
                 self.assertEqual((target / ".vns-version").read_text().strip(), expected)
 
 

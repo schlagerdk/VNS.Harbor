@@ -12,6 +12,32 @@ The publish-script updater also upgrades recognized legacy local `#!/bin/sh` scr
 
 The shared publish targets default `SatelliteResourceLanguages` to `en;da`, retaining only English and Danish satellite assemblies from dependencies. Neutral resources remain available as the fallback. This does not restrict Umbraco content languages, but other translations of library messages and resource-based UI are omitted. A project can override this property to retain additional cultures. Existing language folders in an in-place publish directory are not removed automatically.
 
+## Apache TLS
+
+Apache initialization and normal `/vns/update.sh` updates install and enable
+`/etc/apache2/conf-available/vns-tls.conf` globally. It permits TLS 1.2 and
+1.3 only. TLS 1.2 uses ECDHE with AES-GCM or ChaCha20-Poly1305 (RSA or ECDSA
+certificates); TLS 1.3 uses AES-GCM or ChaCha20-Poly1305. Older clients without
+these protocols and suites intentionally cannot connect. The policy requires
+an Apache/mod_ssl and OpenSSL build supporting TLS 1.3 (OpenSSL 1.1.1 or later);
+an unsupported configuration fails validation rather than falling back.
+
+The installer enables mod_ssl if needed, runs `apache2ctl configtest` and
+reloads a running Apache only on success. A stopped Apache is left stopped on
+update; initialization starts it. Failed installation restores the previous
+managed configuration, and a failed reload also attempts to reload the restored
+configuration. Updates on systems without Apache explicitly skip this step.
+Site-specific Apache TLS directives or other configuration can override global
+settings; check them when troubleshooting. Remote production servers need their
+own VNS initialization or update; publishing or copying a site does not install
+this host policy. HTTP and ACME challenges are unchanged.
+
+When using Cloudflare, this policy governs Cloudflare-to-origin connections, not
+the browser-to-Cloudflare edge. Configure the edge separately and use Cloudflare
+**Full (strict)** with a valid origin certificate. Installation and syntax checks
+alone do not prove a site's negotiated TLS settings: verify each reachable
+origin and edge with an actual TLS probe, including SNI and any IPv6 endpoint.
+
 ## Multi-site actions
 
 The NuGet packages panel shows checked installed and available versions, with an **Update** button per package and **Update all** when multiple updates are available. **Check** retrieves structured .NET output (latest stable versions, including major upgrades). Updates install the exact checked version, ask for confirmation, and re-check afterward. Project changes invalidate old check results; run Check again before updating. Updating packages never publishes automatically, and major upgrades may require code changes. Older saved update badges need a fresh Check to populate version details.

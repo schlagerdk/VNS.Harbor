@@ -24,13 +24,8 @@ sudo a2enmod ssl rewrite headers proxy proxy_http proxy_wstunnel
 echo Install sshpass
 sudo apt install -y sshpass
 
-echo "Test Apache config and reload (start if stopped)"
-sudo apache2ctl configtest
-if sudo systemctl is-active --quiet apache2; then
-	sudo systemctl reload apache2
-else
-	sudo systemctl start apache2
-fi
+echo "Install shared Apache TLS policy"
+sudo bash "$(pwd)/install_tls_policy.sh" --start-if-stopped
 
 if [[ ! -x /etc/acmesh/acme.sh ]]; then
 	echo Install acme.sh

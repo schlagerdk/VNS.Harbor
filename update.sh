@@ -65,6 +65,7 @@ main() {
     fi
 
     find "$TARGET" -name '*.sh' -exec chmod +x {} +
+    sudo bash "$TARGET/apache/install_tls_policy.sh"
     printf '%s\n' "$revision" > "$TARGET/.vns-version"
     echo "VNS updated in $TARGET"
 }

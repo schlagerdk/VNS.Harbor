@@ -15,30 +15,13 @@ def run_shell(code):
 
 
 class ApacheReloadTests(unittest.TestCase):
-    def test_init_reloads_running_apache_and_starts_stopped_apache(self):
+    def test_init_installs_tls_policy_and_starts_if_needed(self):
         source = (APACHE / "init.sh").read_text()
-        block = source[source.index('echo "Test Apache config'):source.index("\nif [[ ! -x /etc/acmesh")]
-        for running in (True, False):
-            with self.subTest(running=running):
-                mock = """
-sudo() {
-    echo "CALL:$*"
-    if [[ $1 == systemctl && $2 == is-active ]]; then return ACTIVE; fi
-}
-""".replace("ACTIVE", "0" if running else "3")
-                result = run_shell(mock + block)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                action = "reload" if running else "start"
-                self.assertIn("CALL:systemctl " + action + " apache2", result.stdout)
-                self.assertNotIn("CALL:systemctl restart", result.stdout)
-                self.assertLess(result.stdout.index("CALL:apache2ctl configtest"),
-                                result.stdout.index("CALL:systemctl " + action))
+        self.assertIn('sudo bash "$(pwd)/install_tls_policy.sh" --start-if-stopped', source)
 
-    def test_failed_configtest_stops_init_and_delete(self):
-        init = (APACHE / "init.sh").read_text()
+    def test_failed_configtest_stops_delete(self):
         delete = (APACHE / "delete_site.sh").read_text()
-        blocks = [init[init.index('echo "Test Apache config'):init.index("\nif [[ ! -x /etc/acmesh")],
-                  delete[delete.index('echo "Reload daemon"'):]]
+        blocks = [delete[delete.index('echo "Reload daemon"'):]]
         for block in blocks:
             result = run_shell("""
 sudo() {
