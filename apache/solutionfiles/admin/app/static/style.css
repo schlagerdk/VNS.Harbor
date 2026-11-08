@@ -419,7 +419,9 @@ dialog.newsite form { padding: 0 24px 20px; }
 .ns-head { display: flex; align-items: center; gap: 14px; margin: 0 -24px 18px; padding: 20px 24px; background: linear-gradient(135deg, rgba(88,101,242,.35), rgba(139,92,246,.22)); border-bottom: 1px solid var(--line); }
 .ns-head h2 { margin: 0; font-size: 20px; }
 .ns-head p { margin: 2px 0 0; font-size: 13px; }
-.ns-icon { width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; font-size: 22px; color: #fff; background: linear-gradient(135deg, #6c7bff, #8b5cf6); box-shadow: 0 4px 14px rgba(108,123,255,.4); }
+.ns-icon { flex: none; width: 42px; height: 42px; border-radius: 12px; display: grid; place-items: center; font-size: 22px; color: #fff; background: linear-gradient(135deg, #6c7bff, #8b5cf6); box-shadow: 0 4px 14px rgba(108,123,255,.4); }
+.ns-icon .ico { width: 24px; height: 24px; }
+.ns-head > div { min-width: 0; overflow-wrap: anywhere; }
 .ns-section { margin: 4px 0 8px; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
 .type-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 16px; }
 dialog .type-card { position: relative; display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; background: rgba(255,255,255,.02); transition: border-color .15s, background .15s; }
