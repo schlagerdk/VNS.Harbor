@@ -808,7 +808,7 @@ def parse_dotnet_templates(output):
                 templates.append({"name": name, "short_name": short_name, "language": language, "tags": tags})
     if not templates:
         raise ValueError("dotnet new list returned no installed templates.")
-    return templates
+    return sorted(templates, key=lambda template: (template["short_name"].casefold(), template["short_name"]))
 
 
 @app.route("/api/dotnet/templates")

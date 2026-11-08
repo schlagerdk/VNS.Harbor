@@ -49,8 +49,9 @@ class DotnetTemplateTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         templates = response.json["templates"]
         self.assertEqual([item["short_name"] for item in templates],
-                         ["web", "webapi", "console", "custom", "alias", "gitignore", ".gitignore"])
-        self.assertEqual(templates[0], dict(name="ASP.NET Core Empty", short_name="web",
+                         [".gitignore", "alias", "console", "custom", "gitignore", "web", "webapi"])
+        self.assertEqual(next(item for item in templates if item["short_name"] == "web"),
+                         dict(name="ASP.NET Core Empty", short_name="web",
                                             language="[C#],F#", tags="Web/Empty"))
         args, kwargs = self.runner.call_args
         self.assertEqual(args[0], ["dotnet", "new", "list"])
@@ -58,6 +59,12 @@ class DotnetTemplateTests(unittest.TestCase):
         self.assertEqual(kwargs["env"]["DOTNET_ROOT"], "/usr/share/dotnet")
         self.assertEqual(kwargs["env"]["DOTNET_CLI_UI_LANGUAGE"], "en-US")
         self.assertEqual(kwargs["timeout"], 60)
+
+    def test_short_names_sort_alphabetically_ignoring_case(self):
+        output = self.output.replace("custom,alias", "Zulu,Alpha  ").replace("console", "beta   ")
+        templates = self.ns["parse_dotnet_templates"](output)
+        self.assertEqual([item["short_name"] for item in templates],
+                         [".gitignore", "Alpha", "beta", "gitignore", "web", "webapi", "Zulu"])
 
     def test_failures_are_reported_instead_of_empty_success(self):
         for result in (Mock(returncode=1, stdout="", stderr="SDK missing"),
