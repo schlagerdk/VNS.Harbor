@@ -130,12 +130,24 @@ class SqlStartupTests(unittest.TestCase):
 
     def test_chroot_retained_for_web_process_but_not_readiness_precommand(self):
         self.settings("Server=.;Database=db")
-        self.service.write_text(self.unit_text + "RootDirectory=/var/lib/vns-roots/example.test\n")
+        sandbox = self.root / "sandbox"
+        self.service.write_text(self.unit_text + f"RootDirectory={sandbox}\n")
         module.configure(self.service, self.root, {})
-        self.assertIn("RootDirectory=/var/lib/vns-roots/example.test\n", self.service.read_text())
+        self.assertIn(f"RootDirectory={sandbox}\n", self.service.read_text())
+        self.assertTrue((sandbox / self.root.relative_to("/")).is_dir())
         self.assertIn("RootDirectoryStartOnly=true\n", self.service.read_text())
         self.assertNotIn("ExecStartPre=+", self.service.read_text())
         self.assertFalse(module.configure(self.service, self.root, {}))
+
+    def test_existing_readiness_unit_gets_missing_precommand_cwd(self):
+        self.settings("Server=.;Database=db")
+        module.configure(self.service, self.root, {})
+        sandbox = self.root / "empty-root"
+        self.service.write_text(self.service.read_text() + f"\nRootDirectory={sandbox}\n")
+        before = self.service.read_text()
+        self.assertTrue(module.configure(self.service, self.root, {}))
+        self.assertEqual(self.service.read_text(), before)
+        self.assertTrue((sandbox / self.root.relative_to("/")).is_dir())
 
     def test_scan_restarts_changed_site_once_and_skips_cached_site(self):
         web = self.root / "www"

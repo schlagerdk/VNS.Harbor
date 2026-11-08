@@ -16,7 +16,7 @@ from sql_ready import sqlcmd_path
 
 
 DROP_IN = "vns-local-sql.conf"
-READINESS_VERSION = 2
+READINESS_VERSION = 3
 ORDERING = "[Unit]\nWants=mssql-server.service\nAfter=network-online.target mssql-server.service\n"
 
 
@@ -33,6 +33,17 @@ def configure(service, root, variables):
     changed = False
     if local_sql:
         sqlcmd_path()
+        sandbox = re.search(r"(?m)^RootDirectory=(.+)$", text)
+        if sandbox:
+            sandbox_root = Path(shlex.split(sandbox[1])[0])
+            working = sandbox_root / Path(root).relative_to("/")
+            if not working.resolve().is_relative_to(sandbox_root.resolve()):
+                raise ValueError("The sandbox WorkingDirectory escapes the configured RootDirectory")
+            # systemd resolves pre-command cwd below RootDirectory even when it does not chroot.
+            # The web process still sees the real site through its existing BindPaths mount.
+            if not working.is_dir():
+                working.mkdir(parents=True, exist_ok=True)
+                changed = True
         section = re.search(r"(?m)^\[Unit\]\s*$", text)
         if section is None:
             raise ValueError("The service has no [Unit] section")
