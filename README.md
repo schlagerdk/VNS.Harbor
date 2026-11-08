@@ -20,6 +20,8 @@ The Packages group's first action, **Check**, runs `dotnet list package --outdat
 
 The file editor and file-browser dialogs share the same responsive outer dimensions, so opening an editor above the browser does not change window size.
 
+The New site dialog reserves a fixed two-line area for template status messages, preventing layout shifts after templates load or the selected template changes. Longer errors remain scrollable within that area.
+
 Form and confirmation modal footers consistently show Cancel as a text-only control at the far left, with primary actions on the right.
 The SQL connection footer centers Remove connection in the free space between Cancel and Save connection; on narrow screens it occupies a centered second row to avoid overlap.
 

@@ -1044,8 +1044,8 @@ function syncTemplateVersion() {
 	const template = dotnetTemplates.find((item) => item.short_name === name);
 	siteForm.version.placeholder = umbraco ? defaultUmbracoVersion : template?.installed_version || "Installed template version";
 	if (!templateRequest) $("#template-status").textContent = umbraco
-		? "Umbraco setup includes uSync, VNS.Umbraco and managed configuration."
-		: "Default: web. Version installs the selected NuGet template package; SDK templates use the installed SDK.";
+		? "Umbraco includes uSync and VNS.Umbraco."
+		: "Default: web. Version applies to NuGet templates.";
 }
 async function loadDotnetTemplates() {
 	if (templateRequest) return templateRequest;
@@ -1057,10 +1057,9 @@ async function loadDotnetTemplates() {
 			dotnetTemplates = data.templates;
 			$("#dotnet-templates").replaceChildren(...data.templates.map((template) =>
 				el("option", { value: template.short_name, label: `${template.name} · ${template.language} · ${template.tags}` })));
-			$("#template-status").textContent = "Default: web. Version installs the selected NuGet template package; SDK templates use the installed SDK.";
 			loaded = true;
 		} catch (error) {
-			$("#template-status").textContent = "Could not load templates. Enter a short name manually (default: web).";
+			$("#template-status").textContent = "Could not load templates. Enter a short name (default: web).";
 			throw error;
 		} finally {
 			templateRequest = null;
