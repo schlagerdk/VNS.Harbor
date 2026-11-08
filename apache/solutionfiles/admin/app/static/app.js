@@ -309,7 +309,7 @@ async function loadSites() {
 	sitesLoaded = true;
 	if (data.update_check) monitorUpdateCheck(data.update_check);
 	$("#settings-admin-site").hidden = !allSites.some((s) => s.admin);
-	$("#settings-admin-group").hidden = $("#settings-admin-site").hidden;
+	$("#settings-admin-group").hidden = false;
 	defaultUmbracoVersion = (data.defaults || {}).umbraco_version || "";
 	renderSites();
 	if (currentView === "site") renderSite(decodeURIComponent(location.hash.slice(6)));
@@ -404,6 +404,7 @@ const buttonStyles = {
 	"Create production site": ["server", "purple"],
 	"Check outdated": ["download", "amber"], "Restart": ["restart", "amber"], "Restart Apache": ["restart", "amber"],
 	"Stop": ["stop", "red"], "Clear logs": ["eraser", "gray"], "Logs": ["file", "gray"],
+	"Admin app log": ["file", "gray"], "Apache error logs": ["file", "teal"],
 	"Issue certificate": ["shield", "teal"], "Change environment": ["sliders", "purple"], "Change bindings": ["globe", "blue"],
 	"Check service": ["activity", "teal"], "Test Apache config": ["activity", "teal"], "Admin site": ["manage", "gray"],
 	"Edit service": ["pencil", "amber"], "Edit config": ["pencil", "amber"], "Edit appsettings.json": ["pencil", "amber"], "Edit web.config": ["pencil", "amber"], "Delete*": ["trash", "red"],
