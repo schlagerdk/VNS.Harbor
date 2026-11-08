@@ -1574,6 +1574,17 @@ def build_command(data):
                 abort(400, "Invalid template version")
             if template and not PROJECT_RE.fullmatch(template):
                 abort(400, "Invalid template name")
+            if csharp == "empty":
+                try:
+                    match = next((item for item in installed_dotnet_templates()
+                                  if item["short_name"].casefold() == (template or "web").casefold()), None)
+                except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                    app.logger.error("Could not validate template: %s", exc)
+                    abort(502, "Could not validate the template. Check server logs and try again.")
+                if match is None:
+                    abort(400, "Choose an installed web template by its exact short name.")
+                if template:
+                    template = match["short_name"]
             package = ""
             if csharp == "empty" and version:
                 try:

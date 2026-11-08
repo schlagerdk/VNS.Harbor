@@ -141,6 +141,7 @@ class CreateCommandTests(unittest.TestCase):
                    "site_dirs": lambda: [], "_normalize_dns_name": normalize_dns_name,
                    "_normalize_site_name": normalize_site_name, "service_name": service_name,
                    "installed_template_packages": lambda: {"custom": {"package": "Custom.Templates"}},
+                   "installed_dotnet_templates": lambda: [{"short_name": name} for name in ("web", "webapi", "custom")],
                    "app": Flask(__name__), "subprocess": subprocess}
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "create command", "exec"), self.ns)
         self.data = dict(kind="create_site", site="example.test", binding="example.test",
@@ -176,6 +177,15 @@ class CreateCommandTests(unittest.TestCase):
 
     def test_umbraco_ignores_hidden_template(self):
         self.assertEqual(self.command(csharp="umbraco", version="13.3.2", template="bad name")[-2], "")
+
+    def test_unknown_or_non_web_templates_are_rejected_before_launch(self):
+        for legacy in (True, False):
+            if not legacy:
+                self.data.pop("csharp")
+            for name in ("umbr", "console", "classlib", "missing"):
+                with self.subTest(name=name, legacy=legacy), self.assertRaisesRegex(BadRequest, "exact short name"):
+                    self.command(template=name)
+            self.assertEqual(self.command(template="WEBAPI")[-2], "webapi")
 
     def test_environment_is_independent_of_build(self):
         for build in ("Debug", "Release"):

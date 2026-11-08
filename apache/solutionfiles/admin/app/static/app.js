@@ -1038,7 +1038,9 @@ const dialog = $("#dlg-site");
 const siteForm = $("#form-site");
 let templateRequest = null;
 let dotnetTemplates = [];
+let templatesLoaded = false;
 function syncTemplateVersion() {
+	siteForm.elements.template.setCustomValidity("");
 	const name = siteForm.elements.template.value.trim();
 	const umbraco = name.toLowerCase() === "umbraco";
 	const template = dotnetTemplates.find((item) => item.short_name === name);
@@ -1055,10 +1057,12 @@ async function loadDotnetTemplates() {
 		try {
 			const data = await api("/api/dotnet/templates");
 			dotnetTemplates = data.templates;
+			templatesLoaded = true;
 			$("#dotnet-templates").replaceChildren(...data.templates.map((template) =>
 				el("option", { value: template.short_name, label: `${template.name} · ${template.language} · ${template.tags}` })));
 			loaded = true;
 		} catch (error) {
+			templatesLoaded = false;
 			$("#template-status").textContent = "Could not load templates. Enter a short name (default: web).";
 			throw error;
 		} finally {
@@ -1082,13 +1086,30 @@ siteForm.addEventListener("change", (event) => { if (event.target.name === "type
 siteForm.elements.template.oninput = syncTemplateVersion;
 siteForm.site.oninput = () => { if (!siteForm.binding.dataset.edited) siteForm.binding.value = siteForm.site.value; };
 siteForm.binding.oninput = () => { siteForm.binding.dataset.edited = "1"; };
-$("#btn-new-site").onclick = () => { siteForm.reset(); delete siteForm.binding.dataset.edited; syncSiteForm(); dialog.showModal(); siteForm.site.focus(); };
+$("#btn-new-site").onclick = () => { siteForm.reset(); siteForm.elements.template.setCustomValidity(""); delete siteForm.binding.dataset.edited; syncSiteForm(); dialog.showModal(); siteForm.site.focus(); };
 $("#btn-empty-new-site").onclick = () => $("#btn-new-site").click();
 $("#site-cancel").onclick = (e) => { e.preventDefault(); dialog.close(); };
-siteForm.onsubmit = () => {
-	const data = Object.fromEntries(new FormData(siteForm));
-	data.kind = "create_site";
-	run(() => openTask(data));
+siteForm.onsubmit = (event) => {
+	event.preventDefault();
+	run(async () => {
+		const field = siteForm.elements.template;
+		if (siteForm.type.value === "csharp") {
+			if (templateRequest) await templateRequest;
+			else if (!templatesLoaded) await loadDotnetTemplates();
+			const name = field.value.trim();
+			const match = dotnetTemplates.find((item) => item.short_name.toLowerCase() === (name || "web").toLowerCase());
+			if (!match && name.toLowerCase() !== "umbraco") {
+				field.setCustomValidity("Choose an installed web template by its exact short name.");
+				field.reportValidity();
+				return;
+			}
+			field.value = name ? match?.short_name || "umbraco" : "";
+		}
+		const data = Object.fromEntries(new FormData(siteForm));
+		data.kind = "create_site";
+		await openTask(data);
+		dialog.close();
+	});
 };
 
 const prodDialog = $("#dlg-prod");
