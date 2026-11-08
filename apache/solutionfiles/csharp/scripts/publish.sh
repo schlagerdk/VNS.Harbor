@@ -50,6 +50,7 @@ if grep -qs "Umbraco.Cms" ./*.csproj; then
 fi
 
 chown -R www-data:www-data "${_publishFolder}"
+python3 "@APACHE_DIR@/lib/sql_startup.py" "${_site}"
 start_service
 
 sleep 2

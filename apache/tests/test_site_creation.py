@@ -22,6 +22,22 @@ CREATE = (APACHE / "create_site.sh").read_text()
 
 
 class UnicodeScriptTests(unittest.TestCase):
+    def test_existing_site_sql_startup_task_validates_unit(self):
+        self.ns.update(WEB_ROOT="/var/www", site_units=lambda site: ["æøå.test"])
+        _, argv, _ = self.ns["build_command"]({
+            "kind": "unit_tool", "site": "æøå.test", "unit": "æøå.test",
+            "tool": "configure_sql_startup"})
+        self.assertEqual(argv, [sys.executable, str(APACHE / "lib/sql_startup.py"), "xn--5cab8c.test"])
+        with self.assertRaises(BadRequest):
+            self.ns["build_command"]({"kind": "unit_tool", "site": "æøå.test",
+                                      "unit": "other.test", "tool": "configure_sql_startup"})
+
+    def test_remote_sql_startup_task_is_allowlisted(self):
+        self.ns.update(WEB_ROOT="/var/www", remote_site=Mock(), REMOTE_STATUS={})
+        _, argv, _ = self.ns["build_command"]({
+            "kind": "remote_tool", "site": "example.test", "tool": "configure_sql_startup"})
+        self.assertEqual(argv, ["/bin/bash", str(APACHE / "remote_site.sh"),
+                                "example.test", "configure_sql_startup"])
     def test_acme_redirect_exclusions_escape_literal_dot(self):
         templates = [
             APACHE / "solutionfiles" / kind / "apache.conf.tpl"
@@ -52,7 +68,7 @@ class UnicodeScriptTests(unittest.TestCase):
             or (isinstance(node, ast.FunctionDef) and node.name == "build_command")
         ]
         self.ns = dict(re=re, os=os, glob=glob, sys=sys, abort=abort,
-                       site_arg=lambda data: data["site"], APACHE_DIR=str(APACHE))
+                       site_arg=lambda data: data["site"], service_name=service_name, APACHE_DIR=str(APACHE))
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "script validation", "exec"), self.ns)
 
     def test_unicode_script_is_listed_and_can_be_run(self):

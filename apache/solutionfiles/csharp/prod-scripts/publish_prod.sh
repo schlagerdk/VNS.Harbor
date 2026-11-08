@@ -390,6 +390,7 @@ if [[ -f ${file} ]] && grep -q "UmbracoApplicationUrl" "${file}"; then
 	sed -i -E 's/("UseHttps"[[:space:]]*:[[:space:]]*)false/\1true/' "${file}"
 fi
 chown -R www-data:www-data "${dir}"
+python3 /vns/apache/lib/sql_startup.py "${SITE}"
 systemctl start "$(python3 /vns/apache/lib/domain_names.py "${SITE}" unit)"
 sleep 2
 systemctl status "$(python3 /vns/apache/lib/domain_names.py "${SITE}" unit)" --no-pager

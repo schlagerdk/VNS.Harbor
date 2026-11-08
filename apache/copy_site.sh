@@ -31,6 +31,9 @@ apache2ctl configtest
 a2ensite "${_site}.conf"
 if [[ -f ${_servicePath} ]]; then
 	systemctl daemon-reload
+	if grep -q '^ExecStart=.*/dotnet ' "${_servicePath}"; then
+		python3 "${_apacheDir}/lib/sql_startup.py" "${_serviceName}"
+	fi
 	systemctl enable "${_serviceName}"
 	systemctl start "${_serviceName}"
 	systemctl is-active --quiet "${_serviceName}"

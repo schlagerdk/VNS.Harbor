@@ -98,7 +98,7 @@ def database_details(root, environment="", variables=None):
         else:
             name = fields.get("initial catalog") or fields.get("database", "")
             if kind in ("MS SQL", "SQL Express", "Azure SQL"):
-                server = next((fields[key] for key in ("server", "data source", "address", "addr", "network address")
+                server = next((fields[key] for key in ("server", "data source", "datasource", "address", "addr", "network address")
                                if fields.get(key)), "")
                 if server:
                     servers.add(server)

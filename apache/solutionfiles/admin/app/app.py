@@ -1058,6 +1058,8 @@ def terminal_scope(payload):
 
 def terminal_auto_close(payload):
     kind = payload.get("kind")
+    if kind in ("unit_tool", "remote_tool") and payload.get("tool") == "configure_sql_startup":
+        return True
     if kind in ("shell", "create_site", "copy_site", "create_prod", "delete_site", "change_binding", "prod_action", "dotnet_package", "fix_permissions", "publish_both", "bulk", "update_package", "sql_action", "install_sql_tools"):
         return True
     if kind == "remote_tool":
@@ -1430,7 +1432,7 @@ def build_command(data):
         site = site_arg(data)
         remote_site(site)
         tool = data.get("tool")
-        if tool not in ("check_service", "edit_service", "edit_conf", "shell"):
+        if tool not in ("check_service", "edit_service", "edit_conf", "shell", "configure_sql_startup"):
             abort(400, "Unknown remote tool")
         REMOTE_STATUS.pop(site, None)
         return "Remote %s: %s" % (tool.replace("_", " "), site), [bash, os.path.join(APACHE_DIR, "remote_site.sh"), site, tool], WEB_ROOT
@@ -1512,6 +1514,9 @@ def build_command(data):
             abort(400, "Unknown service")
         service = "/etc/systemd/system/%s.service" % service_name(unit)
         conf = "/etc/apache2/sites-available/%s.conf" % unit
+        if tool == "configure_sql_startup":
+            return "Configure SQL startup: " + unit, [
+                sys.executable, os.path.join(APACHE_DIR, "lib", "sql_startup.py"), service_name(unit)], WEB_ROOT
         if tool == "check_service":
             return "Service: " + unit, [bash, "-c", 'clear; systemctl status "$1" --no-pager -l', "x", service_name(unit)], WEB_ROOT
         if tool == "edit_service":

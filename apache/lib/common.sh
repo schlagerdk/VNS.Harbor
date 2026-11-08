@@ -513,6 +513,9 @@ install_service() {
 	echo "Create service"
 	render_to "$1" "${_servicePath}"
 	sudo systemctl daemon-reload
+	if grep -q '^ExecStart=.*/dotnet ' "${_servicePath}"; then
+		sudo python3 "${_apacheDir}/lib/sql_startup.py" "${_serviceName}"
+	fi
 	sudo systemctl enable "${_serviceName}"
 	sudo systemctl restart "${_serviceName}"
 	sudo systemctl status "${_serviceName}" --no-pager || true
