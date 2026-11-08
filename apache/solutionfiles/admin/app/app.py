@@ -88,7 +88,7 @@ PROJECT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 FOLDER_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._-]*$")
 VERSION_RE = re.compile(r"^[0-9][0-9A-Za-z.+-]*$")
 PACKAGE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
-SCRIPT_RE = re.compile(r"^[A-Za-z0-9_.-]+\.sh$")
+SCRIPT_RE = re.compile(r"^[\w.-]+\.sh\Z")
 
 
 # ---------------------------------------------------------------- security

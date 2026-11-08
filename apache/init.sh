@@ -71,8 +71,12 @@ dotnet --list-runtimes
 echo "Installed SDKs:"
 dotnet --list-sdks
 
+echo "Mark Apache initialization as complete"
+sudo mkdir -p /var/lib/vns
+sudo touch /var/lib/vns/apache-initialized
+
 echo
 read -r -p "Set up the admin site now (web UI for managing all sites)? [y/N]: " _setupAdmin
-if [[ ${_setupAdmin,,} == y* ]]; then
+if [[ ${_setupAdmin} == [yY]* ]]; then
 	sudo "$(pwd)/install_admin_site.sh"
 fi

@@ -269,7 +269,12 @@ set_site_vars() {
 
 # Print a template with placeholders replaced
 render() {
+	local _publishRoot="${_siteRoot}"
+	if [[ ${_publishFolder} != . ]]; then
+		_publishRoot+="/${_publishFolder}"
+	fi
 	sed \
+		-e "s|@SITE_ROOT@/@PUBLISH_FOLDER@|${_publishRoot}|g" \
 		-e "s|@SITE@|${_site}|g" \
 		-e "s|@SERVICE_NAME@|$(normalize_dns_name "${_site}" unit)|g" \
 		-e "s|@BINDING@|${_binding:-${_site}}|g" \

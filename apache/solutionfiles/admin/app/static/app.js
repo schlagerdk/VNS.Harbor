@@ -622,7 +622,7 @@ function scriptSelect(site, className) {
 	const select = el("select", { className: "script-select " + (className || ""), ariaLabel: "Run site script", title: "Run a script from the site's scripts folder" }, el("option", { textContent: "Run script…", value: "" }));
 	const groups = [["Production", (f) => f.includes("_prod")], ["Site", (f) => !f.includes("_prod")]];
 	for (const [label, test] of groups) {
-		const files = site.scripts.filter((f) => test(f) && !buttonScripts.has(f));
+		const files = site.scripts.filter((f) => test(f) && !hasScriptButton(site, f));
 		if (!files.length) continue;
 		const group = el("optgroup", { label });
 		for (const file of files) group.append(el("option", { textContent: scriptLabel(file), value: file, title: file }));
@@ -652,14 +652,14 @@ function renderSite(name) {
 	}
 	const actions = el("div", { className: "actions" });
 	const add = (label, handler, className) => actions.append(el("button", { textContent: label, className: className || "", onclick: () => run(handler) }));
-	if (hasProd(site) && site.scripts.includes("publish_prod.sh") && ["publish_local.sh", "publish.sh"].some((file) => site.scripts.includes(file))) {
+	if (site.has_project && hasProd(site) && site.scripts.includes("publish_prod.sh") && ["publish_local.sh", "publish.sh"].some((file) => site.scripts.includes(file))) {
 		add("Publish both", async () => {
 			if (await ask({ title: "Publish both?", message: "Publish the test site first, then production (local or remote). Both services are restarted. If test publishing fails, production is not published.", input: false, ok: "Publish both" })) {
 				await openTask({ kind: "publish_both", site: site.name });
 			}
 		});
 	}
-	if (site.kind !== "csharp" && site.kind !== "umbraco" && site.scripts.includes("outdated.sh")) {
+	if (site.has_project && site.kind !== "csharp" && site.kind !== "umbraco" && site.scripts.includes("outdated.sh")) {
 		actions.append(el("button", { textContent: "Check outdated", title: "outdated.sh", onclick: () => run(() => openTask({ kind: "script", site: site.name, script: "outdated.sh" })) }));
 	}
 	if (site.kind === "python") {
@@ -742,6 +742,8 @@ async function updatePackages(site, update) {
 
 // Scripts that have their own button and are therefore left out of the "Run script…" list
 const buttonScripts = new Set(["publish.sh", "publish_local.sh", "publish_prod.sh", "create_prod.sh", "sync_prod.sh", "clear_logs.sh", "clear_logs_local.sh", "clear_logs_prod.sh", "issue_certificat.sh", "change_env.sh", "restart_service.sh", "check_service.sh", "edit_service.sh", "edit_conf.sh", "restart_apache.sh", "outdated.sh", "set_password.sh", "fix_permissions.sh", "update_packages.sh"]);
+const projectScripts = new Set(["publish.sh", "publish_local.sh", "publish_prod.sh", "outdated.sh", "create_prod.sh"]);
+const hasScriptButton = (site, file) => buttonScripts.has(file) && (site.has_project || !projectScripts.has(file));
 
 // [script candidates or null, button label, confirmation text (null = none; the script asks itself), prod_action name]
 function quickActions(env) {
@@ -771,7 +773,7 @@ function envPanel(site, env) {
 	if (environment) heading.append(el("span", { className: "badge env-" + environment.toLowerCase(), textContent: environment }));
 	heading.append(httpsLock(env.https));
 	if (env.mode === "remote") heading.append(remoteIcon(env));
-	if (env.key !== "prod" && !hasProd(site) && site.scripts.includes("create_prod.sh")) {
+	if (site.has_project && env.key !== "prod" && !hasProd(site) && site.scripts.includes("create_prod.sh")) {
 		heading.append(el("button", { textContent: "Create production site", className: "small create-production",
 			onclick: () => run(() => openCreateProdDialog(site)) }));
 	}
@@ -842,6 +844,7 @@ function envPanel(site, env) {
 	}
 	let extraTools = null;
 	for (const [files, label, confirm, action] of quickActions(env)) {
+		if (label === "Publish" && !site.has_project) continue;
 		let file = files && files.find((f) => site.scripts.includes(f));
 		if (!file && label === "Publish" && env.key !== "prod") file = site.scripts.find((f) => /^publish.*\.sh$/.test(f) && f !== "publish_prod.sh");
 		if (!action && !file) continue;
@@ -853,7 +856,7 @@ function envPanel(site, env) {
 			await openTask(action ? { kind: "prod_action", site: site.name, action, scope: env.key === "prod" ? "prod" : "test" } : { kind: "script", site: site.name, script: file });
 		}) }));
 	}
-	if (env.key !== "prod" && site.scripts.some((file) => !buttonScripts.has(file))) quick.append(scriptSelect(site));
+	if (env.key !== "prod" && site.scripts.some((file) => !hasScriptButton(site, file))) quick.append(scriptSelect(site));
 	if (env.unit || env.mode === "remote" || env.apache) {
 		const tools = el("div", { className: "actions quick" });
 		for (const [tool, label] of [["check_service", "Check service"], ["edit_service", "Edit service"], ["edit_conf", "Edit config"]]) {
@@ -1950,7 +1953,7 @@ function groupSqlBackups(backups) {
 	for (const entries of groups.values()) {
 		entries.sort((a, b) => b.finished.localeCompare(a.finished) || String(b.id).localeCompare(String(a.id)));
 	}
-	return [...groups.values()];
+	return [...groups.values()].sort((a, b) => a[0].database_name.localeCompare(b[0].database_name, undefined, { sensitivity: "base" }));
 }
 
 function sqlCell(label, props, ...children) {

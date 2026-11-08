@@ -129,7 +129,10 @@ create_csharp() {
 		Development | Test | Staging | Production) ;;
 		*) echo "Environment must be Development, Test, Staging or Production." >&2; exit 1 ;;
 	esac
-	_docRoot="${_siteRoot}/${_publishFolder}/wwwroot"
+	_docRoot="${_siteRoot}/wwwroot"
+	if [[ ${_publishFolder} != . ]]; then
+		_docRoot="${_siteRoot}/${_publishFolder}/wwwroot"
+	fi
 
 	if [[ ${_csharpKind} == umbraco ]]; then
 		ask _umbracoVersion "Set umbraco version" "${_defaultUmbracoVersion}"

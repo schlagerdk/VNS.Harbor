@@ -6,6 +6,10 @@
 # The site runs as root. Use a long password and, if you can, restrict it to your own IP addresses.
 set -euo pipefail
 cd "$(dirname "$0")"
+if [[ ! -f /var/lib/vns/apache-initialized ]]; then
+	echo "Apache initialization is required. Run $(pwd)/init.sh successfully before installing the admin site." >&2
+	exit 1
+fi
 source lib/common.sh
 source lib/admin_vendor.sh
 

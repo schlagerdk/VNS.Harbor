@@ -1,10 +1,12 @@
 import ast
+import glob
 import json
 import os
 from pathlib import Path
 import re
 import shlex
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import Mock, patch
@@ -17,6 +19,43 @@ from apache.lib.domain_names import display_dns_name, normalize_dns_name, normal
 APACHE = Path(__file__).resolve().parents[1]
 APP = APACHE / "solutionfiles/admin/app"
 CREATE = (APACHE / "create_site.sh").read_text()
+
+
+class UnicodeScriptTests(unittest.TestCase):
+    def setUp(self):
+        nodes = [
+            node for node in ast.parse((APP / "app.py").read_text()).body
+            if (isinstance(node, ast.Assign)
+                and any(isinstance(target, ast.Name) and target.id == "SCRIPT_RE"
+                        for target in node.targets))
+            or (isinstance(node, ast.FunctionDef) and node.name == "build_command")
+        ]
+        self.ns = dict(re=re, os=os, glob=glob, sys=sys, abort=abort,
+                       site_arg=lambda data: data["site"], APACHE_DIR=str(APACHE))
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), "script validation", "exec"), self.ns)
+
+    def test_unicode_script_is_listed_and_can_be_run(self):
+        with tempfile.TemporaryDirectory() as directory:
+            folder = Path(directory) / "example.test" / "scripts"
+            folder.mkdir(parents=True)
+            filename = "publish_tømrerentreprisen.sh"
+            (folder / filename).write_text("#!/bin/bash\n")
+            scripts = sorted(f for f in os.listdir(folder)
+                             if self.ns["SCRIPT_RE"].match(f) and (folder / f).is_file())
+            self.assertEqual(scripts, [filename])
+            self.ns["WEB_ROOT"] = directory
+            _, argv, cwd = self.ns["build_command"](
+                {"kind": "script", "site": "example.test", "script": filename})
+            self.assertEqual(argv, ["/bin/bash", str((folder / filename).resolve())])
+            self.assertEqual(cwd, str(folder))
+
+    def test_script_filter_retains_filename_restrictions(self):
+        pattern = self.ns["SCRIPT_RE"]
+        for name in ("publish.sh", "publish_æøå.sh", "SCRIPT-ÆØÅ.sh"):
+            self.assertIsNotNone(pattern.match(name), name)
+        for name in ("../publish.sh", "folder/publish.sh", "publish.sh\n",
+                     "publish script.sh", "publish;touch.sh", "publish.txt"):
+            self.assertIsNone(pattern.match(name), name)
 
 
 class DotnetTemplateTests(unittest.TestCase):
@@ -449,7 +488,30 @@ install_service() { echo "destination:${_docRoot}"; }
 """)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("<-p:PublishDir=.>", result.stdout)
-        self.assertIn("/./wwwroot", result.stdout)
+        self.assertIn("/wwwroot", result.stdout)
+        self.assertNotIn("/./", result.stdout)
+
+    def test_rendered_root_publish_paths_have_no_dot_component(self):
+        for folder in (".", "_publish"):
+            for template in ("csharp/service.tpl", "csharp/umbraco/service.tpl",
+                             "csharp/apache.conf.tpl", "csharp/umbraco/apache.conf.tpl"):
+                with self.subTest(folder=folder, template=template):
+                    result = subprocess.run(
+                        ["bash", "-c",
+                         'set -eu; source "$1/lib/common.sh"; _site=example.test; '
+                         'set_site_vars; _publishFolder="$2"; _docRoot="$_siteRoot/wwwroot"; '
+                         'if [[ "$2" != . ]]; then _docRoot="$_siteRoot/$2/wwwroot"; fi; '
+                         'render "$1/solutionfiles/$3"',
+                         "test", str(APACHE), folder, template],
+                        capture_output=True, text=True)
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertNotIn("/./", result.stdout)
+                    root = "/var/www/example.test" + ("/_publish" if folder != "." else "")
+                    if template.endswith("service.tpl"):
+                        self.assertIn("WorkingDirectory=" + root + "\n", result.stdout)
+                        self.assertIn(root + "/example.test.dll", result.stdout)
+                    else:
+                        self.assertIn(root + "/wwwroot", result.stdout)
 
     def test_root_publish_is_not_excluded_from_project_build(self):
         result = subprocess.run(
