@@ -7,6 +7,24 @@ import re
 import shutil
 
 from domain_names import normalize_dns_name, normalize_site_name, service_name
+from database_info import configuration_json, connection_type
+
+
+def validate_database_name(name):
+    if not isinstance(name, str) or not name.strip() or len(name) > 128 or any(
+            char in name for char in "\0\r\n;\"'"):
+        raise ValueError("Enter a database name of 1–128 characters without quotes, semicolons or line breaks.")
+    return name.strip()
+
+
+def change_database(connection, name):
+    pattern = r'''(?i)(?:^|;)\s*(?:database|initial catalog)\s*=\s*("(?:[^"]|"")*"|'(?:[^']|'')*'|[^;]*)'''
+    matches = list(re.finditer(pattern, connection))
+    if not matches:
+        raise ValueError("A SQL connection string has no Database or Initial Catalog to replace.")
+    for match in reversed(matches):
+        connection = connection[:match.start(1)] + '"' + name + '"' + connection[match.end(1):]
+    return connection
 
 
 def rewrite(text, source, target, binding, old_port="", new_port=""):
@@ -33,7 +51,8 @@ def rewrite(text, source, target, binding, old_port="", new_port=""):
 
 
 def prepare(source_name, target_name, binding, port="", web_root=Path("/var/www"),
-            configs=Path("/etc/apache2/sites-available"), services=Path("/etc/systemd/system")):
+            configs=Path("/etc/apache2/sites-available"), services=Path("/etc/systemd/system"),
+            database=""):
     source_name = normalize_site_name(source_name)
     target_name = normalize_site_name(target_name)
     binding = normalize_dns_name(binding, fully_qualified=True)
@@ -59,6 +78,24 @@ def prepare(source_name, target_name, binding, port="", web_root=Path("/var/www"
         if re.search(r"(?mi)^\s*(?:ServerName|ServerAlias)\s+.*(?<!\S)" + re.escape(binding) + r"(?!\S)", path.read_text()):
             raise ValueError("The new binding is already used by an Apache site.")
     service_text = service.read_text() if service.is_file() else ""
+    if database:
+        database = validate_database_name(database)
+        if re.search(r"(?i)connectionstrings(?:__|:)", service_text):
+            raise ValueError("Service environment connection strings must be edited separately before changing the copied database.")
+        changes = 0
+        for path in source.rglob("appsettings*.json"):
+            if path.is_symlink():
+                continue
+            data = configuration_json(path.read_text(encoding="utf-8-sig"))
+            connections = data.get("ConnectionStrings", {})
+            for key, value in connections.items():
+                if isinstance(value, str) and not key.lower().endswith("_providername"):
+                    provider = str(connections.get(key + "_ProviderName", "")).lower()
+                    if connection_type(value, provider) in ("MS SQL", "SQL Express", "Azure SQL"):
+                        change_database(value, database)
+                        changes += 1
+        if not changes:
+            raise ValueError("No SQL database connection strings were found to change.")
     ports = set(re.findall(r"(?:localhost|127\.0\.0\.1):(\d+)", text + service_text))
     if service_text and (len(ports) != 1 or not port.isdigit()):
         raise ValueError("A service copy requires one identifiable HTTP port and a new allocated port.")
@@ -93,9 +130,16 @@ def prepare(source_name, target_name, binding, port="", web_root=Path("/var/www"
         if path.is_symlink():
             continue
         content = path.read_text(encoding="utf-8-sig")
-        if "UmbracoApplicationUrl" not in content:
+        if "UmbracoApplicationUrl" not in content and not database:
             continue
-        data = json.loads(content)
+        data = configuration_json(content)
+        if database:
+            connections = data.get("ConnectionStrings", {})
+            for key, value in connections.items():
+                if isinstance(value, str) and not key.lower().endswith("_providername"):
+                    provider = str(connections.get(key + "_ProviderName", "")).lower()
+                    if connection_type(value, provider) in ("MS SQL", "SQL Express", "Azure SQL"):
+                        connections[key] = change_database(value, database)
 
         def update_urls(value):
             if isinstance(value, dict):
@@ -130,8 +174,9 @@ if __name__ == "__main__":
     parser.add_argument("target")
     parser.add_argument("binding")
     parser.add_argument("port", nargs="?", default="")
+    parser.add_argument("--database", default="")
     args = parser.parse_args()
     try:
-        prepare(args.source, args.target, args.binding, args.port)
+        prepare(args.source, args.target, args.binding, args.port, database=args.database)
     except (OSError, ValueError) as exc:
         parser.exit(1, f"Copy site failed: {exc}\n")

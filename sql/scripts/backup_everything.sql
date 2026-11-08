@@ -1,3 +1,5 @@
+-- Linux write permissions are prepared by sql/cron/backup_everything.sh before this script runs.
+-- WITH INIT replaces the backup sets in each existing file; it cannot override filesystem permissions.
 DECLARE @name VARCHAR(50) -- database name  
 DECLARE @path VARCHAR(256) -- path for backup files  
 DECLARE @fileName VARCHAR(256) -- filename for backup  

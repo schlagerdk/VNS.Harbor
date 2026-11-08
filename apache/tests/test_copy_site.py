@@ -91,3 +91,23 @@ class CopySiteTests(unittest.TestCase):
         self.assertFalse(copy_site.prepare("source.test", "target.test", "new.example.test",
                                           web_root=self.web, configs=self.configs, services=self.services))
         self.assertFalse((self.services / "target.test.service").exists())
+
+    def test_optional_database_change_preserves_server_login_and_source(self):
+        original = (self.source / "appsettings.json").read_text()
+        copy_site.prepare("source.test", "target.test", "new.example.test", "4002",
+                          self.web, self.configs, self.services, database="target.test")
+        settings = json.loads((self.web / "target.test/appsettings.json").read_text())
+        self.assertEqual(settings["ConnectionStrings"]["db"],
+                         'Database="target.test";Password=test')
+        self.assertEqual((self.source / "appsettings.json").read_text(), original)
+
+    def test_database_replacement_handles_quoted_and_duplicate_catalogs(self):
+        value = 'Server=.;Initial Catalog="old;name";UID=user;PWD="secret;value";Database=old'
+        self.assertEqual(copy_site.change_database(value, "æøå.test"),
+                         'Server=.;Initial Catalog="æøå.test";UID=user;PWD="secret;value";Database="æøå.test"')
+
+    def test_invalid_database_rejected_before_destination_created(self):
+        with self.assertRaises(ValueError):
+            copy_site.prepare("source.test", "target.test", "new.example.test", "4002",
+                              self.web, self.configs, self.services, database="bad;name")
+        self.assertFalse((self.web / "target.test").exists())

@@ -957,11 +957,20 @@ async function changeBinding(site, scope, env) {
 }
 
 async function copySite(site) {
-	const target = await ask({ title: "Copy site", message: "New folder name. All files and database connections are copied unchanged. HTTPS sites get a new certificate.", ok: "Next" });
+	const target = await ask({ title: "Copy site", message: "New folder name. All files are copied. HTTPS sites get a new certificate.", ok: "Next" });
 	if (target === null) return;
-	const binding = await ask({ title: "Copy site binding", message: "Enter the new domain. For HTTPS, DNS must already point to this server.", value: target, ok: "Copy site" });
+	const binding = await ask({ title: "Copy site binding", message: "Enter the new domain. For HTTPS, DNS must already point to this server.", value: target, ok: "Next",
+		checkbox: "Change SQL database name in connection strings" });
 	if (binding === null) return;
-	await openTask({ kind: "copy_site", site: site.name, target, binding });
+	let database = "";
+	if (binding.checked) {
+		database = await ask({ title: "Copied site database", message: "The database must already exist. SQL server and login are preserved; no database is copied.", value: target, ok: "Copy site" });
+		if (database === null) return;
+		if (!database.trim() || database.length > 128 || /[;\u0000\r\n"']/.test(database)) {
+			throw new Error("Enter a database name of 1–128 characters without quotes, semicolons or line breaks.");
+		}
+	}
+	await openTask({ kind: "copy_site", site: site.name, target, binding: binding.value, database });
 }
 
 async function deleteSite(site, scope) {

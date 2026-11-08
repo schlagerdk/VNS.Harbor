@@ -1559,7 +1559,13 @@ def build_command(data):
         binding = dns_name(data.get("binding", ""), "binding", fully_qualified=True)
         if any(service_name(name) == service_name(target) for name in site_dirs()):
             abort(400, "The destination site already exists.")
-        return "Copy site: " + source, [bash, os.path.join(APACHE_DIR, "copy_site.sh"), source, target, binding], APACHE_DIR
+        database = data.get("database", "")
+        if not isinstance(database, str) or len(database) > 128 or any(char in database for char in "\0\r\n;\"'"):
+            abort(400, "Invalid database name")
+        argv = [bash, os.path.join(APACHE_DIR, "copy_site.sh"), source, target, binding]
+        if database.strip():
+            argv.append(database.strip())
+        return "Copy site: " + source, argv, APACHE_DIR
     if kind == "create_site":
         site = dns_name(data.get("site", ""), "site name")
         site_type = data.get("type", "")

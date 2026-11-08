@@ -4,7 +4,7 @@ set -euo pipefail
 [[ $EUID -eq 0 ]] || exec sudo /bin/bash "$(realpath "$0")" "$@"
 cd "$(dirname "$0")"
 source lib/common.sh
-[[ $# -eq 3 ]] || { echo "Usage: $0 <source> <new-folder> <new-binding>" >&2; exit 1; }
+[[ $# -eq 3 || $# -eq 4 ]] || { echo "Usage: $0 <source> <new-folder> <new-binding> [new-database]" >&2; exit 1; }
 _source=$(normalize_dns_name "$1" site)
 _site=$(normalize_dns_name "$2" site)
 _binding=$(normalize_dns_name "$3" binding)
@@ -17,7 +17,9 @@ _portHttp=""
 if [[ -f /etc/systemd/system/${_sourceUnit}.service ]]; then allocate_ports; fi
 _https=0
 if grep -qiE '^[[:space:]]*SSLEngine[[:space:]]+on' "/etc/apache2/sites-available/${_source}.conf"; then _https=1; fi
-python3 lib/copy_site.py "${_source}" "${_site}" "${_binding}" "${_portHttp}"
+_databaseArgs=()
+if [[ -n ${4:-} ]]; then _databaseArgs=(--database "$4"); fi
+python3 lib/copy_site.py "${_source}" "${_site}" "${_binding}" "${_portHttp}" "${_databaseArgs[@]}"
 mkdir -p "/var/lib/vns-roots/${_site}"
 if ((_https)); then
 	_final=$(mktemp)
@@ -40,4 +42,8 @@ if [[ -f ${_servicePath} ]]; then
 fi
 systemctl reload apache2
 echo "Site copied: ${_source} -> ${_site} (${_binding})"
-echo "Database connections were copied unchanged; no database was duplicated."
+if [[ -n ${4:-} ]]; then
+	echo "SQL database names were updated. The database must already exist; no database was duplicated."
+else
+	echo "Database connections were copied unchanged; no database was duplicated."
+fi
