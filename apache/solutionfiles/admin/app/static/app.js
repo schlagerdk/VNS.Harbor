@@ -2136,12 +2136,9 @@ async function sqlDatabaseAction(action, database) {
 	const connection = sqlSelected();
 	const payload = { kind: "sql_action", connection, action, database: database.name };
 	if (action === "copy") {
-		const target = await ask({ title: "Copy database", message: `Back up ${database.name} and restore to a new database. Logins are not copied; existing database users remain in the backup.`, placeholder: "New database name", ok: "Copy" });
-		if (!target) return;
-		payload.target = target.trim();
-		const login = await askRestoreLogin(payload.target, "Copy");
-		if (!login) return;
-		Object.assign(payload, login);
+		const values = await askSqlDatabase(database.name);
+		if (!values) return;
+		Object.assign(payload, values);
 	} else if (action === "drop") {
 		const confirmation = await ask({ title: "Delete database?", message: `This permanently deletes ${database.name} and disconnects all sessions. Shared and administrator logins are kept. Type ${database.name} to confirm.`, match: database.name, danger: true, ok: "Delete", loginCheckbox: true,
 			checkbox: sqlSnapshot.backup_file_access ? "Also delete backup files for this database" : null });
@@ -2196,6 +2193,47 @@ function askRestoreLogin(database, action = "Restore") {
 	});
 }
 
+function askSqlDatabase(source = null) {
+	const dialog = $("#dlg-sql-database");
+	const form = $("#form-sql-database");
+	const copying = source !== null;
+	form.reset();
+	$("#sql-database-icon").replaceChildren(svgIcon(copying ? "sync" : "server"));
+	$("#sql-database-title").textContent = copying ? "Copy database" : "Create database";
+	$("#sql-database-description").textContent = copying
+		? `Back up ${source} and restore to a new database. Existing database users remain in the backup; server logins are not copied.`
+		: "Creates a database only, not a new SQL login.";
+	$("#sql-database-submit").textContent = copying ? "Copy and create login" : "Create database";
+	const loginFields = $("#sql-database-login");
+	loginFields.hidden = !copying;
+	loginFields.disabled = !copying;
+	const error = $("#sql-database-error");
+	error.textContent = "";
+	let loginEdited = false;
+	form.elements.database.oninput = () => {
+		if (!loginEdited) form.elements.login.value = form.elements.database.value;
+	};
+	form.elements.login.oninput = () => { loginEdited = true; };
+	return new Promise((resolve) => {
+		let result = null;
+		form.onsubmit = (event) => {
+			event.preventDefault();
+			if (copying && form.elements.password.value !== form.elements.confirmation.value) {
+				error.textContent = "Passwords do not match.";
+				return;
+			}
+			const name = form.elements.database.value.trim();
+			result = copying
+				? { target: name, login: form.elements.login.value.trim(), login_password: form.elements.password.value }
+				: { database: name };
+			dialog.close();
+		};
+		$("#sql-database-cancel").onclick = () => dialog.close();
+		dialog.onclose = () => { form.reset(); error.textContent = ""; resolve(result); };
+		dialog.showModal();
+	});
+}
+
 function decorateSql() {
 	const styles = {
 		"Add connection": ["server", "blue"], "Remove connection": ["trash", "red"],
@@ -2219,8 +2257,8 @@ $("#sql-refresh").onclick = () => run(refreshSql);
 $("#sql-connection").onchange = () => run(refreshSql);
 $("#sql-create").onclick = () => run(async () => {
 	const connection = sqlSelected();
-	const name = await ask({ title: "Create database", message: "Creates a database only, not a new SQL login.", placeholder: "Database name", ok: "Create" });
-	if (name) await openTask({ kind: "sql_action", connection, action: "create", database: name.trim() });
+	const values = await askSqlDatabase();
+	if (values) await openTask({ kind: "sql_action", connection, action: "create", ...values });
 });
 $("#sql-backup-all").onclick = () => run(async () => {
 	const connection = sqlSelected();

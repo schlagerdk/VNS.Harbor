@@ -262,6 +262,27 @@
   </form>
 </dialog>
 
+<dialog id="dlg-sql-database" class="newsite">
+  <form id="form-sql-database">
+    <header class="ns-head">
+      <span class="ns-icon" id="sql-database-icon" aria-hidden="true"></span>
+      <div><h2 id="sql-database-title"></h2><p id="sql-database-description"></p></div>
+    </header>
+    <label>Database name<input name="database" required maxlength="128" autocomplete="off" placeholder="New database name"></label>
+    <fieldset id="sql-database-login" hidden disabled>
+      <legend>New SQL login</legend>
+      <p class="hint">Creates a new login with db_owner access. Existing logins cannot be reused. Password policy and expiration are disabled.</p>
+      <label>Username<input name="login" required maxlength="128" autocomplete="off"></label>
+      <div class="ns-grid">
+        <label>Password<input name="password" type="password" required minlength="8" maxlength="128" autocomplete="new-password"></label>
+        <label>Repeat password<input name="confirmation" type="password" required minlength="8" maxlength="128" autocomplete="new-password"></label>
+      </div>
+    </fieldset>
+    <p id="sql-database-error" class="error" role="alert"></p>
+    <menu><li class="cancel-action"><button type="button" id="sql-database-cancel" class="cancel-link">Cancel</button></li><li><button type="submit" id="sql-database-submit" class="primary"></button></li></menu>
+  </form>
+</dialog>
+
 <dialog id="dlg-copy-site" class="newsite">
   <form id="form-copy-site">
     <header class="ns-head">
