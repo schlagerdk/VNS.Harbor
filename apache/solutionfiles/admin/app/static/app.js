@@ -112,7 +112,7 @@ async function copyText(text, container) {
 let copyStatusTimer = null;
 
 // Replaces prompt()/confirm(). Resolves to the entered text (or true without an input), or null when cancelled.
-function ask({ title, message = "", value = "", placeholder = "", ok = "OK", danger = false, input = true, match = null, extra = null, checkbox = null, loginCheckbox = false }) {
+function ask({ title, message = "", value = "", placeholder = "", ok = "OK", danger = false, input = true, match = null, extra = null, checkbox = null, checkboxChecked = false, loginCheckbox = false }) {
 	const dlg = $("#dlg-prompt");
 	const field = $("#prompt-input");
 	const extraRow = $("#prompt-extra-row");
@@ -159,7 +159,7 @@ function ask({ title, message = "", value = "", placeholder = "", ok = "OK", dan
 	$("#prompt-checkbox-row").hidden = !checkbox;
 	$("#prompt-login-row").hidden = !loginCheckbox;
 	$("#prompt-login-checkbox").checked = loginCheckbox;
-	$("#prompt-checkbox").checked = false;
+	$("#prompt-checkbox").checked = checkboxChecked;
 	$("#prompt-checkbox-label").textContent = checkbox || "";
 	if (extra) {
 		$("#prompt-extra-label").textContent = extra.label;
@@ -2317,6 +2317,23 @@ $("#settings-restart-apache").onclick = () => run(async () => {
 });
 $("#settings-admin-site").onclick = () => { const admin = allSites.find((s) => s.admin); if (admin) go(siteLink(admin.name)); };
 $("#settings-apache-test").onclick = () => run(() => openTask({ kind: "apache", tool: "configtest" }));
+$("#settings-keep-alive").onclick = () => run(async () => {
+	const settings = await api("/api/keep-alive");
+	if (!settings.installed) throw new Error("Keep-alive cron job is missing. Run apache/init.sh on this server.");
+	const answer = await ask({
+		title: "Site keep-alive",
+		message: "Send local requests to active dynamic sites. Interval: 1–1440 minutes. Does not restart services or prevent Boot failed.",
+		value: String(settings.interval_minutes), placeholder: "Interval in minutes", ok: "Save",
+		checkbox: "Enabled", checkboxChecked: settings.enabled,
+	});
+	if (answer === null) return;
+	const interval = Number(answer.value);
+	if (!Number.isInteger(interval) || interval < 1 || interval > 1440) {
+		throw new Error("Interval must be a whole number from 1 to 1440 minutes.");
+	}
+	await api("/api/keep-alive", { method: "PUT", json: { enabled: answer.checked, interval_minutes: interval } });
+	toast("Keep-alive settings saved", "ok");
+});
 $("#settings-update").onclick = () => run(async () => {
 	if (await ask({
 		title: "Update VNS and the admin site?",

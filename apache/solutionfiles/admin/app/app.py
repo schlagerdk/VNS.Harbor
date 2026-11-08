@@ -60,6 +60,10 @@ _publish_spec.loader.exec_module(_publish_module)
 _database_spec = importlib.util.spec_from_file_location("vns_database_info", os.path.join(APACHE_DIR, "lib", "database_info.py"))
 _database_module = importlib.util.module_from_spec(_database_spec)
 _database_spec.loader.exec_module(_database_module)
+_keep_alive_spec = importlib.util.spec_from_file_location(
+    "vns_keep_alive", os.path.join(APACHE_DIR, "lib", "keep_alive.py"))
+_keep_alive_module = importlib.util.module_from_spec(_keep_alive_spec)
+_keep_alive_spec.loader.exec_module(_keep_alive_module)
 ADMIN_SITE = cfg.get("admin_site", "")
 SQL_HELPER = os.path.join(os.path.dirname(APACHE_DIR), "sql", "lib", "admin.py")
 _sql_spec = importlib.util.spec_from_file_location("vns_sql_admin", SQL_HELPER)
@@ -89,6 +93,23 @@ FOLDER_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._-]*$")
 VERSION_RE = re.compile(r"^[0-9][0-9A-Za-z.+-]*$")
 PACKAGE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 SCRIPT_RE = re.compile(r"^[\w.-]+\.sh\Z")
+
+
+@app.route("/api/keep-alive", methods=["GET", "PUT"])
+def api_keep_alive():
+    try:
+        settings = _keep_alive_module.load()
+        if request.method == "PUT":
+            settings = _keep_alive_module.validate(request.get_json())
+            _keep_alive_module.save(settings)
+        return jsonify(**settings, installed=os.path.isfile("/etc/cron.d/vns-keep-alive"))
+    except FileNotFoundError:
+        return error("Keep-alive is not installed. Run apache/init.sh on this server.", 503)
+    except ValueError as exc:
+        return error(str(exc), 400)
+    except OSError:
+        app.logger.exception("Could not read or save keep-alive settings")
+        return error("Could not read or save keep-alive settings. Inspect the admin app log.", 500)
 
 
 # ---------------------------------------------------------------- security

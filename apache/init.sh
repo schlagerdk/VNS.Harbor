@@ -10,7 +10,7 @@ _dotnetChannel=10.0
 
 echo Install prerequisites
 sudo apt-get update
-sudo apt-get install -y curl tar git ca-certificates uuid-runtime python3 python3-venv python3-pip
+sudo apt-get install -y curl tar git ca-certificates uuid-runtime python3 python3-venv python3-pip cron
 
 echo Install apache2
 sudo apt-get install -y apache2
@@ -71,6 +71,9 @@ dotnet --list-runtimes
 echo "Installed SDKs:"
 dotnet --list-sdks
 
+echo "Install configurable site keep-alive cron job"
+sudo python3 "$(pwd)/lib/keep_alive.py" --install
+sudo systemctl enable --now cron
 echo "Mark Apache initialization as complete"
 sudo mkdir -p /var/lib/vns
 sudo touch /var/lib/vns/apache-initialized

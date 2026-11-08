@@ -31,6 +31,17 @@ When Umbraco is selected, a blank Version submits the displayed default version 
 Custom site scripts close their admin terminal automatically when they exit with code 0 and no detected errors or warnings. No special output marker is required. Failed scripts or scripts reporting errors/warnings remain open; the built-in service-check and configuration/service-editor scripts also remain open for inspection.
 Script filenames may contain Unicode letters (including æøå), numbers, underscores, dots and hyphens, and must end in `.sh`.
 
+`apache/init.sh` installs a site keep-alive cron job in `/etc/cron.d/vns-keep-alive`. It runs every minute and uses `/etc/vns/keep-alive.json` to control whether requests are enabled and the interval (default: 5 minutes; allowed: 1–1440). Existing settings are preserved when initialization is rerun. Change these values through **Settings → Apache → Site keep-alive**, or edit the JSON file:
+
+```json
+{
+  "enabled": true,
+  "interval_minutes": 5
+}
+```
+
+Keep-alive discovers local .NET and Python webservices, skips stopped services and standard HTML sites, and sends a bounded GET request to `/` on each service's loopback port with its Apache binding as the Host header. It bypasses outbound proxies and Cloudflare cache and does not follow redirects off-server. An application redirect or authentication response counts as a received request, not as proof of application health. Failures are logged with the `vns-keep-alive` journal tag (`journalctl -t vns-keep-alive`); services are never restarted. A lock prevents overlapping runs, and the interval timestamp is stored in `/var/lib/vns/keep-alive/`. This keeps request-dependent application activity warm, but does not fix Boot failed, guarantee background work, or replace external SiteMonitor health checks. Linux systemd webservices normally have no IIS-style idle shutdown. Existing servers must rerun `apache/init.sh` to install the cron job; no server changes are made by merely updating the repository.
+
 Project-dependent buttons (Publish, Publish both, Check outdated and Create production site) require a `.csproj` file in the site folder. Without one, `publish.sh`, `publish_local.sh`, `publish_prod.sh`, `outdated.sh` and `create_prod.sh` remain available in the Run script dropdown as custom scripts. Content sync and other scripts that do not require a project retain their buttons.
 
 When the administration starts, it scans local site services for C#/Umbraco using **local MS SQL** (`.`, `localhost`, `127.0.0.1` or `::1`, including TCP prefixes and port suffixes). It adds missing `Wants=mssql-server.service` and `After=network-online.target mssql-server.service` dependencies directly to the main service file, preserves existing dependencies, reloads systemd and restarts only changed services. It migrates the old managed `vns-local-sql.conf` drop-ins and removes those files. There is no configuration button. Successful checks are recorded in `/var/lib/vns/sql-startup-checked.json`; unchanged checked units are skipped on subsequent admin starts. Failed restarts remain pending for retry on the next admin start. Changes to a checked unit trigger another check; appsettings-only changes on checked sites require publishing with the updated scripts. Other SQL hosts, SQLite, non-.NET services and the admin site are excluded. Failures are logged to the admin service journal.
