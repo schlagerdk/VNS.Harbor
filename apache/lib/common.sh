@@ -160,7 +160,7 @@ ${_aliasLine}
   DocumentRoot ${_root}/wwwroot
 
   RewriteEngine On
-  RewriteCond %{REQUEST_URI} !^/.well-known/acme-challenge/
+  RewriteCond %{REQUEST_URI} !^/\.well-known/acme-challenge/
   RewriteRule ^(.*)\$ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
 
   ErrorLog /var/log/apache2/${_site}-rewrite-error.log
@@ -484,7 +484,7 @@ enable_https_config() {
 	local _updated
 	_updated=$(mktemp)
 	{
-		printf '<VirtualHost *:80>\n  ServerName %s\n  RewriteEngine On\n  RewriteCond %%{REQUEST_URI} !^/.well-known/acme-challenge/\n  RewriteRule ^ https://%%{HTTP_HOST}%%{REQUEST_URI} [R=301,L]\n</VirtualHost>\n\n' "${_binding}"
+		printf '<VirtualHost *:80>\n  ServerName %s\n  RewriteEngine On\n  RewriteCond %%{REQUEST_URI} !^/\\.well-known/acme-challenge/\n  RewriteRule ^ https://%%{HTTP_HOST}%%{REQUEST_URI} [R=301,L]\n</VirtualHost>\n\n' "${_binding}"
 		awk -v cert="${_certificateFile}" -v key="${_keyFile}" '
 			{
 				gsub("<VirtualHost \\*:80>", "<VirtualHost *:443>")

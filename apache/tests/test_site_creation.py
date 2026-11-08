@@ -22,6 +22,27 @@ CREATE = (APACHE / "create_site.sh").read_text()
 
 
 class UnicodeScriptTests(unittest.TestCase):
+    def test_acme_redirect_exclusions_escape_literal_dot(self):
+        templates = [
+            APACHE / "solutionfiles" / kind / "apache.conf.tpl"
+            for kind in ("python", "admin", "csharp", "csharp/umbraco")
+        ]
+        for template in templates:
+            with self.subTest(template=template):
+                self.assertIn(r"RewriteCond %{REQUEST_URI} !^/\.well-known/acme-challenge/",
+                              template.read_text())
+        for path in (APACHE / "lib/common.sh",
+                     APACHE / "solutionfiles/csharp/prod-scripts/publish_prod.sh"):
+            self.assertNotIn("!^/.well-known/acme-challenge/", path.read_text())
+        source = (APACHE / "lib/common.sh").read_text()
+        line = next(line.strip() for line in source.splitlines()
+                    if "printf '<VirtualHost *:80>" in line)
+        result = subprocess.run(
+            ["bash", "-c", '_binding=example.test; ' + line],
+            capture_output=True, text=True, check=True)
+        self.assertIn(r"RewriteCond %{REQUEST_URI} !^/\.well-known/acme-challenge/",
+                      result.stdout)
+
     def setUp(self):
         nodes = [
             node for node in ast.parse((APP / "app.py").read_text()).body

@@ -273,7 +273,7 @@ ${server_alias_line}
   DocumentRoot ${docroot}
 
   RewriteEngine On
-  RewriteCond %{REQUEST_URI} !^/.well-known/acme-challenge/
+  RewriteCond %{REQUEST_URI} !^/\.well-known/acme-challenge/
   RewriteRule ^(.*)\$ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
 
   ErrorLog /var/log/apache2/${SITE}-rewrite-error.log
