@@ -44,7 +44,7 @@ class ServerFilesTests(unittest.TestCase):
                        WEB_ROOT=str(self.web), MAX_EDIT_BYTES=2 * 1024 * 1024,
                        editable_file=editable_file, contains_editable_files=contains_editable_files,
                        file_metadata=file_metadata)
-        names = {"protect", "error", "safe_path", "rel", "server_files", "fs_path", "fs_relative",
+        names = {"protect", "error", "safe_path", "rel", "server_files", "fs_root", "fs_path", "fs_relative",
                  "is_site_root", "own_like_parent", "valid_name", "build_command",
                  "fs_list", "fs_read", "fs_save", "fs_create", "fs_rename", "fs_delete",
                  "fs_upload", "fs_download"}
@@ -58,6 +58,67 @@ class ServerFilesTests(unittest.TestCase):
     def post(self, action, **data):
         return self.client.post("/api/server-fs/" + action, json=data,
                                 headers={"X-CSRF-Token": "test-csrf"})
+
+    def test_site_browser_is_confined_to_its_root_for_all_operations(self):
+        site = self.web / "example.test"
+        site.mkdir()
+        (site / "index.html").write_text("site")
+        sibling = self.web / "other.test"
+        sibling.mkdir()
+        (sibling / "index.html").write_text("other")
+        base = "/api/site-fs/example.test/"
+        response = self.client.get(base + "list")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["path"], "")
+        self.assertEqual([item["name"] for item in response.json["items"]], ["index.html"])
+        for action in ("list", "read", "download"):
+            response = self.client.get(base + action, query_string={"path": "../other.test/index.html"})
+            self.assertEqual(response.status_code, 400, action)
+        for action in ("save", "delete", "rename", "mkdir", "newfile"):
+            response = self.client.post(base + action,
+                                       json={"path": "../other.test/index.html", "name": "renamed", "content": "changed"},
+                                       headers={"X-CSRF-Token": "test-csrf"})
+            self.assertEqual(response.status_code, 400, action)
+        self.assertEqual((sibling / "index.html").read_text(), "other")
+        for action in ("rename", "delete"):
+            response = self.client.post(base + action, json={"path": "", "name": "renamed"},
+                                       headers={"X-CSRF-Token": "test-csrf"})
+            self.assertEqual(response.status_code, 400)
+        self.assertTrue(site.is_dir())
+
+    def test_site_browser_blocks_symlink_escape_including_upload(self):
+        site = self.web / "example.test"
+        site.mkdir()
+        (site / "linked.conf").symlink_to(self.file)
+        base = "/api/site-fs/example.test/"
+        for action in ("read", "download"):
+            response = self.client.get(base + action, query_string={"path": "linked.conf"})
+            self.assertEqual(response.status_code, 400)
+        response = self.client.post(base + "upload",
+                                   data={"path": "", "files": (io.BytesIO(b"overwrite"), "linked.conf")},
+                                   headers={"X-CSRF-Token": "test-csrf"})
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(self.file.read_text(), "original\n")
+
+    def test_local_production_root_is_relative_and_cannot_be_removed(self):
+        site = self.web / "example.test"
+        production = site / "_prod"
+        production.mkdir(parents=True)
+        (site / "private.txt").write_text("source")
+        (production / "index.html").write_text("production")
+        base = "/api/site-fs/example.test/_prod/"
+        response = self.client.get(base + "list")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["path"], "")
+        response = self.client.get(base + "read", query_string={"path": "../private.txt"})
+        self.assertEqual(response.status_code, 400)
+        response = self.client.post(base + "delete", json={"path": ""},
+                                   headers={"X-CSRF-Token": "test-csrf"})
+        self.assertEqual(response.status_code, 400)
+        response = self.client.post(base + "save", json={"path": "index.html", "content": "updated"},
+                                   headers={"X-CSRF-Token": "test-csrf"})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual((production / "index.html").read_text(), "updated")
 
     def test_editor_preserves_danish_characters_as_utf8(self):
         content = '<meta charset="utf-8">\nHello world! - æøå'

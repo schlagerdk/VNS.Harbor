@@ -191,6 +191,7 @@ function ask({ title, message = "", value = "", placeholder = "", ok = "OK", dan
 
 let remoteFilesSite = "";
 let serverFiles = false;
+let localFilesRoot = "";
 let currentView = "sites";
 const views = ["sites", "site", "sql"];
 
@@ -237,7 +238,7 @@ async function route() {
 window.addEventListener("hashchange", route);
 const go = (hash) => { location.hash = hash; };
 const siteLink = (name) => "#site/" + encodeURIComponent(name);
-const fsUrl = (action) => remoteFilesSite ? "/api/remote-fs/" + encodeURIComponent(remoteFilesSite) + "/" + action : (serverFiles ? "/api/server-fs/" : "/api/fs/") + action;
+const fsUrl = (action) => remoteFilesSite ? "/api/remote-fs/" + encodeURIComponent(remoteFilesSite) + "/" + action : (serverFiles ? "/api/server-fs/" : "/api/site-fs/" + localFilesRoot.split("/").map(encodeURIComponent).join("/") + "/") + action;
 
 // ------------------------------------------------------------------ sites
 
@@ -1252,7 +1253,7 @@ let hideNonEditableFiles = true;
 let listedFiles = [];
 let filesLoadGeneration = 0;
 function filesPathPrefix() {
-	return remoteFilesSite || serverFiles ? "/" : "/var/www/";
+	return remoteFilesSite || serverFiles ? "/" : "/var/www/" + localFilesRoot + "/";
 }
 function filesSearchName() {
 	return $("#files-search").value.split("/").pop();
@@ -1299,7 +1300,7 @@ document.addEventListener("keydown", (event) => {
 	focusFilesPath();
 	const field = $("#files-search");
 	const end = field.value.length;
-	field.setRangeText(event.key === "Backspace" ? "" : event.key, event.key === "Backspace" ? Math.max(0, end - 1) : end, end, "end");
+	field.setRangeText(event.key === "Backspace" ? "" : event.key, event.key === "Backspace" ? Math.max(filesPathPrefix().length, end - 1) : end, end, "end");
 	field.dispatchEvent(new Event("input", { bubbles: true }));
 });
 async function navigateFilesInput(enter = false) {
@@ -1314,13 +1315,13 @@ async function navigateFilesInput(enter = false) {
 	const suffix = enter ? "" : value.slice(split + 1);
 	if (path.startsWith("/")) {
 		const prefix = filesPathPrefix();
-		if (path === "/") {
+		if (path === prefix.slice(0, -1) || path === prefix) {
 			path = "";
 		} else {
-			if (prefix !== "/" && path !== "/var/www" && !path.startsWith(prefix)) {
-				throw new Error("This file browser is confined to /var/www.");
+			if (!path.startsWith(prefix)) {
+				throw new Error(`This file browser is confined to ${prefix}`);
 			}
-			path = prefix === "/" ? path.slice(1) : path.slice("/var/www".length).replace(/^\//, "");
+			path = path.slice(prefix.length);
 		}
 	} else {
 		path = join(currentPath, path);
@@ -1431,8 +1432,9 @@ function renderFiles() {
 async function openFiles(path, remoteSite = "", server = false) {
 	remoteFilesSite = remoteSite;
 	serverFiles = server && !remoteSite;
+	localFilesRoot = remoteSite || serverFiles ? "" : path.replace(/^\/var\/www\//, "").replace(/\/+$/, "");
 	$("#files-search").value = "";
-	await loadFiles(path);
+	await loadFiles(remoteSite || serverFiles ? path : "");
 	$("#files-title").textContent = remoteSite ? "Remote files · " + remoteSite : serverFiles ? "Server files" : "Files";
 	if (!filesDialog.open) filesDialog.showModal();
 	focusFilesPath();
@@ -1500,9 +1502,9 @@ async function showInEditor(path, content) {
 
 const editorValue = () => (monacoEditor && !$("#editor-box").hidden ? monacoEditor.getValue() : $("#editor-text").value);
 
-async function editFile(path, remoteSite = remoteFilesSite) {
+async function editFile(path, remoteSite = null) {
 	if (!(await discardOk())) return;
-	const base = remoteSite ? "/api/remote-fs/" + encodeURIComponent(remoteSite) + "/" : serverFiles ? "/api/server-fs/" : "/api/fs/";
+	const base = remoteSite === null ? fsUrl("") : remoteSite ? "/api/remote-fs/" + encodeURIComponent(remoteSite) + "/" : "/api/fs/";
 	const saveUrl = base + "save";
 	const data = await api(base + "read?path=" + encodeURIComponent(path));
 	openFile = path;

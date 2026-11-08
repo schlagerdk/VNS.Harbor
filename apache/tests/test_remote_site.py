@@ -123,7 +123,7 @@ class RemoteApiTests(unittest.TestCase):
         )
         functions = {"error", "remote_command", "remote_status", "remote_site", "api_service", "api_logs", "build_command", "remote_fs",
                      "service_environment", "server_aliases", "environment_info", "managed_config", "fs_list",
-                     "server_files", "fs_path", "fs_relative"}
+                     "server_files", "fs_root", "fs_path", "fs_relative"}
         nodes = [node for node in ast.parse(APP_SOURCE.read_text()).body
                  if isinstance(node, ast.FunctionDef) and node.name in functions]
         exec(compile(ast.Module(body=nodes, type_ignores=[]), str(APP_SOURCE), "exec"), self.ns)

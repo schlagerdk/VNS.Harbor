@@ -577,21 +577,42 @@ def server_files():
     return request.path.startswith("/api/server-fs/")
 
 
+def fs_root():
+    root = (request.view_args or {}).get("root")
+    if root is None:
+        return WEB_ROOT
+    full = safe_path(root)
+    if full == WEB_ROOT or not os.path.isdir(full):
+        abort(400, "Invalid site file root")
+    return full
+
+
 def fs_path(relative):
     if server_files():
         path = os.path.join("/", (relative or "").lstrip("/"))
         if request.endpoint in ("fs_rename", "fs_delete") and os.path.basename(path) not in ("", ".", ".."):
             return os.path.join(os.path.realpath(os.path.dirname(path)), os.path.basename(path))
         return os.path.realpath(path)
-    return safe_path(relative)
+    if not (request.view_args or {}).get("root"):
+        return safe_path(relative)
+    root = fs_root()
+    full = os.path.realpath(os.path.join(root, (relative or "").lstrip("/")))
+    if full != root and not full.startswith(root + os.sep):
+        abort(400, "Path outside the site file root")
+    return full
 
 
 def fs_relative(full):
-    return full.lstrip("/") if server_files() else rel(full)
+    if server_files():
+        return full.lstrip("/")
+    if not (request.view_args or {}).get("root"):
+        return rel(full)
+    root = fs_root()
+    return os.path.relpath(full, root).replace(os.sep, "/") if full != root else ""
 
 
 def is_site_root(full):
-    return full == "/" or full == WEB_ROOT or os.path.dirname(full) == WEB_ROOT
+    return full == "/" or full == WEB_ROOT or os.path.dirname(full) == WEB_ROOT or (not server_files() and full == fs_root())
 
 
 def own_like_parent(path):
@@ -1646,8 +1667,9 @@ def remote_fs(site, action):
 
 
 @app.route("/api/fs/list")
+@app.route("/api/site-fs/<path:root>/list")
 @app.route("/api/server-fs/list")
-def fs_list():
+def fs_list(root=None):
     full = fs_path(request.args.get("path", ""))
     if not os.path.isdir(full):
         return error("Not a folder", 404)
@@ -1673,8 +1695,9 @@ def fs_list():
 
 
 @app.route("/api/fs/read")
+@app.route("/api/site-fs/<path:root>/read")
 @app.route("/api/server-fs/read")
-def fs_read():
+def fs_read(root=None):
     full = fs_path(request.args.get("path", ""))
     if not os.path.isfile(full):
         return error("Not a file", 404)
@@ -1688,8 +1711,9 @@ def fs_read():
 
 
 @app.route("/api/fs/save", methods=["POST"])
+@app.route("/api/site-fs/<path:root>/save", methods=["POST"])
 @app.route("/api/server-fs/save", methods=["POST"])
-def fs_save():
+def fs_save(root=None):
     data = request.get_json(silent=True) or {}
     full = fs_path(data.get("path", ""))
     if os.path.isdir(full) or not os.path.isdir(os.path.dirname(full)):
@@ -1709,9 +1733,11 @@ def valid_name(name):
 
 @app.route("/api/fs/mkdir", methods=["POST"])
 @app.route("/api/fs/newfile", methods=["POST"])
+@app.route("/api/site-fs/<path:root>/mkdir", methods=["POST"])
+@app.route("/api/site-fs/<path:root>/newfile", methods=["POST"])
 @app.route("/api/server-fs/mkdir", methods=["POST"])
 @app.route("/api/server-fs/newfile", methods=["POST"])
-def fs_create():
+def fs_create(root=None):
     data = request.get_json(silent=True) or {}
     parent = fs_path(data.get("path", ""))
     name = data.get("name", "")
@@ -1729,8 +1755,9 @@ def fs_create():
 
 
 @app.route("/api/fs/rename", methods=["POST"])
+@app.route("/api/site-fs/<path:root>/rename", methods=["POST"])
 @app.route("/api/server-fs/rename", methods=["POST"])
-def fs_rename():
+def fs_rename(root=None):
     data = request.get_json(silent=True) or {}
     full = fs_path(data.get("path", ""))
     name = data.get("name", "")
@@ -1748,8 +1775,9 @@ def fs_rename():
 
 
 @app.route("/api/fs/delete", methods=["POST"])
+@app.route("/api/site-fs/<path:root>/delete", methods=["POST"])
 @app.route("/api/server-fs/delete", methods=["POST"])
-def fs_delete():
+def fs_delete(root=None):
     full = fs_path((request.get_json(silent=True) or {}).get("path", ""))
     if full == "/":
         return error("The filesystem root cannot be deleted.")
@@ -1765,8 +1793,9 @@ def fs_delete():
 
 
 @app.route("/api/fs/upload", methods=["POST"])
+@app.route("/api/site-fs/<path:root>/upload", methods=["POST"])
 @app.route("/api/server-fs/upload", methods=["POST"])
-def fs_upload():
+def fs_upload(root=None):
     parent = fs_path(request.form.get("path", ""))
     if not os.path.isdir(parent):
         return error("Not a folder")
@@ -1775,7 +1804,7 @@ def fs_upload():
         name = os.path.basename(upload.filename or "")
         if not valid_name(name):
             continue
-        target = os.path.join(parent, name)
+        target = fs_path(os.path.join(fs_relative(parent), name))
         existed = os.path.exists(target)
         upload.save(target)
         if not existed:
@@ -1785,8 +1814,9 @@ def fs_upload():
 
 
 @app.route("/api/fs/download")
+@app.route("/api/site-fs/<path:root>/download")
 @app.route("/api/server-fs/download")
-def fs_download():
+def fs_download(root=None):
     full = fs_path(request.args.get("path", ""))
     if not os.path.isfile(full):
         return error("Not a file", 404)
