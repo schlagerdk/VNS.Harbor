@@ -2240,6 +2240,8 @@ $("#form-sql-connection").onsubmit = (event) => {
 decorateSql();
 $("#settings-sql").dataset.tone = "blue";
 $("#settings-sql").prepend(svgIcon("server"));
+$("#settings-keep-alive").dataset.tone = "teal";
+$("#settings-keep-alive").prepend(svgIcon("activity"));
 
 const settingsMenu = $("#settings-menu");
 let systemUpdating = false;
