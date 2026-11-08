@@ -143,6 +143,7 @@ class CreateCommandTests(unittest.TestCase):
                    "installed_template_packages": lambda: {"custom": {"package": "Custom.Templates"}},
                    "installed_dotnet_templates": lambda: [{"short_name": name} for name in ("web", "webapi", "custom")],
                    "app": Flask(__name__), "subprocess": subprocess}
+        self.ns["default_umbraco_version"] = lambda: "18.3.1"
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "create command", "exec"), self.ns)
         self.data = dict(kind="create_site", site="example.test", binding="example.test",
                          type="csharp", csharp="empty", certificate="n")
@@ -164,6 +165,7 @@ class CreateCommandTests(unittest.TestCase):
         args = self.command(template="umbraco", version="13.16.4")
         self.assertEqual(args[4:6], ["umbraco", "13.16.4"])
         self.assertEqual(args[-2], "")
+        self.assertEqual(self.command(template="umbraco", version=" ")[5], "18.3.1")
         args = self.command(template="custom", version="2.0.0")
         self.assertEqual(args[4:6], ["empty", "2.0.0"])
         self.assertEqual(args[-3:], ["custom", "Test", "Custom.Templates"])

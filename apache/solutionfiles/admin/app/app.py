@@ -1564,6 +1564,10 @@ def build_command(data):
             if environment not in ("Development", "Test", "Staging", "Production"):
                 abort(400, "Invalid environment")
             version = version.strip()
+            if csharp == "umbraco" and not version:
+                version = default_umbraco_version()
+                if not version:
+                    abort(500, "The default Umbraco version could not be determined.")
             if legacy and csharp != "umbraco":
                 version = ""
             if csharp not in ("umbraco", "empty") or build not in ("Debug", "Release"):

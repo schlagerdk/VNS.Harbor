@@ -618,7 +618,7 @@ const scriptNames = {
 const scriptLabel = (file) => scriptNames[file] || file.replace(/\.sh$/, "").replace(/[_-]+/g, " ").replace(/^./, (c) => c.toUpperCase());
 
 function scriptSelect(site, className) {
-	const select = el("select", { className: className || "", title: "Run a script from the site's scripts folder" }, el("option", { textContent: "Run script…", value: "" }));
+	const select = el("select", { className: "script-select " + (className || ""), ariaLabel: "Run site script", title: "Run a script from the site's scripts folder" }, el("option", { textContent: "Run script…", value: "" }));
 	const groups = [["Production", (f) => f.includes("_prod")], ["Site", (f) => !f.includes("_prod")]];
 	for (const [label, test] of groups) {
 		const files = site.scripts.filter((f) => test(f) && !buttonScripts.has(f));
@@ -651,7 +651,6 @@ function renderSite(name) {
 	}
 	const actions = el("div", { className: "actions" });
 	const add = (label, handler, className) => actions.append(el("button", { textContent: label, className: className || "", onclick: () => run(handler) }));
-	if (site.scripts.some((f) => !buttonScripts.has(f))) actions.append(scriptSelect(site));
 	if (hasProd(site) && site.scripts.includes("publish_prod.sh") && ["publish_local.sh", "publish.sh"].some((file) => site.scripts.includes(file))) {
 		add("Publish both", async () => {
 			if (await ask({ title: "Publish both?", message: "Publish the test site first, then production (local or remote). Both services are restarted. If test publishing fails, production is not published.", input: false, ok: "Publish both" })) {
@@ -853,6 +852,7 @@ function envPanel(site, env) {
 			await openTask(action ? { kind: "prod_action", site: site.name, action, scope: env.key === "prod" ? "prod" : "test" } : { kind: "script", site: site.name, script: file });
 		}) }));
 	}
+	if (env.key !== "prod" && site.scripts.some((file) => !buttonScripts.has(file))) quick.append(scriptSelect(site));
 	if (env.unit || env.mode === "remote" || env.apache) {
 		const tools = el("div", { className: "actions quick" });
 		for (const [tool, label] of [["check_service", "Check service"], ["edit_service", "Edit service"], ["edit_conf", "Edit config"]]) {
@@ -1106,6 +1106,9 @@ siteForm.onsubmit = (event) => {
 			field.value = name ? match?.short_name || "umbraco" : "";
 		}
 		const data = Object.fromEntries(new FormData(siteForm));
+		if (data.type === "csharp" && data.template?.toLowerCase() === "umbraco" && !data.version?.trim()) {
+			data.version = defaultUmbracoVersion;
+		}
 		data.kind = "create_site";
 		await openTask(data);
 		dialog.close();

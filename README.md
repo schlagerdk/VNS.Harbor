@@ -24,6 +24,8 @@ The New site dialog reserves a fixed single-line area for template status messag
 
 Template selection requires an exact installed web-template short name (case-insensitive), not a partial search. Invalid selections keep the creation dialog open and show field validation without starting a terminal. The server rechecks installed web templates before launching creation. Blank still uses `web`; exact `umbraco` remains available through its dedicated package-installation flow. Template discovery failures stop creation until validation can succeed.
 
+When Umbraco is selected, a blank Version submits the displayed default version explicitly, so the creation script does not prompt again. The Run script selector is placed after Publish and Clear logs on the main environment card, with styling matching the action controls; it retains both site and production script groups.
+
 Form and confirmation modal footers consistently show Cancel as a text-only control at the far left, with primary actions on the right.
 The SQL connection footer centers Remove connection in the free space between Cancel and Save connection; on narrow screens it occupies a centered second row to avoid overlap.
 
