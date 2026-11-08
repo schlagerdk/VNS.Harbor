@@ -34,6 +34,8 @@ Script filenames may contain Unicode letters (including æøå), numbers, unders
 
 The scheduled SQL backup wrapper `sql/cron/backup_everything.sh` runs as root and prepares `/var/opt/mssql/backup` as `mssql:mssql` with mode `750`, and existing regular `.bak` files as `mssql:mssql` with mode `640`, before calling SQL. It rejects backup symlinks and leaves other files/subdirectories untouched. `BACKUP ... WITH INIT` overwrites existing backup sets; preserve imported originals elsewhere if needed. Directly executing `sql/scripts/backup_everything.sql` does not repair Linux permissions. The wrapper uses sqlcmd's `-b` option and reports completion only after a successful SQL run.
 
+The same shared permission preparation is used by the SQL installer, `sql/copy_db.sh` and `sql/restore_db.sh`. Admin backup/copy/restore operations also prepare the configured directory and the specific `.bak` file when local Linux access or SSH is available. SSH permission preparation requires root or passwordless sudo; failures stop the SQL operation. Windows and SQL-only remote connections require permissions to be configured on the SQL Server host and report this limitation explicitly. Neither path deletes backup contents while repairing ownership/permissions.
+
 `apache/init.sh` installs a site keep-alive cron job in `/etc/cron.d/vns-keep-alive`. It runs every minute and uses `/etc/vns/keep-alive.json` to control whether requests are enabled and the interval (default: 5 minutes; allowed: 1–1440). Existing settings are preserved when initialization is rerun. Change these values through **Settings → Apache → Site keep-alive**, or edit the JSON file:
 
 ```json

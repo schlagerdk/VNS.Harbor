@@ -73,8 +73,8 @@ install_server() {
 	${_sudo} /opt/mssql/bin/mssql-conf setup
 
 	echo "Create backup folder"
-	${_sudo} mkdir -p /var/opt/mssql/backup
-	${_sudo} chmod -R 757 /var/opt/mssql/backup
+	source lib/backup_permissions.sh
+	prepare_backup_permissions
 
 	${_sudo} systemctl status mssql-server --no-pager || true
 }

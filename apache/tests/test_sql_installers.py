@@ -45,6 +45,8 @@ esac
             'install_tools() { echo install_tools >> "$MOCK_LOG"; }\n')
         (self.sql / "lib/sa_password.sh").write_text(
             'sa_prompt_and_apply() { echo sa_password >> "$MOCK_LOG"; }\n')
+        (self.sql / "lib/backup_permissions.sh").write_text(
+            'prepare_backup_permissions() { echo backup_permissions >> "$MOCK_LOG"; }\n')
         (self.sql / "placeholder.sh").write_text("# '@SA_PASSWORD@'\n")
 
     def run_script(self, name, answers, packages=None, apt_fail=False):

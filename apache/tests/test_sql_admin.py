@@ -20,6 +20,31 @@ sql = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(sql)
 
 
+class BackupAccessTests(unittest.TestCase):
+    def test_local_and_ssh_preparation_use_specific_file(self):
+        for local, ssh in ((True, False), (False, True)):
+            settings = {"backup_directory": "/backup", "ssh_enabled": ssh}
+            with patch.object(sql, "local_backup_access", return_value=local), \
+                    patch.object(sql, "file_operation") as operation:
+                sql.prepare_backup_access(settings, "/backup/site.bak", write=True)
+                operation.assert_called_once_with(settings, "prepare_write", {"/backup/site.bak": []})
+
+    def test_restore_prepares_read_access(self):
+        with patch.object(sql, "local_backup_access", return_value=True), \
+                patch.object(sql, "file_operation") as operation:
+            sql.prepare_backup_access({"backup_directory": "/backup"}, "/backup/site.bak", write=False)
+        self.assertEqual(operation.call_args.args[1], "prepare_read")
+
+    def test_remote_permission_failure_stops_before_sql_backup(self):
+        settings = {"backup_directory": "/backup", "ssh_enabled": True}
+        with patch.object(sql, "local_backup_access", return_value=False), \
+                patch.object(sql, "file_operation", side_effect=RuntimeError("sudo permission denied")), \
+                patch.object(sql, "execute") as execute:
+            with self.assertRaisesRegex(RuntimeError, "sudo permission denied"):
+                sql.backup(settings, "site")
+        execute.assert_not_called()
+
+
 class SqlAdminTests(unittest.TestCase):
     def test_sqlcmd_detection_requires_executable_file_or_path_lookup(self):
         with patch.object(sql.Path, "is_file", return_value=True), \
@@ -31,6 +56,9 @@ class SqlAdminTests(unittest.TestCase):
             self.assertEqual(sql.sqlcmd_path(), "/opt/mssql-tools18/bin/sqlcmd")
 
     def setUp(self):
+        permissions = patch.object(sql, "prepare_backup_access")
+        self.prepare_permissions = permissions.start()
+        self.addCleanup(permissions.stop)
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.store = Path(self.directory.name) / "connections.json"
@@ -292,6 +320,7 @@ class SqlAdminTests(unittest.TestCase):
             with self.subTest(directory=directory), patch.object(sql, "execute") as execute:
                 settings = self.settings | {"backup_directory": directory}
                 self.assertEqual(sql.backup(settings, "test.example.dk"), expected)
+                self.prepare_permissions.assert_called_with(settings, expected, write=True)
                 query = execute.call_args.args[1]
                 self.assertIn("TO DISK=" + sql.literal(expected), query)
                 self.assertTrue(query.endswith("WITH INIT;"))

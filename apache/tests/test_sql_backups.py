@@ -1,11 +1,17 @@
 import os
+import importlib.util
 from pathlib import Path
+from types import SimpleNamespace
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
+spec = importlib.util.spec_from_file_location("backup_permissions", ROOT / "sql/lib/backup_files.py")
+permissions = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(permissions)
 
 
 class ScheduledBackupTests(unittest.TestCase):
@@ -31,7 +37,11 @@ class ScheduledBackupTests(unittest.TestCase):
             "/var/opt/mssql/backup", str(self.backups)).replace(
             "/opt/mssql-tools18/bin/sqlcmd", str(self.bin / "sqlcmd"))
         self.script = self.root / "backup.sh"
-        self.script.write_text(source)
+        (self.root / "lib").mkdir()
+        helper = (ROOT / "sql/lib/backup_permissions.sh").read_text().replace(
+            "/var/opt/mssql/backup", str(self.backups)).replace('[[ $EUID -eq 0 ]]', "true")
+        (self.root / "lib/backup_permissions.sh").write_text(helper)
+        self.script.write_text(source.replace("source ../lib/backup_permissions.sh", "source lib/backup_permissions.sh"))
 
     def run_backup(self, sql_exit=0, chown_exit=0):
         return subprocess.run(
@@ -77,3 +87,37 @@ class ScheduledBackupTests(unittest.TestCase):
         self.assertIn("must not be symbolic links", result.stderr)
         self.assertNotIn("sqlcmd", self.log.read_text())
         self.assertEqual(outside.read_text(), "original")
+
+    def test_copy_restore_and_installer_use_shared_preparation(self):
+        for name in ("copy_db.sh", "restore_db.sh", "install_server.sh"):
+            source = (ROOT / "sql" / name).read_text()
+            self.assertIn("source lib/backup_permissions.sh", source)
+            self.assertIn("prepare_backup_permissions", source)
+            self.assertNotIn("chmod -R 757", source)
+            if name != "install_server.sh":
+                self.assertLess(source.index("prepare_backup_permissions"), source.index("/opt/mssql-tools18/bin/sqlcmd"))
+
+    def test_admin_preparation_uses_restricted_files_and_preserves_data(self):
+        file = self.backups / "imported.bak"
+        file.write_bytes(b"original backup")
+        data = dict(directory=str(self.backups), operation="prepare_write",
+                    files={str(file): [], str(self.backups / "new.bak"): []})
+        account = SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid())
+        with patch.object(permissions.pwd, "getpwnam", return_value=account):
+            result = permissions.operate(data)
+        self.assertEqual(set(result), {str(file)})
+        self.assertEqual(file.read_bytes(), b"original backup")
+        self.assertEqual(file.stat().st_mode & 0o777, 0o640)
+        self.assertEqual(self.backups.stat().st_mode & 0o777, 0o750)
+
+    def test_admin_preparation_rejects_symlink(self):
+        outside = self.root / "outside.bak"
+        outside.write_bytes(b"original")
+        link = self.backups / "link.bak"
+        link.symlink_to(outside)
+        account = SimpleNamespace(pw_uid=os.getuid(), pw_gid=os.getgid())
+        with patch.object(permissions.pwd, "getpwnam", return_value=account):
+            with self.assertRaises(OSError):
+                permissions.operate(dict(directory=str(self.backups), operation="prepare_write",
+                                         files={str(link): []}))
+        self.assertEqual(outside.read_bytes(), b"original")

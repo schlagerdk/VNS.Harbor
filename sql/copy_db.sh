@@ -22,7 +22,9 @@ if [[ -z ${_newdbname} ]]; then
 fi
 
 source lib/new_login.sh
+source lib/backup_permissions.sh
 prompt_new_login_password
+prepare_backup_permissions
 
 _sqlFile=$(mktemp)
 trap 'rm -f "$_sqlFile"' EXIT

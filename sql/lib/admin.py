@@ -293,12 +293,14 @@ def backup(settings, name):
     if separator == "\\" and re.fullmatch(r"(?i)(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])", name.split(".")[0]):
         raise ValueError("Database name is a reserved Windows backup filename: " + name)
     path = settings["backup_directory"].rstrip("/\\") + separator + name + ".bak"
+    prepare_backup_access(settings, path, write=True)
     execute(settings, f"BACKUP DATABASE {identifier(name)} TO DISK={literal(path)} WITH INIT;")
     print(f"Backup complete: {name} -> {path}", flush=True)
     return path
 
 
 def restore(settings, name, path, position, overwrite):
+    prepare_backup_access(settings, path, write=False)
     files = execute(settings, f"RESTORE FILELISTONLY FROM DISK={literal(path)} WITH FILE={position};", table=True)
     lines = [line.strip() for line in files.splitlines() if line.strip()]
     if not lines or not lines[0].startswith("LogicalName|PhysicalName|Type|"):
@@ -362,6 +364,17 @@ def backup_file_access(settings):
     return local_backup_access(settings) or settings.get("ssh_enabled", False)
 
 
+def prepare_backup_access(settings, path, write):
+    if "\\" in settings["backup_directory"]:
+        print("Windows backup permissions must be configured on the SQL Server host.",
+              file=sys.stderr, flush=True)
+    elif local_backup_access(settings) or settings.get("ssh_enabled", False):
+        file_operation(settings, "prepare_write" if write else "prepare_read", {path: []})
+    else:
+        print("SQL backup file permissions cannot be prepared without local or SSH access; "
+              "the SQL Server service account must have access on its server.", file=sys.stderr, flush=True)
+
+
 def file_operation(settings, operation, files, skip_missing=False):
     data = dict(directory=settings["backup_directory"], operation=operation, files=files, skip_missing=skip_missing)
     if local_backup_access(settings):
@@ -384,7 +397,10 @@ def file_operation(settings, operation, files, skip_missing=False):
     else:
         args += ["-o", "BatchMode=yes"]
     source = Path(__file__).with_name("backup_files.py").read_text()
-    args += [config["ssh_username"] + "@" + config["ssh_host"], "python3 -c " + shlex.quote(source)]
+    command = "python3 -c " + shlex.quote(source)
+    if operation.startswith("prepare_") and config["ssh_username"] != "root":
+        command = "sudo -n " + command
+    args += [config["ssh_username"] + "@" + config["ssh_host"], command]
     result = subprocess.run(args, input=json.dumps(data), capture_output=True, text=True,
                             encoding="utf-8", env=env, timeout=60)
     if result.returncode:
@@ -398,9 +414,9 @@ def file_operation(settings, operation, files, skip_missing=False):
         for path, identity in response.items()
     ):
         raise ValueError("Invalid remote backup file response")
-    if (operation == "delete" or not skip_missing) and set(response) != set(files):
+    if operation != "prepare_write" and (operation == "delete" or not skip_missing) and set(response) != set(files):
         raise ValueError("Remote backup file operation did not confirm every file")
-    for filename in set(files) - set(response):
+    for filename in (set(files) - set(response) if operation != "prepare_write" else set()):
         print("Backup file no longer exists; skipping: " + filename, flush=True)
     return response
 
