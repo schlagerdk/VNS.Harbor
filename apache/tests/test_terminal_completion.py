@@ -62,9 +62,9 @@ class TerminalCompletionTests(unittest.TestCase):
                      "shell", "dotnet_package", "publish_both", "bulk", "sql_action"):
             self.assertTrue(auto_close({"kind": kind}), kind)
         for script in ("publish.sh", "publish_local.sh", "publish_prod.sh", "sync_prod.sh",
-                       "change_env.sh", "clear_logs.sh", "outdated.sh"):
+                       "change_env.sh", "clear_logs.sh", "outdated.sh", "custom.sh", "custom_publish.sh"):
             self.assertTrue(auto_close({"kind": "script", "script": script}), script)
-        for script in ("check_service.sh", "custom.sh", "edit_conf.sh"):
+        for script in ("check_service.sh", "edit_service.sh", "edit_conf.sh"):
             self.assertFalse(auto_close({"kind": "script", "script": script}), script)
         for kind in ("unit_tool", "remote_tool"):
             self.assertFalse(auto_close({"kind": kind, "tool": "check_service"}))
@@ -82,6 +82,13 @@ class TerminalCompletionTests(unittest.TestCase):
                      "No errors detected", "No outdated dependencies were detected",
                      "/var/log/apache2/site-error.log", "ErrorLog /var/log/apache2/example.log"):
             self.assertFalse(problem(text), text)
+
+    def test_custom_script_clean_output_allows_auto_close(self):
+        self.assertTrue(self.ns["terminal_auto_close"]({"kind": "script", "script": "custom_publish.sh"}))
+        output = "Restore complete (0.4s)\nBuild succeeded in 5.1s\nDelete bin\nDelete Umbraco schema files and App_Plugins\n"
+        self.assertFalse(self.ns["terminal_output_problem"](output))
+        for issue in ("warning: incomplete cleanup", "error: publish failed"):
+            self.assertTrue(self.ns["terminal_output_problem"](output + issue))
 
     def test_sql_tools_installation_auto_closes_only_with_clean_output(self):
         self.assertTrue(self.ns["terminal_auto_close"]({"kind": "install_sql_tools"}))

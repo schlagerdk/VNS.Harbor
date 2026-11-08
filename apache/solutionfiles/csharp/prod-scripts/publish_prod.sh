@@ -27,7 +27,7 @@ PROD_ADMIN_MAIL="@ADMIN_MAIL@"
 # ---------------------------------------------------------------------------
 
 _projectName=@PROJECT_NAME@
-_localPublish=@PUBLISH_FOLDER@   # The site's local publish folder: source of appsettings*.json and web.config on the first publish
+_localPublish=@PUBLISH_FOLDER@   # The site's local publish folder: source of appsettings*.json on the first publish
 _publishFolder=$(mktemp -d)
 _cleanup=("${_publishFolder}")
 trap 'rm -rf "${_cleanup[@]}"' EXIT
@@ -338,22 +338,21 @@ fi
 # overwritten or deleted by a publish (rsync keeps excluded paths when using --delete).
 _keep=(--exclude 'appsettings-schema*.json' --exclude 'umbraco-package-schema.json')
 if ((_exists)); then
-	_keep+=(--exclude 'appsettings*.json' --exclude 'web.config'
+	_keep+=(--exclude 'appsettings*.json'
 		--exclude '/umbraco/' --exclude '/uSync/' --exclude '/Views/' --exclude '/wwwroot/'
 		--exclude '/App_Data/' --exclude '/app_data/')
 fi
 rsync -az --delete "${_keep[@]}" ${_rsyncRemote[@]+"${_rsyncRemote[@]}"} "${_publishFolder}/" "${_dest}"
 
 if ((_exists)); then
-	echo "appsettings.json and web.config already exist in the destination - not touched"
+	echo "appsettings.json already exists in the destination - not touched"
 else
-	echo "First publish: copy appsettings*.json (without ConnectionStrings) and web.config"
+	echo "First publish: copy appsettings*.json (without ConnectionStrings)"
 	_first=$(mktemp -d)
 	_cleanup+=("${_first}")
 	# Prefer the files from the local publish folder (created by create_site.sh); fall back to the fresh build
 	for _src in "${_localPublish}" "${_publishFolder}"; do
 		cp "${_src}"/appsettings*.json "${_first}/" 2>/dev/null || true
-		[[ -f ${_src}/web.config && ! -f ${_first}/web.config ]] && cp "${_src}/web.config" "${_first}/"
 		[[ -f ${_first}/appsettings.json ]] && break
 	done
 	rm -f "${_first}"/appsettings-schema*.json

@@ -407,7 +407,7 @@ const buttonStyles = {
 	"Admin app log": ["file", "gray"], "Apache error logs": ["file", "teal"],
 	"Issue certificate": ["shield", "teal"], "Change environment": ["sliders", "purple"], "Change bindings": ["globe", "blue"],
 	"Check service": ["activity", "teal"], "Test Apache config": ["activity", "teal"], "Admin site": ["manage", "gray"],
-	"Edit service": ["pencil", "amber"], "Edit config": ["pencil", "amber"], "Edit appsettings.json": ["pencil", "amber"], "Edit web.config": ["pencil", "amber"], "Delete*": ["trash", "red"],
+	"Edit service": ["pencil", "amber"], "Edit config": ["pencil", "amber"], "Edit appsettings.json": ["pencil", "amber"], "Delete*": ["trash", "red"],
 };
 
 function svgIcon(name) {
@@ -862,7 +862,7 @@ function envPanel(site, env) {
 				: editConfiguration(site, env, tool === "edit_service" ? "service" : "conf")) }));
 		}
 		if (site.kind === "csharp" || site.kind === "umbraco") {
-			for (const filename of ["appsettings.json", "web.config"]) {
+			for (const filename of ["appsettings.json"]) {
 				if (env.mode !== "remote" && !(env.editable_configs || []).includes(filename)) continue;
 				tools.append(el("button", { textContent: "Edit " + filename, className: "small desktop-only", onclick: () => run(() =>
 					editFile(env.mode === "remote" ? filename : join(env.publish_path, filename), env.mode === "remote" ? site.name : "")) }));

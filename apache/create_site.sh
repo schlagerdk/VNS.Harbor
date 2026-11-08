@@ -261,10 +261,6 @@ create_umbraco_project() {
 	if [[ ${_createCertificate} == n ]]; then
 		configure_umbraco_https "${_publish}/appsettings.json" "${_binding}" n >/dev/null
 	fi
-	echo "Add web.config"
-	sudo cp -f "${_files}/web.config" "${_publish}/web.config"
-	sudo sed -i "s|UmbracoCoreProjectName|${_projectName}|g" "${_publish}/web.config"
-
 	if [[ ${_umbracoVersion%%.*} -ge 18 ]]; then
 		echo "Add default wwwroot, views and uSync"
 		sudo cp -rf "${_files}/wwwroot" "${_files}/Views" "${_files}/uSync" "${_publish}/"

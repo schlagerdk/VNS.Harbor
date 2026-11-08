@@ -358,7 +358,7 @@ def environment_info(key, label, unit, binding, port, path, states, **extra):
             working = os.path.realpath(match.group(1).strip().strip('"'))
             if working.startswith(WEB_ROOT + os.sep) and os.path.isdir(working):
                 info["publish_path"] = rel(working)
-                info["editable_configs"] = [filename for filename in ("appsettings.json", "web.config")
+                info["editable_configs"] = [filename for filename in ("appsettings.json",)
                                             if os.path.isfile(os.path.join(working, filename))]
                 try:
                     if info["environment"] == "Unknown":
@@ -1065,11 +1065,8 @@ def terminal_auto_close(payload):
     if kind == "apache":
         return payload.get("tool") == "restart"
     if kind == "script":
-        return payload.get("script") in {
-            "publish.sh", "publish_local.sh", "publish_prod.sh", "create_prod.sh",
-            "sync_prod.sh", "clear_logs.sh", "clear_logs_local.sh", "clear_logs_prod.sh",
-            "issue_certificat.sh", "change_env.sh", "restart_service.sh", "restart_apache.sh",
-            "fix_permissions.sh", "update_packages.sh", "set_password.sh", "outdated.sh",
+        return payload.get("script") not in {
+            "check_service.sh", "edit_service.sh", "edit_conf.sh",
         }
     return False
 
