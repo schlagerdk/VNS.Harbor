@@ -873,7 +873,7 @@ function envPanel(site, env) {
 	}
 	if (hasProd(site) && !site.admin) add(`Delete ${environmentLabel(site, env)} site`, () => deleteSite(site, env.key === "prod" ? "prod" : "test"), "danger");
 	if (!hasProd(site) && !site.admin) {
-		add("Copy site", () => copySite(site));
+		add("Copy site", () => copySite(site), "push-right");
 		add("Delete site", () => deleteSite(site, "all"), "danger");
 	}
 
