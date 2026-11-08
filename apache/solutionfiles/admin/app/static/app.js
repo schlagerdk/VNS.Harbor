@@ -405,6 +405,7 @@ const buttonStyles = {
 	"Check outdated": ["download", "amber"], "Restart": ["restart", "amber"], "Restart Apache": ["restart", "amber"],
 	"Stop": ["stop", "red"], "Clear logs": ["eraser", "gray"], "Logs": ["file", "gray"],
 	"Admin app log": ["file", "gray"], "Apache error logs": ["file", "teal"],
+	"Copy site": ["file", "blue"],
 	"Issue certificate": ["shield", "teal"], "Change environment": ["sliders", "purple"], "Change bindings": ["globe", "blue"],
 	"Check service": ["activity", "teal"], "Test Apache config": ["activity", "teal"], "Admin site": ["manage", "gray"],
 	"Edit service": ["pencil", "amber"], "Edit config": ["pencil", "amber"], "Edit appsettings.json": ["pencil", "amber"], "Delete*": ["trash", "red"],
@@ -871,7 +872,10 @@ function envPanel(site, env) {
 		extraTools = tools;
 	}
 	if (hasProd(site) && !site.admin) add(`Delete ${environmentLabel(site, env)} site`, () => deleteSite(site, env.key === "prod" ? "prod" : "test"), "danger");
-	if (!hasProd(site) && !site.admin) add("Delete site", () => deleteSite(site, "all"), "danger");
+	if (!hasProd(site) && !site.admin) {
+		add("Copy site", () => copySite(site));
+		add("Delete site", () => deleteSite(site, "all"), "danger");
+	}
 
 	const panel = el("section", { className: "env " + (env.key === "prod" ? "prod" : "") }, heading, meta);
 	if (env.exists === false) panel.append(el("p", { className: "muted", textContent: "Nothing published here yet." }));
@@ -941,6 +945,14 @@ async function changeBinding(site, scope, env) {
 	if (binding !== current || aliases.replace(/,/g, " ").trim().replace(/\s+/g, " ").toLowerCase() !== currentAliases) {
 		await openTask({ kind: "change_binding", site: site.name, binding, aliases, scope });
 	}
+}
+
+async function copySite(site) {
+	const target = await ask({ title: "Copy site", message: "New folder name. All files and database connections are copied unchanged. HTTPS sites get a new certificate.", ok: "Next" });
+	if (target === null) return;
+	const binding = await ask({ title: "Copy site binding", message: "Enter the new domain. For HTTPS, DNS must already point to this server.", value: target, ok: "Copy site" });
+	if (binding === null) return;
+	await openTask({ kind: "copy_site", site: site.name, target, binding });
 }
 
 async function deleteSite(site, scope) {

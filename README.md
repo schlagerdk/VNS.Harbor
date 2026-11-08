@@ -30,6 +30,8 @@ When Umbraco is selected, a blank Version submits the displayed default version 
 
 Custom site scripts close their admin terminal automatically when they exit with code 0 and no detected errors or warnings. No special output marker is required. Failed scripts or scripts reporting errors/warnings remain open; the built-in service-check and configuration/service-editor scripts also remain open for inspection.
 
+**Copy site** is available beside Delete site for ordinary local sites without a production target (admin sites are excluded). It asks for a new folder and binding, copies the entire folder with permissions and ownership, preserves compiled project names, rewrites deployment paths/scripts, allocates a new service port and creates a new service and Apache configuration. HTTP sites remain HTTP; HTTPS copies issue a new certificate for the new binding, which must already resolve to this server. Original aliases are not copied. Database connection strings are unchanged: no SQL database is duplicated, so the copy may share the original database. Umbraco's application URL is updated. Source files are not modified. Failures are reported and may leave an incomplete destination for inspection/cleanup. CLI: `bash apache/copy_site.sh <source> <new-folder> <new-binding>`.
+
 Form and confirmation modal footers consistently show Cancel as a text-only control at the far left, with primary actions on the right.
 The SQL connection footer centers Remove connection in the free space between Cancel and Save connection; on narrow screens it occupies a centered second row to avoid overlap.
 

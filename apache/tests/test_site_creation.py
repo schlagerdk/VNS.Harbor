@@ -7,7 +7,7 @@ import shlex
 import subprocess
 import tempfile
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from flask import Flask, abort, jsonify
 from werkzeug.exceptions import BadRequest
@@ -165,6 +165,16 @@ class CreateCommandTests(unittest.TestCase):
         self.assertEqual(self.command()[8], "_publish")
         with self.assertRaises(BadRequest):
             self.command(publish="../other")
+
+    def test_copy_command_is_allowlisted_and_rejects_production(self):
+        self.ns.update(site_arg=lambda data: "source.test", ADMIN_SITE="admin.test", WEB_ROOT="/var/www")
+        payload = {"kind": "copy_site", "site": "source.test", "target": "æøå.test", "binding": "æøå.example.test"}
+        with patch.object(os.path, "isfile", return_value=False):
+            args = self.ns["build_command"](payload)[1]
+            self.assertEqual(args[1:], [str(APACHE / "copy_site.sh"), "source.test", "æøå.test",
+                                       "xn--5cab8c.example.test"])
+        with patch.object(os.path, "isfile", return_value=True), self.assertRaisesRegex(BadRequest, "production"):
+            self.ns["build_command"](payload)
 
     def test_unified_template_defaults_to_web_and_detects_umbraco(self):
         del self.data["csharp"]

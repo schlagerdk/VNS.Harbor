@@ -1058,7 +1058,7 @@ def terminal_scope(payload):
 
 def terminal_auto_close(payload):
     kind = payload.get("kind")
-    if kind in ("shell", "create_site", "create_prod", "delete_site", "change_binding", "prod_action", "dotnet_package", "fix_permissions", "publish_both", "bulk", "update_package", "sql_action", "install_sql_tools"):
+    if kind in ("shell", "create_site", "copy_site", "create_prod", "delete_site", "change_binding", "prod_action", "dotnet_package", "fix_permissions", "publish_both", "bulk", "update_package", "sql_action", "install_sql_tools"):
         return True
     if kind == "remote_tool":
         return payload.get("tool") == "shell"
@@ -1530,6 +1530,15 @@ def build_command(data):
         if tool == "configtest":
             return "Apache config test", [bash, "-c", "clear; apache2ctl configtest"], WEB_ROOT
         abort(400, "Unknown tool")
+    if kind == "copy_site":
+        source = site_arg(data)
+        if source == ADMIN_SITE or os.path.isfile(os.path.join(WEB_ROOT, source, "scripts", "publish_prod.sh")):
+            abort(400, "Admin sites and sites with production targets cannot be copied.")
+        target = dns_name(data.get("target", ""), "site name")
+        binding = dns_name(data.get("binding", ""), "binding", fully_qualified=True)
+        if any(service_name(name) == service_name(target) for name in site_dirs()):
+            abort(400, "The destination site already exists.")
+        return "Copy site: " + source, [bash, os.path.join(APACHE_DIR, "copy_site.sh"), source, target, binding], APACHE_DIR
     if kind == "create_site":
         site = dns_name(data.get("site", ""), "site name")
         site_type = data.get("type", "")
