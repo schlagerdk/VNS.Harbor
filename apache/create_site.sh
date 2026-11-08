@@ -20,6 +20,7 @@ _umbracoVersion=${4:-}
 _projectName=${5:-}
 _binding=${6:-}
 _publishArg=${7:-}
+if [[ $# -ge 7 && -z ${_publishArg} && ${2:-} == csharp ]]; then _publishArg=.; fi
 _buildConfig=${8:-}
 _createCertificate=${9:-}
 _templateName=${10:-}

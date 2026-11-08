@@ -159,6 +159,13 @@ class CreateCommandTests(unittest.TestCase):
     def test_blank_template_preserves_default(self):
         self.assertEqual(self.command(template="  ")[-2], "")
 
+    def test_blank_publish_folder_means_site_root(self):
+        for value in ("", " ", "."):
+            self.assertEqual(self.command(publish=value)[8], ".")
+        self.assertEqual(self.command()[8], "_publish")
+        with self.assertRaises(BadRequest):
+            self.command(publish="../other")
+
     def test_unified_template_defaults_to_web_and_detects_umbraco(self):
         del self.data["csharp"]
         self.assertEqual(self.command(template="")[4:6], ["empty", ""])
@@ -424,6 +431,22 @@ sudo() {
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("<dotnet> <new> <web> <--name> <Example> <--output> <.>", result.stdout)
         self.assertIsNone(sdk)
+
+    def test_root_publish_reaches_creation_and_service(self):
+        result, _ = self.run_creation(extra="""
+_publishArg=.
+install_service() { echo "destination:${_docRoot}"; }
+""")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("<-p:PublishDir=.>", result.stdout)
+        self.assertIn("/./wwwroot", result.stdout)
+
+    def test_root_publish_is_not_excluded_from_project_build(self):
+        result = subprocess.run(
+            ["bash", "-c", 'source "$1/lib/common.sh"; validate_publish_folder .; exclude_from_build /missing.csproj .',
+             "test", str(APACHE)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, "")
 
     def test_custom_template_runs_in_site_folder(self):
         result, _ = self.run_creation(template="webapi",

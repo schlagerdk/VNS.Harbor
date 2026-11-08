@@ -233,12 +233,13 @@ validate_project_name() {
 }
 
 validate_publish_folder() {
+	[[ $1 != . ]] || return 0
 	if [[ ! $1 =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]]; then
 		echo "Invalid publish folder. Use a single folder name with letters, numbers, dots, hyphens or underscores." >&2
 		return 1
 	fi
 	case "${1,,}" in
-		bin | obj | wwwroot | views | usync | scripts | properties | umbraco | app_plugins | .)
+		bin | obj | wwwroot | views | usync | scripts | properties | umbraco | app_plugins)
 			echo "Publish folder name '$1' is reserved." >&2
 			return 1
 			;;
@@ -248,6 +249,7 @@ validate_publish_folder() {
 # Exclude a publish folder from the project's build globs. Usage: exclude_from_build <csproj> <folder>. Safe to repeat.
 exclude_from_build() {
 	local _csproj=$1 _folder=$2
+	[[ ${_folder} != . ]] || return 0
 	if grep -qF "Compile Remove=\"${_folder}/**\"" "${_csproj}"; then
 		return 0
 	fi

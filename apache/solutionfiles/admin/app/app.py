@@ -1555,7 +1555,10 @@ def build_command(data):
             project = data.get("project") or service_name(site)
             if project == data.get("site"):
                 project = service_name(site)
-            publish = data.get("publish") or "_publish"
+            publish = data.get("publish", "_publish")
+            if not isinstance(publish, str):
+                abort(400, "Invalid publish folder")
+            publish = publish.strip() or "."
             build = data.get("build") or "Debug"
             environment = data.get("environment") or ("Production" if build == "Release" else "Test")
             if environment not in ("Development", "Test", "Staging", "Production"):
@@ -1569,7 +1572,7 @@ def build_command(data):
                 version = ""
             if csharp not in ("umbraco", "empty") or build not in ("Debug", "Release"):
                 abort(400, "Invalid C# options")
-            if not PROJECT_RE.match(project) or not FOLDER_RE.match(publish):
+            if not PROJECT_RE.match(project) or (publish != "." and not FOLDER_RE.fullmatch(publish)):
                 abort(400, "Invalid project name or publish folder")
             if version and not VERSION_RE.fullmatch(version):
                 abort(400, "Invalid template version")

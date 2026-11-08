@@ -22,6 +22,8 @@ The file editor, file browser and log dialogs share the same responsive outer di
 
 The New site dialog reserves a fixed single-line area for template status messages (two lines on mobile), preventing layout shifts after templates load or the selected template changes. Longer errors remain scrollable within that area.
 
+Local publish folder is prefilled with `_publish`. Clearing it explicitly publishes into the site's own root (`.`), including subsequent local publishes, instead of restoring the default. An omitted CLI argument still prompts with `_publish`; an explicitly empty seventh argument or `.` selects the root. Root publishing mixes source and output and may overwrite settings/content; use a separate publish folder when source/output separation is needed. Root publishing does not add build exclusions for the entire project.
+
 Template selection requires an exact installed web-template short name (case-insensitive), not a partial search. Invalid selections keep the creation dialog open and show field validation without starting a terminal. The server rechecks installed web templates before launching creation. Blank still uses `web`; exact `umbraco` remains available through its dedicated package-installation flow. Template discovery failures stop creation until validation can succeed.
 
 When Umbraco is selected, a blank Version submits the displayed default version explicitly, so the creation script does not prompt again. The Run script selector is placed after Publish and Clear logs on the main environment card, with styling matching the action controls; it retains both site and production script groups.
