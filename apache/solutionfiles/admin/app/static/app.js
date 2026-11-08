@@ -3,6 +3,28 @@
 const csrf = document.querySelector("meta[name=csrf]").content;
 const $ = (selector) => document.querySelector(selector);
 
+let backgroundScrollPosition = null;
+function syncModalScrollLock() {
+	const locked = !!document.querySelector("dialog[open], #dock:not([hidden])");
+	if (locked && backgroundScrollPosition === null) {
+		backgroundScrollPosition = { x: window.scrollX, y: window.scrollY };
+		document.body.style.setProperty("--modal-scroll-top", `${-backgroundScrollPosition.y}px`);
+		document.body.style.setProperty("--modal-scroll-left", `${-backgroundScrollPosition.x}px`);
+		document.documentElement.classList.add("modal-scroll-locked");
+	} else if (!locked && backgroundScrollPosition !== null) {
+		const position = backgroundScrollPosition;
+		backgroundScrollPosition = null;
+		document.documentElement.classList.remove("modal-scroll-locked");
+		document.body.style.removeProperty("--modal-scroll-top");
+		document.body.style.removeProperty("--modal-scroll-left");
+		window.scrollTo(position.x, position.y);
+	}
+}
+new MutationObserver(syncModalScrollLock).observe(document.body, {
+	subtree: true, attributes: true, attributeFilter: ["open", "hidden"],
+});
+syncModalScrollLock();
+
 // Elements are always built with textContent, so file and site names can never inject HTML
 function el(tag, props, ...children) {
 	const node = document.createElement(tag);
