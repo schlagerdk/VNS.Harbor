@@ -819,7 +819,7 @@ def api_dotnet_templates():
     if root:
         env["DOTNET_ROOT"] = root
     try:
-        result = subprocess.run(["dotnet", "new", "list"], capture_output=True, text=True,
+        result = subprocess.run(["dotnet", "new", "list", "--type", "project"], capture_output=True, text=True,
                                 timeout=60, env=env)
         if result.returncode:
             app.logger.error("dotnet new list failed: %s", result.stderr or result.stdout)

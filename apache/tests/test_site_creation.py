@@ -54,7 +54,7 @@ class DotnetTemplateTests(unittest.TestCase):
                          dict(name="ASP.NET Core Empty", short_name="web",
                                             language="[C#],F#", tags="Web/Empty"))
         args, kwargs = self.runner.call_args
-        self.assertEqual(args[0], ["dotnet", "new", "list"])
+        self.assertEqual(args[0], ["dotnet", "new", "list", "--type", "project"])
         self.assertEqual(kwargs["env"]["HOME"], "/root")
         self.assertEqual(kwargs["env"]["DOTNET_ROOT"], "/usr/share/dotnet")
         self.assertEqual(kwargs["env"]["DOTNET_CLI_UI_LANGUAGE"], "en-US")
