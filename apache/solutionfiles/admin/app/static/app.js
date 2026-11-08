@@ -803,7 +803,7 @@ function envPanel(site, env) {
 	if (site.kind === "csharp" || site.kind === "umbraco") {
 		meta.append(el("dt", { textContent: "Datasource" }), el("dd", {
 			className: "database-name",
-			textContent: (env.database || "Unknown") + (env.database_server ? ` (${env.database_server})` : ""),
+			textContent: (env.database || "Unknown") + (env.database_server ? ` (${env.database_server.replace(/^\.(?=$|[\\,])/, "localhost")})` : ""),
 			title: "Inferred from database configuration; connection and server edition are not tested.",
 		}));
 		if (env.database_name) meta.append(el("dt", { textContent: "Database" }), el("dd", {
@@ -960,17 +960,33 @@ async function copySite(site) {
 	const dialog = $("#dlg-copy-site");
 	const form = $("#form-copy-site");
 	form.reset();
+	$("#copy-site-icon").replaceChildren(svgIcon("file"));
 	const field = (name) => form.elements.namedItem(name);
+	const hasSqlConnection = site.environments.some((env) =>
+		env.key !== "prod" && ["MS SQL", "SQL Express", "Azure SQL"].includes(env.database));
+	field("change_connection").closest("label").hidden = !hasSqlConnection;
+	field("change_connection").disabled = !hasSqlConnection;
 	const sqlFields = $("#copy-sql-fields");
 	sqlFields.hidden = true;
 	sqlFields.disabled = true;
 	let databaseEdited = false;
 	let bindingEdited = false;
+	let usernameEdited = false;
+	const suggestUsername = () => {
+		if (!usernameEdited) field("username").value = field("database").value;
+	};
 	field("target").oninput = () => {
-		if (!databaseEdited) field("database").value = field("target").value;
+		if (!databaseEdited) {
+			field("database").value = field("target").value;
+			suggestUsername();
+		}
 		if (!bindingEdited) field("binding").value = field("target").value;
 	};
-	field("database").oninput = () => { databaseEdited = true; };
+	field("database").oninput = () => {
+		databaseEdited = true;
+		suggestUsername();
+	};
+	field("username").oninput = () => { usernameEdited = true; };
 	field("binding").oninput = () => { bindingEdited = true; };
 	field("change_connection").onchange = () => {
 		sqlFields.hidden = !field("change_connection").checked;
@@ -986,7 +1002,7 @@ async function copySite(site) {
 			try {
 				const payload = { kind: "copy_site", site: site.name,
 					target: field("target").value.trim(), binding: field("binding").value.trim() };
-				if (field("change_connection").checked) {
+				if (hasSqlConnection && field("change_connection").checked) {
 					payload.connection = { server: field("server").value.trim(), database: field("database").value.trim(),
 						username: field("username").value.trim(), password: field("password").value };
 				}

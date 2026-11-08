@@ -264,17 +264,25 @@
 
 <dialog id="dlg-copy-site" class="newsite">
   <form id="form-copy-site">
-    <h2>Copy site</h2>
-    <p class="hint">All files are copied. HTTPS requires DNS for the new binding to point to this server.</p>
-    <label>New folder<input name="target" required autocomplete="off"></label>
-    <label>Binding<input name="binding" required autocomplete="off"></label>
-    <label class="sql-trust-certificate"><input name="change_connection" type="checkbox">Change SQL connection strings</label>
+    <header class="ns-head">
+      <span class="ns-icon" id="copy-site-icon" aria-hidden="true"></span>
+      <div><h2>Copy site</h2><p>Copy files, service and Apache configuration.</p></div>
+    </header>
+    <div class="ns-grid">
+      <label>New folder<input name="target" required autocomplete="off" placeholder="copy.example.com"></label>
+      <label>Binding<input name="binding" required autocomplete="off" placeholder="copy.example.com"></label>
+    </div>
+    <p class="hint copy-dns-hint">For HTTPS, the new binding must point to this server.</p>
+    <label class="copy-connection-toggle"><input name="change_connection" type="checkbox" aria-controls="copy-sql-fields"><span>Change SQL connection strings</span></label>
     <fieldset id="copy-sql-fields" hidden disabled>
+      <legend>SQL connection</legend>
       <p class="hint">The database and login must already exist. No SQL database or login is created.</p>
-      <label>Server<input name="server" value="." required autocomplete="off"></label>
-      <label>Database<input name="database" required maxlength="128" autocomplete="off"></label>
-      <label>Username<input name="username" required autocomplete="off"></label>
-      <label>Password<input name="password" type="password" required autocomplete="new-password"></label>
+      <div class="ns-grid">
+        <label>Server<input name="server" value="localhost" required autocomplete="off"></label>
+        <label>Database<input name="database" required maxlength="128" autocomplete="off"></label>
+        <label>Username<input name="username" required autocomplete="off"></label>
+        <label>Password<input name="password" type="password" required autocomplete="new-password"></label>
+      </div>
     </fieldset>
     <menu><li class="cancel-action"><button type="button" id="copy-site-cancel" class="cancel-link">Cancel</button></li><li><button type="submit" class="primary">Copy site</button></li></menu>
   </form>
