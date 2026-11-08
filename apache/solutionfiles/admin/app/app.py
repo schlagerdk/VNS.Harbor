@@ -835,7 +835,14 @@ def dotnet_template_output(arguments):
 
 
 def installed_dotnet_templates():
-    return parse_dotnet_templates(dotnet_template_output(["list", "--type", "project"]))
+    templates = parse_dotnet_templates(dotnet_template_output(
+        ["list", "--type", "project", "--language", "C#", "--tag", "Web"]))
+    return [template for template in templates
+            if "web" in template["tags"].casefold().split("/")
+            and "C#" in template["language"]
+            and not re.search(r"\b(?:library|worker|test|desktop|extension|plugin)\b",
+                              template["tags"], re.I)
+            and template["short_name"] not in ("blazorwasm", "blazorwasm-empty")]
 
 
 def parse_template_packages(output):

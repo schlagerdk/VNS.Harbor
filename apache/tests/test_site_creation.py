@@ -39,8 +39,14 @@ class DotnetTemplateTests(unittest.TestCase):
             ("ASP.NET Core Empty", "web", "[C#],F#", "Web/Empty"),
             ("ASP.NET Core Web API", "webapi", "[C#],F#", "Web/WebAPI"),
             ("Console App", "console", "[C#],F#,VB", "Common/Console"),
-            ("Custom Template", "custom,alias", "C#", "Custom"),
+            ("Custom Template", "custom,alias", "C#", "Web/Custom"),
             ("dotnet gitignore file", "gitignore,.gitignore", "", "Config"),
+            ("Razor Class Library", "razorclasslib", "C#", "Web/Razor/Library"),
+            ("Worker Service", "worker", "C#", "Common/Worker/Web"),
+            ("Test Project", "mstest", "C#", "Test/Desktop/Web"),
+            ("Umbraco Extension", "umbraco-extension", "C#", "Web/CMS/Extension/Plugin"),
+            ("Blazor Standalone", "blazorwasm", "C#", "Web/Blazor/WebAssembly"),
+            ("Blazor Web App", "blazor", "C#", "Web/Blazor/WebAssembly"),
         ]
         self.output = "Installed templates:\n\n" + "\n".join(
             "  ".join(value.ljust(width) for value, width in zip(row, columns)).rstrip() for row in rows) + "\n"
@@ -59,7 +65,7 @@ class DotnetTemplateTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         templates = response.json["templates"]
         self.assertEqual([item["short_name"] for item in templates],
-                         [".gitignore", "alias", "console", "custom", "gitignore", "web", "webapi"])
+                         ["alias", "blazor", "custom", "web", "webapi"])
         self.assertEqual(next(item for item in templates if item["short_name"] == "web"),
                          dict(name="ASP.NET Core Empty", short_name="web",
                                             language="[C#],F#", tags="Web/Empty"))
@@ -67,7 +73,7 @@ class DotnetTemplateTests(unittest.TestCase):
         self.assertEqual(custom["package"], "Custom.Templates")
         self.assertEqual(custom["installed_version"], "2.0.0")
         args, kwargs = self.runner.call_args_list[0]
-        self.assertEqual(args[0], ["dotnet", "new", "list", "--type", "project"])
+        self.assertEqual(args[0], ["dotnet", "new", "list", "--type", "project", "--language", "C#", "--tag", "Web"])
         self.assertEqual(kwargs["env"]["HOME"], "/root")
         self.assertEqual(kwargs["env"]["DOTNET_ROOT"], "/usr/share/dotnet")
         self.assertEqual(kwargs["env"]["DOTNET_CLI_UI_LANGUAGE"], "en-US")
@@ -78,7 +84,8 @@ class DotnetTemplateTests(unittest.TestCase):
         output = self.output.replace("custom,alias", "Zulu,Alpha  ").replace("console", "beta   ")
         templates = self.ns["parse_dotnet_templates"](output)
         self.assertEqual([item["short_name"] for item in templates],
-                         [".gitignore", "Alpha", "beta", "gitignore", "web", "webapi", "Zulu"])
+                         [".gitignore", "Alpha", "beta", "blazor", "blazorwasm", "gitignore", "mstest",
+                          "razorclasslib", "umbraco-extension", "web", "webapi", "worker", "Zulu"])
 
     def test_failures_are_reported_instead_of_empty_success(self):
         for result in (Mock(returncode=1, stdout="", stderr="SDK missing"),
