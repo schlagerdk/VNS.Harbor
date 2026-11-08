@@ -337,12 +337,14 @@ dialog.editor[open] { display: flex; }
 dialog.editor .toolbar { margin-bottom: 10px; }
 dialog.editor textarea { flex: 1; min-height: 0; width: 100%; resize: none; font: 13px/1.5 ui-monospace, Menlo, Consolas, monospace; tab-size: 4; }
 dialog.wide { width: min(1000px, 94vw); }
-dialog.editor, dialog.files-dialog { width: min(1100px, 94vw); height: min(740px, 86vh); }
+dialog.editor, dialog.files-dialog, #dlg-logs { width: min(1100px, 94vw); height: min(740px, 86vh); }
+#dlg-logs { padding: 18px; flex-direction: column; }
+#dlg-logs[open] { display: flex; }
 dialog.files-dialog { padding: 18px; }
 .files-dialog #view-files { display: flex; flex-direction: column; height: 100%; }
 .files-heading h2 { margin: 0; font-size: 18px; }
 .files-dialog #drop { flex: 1; min-height: 0; overflow: auto; }
-#logs-text { max-height: 60vh; overflow: auto; background: #000; padding: 10px; border-radius: 6px; font: 12px/1.4 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; }
+#logs-text { flex: 1; min-height: 0; overflow: auto; background: #000; padding: 10px; border-radius: 6px; font: 12px/1.4 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; }
 @media (max-width: 800px) { .page-header #search { min-width: 0; flex: 1; } .brand h1, .brand .host { display: none; } .envs { grid-template-columns: 1fr; } }
 @media (max-width: 800px) {
 	.env .desktop-only, .env .actions:not(:has(> button:not(.desktop-only))) { display: none; }
@@ -410,7 +412,7 @@ button.primary[data-tone] { background: #238636; border-color: #2ea043; color: #
 dialog.editor #editor-box { flex: 1; min-height: 0; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
 
 /* New site dialog */
-dialog.newsite { width: min(640px, 94vw); padding: 0; overflow: hidden; }
+dialog.newsite { width: min(640px, 94vw); max-height: 90vh; max-height: 90dvh; padding: 0; overflow-y: auto; }
 dialog.newsite form { padding: 0 24px 20px; }
 .ns-head { display: flex; align-items: center; gap: 14px; margin: 0 -24px 18px; padding: 20px 24px; background: linear-gradient(135deg, rgba(88,101,242,.35), rgba(139,92,246,.22)); border-bottom: 1px solid var(--line); }
 .ns-head h2 { margin: 0; font-size: 20px; }

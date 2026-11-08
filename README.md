@@ -18,7 +18,7 @@ The NuGet packages panel shows checked installed and available versions, with an
 
 The Packages group's first action, **Check**, runs `dotnet list package --outdated` on each selected project without modifying packages and saves the result for the site's Updates available badge. A successful check with no updates clears that badge; failed checks record an error instead.
 
-The file editor and file-browser dialogs share the same responsive outer dimensions, so opening an editor above the browser does not change window size.
+The file editor, file browser and log dialogs share the same responsive outer dimensions. Logs scroll inside the dialog while Refresh and Close remain visible. New site and production setup dialogs scroll within the available viewport height on mobile and short screens.
 
 The New site dialog reserves a fixed single-line area for template status messages (two lines on mobile), preventing layout shifts after templates load or the selected template changes. Longer errors remain scrollable within that area.
 
