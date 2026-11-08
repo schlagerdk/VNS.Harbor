@@ -957,20 +957,47 @@ async function changeBinding(site, scope, env) {
 }
 
 async function copySite(site) {
-	const target = await ask({ title: "Copy site", message: "New folder name. All files are copied. HTTPS sites get a new certificate.", ok: "Next" });
-	if (target === null) return;
-	const binding = await ask({ title: "Copy site binding", message: "Enter the new domain. For HTTPS, DNS must already point to this server.", value: target, ok: "Next",
-		checkbox: "Change SQL database name in connection strings" });
-	if (binding === null) return;
-	let database = "";
-	if (binding.checked) {
-		database = await ask({ title: "Copied site database", message: "The database must already exist. SQL server and login are preserved; no database is copied.", value: target, ok: "Copy site" });
-		if (database === null) return;
-		if (!database.trim() || database.length > 128 || /[;\u0000\r\n"']/.test(database)) {
-			throw new Error("Enter a database name of 1–128 characters without quotes, semicolons or line breaks.");
-		}
-	}
-	await openTask({ kind: "copy_site", site: site.name, target, binding: binding.value, database });
+	const dialog = $("#dlg-copy-site");
+	const form = $("#form-copy-site");
+	form.reset();
+	const field = (name) => form.elements.namedItem(name);
+	const sqlFields = $("#copy-sql-fields");
+	sqlFields.hidden = true;
+	sqlFields.disabled = true;
+	let databaseEdited = false;
+	let bindingEdited = false;
+	field("target").oninput = () => {
+		if (!databaseEdited) field("database").value = field("target").value;
+		if (!bindingEdited) field("binding").value = field("target").value;
+	};
+	field("database").oninput = () => { databaseEdited = true; };
+	field("binding").oninput = () => { bindingEdited = true; };
+	field("change_connection").onchange = () => {
+		sqlFields.hidden = !field("change_connection").checked;
+		sqlFields.disabled = !field("change_connection").checked;
+	};
+	$("#copy-site-cancel").onclick = () => dialog.close();
+	dialog.onclose = () => form.reset();
+	form.onsubmit = (event) => {
+		event.preventDefault();
+		run(async () => {
+			const submit = form.querySelector('[type="submit"]');
+			submit.disabled = true;
+			try {
+				const payload = { kind: "copy_site", site: site.name,
+					target: field("target").value.trim(), binding: field("binding").value.trim() };
+				if (field("change_connection").checked) {
+					payload.connection = { server: field("server").value.trim(), database: field("database").value.trim(),
+						username: field("username").value.trim(), password: field("password").value };
+				}
+				await openTask(payload);
+				dialog.close();
+			} finally {
+				submit.disabled = false;
+			}
+		});
+	};
+	dialog.showModal();
 }
 
 async function deleteSite(site, scope) {

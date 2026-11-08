@@ -20,6 +20,8 @@ if grep -qiE '^[[:space:]]*SSLEngine[[:space:]]+on' "/etc/apache2/sites-availabl
 _databaseArgs=()
 if [[ -n ${4:-} ]]; then _databaseArgs=(--database "$4"); fi
 python3 lib/copy_site.py "${_source}" "${_site}" "${_binding}" "${_portHttp}" "${_databaseArgs[@]}"
+_changedConnection=${VNS_COPY_SQL:+y}
+unset VNS_COPY_SQL
 mkdir -p "/var/lib/vns-roots/${_site}"
 if ((_https)); then
 	_final=$(mktemp)
@@ -42,8 +44,8 @@ if [[ -f ${_servicePath} ]]; then
 fi
 systemctl reload apache2
 echo "Site copied: ${_source} -> ${_site} (${_binding})"
-if [[ -n ${4:-} ]]; then
-	echo "SQL database names were updated. The database must already exist; no database was duplicated."
+if [[ -n ${4:-} || -n ${_changedConnection} ]]; then
+	echo "SQL connections were updated. The database and login must already exist; neither was created."
 else
 	echo "Database connections were copied unchanged; no database was duplicated."
 fi

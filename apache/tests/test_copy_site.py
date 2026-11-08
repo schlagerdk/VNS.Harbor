@@ -111,3 +111,34 @@ class CopySiteTests(unittest.TestCase):
             copy_site.prepare("source.test", "target.test", "new.example.test", "4002",
                               self.web, self.configs, self.services, database="bad;name")
         self.assertFalse((self.web / "target.test").exists())
+
+    def test_full_connection_change_quotes_values_and_preserves_options(self):
+        original = 'Data Source=old;Initial Catalog=old;UID=old;PWD=old;Integrated Security=True;Encrypt=True'
+        settings = {"server": "tcp:sql.test,1433", "database": "new.test",
+                    "username": "newuser", "password": 'semi;quote"value'}
+        updated = copy_site.change_connection(original, settings)
+        self.assertIn('PWD="semi;quote""value"', updated)
+        self.assertIn('Data Source="tcp:sql.test,1433"', updated)
+        self.assertIn("Integrated Security=False", updated)
+        self.assertIn("Encrypt=True", updated)
+        self.assertNotIn("UID=old", updated)
+
+    def test_full_connection_changes_copy_not_source(self):
+        original = (self.source / "appsettings.json").read_bytes()
+        settings = {"server": "sql.test", "database": "new.test",
+                    "username": "newuser", "password": "newpassword"}
+        copy_site.prepare("source.test", "target.test", "new.example.test", "4002",
+                          self.web, self.configs, self.services, connection=settings)
+        data = json.loads((self.web / "target.test/appsettings.json").read_text())
+        connection = data["ConnectionStrings"]["db"]
+        self.assertIn('Server="sql.test"', connection)
+        self.assertIn('User ID="newuser"', connection)
+        self.assertIn('Password="newpassword"', connection)
+        self.assertEqual((self.source / "appsettings.json").read_bytes(), original)
+
+    def test_missing_connection_field_rejected_before_copy(self):
+        with self.assertRaises(ValueError):
+            copy_site.prepare("source.test", "target.test", "new.example.test", "4002",
+                              self.web, self.configs, self.services,
+                              connection={"server": ".", "database": "new", "username": "user"})
+        self.assertFalse((self.web / "target.test").exists())

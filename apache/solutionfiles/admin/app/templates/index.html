@@ -262,6 +262,24 @@
   </form>
 </dialog>
 
+<dialog id="dlg-copy-site" class="newsite">
+  <form id="form-copy-site">
+    <h2>Copy site</h2>
+    <p class="hint">All files are copied. HTTPS requires DNS for the new binding to point to this server.</p>
+    <label>New folder<input name="target" required autocomplete="off"></label>
+    <label>Binding<input name="binding" required autocomplete="off"></label>
+    <label class="sql-trust-certificate"><input name="change_connection" type="checkbox">Change SQL connection strings</label>
+    <fieldset id="copy-sql-fields" hidden disabled>
+      <p class="hint">The database and login must already exist. No SQL database or login is created.</p>
+      <label>Server<input name="server" value="." required autocomplete="off"></label>
+      <label>Database<input name="database" required maxlength="128" autocomplete="off"></label>
+      <label>Username<input name="username" required autocomplete="off"></label>
+      <label>Password<input name="password" type="password" required autocomplete="new-password"></label>
+    </fieldset>
+    <menu><li class="cancel-action"><button type="button" id="copy-site-cancel" class="cancel-link">Cancel</button></li><li><button type="submit" class="primary">Copy site</button></li></menu>
+  </form>
+</dialog>
+
 <dialog id="dlg-site" class="newsite">
   <form method="dialog" id="form-site">
     <header class="ns-head">

@@ -1562,6 +1562,14 @@ def build_command(data):
         database = data.get("database", "")
         if not isinstance(database, str) or len(database) > 128 or any(char in database for char in "\0\r\n;\"'"):
             abort(400, "Invalid database name")
+        connection = data.get("connection")
+        if connection is not None:
+            if not isinstance(connection, dict) or set(connection) != {"server", "database", "username", "password"}:
+                abort(400, "Enter SQL server, database, username and password.")
+            for key, value in connection.items():
+                if not isinstance(value, str) or not value.strip() or len(value) > (128 if key == "database" else 4096) or any(
+                        char in value for char in "\0\r\n"):
+                    abort(400, "Invalid SQL connection field: " + key)
         argv = [bash, os.path.join(APACHE_DIR, "copy_site.sh"), source, target, binding]
         if database.strip():
             argv.append(database.strip())
@@ -1722,6 +1730,8 @@ def api_term():
     extra_env = production_setup_env(payload, payload.get("site", "")) if payload.get("kind") == "create_prod" else None
     if payload.get("kind") == "sql_action" and payload.get("login") is not None:
         extra_env = {"VNS_SQL_LOGIN_PASSWORD": payload["login_password"]}
+    if payload.get("kind") == "copy_site" and payload.get("connection") is not None:
+        extra_env = {"VNS_COPY_SQL": json.dumps(payload["connection"])}
     if payload.get("kind") == "create_prod":
         argv = ["/bin/bash", render_create_prod_script(payload["site"])]
     with SESSIONS_LOCK:
