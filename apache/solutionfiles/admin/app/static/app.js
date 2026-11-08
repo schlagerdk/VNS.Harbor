@@ -1037,39 +1037,53 @@ profileForm.onsubmit = (event) => {
 const dialog = $("#dlg-site");
 const siteForm = $("#form-site");
 let templateRequest = null;
+let dotnetTemplates = [];
+function syncTemplateVersion() {
+	const name = siteForm.elements.template.value.trim();
+	const umbraco = name.toLowerCase() === "umbraco";
+	const template = dotnetTemplates.find((item) => item.short_name === name);
+	siteForm.version.placeholder = umbraco ? defaultUmbracoVersion : template?.installed_version || "Installed template version";
+	if (!templateRequest) $("#template-status").textContent = umbraco
+		? "Umbraco setup includes uSync, VNS.Umbraco and managed configuration."
+		: "Default: web. Version installs the selected NuGet template package; SDK templates use the installed SDK.";
+}
 async function loadDotnetTemplates() {
 	if (templateRequest) return templateRequest;
 	$("#template-status").textContent = "Loading installed templates…";
 	templateRequest = (async () => {
+		let loaded = false;
 		try {
 			const data = await api("/api/dotnet/templates");
+			dotnetTemplates = data.templates;
 			$("#dotnet-templates").replaceChildren(...data.templates.map((template) =>
 				el("option", { value: template.short_name, label: `${template.name} · ${template.language} · ${template.tags}` })));
-			$("#template-status").textContent = "Default: web. Choose a template that creates a runnable C# project.";
+			$("#template-status").textContent = "Default: web. Version installs the selected NuGet template package; SDK templates use the installed SDK.";
+			loaded = true;
 		} catch (error) {
 			$("#template-status").textContent = "Could not load templates. Enter a short name manually (default: web).";
 			throw error;
 		} finally {
 			templateRequest = null;
+			if (loaded) syncTemplateVersion();
 		}
 	})();
 	return templateRequest;
 }
 function syncSiteForm() {
 	const csharp = siteForm.type.value === "csharp";
-	const umbraco = siteForm.csharp.value === "umbraco";
 	$("#csharp-options").hidden = !csharp;
-	$("#umbraco-version-option").hidden = !umbraco;
-	$("#template-name-option").hidden = umbraco;
-	$("#template-status").hidden = !csharp || umbraco;
-	siteForm.version.disabled = !csharp || !umbraco;
-	siteForm.elements.template.disabled = !csharp || umbraco;
-	if (csharp && !umbraco) run(loadDotnetTemplates);
+	$("#template-name-option").hidden = !csharp;
+	$("#template-status").hidden = !csharp;
+	siteForm.version.disabled = !csharp;
+	siteForm.elements.template.disabled = !csharp;
+	syncTemplateVersion();
+	if (csharp) run(loadDotnetTemplates);
 }
-siteForm.addEventListener("change", (event) => { if (["type", "csharp"].includes(event.target.name)) syncSiteForm(); });
+siteForm.addEventListener("change", (event) => { if (event.target.name === "type") syncSiteForm(); });
+siteForm.elements.template.oninput = syncTemplateVersion;
 siteForm.site.oninput = () => { if (!siteForm.binding.dataset.edited) siteForm.binding.value = siteForm.site.value; };
 siteForm.binding.oninput = () => { siteForm.binding.dataset.edited = "1"; };
-$("#btn-new-site").onclick = () => { siteForm.reset(); siteForm.version.value = defaultUmbracoVersion; delete siteForm.binding.dataset.edited; syncSiteForm(); dialog.showModal(); siteForm.site.focus(); };
+$("#btn-new-site").onclick = () => { siteForm.reset(); delete siteForm.binding.dataset.edited; syncSiteForm(); dialog.showModal(); siteForm.site.focus(); };
 $("#btn-empty-new-site").onclick = () => $("#btn-new-site").click();
 $("#site-cancel").onclick = (e) => { e.preventDefault(); dialog.close(); };
 siteForm.onsubmit = () => {

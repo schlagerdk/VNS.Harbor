@@ -28,7 +28,9 @@ class DotnetTemplateTests(unittest.TestCase):
                        dotnet_root_dir=lambda: "/usr/share/dotnet",
                        error=lambda message, status: (jsonify(error=message), status))
         nodes = [node for node in ast.parse((APP / "app.py").read_text()).body
-                 if isinstance(node, ast.FunctionDef) and node.name in ("parse_dotnet_templates", "api_dotnet_templates")]
+                 if isinstance(node, ast.FunctionDef) and node.name in (
+                     "parse_dotnet_templates", "api_dotnet_templates", "dotnet_template_output",
+                     "installed_dotnet_templates", "parse_template_packages", "installed_template_packages")]
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "dotnet templates", "exec"), self.ns)
         columns = (42, 20, 18, 30)
         rows = [
@@ -44,7 +46,15 @@ class DotnetTemplateTests(unittest.TestCase):
             "  ".join(value.ljust(width) for value, width in zip(row, columns)).rstrip() for row in rows) + "\n"
 
     def test_lists_installed_templates_and_aliases(self):
-        self.runner.return_value = Mock(returncode=0, stdout=self.output)
+        package_output = """Currently installed items:
+   Custom.Templates
+      Version: 2.0.0
+      Templates:
+         Custom Template (custom,alias) C#
+      Uninstall Command:
+         dotnet new uninstall Custom.Templates
+"""
+        self.runner.side_effect = [Mock(returncode=0, stdout=self.output), Mock(returncode=0, stdout=package_output)]
         response = self.app.test_client().get("/api/dotnet/templates")
         self.assertEqual(response.status_code, 200)
         templates = response.json["templates"]
@@ -53,12 +63,16 @@ class DotnetTemplateTests(unittest.TestCase):
         self.assertEqual(next(item for item in templates if item["short_name"] == "web"),
                          dict(name="ASP.NET Core Empty", short_name="web",
                                             language="[C#],F#", tags="Web/Empty"))
-        args, kwargs = self.runner.call_args
+        custom = next(item for item in templates if item["short_name"] == "custom")
+        self.assertEqual(custom["package"], "Custom.Templates")
+        self.assertEqual(custom["installed_version"], "2.0.0")
+        args, kwargs = self.runner.call_args_list[0]
         self.assertEqual(args[0], ["dotnet", "new", "list", "--type", "project"])
         self.assertEqual(kwargs["env"]["HOME"], "/root")
         self.assertEqual(kwargs["env"]["DOTNET_ROOT"], "/usr/share/dotnet")
         self.assertEqual(kwargs["env"]["DOTNET_CLI_UI_LANGUAGE"], "en-US")
         self.assertEqual(kwargs["timeout"], 60)
+        self.assertEqual(self.runner.call_args_list[1].args[0], ["dotnet", "new", "uninstall"])
 
     def test_short_names_sort_alphabetically_ignoring_case(self):
         output = self.output.replace("custom,alias", "Zulu,Alpha  ").replace("console", "beta   ")
@@ -84,6 +98,24 @@ class DotnetTemplateTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             parser("\n".join(self.output.splitlines()[:4]))
 
+    def test_template_package_parser_rejects_ambiguous_ownership(self):
+        parser = self.ns["parse_template_packages"]
+        output = """Currently installed items:
+   One.Templates
+      Version: 1.0.0
+      Templates:
+         Project (custom) C#
+      Uninstall Command:
+         dotnet new uninstall One.Templates
+
+   Two.Templates
+      Version: 2.0.0
+      Templates:
+         Project (custom) C#
+"""
+        with self.assertRaisesRegex(ValueError, "Multiple installed packages"):
+            parser(output)
+
 
 def shell_function(name):
     return re.search(r"^" + name + r"\(\) \{.*?^\}", CREATE, re.M | re.S).group()
@@ -96,11 +128,13 @@ class CreateCommandTests(unittest.TestCase):
                  isinstance(node, ast.FunctionDef) and node.name in ("build_command", "dns_name") or
                  isinstance(node, ast.Assign) and any(
                      isinstance(target, ast.Name) and target.id in
-                     ("NAME_RE", "BINDING_RE", "PROJECT_RE", "FOLDER_RE", "VERSION_RE")
+                     ("NAME_RE", "BINDING_RE", "PROJECT_RE", "FOLDER_RE", "VERSION_RE", "PACKAGE_RE")
                      for target in node.targets)]
         self.ns = {"re": re, "os": os, "abort": abort, "APACHE_DIR": str(APACHE),
                    "site_dirs": lambda: [], "_normalize_dns_name": normalize_dns_name,
-                   "_normalize_site_name": normalize_site_name, "service_name": service_name}
+                   "_normalize_site_name": normalize_site_name, "service_name": service_name,
+                   "installed_template_packages": lambda: {"custom": {"package": "Custom.Templates"}},
+                   "app": Flask(__name__), "subprocess": subprocess}
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "create command", "exec"), self.ns)
         self.data = dict(kind="create_site", site="example.test", binding="example.test",
                          type="csharp", csharp="empty", certificate="n")
@@ -115,6 +149,23 @@ class CreateCommandTests(unittest.TestCase):
 
     def test_blank_template_preserves_default(self):
         self.assertEqual(self.command(template="  ")[-2], "")
+
+    def test_unified_template_defaults_to_web_and_detects_umbraco(self):
+        del self.data["csharp"]
+        self.assertEqual(self.command(template="")[4:6], ["empty", ""])
+        args = self.command(template="umbraco", version="13.16.4")
+        self.assertEqual(args[4:6], ["umbraco", "13.16.4"])
+        self.assertEqual(args[-2], "")
+        args = self.command(template="custom", version="2.0.0")
+        self.assertEqual(args[4:6], ["empty", "2.0.0"])
+        self.assertEqual(args[-3:], ["custom", "Test", "Custom.Templates"])
+        with self.assertRaisesRegex(BadRequest, "SDK templates"):
+            self.command(template="web", version="2.0.0")
+        with self.assertRaises(BadRequest):
+            self.command(template="custom", version="--invalid")
+        for changes in (dict(template=42), dict(template="custom", version=42)):
+            with self.assertRaises(BadRequest):
+                self.command(**changes)
 
     def test_umbraco_ignores_hidden_template(self):
         self.assertEqual(self.command(csharp="umbraco", version="13.3.2", template="bad name")[-2], "")
@@ -297,7 +348,9 @@ class CreateScriptTests(unittest.TestCase):
                 if site_type == "csharp":
                     self.assertIn("project=xn--5cab8c.dk", result.stdout)
 
-    def run_creation(self, kind="empty", version="18.3.1", template="", extra=""):
+    def run_creation(self, kind="empty", version=None, template="", extra=""):
+        if version is None:
+            version = "18.3.1" if kind == "umbraco" else ""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "_publish").mkdir()
@@ -313,6 +366,7 @@ _publishArg=_publish
 _buildConfig=Debug
 _createCertificate=n
 _templateProvided=y
+_templatePackageArg=""
 _dotNetVersion=net10.0
 _defaultUmbracoVersion=18.3.1
 _defaultUmbraco13Version=13.16.4
@@ -367,6 +421,17 @@ sudo() {
         self.assertIn("Invalid template name", result.stderr)
         self.assertNotIn("sudo:", result.stdout)
 
+    def test_template_package_version_installs_before_project_creation(self):
+        result, _ = self.run_creation(template="custom", version="2.0.0",
+                                      extra='_templatePackageArg="Custom.Templates"')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        install = "<dotnet> <new> <install> <Custom.Templates@2.0.0> <--force>"
+        create = "<dotnet> <new> <custom> <--name>"
+        self.assertLess(result.stdout.index(install), result.stdout.index(create))
+        result, _ = self.run_creation(template="web", version="2.0.0")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("NuGet template package", result.stderr)
+        self.assertNotIn("sudo:", result.stdout)
     def test_umbraco13_uses_sdk_and_target_net8(self):
         for version in ("13", "13.3.2", "13.12.0"):
             with self.subTest(version=version):

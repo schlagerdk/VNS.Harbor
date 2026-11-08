@@ -1,5 +1,5 @@
 #!/bin/bash
-# Usage: create_site.sh [folder] [html|python|csharp] [umbraco|empty] [umbraco-version] [project-name] [binding] [publish-folder] [Debug|Release] [y|n certificate] [template-name] [Development|Test|Staging|Production]
+# Usage: create_site.sh [folder] [html|python|csharp] [umbraco|empty] [template-version] [project-name] [binding] [publish-folder] [Debug|Release] [y|n certificate] [template-name] [Development|Test|Staging|Production] [NuGet-template-package]
 set -euo pipefail
 cd "$(dirname "$0")"
 source lib/common.sh
@@ -24,6 +24,7 @@ _buildConfig=${8:-}
 _createCertificate=${9:-}
 _templateName=${10:-}
 _environmentArg=${11:-}
+_templatePackageArg=${12:-}
 _templateProvided=n
 [[ $# -lt 10 ]] || _templateProvided=y
 ask _createCertificate "Create an HTTPS certificate? (y/n)" y
@@ -148,6 +149,15 @@ create_csharp() {
 		if [[ ! ${_templateName} =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
 			echo "Invalid template name. Use letters, numbers, dots, hyphens or underscores." >&2
 			exit 1
+		fi
+		if [[ -n ${_umbracoVersion} ]]; then
+			if [[ ! ${_umbracoVersion} =~ ^[0-9][A-Za-z0-9.+-]*$ ]] ||
+				[[ ! ${_templatePackageArg} =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+				echo "A template version requires a valid NuGet template package (argument 12) and version." >&2
+				exit 1
+			fi
+			echo "Install template package: ${_templatePackageArg}@${_umbracoVersion}"
+			sudo dotnet new install "${_templatePackageArg}@${_umbracoVersion}" --force
 		fi
 	fi
 

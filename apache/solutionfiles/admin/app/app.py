@@ -813,21 +813,64 @@ def parse_dotnet_templates(output):
 
 @app.route("/api/dotnet/templates")
 def api_dotnet_templates():
+    try:
+        templates = installed_dotnet_templates()
+        packages = installed_template_packages()
+        return jsonify(templates=[template | packages.get(template["short_name"], {}) for template in templates])
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        app.logger.error("Could not list .NET templates: %s", exc)
+        return error("Could not load installed .NET templates. Check the .NET SDK and server logs.", 502)
+
+
+def dotnet_template_output(arguments):
     env = dict(os.environ, HOME="/root", DOTNET_CLI_UI_LANGUAGE="en-US",
                LANG="C.UTF-8", DOTNET_NOLOGO="1", TERM="dumb")
     root = dotnet_root_dir()
     if root:
         env["DOTNET_ROOT"] = root
-    try:
-        result = subprocess.run(["dotnet", "new", "list", "--type", "project"], capture_output=True, text=True,
-                                timeout=60, env=env)
-        if result.returncode:
-            app.logger.error("dotnet new list failed: %s", result.stderr or result.stdout)
-            return error("Could not list .NET templates. Check that the .NET SDK is installed.", 502)
-        return jsonify(templates=parse_dotnet_templates(result.stdout))
-    except (OSError, subprocess.SubprocessError, ValueError) as exc:
-        app.logger.error("Could not list .NET templates: %s", exc)
-        return error("Could not load installed .NET templates. Check the .NET SDK and server logs.", 502)
+    result = subprocess.run(["dotnet", "new", *arguments], capture_output=True, text=True, timeout=60, env=env)
+    if result.returncode:
+        raise ValueError((result.stderr or result.stdout).strip() or "dotnet template command failed")
+    return result.stdout
+
+
+def installed_dotnet_templates():
+    return parse_dotnet_templates(dotnet_template_output(["list", "--type", "project"]))
+
+
+def parse_template_packages(output):
+    packages = {}
+    package = ""
+    version = ""
+    in_templates = False
+    for line in output.splitlines():
+        if not line.strip():
+            continue
+        if re.fullmatch(r"   \S.*", line):
+            package = line.strip()
+            version = ""
+            in_templates = False
+        elif line.strip().startswith("Version:"):
+            version = line.strip().removeprefix("Version:").strip()
+        elif line.strip() == "Templates:":
+            in_templates = True
+        elif line.strip().endswith(":"):
+            in_templates = False
+        elif in_templates:
+            match = re.search(r"\(([^()]+)\)(?:\s+.*)?$", line.strip())
+            if not match:
+                raise ValueError("Could not parse installed template package entries.")
+            for short_name in match.group(1).split(","):
+                short_name = short_name.strip()
+                details = {"package": package, "installed_version": version}
+                if short_name in packages and packages[short_name] != details:
+                    raise ValueError("Multiple installed packages provide template: " + short_name)
+                packages[short_name] = details
+    return packages
+
+
+def installed_template_packages():
+    return parse_template_packages(dotnet_template_output(["uninstall"]))
 
 
 @app.route("/api/sites")
@@ -1496,7 +1539,15 @@ def build_command(data):
             abort(400, "Invalid certificate option")
         args = [site, site_type, "", "", "", binding, "", "", certificate]
         if site_type == "csharp":
-            csharp = data.get("csharp") or "umbraco"
+            legacy = "csharp" in data
+            template = data.get("template") or ""
+            version = data.get("version") or ""
+            if not isinstance(template, str) or not isinstance(version, str):
+                abort(400, "Invalid template name or version")
+            template = template.strip()
+            csharp = (data.get("csharp") or "umbraco") if legacy else ("umbraco" if template.lower() == "umbraco" else "empty")
+            if csharp == "umbraco":
+                template = ""
             project = data.get("project") or service_name(site)
             if project == data.get("site"):
                 project = service_name(site)
@@ -1505,17 +1556,30 @@ def build_command(data):
             environment = data.get("environment") or ("Production" if build == "Release" else "Test")
             if environment not in ("Development", "Test", "Staging", "Production"):
                 abort(400, "Invalid environment")
-            version = data.get("version") or ""
-            template = (data.get("template") or "").strip() if csharp == "empty" else ""
+            version = version.strip()
+            if legacy and csharp != "umbraco":
+                version = ""
             if csharp not in ("umbraco", "empty") or build not in ("Debug", "Release"):
                 abort(400, "Invalid C# options")
             if not PROJECT_RE.match(project) or not FOLDER_RE.match(publish):
                 abort(400, "Invalid project name or publish folder")
-            if csharp == "umbraco" and version and not VERSION_RE.match(version):
-                abort(400, "Invalid Umbraco version")
+            if version and not VERSION_RE.fullmatch(version):
+                abort(400, "Invalid template version")
             if template and not PROJECT_RE.fullmatch(template):
                 abort(400, "Invalid template name")
-            args = [site, site_type, csharp, version if csharp == "umbraco" else "", project, binding, publish, build, certificate, template, environment]
+            package = ""
+            if csharp == "empty" and version:
+                try:
+                    metadata = installed_template_packages().get(template or "web", {})
+                except (OSError, subprocess.SubprocessError, ValueError) as exc:
+                    app.logger.error("Could not resolve template package: %s", exc)
+                    abort(502, "Could not resolve the installed template package. Check server logs.")
+                package = metadata.get("package", "")
+                if not package or not PACKAGE_RE.fullmatch(package):
+                    abort(400, "A version requires a template from an installed NuGet template package. SDK templates use the installed SDK version.")
+            args = [site, site_type, csharp, version, project, binding, publish, build, certificate, template, environment]
+            if package:
+                args.append(package)
         return "Create: " + site, [bash, os.path.join(APACHE_DIR, "create_site.sh"), *args], APACHE_DIR
     if kind == "fix_permissions":
         site = site_arg(data)
