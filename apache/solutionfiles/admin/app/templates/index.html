@@ -120,26 +120,40 @@
         <span class="ns-icon" data-header-icon="server" aria-hidden="true"></span>
         <div><h2 id="sql-connection-title">Add SQL connection</h2><p>Configure SQL Server access and optional backup file access.</p></div>
       </header>
-      <label>Name <input name="name" required maxlength="100" placeholder="Local SQL Server"></label>
-      <label>Hostname / IP <input name="host" required value="localhost"></label>
-      <label>Port <input name="port" type="number" min="1" max="65535" required value="1433"></label>
-      <label>SQL username <input name="username" required autocomplete="off" value="sa"></label>
-      <label>Password <input name="password" type="password" required autocomplete="new-password"></label>
-      <p id="sql-password-help" class="hint" hidden>Leave the password blank to keep the saved password.</p>
+      <div class="ns-section">SQL Server</div>
+      <label>Connection name <input name="name" required maxlength="100" placeholder="Local SQL Server"></label>
+      <div class="ns-grid">
+        <label>Hostname / IP <input name="host" required value="localhost"></label>
+        <label>Port <input name="port" type="number" min="1" max="65535" required value="1433"></label>
+      </div>
+      <div class="ns-section">SQL credentials</div>
+      <div class="ns-grid">
+        <label>SQL username <input name="username" required autocomplete="off" value="sa"></label>
+        <label>Password <input name="password" type="password" required autocomplete="new-password" aria-describedby="sql-password-help"><span id="sql-password-help" class="hint" hidden>Leave blank to keep the saved password.</span></label>
+      </div>
+      <div class="ns-section">Backups</div>
       <label>Backup directory on SQL server <input name="backup_directory" required value="/var/opt/mssql/backup"></label>
-      <label class="sql-trust-certificate"><input name="trust_certificate" type="checkbox" aria-describedby="sql-trust-help"><span>Trust server certificate</span></label>
-      <p id="sql-trust-help" class="hint">Skip certificate validation only for a server you trust, such as one using a self-signed certificate.</p>
-      <label class="sql-trust-certificate"><input name="ssh_enabled" type="checkbox"><span>Linux SSH access for backup files</span></label>
+      <div class="ns-section">Connection options</div>
+      <label class="sql-option">
+        <input name="trust_certificate" type="checkbox" aria-describedby="sql-trust-help">
+        <span><strong>Trust server certificate</strong><span id="sql-trust-help" class="hint">Skip certificate validation only for a trusted server using a self-signed certificate.</span></span>
+      </label>
+      <label class="sql-option">
+        <input name="ssh_enabled" type="checkbox" aria-controls="sql-ssh-fields" aria-describedby="sql-ssh-help">
+        <span><strong>Linux SSH access for backup files</strong><span id="sql-ssh-help" class="hint">Manage backup files on the SQL host through SSH. Configure server access below.</span></span>
+      </label>
       <fieldset id="sql-ssh-fields" hidden disabled>
         <legend>Linux server access</legend>
         <p class="hint">Use the same Linux server that hosts this SQL instance. The SSH user must be able to read and delete files in the backup directory; sudo is not used. Python 3 is required on the Linux server.</p>
-        <label>SSH hostname / IP <input name="ssh_host" readonly autocomplete="off"></label>
-        <label>SSH port <input name="ssh_port" type="number" min="1" max="65535" value="22" required></label>
-        <label>SSH username <input name="ssh_username" required autocomplete="off"></label>
-        <label>SSH password <input name="ssh_password" type="password" autocomplete="new-password"></label>
+        <div class="ns-grid">
+          <label>SSH hostname / IP <input name="ssh_host" readonly autocomplete="off"></label>
+          <label>SSH port <input name="ssh_port" type="number" min="1" max="65535" value="22" required></label>
+          <label>SSH username <input name="ssh_username" required autocomplete="off"></label>
+          <label>SSH password <input name="ssh_password" type="password" autocomplete="new-password"></label>
+        </div>
         <p class="hint">Like production setup: an empty password uses the admin server's SSH key. During editing, leave blank to keep a saved password; disable SSH access and save to remove its credentials. First connection accepts a new host key; changed keys are rejected.</p>
       </fieldset>
-      <p class="hint">Saved on the admin server in a root-only file. The login needs database and backup administration privileges. sqlcmd must be installed on the admin server.</p>
+      <p class="hint sql-connection-note">Credentials are stored in a root-only file on the admin server. The SQL login needs database and backup administration privileges; sqlcmd must be installed.</p>
       <menu><button id="sql-connection-cancel" type="button" class="cancel-link">Cancel</button><button id="sql-remove-connection" type="button" class="danger" tabindex="-1" hidden>Remove connection</button><button type="submit" class="primary">Save connection</button></menu>
     </form>
   </dialog>
