@@ -902,6 +902,15 @@ def dotnet_root_dir():
 DEFAULT_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 
+def terminal_activity_sites(payload):
+    kind = payload.get("kind")
+    if kind == "shell" or (kind == "remote_tool" and payload.get("tool") == "shell"):
+        return []
+    if kind == "bulk":
+        return payload.get("sites", [])
+    return [payload["site"]] if payload.get("site") else []
+
+
 def terminal_scope(payload):
     kind = payload.get("kind")
     if kind == "publish_both" or (kind == "bulk" and payload.get("action") == "both"):
@@ -1522,7 +1531,7 @@ def api_term():
             return error("Too many running terminals. Close some first.")
         try:
             update_root = os.path.join(WEB_ROOT, payload["site"]) if payload.get("kind") == "script" and payload.get("script") == "outdated.sh" and glob.glob(os.path.join(WEB_ROOT, payload["site"], "*.csproj")) else None
-            sites = payload.get("sites", []) if payload.get("kind") == "bulk" else [payload["site"]] if payload.get("site") else []
+            sites = terminal_activity_sites(payload)
             session_obj = TermSession(title, argv, cwd, extra_env, auto_close=terminal_auto_close(payload), update_root=update_root, sites=sites, scope=terminal_scope(payload))
         except Exception:
             if payload.get("kind") == "create_prod":

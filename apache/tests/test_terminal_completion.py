@@ -14,12 +14,27 @@ APP = Path(__file__).resolve().parents[1] / "solutionfiles/admin/app"
 
 class TerminalCompletionTests(unittest.TestCase):
     def setUp(self):
-        names = {"terminal_scope", "terminal_auto_close", "terminal_output_problem", "TermSession", "describe"}
+        names = {"terminal_activity_sites", "terminal_scope", "terminal_auto_close", "terminal_output_problem", "TermSession", "describe"}
         nodes = [node for node in ast.parse((APP / "app.py").read_text()).body
                  if isinstance(node, (ast.FunctionDef, ast.ClassDef)) and node.name in names]
         self.ns = {"re": re, "codecs": codecs, "BUFFER_MAX": 1024, "REMOTE_STATUS": {},
                    "os": SimpleNamespace(read=Mock())}
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "terminal completion", "exec"), self.ns)
+
+    def test_open_shells_do_not_mark_sites_as_working(self):
+        activity = self.ns["terminal_activity_sites"]
+        for payload in (
+            {"kind": "shell", "site": "example.test"},
+            {"kind": "remote_tool", "tool": "shell", "site": "example.test"},
+            {"kind": "shell", "server": True},
+        ):
+            self.assertEqual(activity(payload), [])
+        for kind in ("fix_permissions", "script", "change_binding", "prod_action"):
+            self.assertEqual(activity({"kind": kind, "site": "example.test"}), ["example.test"])
+        self.assertEqual(activity({"kind": "remote_tool", "tool": "check_service", "site": "example.test"}),
+                         ["example.test"])
+        self.assertEqual(activity({"kind": "bulk", "sites": ["one.test", "two.test"]}),
+                         ["one.test", "two.test"])
 
     def test_activity_scope_matches_target_environment(self):
         scope = self.ns["terminal_scope"]
