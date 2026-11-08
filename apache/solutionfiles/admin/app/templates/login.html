@@ -4,19 +4,30 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>Admin login</title>
+<title>Sign in · VNS Server admin</title>
+<link rel="icon" href="/static/vns-logo.webp" type="image/webp">
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body class="login">
-<form method="post" action="/login" class="card">
-  <div class="card-head"><h1>Server admin</h1><p>Sign in to continue</p></div>
+<main class="login-shell">
+  <form method="post" action="/login" class="card login-card">
+  <header class="login-heading">
+    <img class="login-logo" src="/static/vns-logo.webp" width="128" height="91" alt="VNS - vital new software">
+    <div class="login-brand-name">VNS / SERVER ADMIN</div>
+    <h1>Your server. Under control.</h1>
+    <p>Sites, services and databases. One workspace.</p>
+  </header>
   <div class="card-body">
+    <h2>Welcome back</h2>
+    <p class="login-intro">Sign in to manage your server.</p>
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <label>Username <input name="username" autocomplete="username" autofocus required></label>
     <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
-    {% if error %}<p class="error">{{ error }}</p>{% endif %}
+    {% if error %}<p class="error login-error" role="alert">{{ error }}</p>{% endif %}
     <button type="submit" class="primary wide">Log in</button>
   </div>
-</form>
+  </form>
+  <p class="login-footer">VNS Linux <span aria-hidden="true">/</span> Server administration</p>
+</main>
 </body>
 </html>
