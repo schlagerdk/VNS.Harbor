@@ -117,6 +117,7 @@ main { padding: 20px 24px; max-width: 1600px; margin: 0 auto; }
 .badge.html { background: #e34f26; color: #fff; }
 .badge.admin { background: var(--purple); color: #fff; }
 .badge.state-active { background: rgba(63, 185, 80, .2); color: var(--green); }
+.badge.env-missing { background: rgba(248, 81, 73, .18); color: #f85149; }
 .badge.publish-pending { background: rgba(210, 153, 34, .2); color: #d29922; }
 .badge.updates-available { background: rgba(210, 153, 34, .2); color: #d29922; }
 .badge.updates-error { background: rgba(248, 81, 73, .2); color: var(--red); }
@@ -551,6 +552,7 @@ a.btn-link .ico { width: 13px; height: 13px; flex: none; }
 .site-link-group.compact a.btn-link span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .site-link-group.compact a.btn-link svg { flex-shrink: 0; }
 .site-link-group.compact a.btn-link { min-width: 0; }
+.site-link-group.compact a.btn-link.backend { flex-shrink: 0; }
 .site-link-group.compact .badge { flex-shrink: 0; }
 .site-link-group.compact a.btn-link { padding: 3px 8px; font-size: 12px; }
 .site-link-more { padding: 7px 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }

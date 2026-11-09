@@ -1099,7 +1099,7 @@ class RemoteEnvironmentTests(AdoptSiteTests):
 
     def setUp(self):
         super().setUp()
-        for script in ("register_env.sh", "copy_env.sh"):
+        for script in ("register_env.sh", "copy_env.sh", "sync_env.sh"):
             text = (APACHE / script).read_text()
             (self.apache / script).write_text(re.sub(r"(?m)^\[\[ \$EUID -eq 0 \]\] \|\| exec sudo .*$", "", text))
         adopt = self.apache / "adopt_site.sh"
@@ -1161,6 +1161,30 @@ class RemoteEnvironmentTests(AdoptSiteTests):
 
     def environment(self):
         self.assertEqual(self.register().returncode, 0)
+
+    def sync_all(self, **env):
+        self.environment()
+        executable(self.scripts / "targets/staging/sync_prod.sh", f'#!/bin/bash\necho SYNCED >>"{self.log}"\n')
+        return subprocess.run([BASH, str(self.apache / "sync_env.sh"), "dev.example.test", "main", "all"], capture_output=True, text=True, env=self.env | env)
+
+    def test_sync_reaches_a_site_that_exists(self):
+        result = self.sync_all()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("SYNCED", self.log.read_text())
+
+    def test_sync_skips_a_site_that_was_deleted_on_the_server(self):
+        self.environment()
+        executable(self.scripts / "targets/staging/sync_prod.sh", f'#!/bin/bash\necho SYNCED >>"{self.log}"\n')
+        shutil.rmtree(self.remote / "www/copy.example.test")
+        result = subprocess.run([BASH, str(self.apache / "sync_env.sh"), "dev.example.test", "main", "all"], capture_output=True, text=True, env=self.env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("SKIPPED (the site no longer exists", result.stdout)
+        self.assertNotIn("SYNCED", self.log.read_text())
+
+    def test_unreachable_server_is_not_treated_as_a_deleted_site(self):
+        result = self.sync_all(FAKE_SSH_FAILS="1")
+        self.assertNotIn("SKIPPED", result.stdout)
+        self.assertIn("SYNCED", self.log.read_text(), "The sync script reports the connection problem itself")
 
     def test_move_out_changes_nothing_when_the_server_cannot_be_reached(self):
         self.environment()

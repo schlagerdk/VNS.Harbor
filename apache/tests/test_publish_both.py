@@ -99,6 +99,7 @@ let allSites = [], sitesLoaded = true, confirmed = false, tasks = [], prompts = 
 const buttonScripts = new Set(["publish_local.sh", "publish.sh", "publish_prod.sh"]);
 const hasProd = site => site.prod;
 const isTarget = env => env.key !== "main";
+const isMissingEnv = () => false;
 const targetFields = () => ({});
 const sortedEnvironments = environments => environments;
 const siteLabel = site => site.display_name || site.name;

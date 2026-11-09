@@ -48,7 +48,7 @@ console.log(JSON.stringify(sortedEnvironments(input).map((env) => env.environmen
 
     def test_move_out_is_a_choice_in_the_move_dialog(self):
         source = (APP / "static/app.js").read_text()
-        self.assertNotIn('if (env.separate) add("Move out"', source)
+        self.assertNotIn('add("Move out"', source)
         self.assertIn('value: "release", textContent: "Separate site (move out)"', source)
         self.assertIn('kind: "release_site"', source)
 
@@ -71,12 +71,12 @@ console.log(JSON.stringify(sortedEnvironments(input).map((env) => env.environmen
 
     def test_binding_is_the_heading_and_the_overview_button(self):
         source = (APP / "static/app.js").read_text()
-        self.assertIn('if (isTarget(env)) heading.prepend(el("h3", { className: "env-title" }, binding));', source)
-        self.assertIn('if (!isTarget(env)) meta.append(el("dt", { textContent: "Binding" }), el("dd", {}, binding));', source)
+        self.assertIn('if (isTarget(env)) heading.prepend(el("h3", { className: "env-title", textContent: bindingLabel(env) || address.hostname }));', source)
+        self.assertIn('const meta = el("dl", { className: "meta" }, el("dt", { textContent: "Binding" }), el("dd", {}, binding));', source)
         self.assertIn(".env-head .publish-status { flex-basis: auto; }", (APP / "static/style.css").read_text())
         row = source[source.index("function compactEnvironmentRow"):source.index("function siteCard(")]
         self.assertIn("openLink(bindingLabel(env) || address.hostname, address.url", row)
-        self.assertNotIn("Backend", row)
+        self.assertIn('openLink("Backend", address.url + "umbraco"', row)
 
     def test_add_is_on_the_left_and_publish_and_sync_on_the_right(self):
         page = (APP / "templates/index.html").read_text()
@@ -85,6 +85,21 @@ console.log(JSON.stringify(sortedEnvironments(input).map((env) => env.environmen
         self.assertIn('targetsAdd.append(el("button", { textContent: "Add environment"', source)
         # More specific than the rule that resets the margin of .site-targets-head .actions
         self.assertIn(".site-targets-head .actions.site-targets-right { margin-left: auto; }", (APP / "static/style.css").read_text())
+
+    def test_copy_dialog_shows_the_destination(self):
+        self.assertIn('id="copy-site-path"', (APP / "templates/index.html").read_text())
+        self.assertIn('`Copied to ${copyServer ? copyServer + ":" : ""}/var/www/${name}`', (APP / "static/app.js").read_text())
+
+    def test_site_deleted_on_its_server_is_shown_and_only_publish_and_delete_remain(self):
+        source = (APP / "static/app.js").read_text()
+        self.assertIn('const isMissingEnv = (env) => env.mode === "remote" && env.exists === false;', source)
+        self.assertIn('if (missing && label !== "Publish") continue;', source)
+        start = source.index("const isMissingEnv")
+        code = source[start:source.index("\n", start)]
+        result = subprocess.run(["node", "-e", code + """
+console.log(JSON.stringify([isMissingEnv({mode: "remote", exists: false}), isMissingEnv({mode: "remote"}),
+    isMissingEnv({mode: "remote", exists: true}), isMissingEnv({mode: "local", exists: false})]));"""], capture_output=True, text=True, check=True)
+        self.assertEqual(json.loads(result.stdout), [True, False, False, False])
 
     def test_layout_and_wording(self):
         page = (APP / "templates/index.html").read_text()

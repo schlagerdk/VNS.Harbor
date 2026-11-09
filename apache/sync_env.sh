@@ -75,12 +75,25 @@ if [[ ${_from} != main ]]; then
 	pull_environment "${_from}"
 fi
 
+# True only when the server answers that the folder is gone. An unreachable server fails in the sync instead.
+destination_missing() (
+	export VNS_TARGET=$1
+	load_prod_settings
+	[[ -z ${PROD_LOCAL_PATH} && ${PROD_TARGET} != windows ]] || exit 1
+	prod_exec "test -d $(printf %q "${_root}")"
+	[[ $? -eq 1 ]]
+)
+
 _failed=0
 for _id in "${_destinations[@]}"; do
 	_script=${_siteRoot}/scripts/targets/${_id}/sync_prod.sh
 	[[ ${_id} != prod ]] || _script=${_siteRoot}/scripts/sync_prod.sh
 	if [[ ! -f ${_script} ]]; then
 		echo "${_id}: SKIPPED (no sync script)"
+		continue
+	fi
+	if destination_missing "${_id}"; then
+		echo "${_id}: SKIPPED (the site no longer exists on the server)"
 		continue
 	fi
 	echo

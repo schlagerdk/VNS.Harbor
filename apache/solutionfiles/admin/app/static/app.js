@@ -591,6 +591,8 @@ function httpsLock(secure) {
 }
 
 const isRemoteEnv = (env) => env.mode === "remote" || env.mode === "windows";
+// The server answered, and the site's folder is gone. Without an answer, exists is not set.
+const isMissingEnv = (env) => env.mode === "remote" && env.exists === false;
 
 function remoteIcon(env) {
 	return el("span", { className: "remote-icon", title: "Remote server: " + env.host, ariaLabel: "Remote server: " + env.host }, svgIcon("server"));
@@ -609,7 +611,7 @@ function publishBadge(env) {
 
 const maxCardEnvironments = 4;
 
-// One line: the environment, and a button with the binding that opens the site
+// One line: the environment, a button with the binding that opens the site, and the backoffice
 function compactEnvironmentRow(site, env, environment) {
 	const row = el("div", { className: "site-link-group compact" + (isTarget(env) ? " production" : ""), role: "group", ariaLabel: environment + " · " + (bindingLabel(env) || siteLabel(site)) });
 	const address = environmentAddress(env);
@@ -618,11 +620,18 @@ function compactEnvironmentRow(site, env, environment) {
 		el("span", { className: "badge env-" + environment.toLowerCase(), textContent: environment }));
 	if (isRemoteEnv(env)) head.append(remoteIcon(env));
 	row.append(head);
-	if (env.publish_status === "pending") row.append(publishBadge(env));
+	if (isMissingEnv(env)) row.append(el("span", { className: "badge env-missing", textContent: "Not found on server", title: `The site no longer exists on ${env.host}.` }));
+	else if (env.publish_status === "pending") row.append(publishBadge(env));
 	if (address.url) {
 		const frontend = openLink(bindingLabel(env) || address.hostname, address.url, environment + ": " + address.title, true);
 		frontend.classList.add("frontend");
-		row.append(el("div", { className: "site-environment-links" }, frontend));
+		const links = el("div", { className: "site-environment-links" }, frontend);
+		if (site.kind === "umbraco") {
+			const backend = openLink("Backend", address.url + "umbraco", environment + " backoffice: " + address.title, true);
+			backend.classList.add("backend");
+			links.append(backend);
+		}
+		row.append(links);
 	} else {
 		row.append(el("span", { className: "muted", textContent: "No binding" }));
 	}
@@ -851,7 +860,7 @@ function renderSite(name) {
 			}
 		}
 	}
-	const syncTargets = site.environments.filter((env) => isTarget(env) && (env.scripts || []).includes("sync_prod.sh"));
+	const syncTargets = site.environments.filter((env) => isTarget(env) && !isMissingEnv(env) && (env.scripts || []).includes("sync_prod.sh"));
 	if (syncTargets.length) {
 		targetsActions.append(el("button", { textContent: "Sync to all", title: "Sync from the main site to every environment", onclick: () => run(async () => {
 			const names = syncTargets.map((env) => `${env.environment || env.target}: ${bindingLabel(env) || env.host || ""}`).join("\n");
@@ -984,6 +993,7 @@ function quickActions(env) {
 }
 
 function envPanel(site, env) {
+	const missing = isMissingEnv(env);
 	const dot = env.unit ? env.state || "unknown" : "";
 	const heading = el("div", { className: "env-head" },
 		siteActivity(site, isTarget(env) ? "prod" : "main"),
@@ -993,8 +1003,9 @@ function envPanel(site, env) {
 	if (environment) heading.append(el("span", { className: "badge env-" + environment.toLowerCase(), textContent: environment }));
 	heading.append(httpsLock(env.https));
 	if (isRemoteEnv(env)) heading.append(remoteIcon(env));
+	if (missing) heading.append(el("span", { className: "badge env-missing", textContent: "Not found on server" }));
 	const pending = publishBadge(env);
-	if (pending) heading.append(el("div", { className: "publish-status" }, pending));
+	if (pending && !missing) heading.append(el("div", { className: "publish-status" }, pending));
 
 	const scheme = env.scheme || "https";
 	const address = environmentAddress(env);
@@ -1002,9 +1013,8 @@ function envPanel(site, env) {
 		? el("span", { textContent: bindingLabel(env) })
 		: openLink(bindingLabel(env) || address.hostname, address.url, address.title);
 	// The main site's name is the page's title. Its binding, which can differ, is listed below.
-	if (isTarget(env)) heading.prepend(el("h3", { className: "env-title" }, binding));
-	const meta = el("dl", { className: "meta" });
-	if (!isTarget(env)) meta.append(el("dt", { textContent: "Binding" }), el("dd", {}, binding));
+	if (isTarget(env)) heading.prepend(el("h3", { className: "env-title", textContent: bindingLabel(env) || address.hostname }));
+	const meta = el("dl", { className: "meta" }, el("dt", { textContent: "Binding" }), el("dd", {}, binding));
 	if (env.aliases && env.aliases.length) {
 		meta.append(el("dt", { textContent: "Aliases" }), el("dd", { className: "database-name aliases" },
 			...env.aliases.flatMap((alias, index) => [
@@ -1037,12 +1047,14 @@ function envPanel(site, env) {
 
 	const actions = el("div", { className: "actions" });
 	const add = (label, handler, className) => actions.append(el("button", { textContent: label, className: "small " + (className || ""), onclick: () => run(handler) }));
-	if (env.unit || env.mode === "remote") {
+	if ((env.unit || env.mode === "remote") && !missing) {
 		if (env.unit !== site.name || !site.admin) add(env.state === "active" ? "Stop" : "Start", () => serviceAction(site, env, env.state === "active" ? "stop" : "start"));
 		add("Restart", () => serviceAction(site, env, "restart"));
 		add("Logs", () => showLogs(site, env));
 	}
-	if (env.mode === "remote") {
+	if (missing) {
+		// Only Publish and Delete site are offered: there is nothing on the server to work with
+	} else if (env.mode === "remote") {
 		add("Shell", () => openTask({ kind: "remote_tool", site: site.name, tool: "shell", ...targetFields(env) }), "desktop-only");
 		add("Files", () => openFiles("", remoteRef(site, env)), "desktop-only");
 	} else if (env.mode !== "windows") {
@@ -1054,19 +1066,20 @@ function envPanel(site, env) {
 	const settings = el("div", { className: "actions quick" });
 	settings.setAttribute("role", "group");
 	settings.setAttribute("aria-label", "Environment settings");
-	if (!site.admin && env.mode !== "windows") {
+	if (!site.admin && env.mode !== "windows" && !missing) {
 		settings.append(el("button", { textContent: "Fix permissions", className: "small", onclick: () => run(async () => {
 			if (await ask({ title: "Fix permissions?", message: "Restore www-data ownership and content access for this environment. Scripts and symbolic links are skipped. No service restart is needed.", input: false, ok: "Fix permissions" })) {
 				await openTask({ kind: "fix_permissions", site: site.name, scope: isTarget(env) ? "prod" : "test", ...targetFields(env) });
 			}
 		}) }));
 	}
-	if ((!hasProd(site) || !site.admin) && env.mode !== "windows") {
+	if ((!hasProd(site) || !site.admin) && env.mode !== "windows" && !missing) {
 		settings.append(el("button", { textContent: "Change bindings", className: "small desktop-only", onclick: () => run(() => changeBinding(site, isTarget(env) ? "prod" : "test", env)) }));
 	}
 	let extraTools = null;
 	for (const [files, label, confirm, action] of quickActions(env)) {
 		if (label === "Publish" && !site.has_project) continue;
+		if (missing && label !== "Publish") continue;
 		let file = files && files.find((f) => (isTarget(env) ? env.scripts || [] : site.scripts).includes(f));
 		if (!file && label === "Publish" && !isTarget(env)) file = site.scripts.find((f) => /^publish.*\.sh$/.test(f) && f !== "publish_prod.sh");
 		if (!action && !file) continue;
@@ -1080,11 +1093,11 @@ function envPanel(site, env) {
 		}) }));
 	}
 	// The main site's only destination already has its button at the top of the page
-	if (syncDestinations(site, env).length > (isTarget(env) ? 0 : 1)) {
+	if (!missing && syncDestinations(site, env).length > (isTarget(env) ? 0 : 1)) {
 		quick.append(el("button", { textContent: "Sync to…", className: "small", title: "Sync content from this environment", onclick: () => run(() => openSyncDialog(site, env)) }));
 	}
 	if (!isTarget(env) && site.scripts.some((file) => !hasScriptButton(site, file))) quick.append(scriptSelect(site));
-	if (env.unit || env.mode === "remote" || env.apache) {
+	if ((env.unit || env.mode === "remote" || env.apache) && !missing) {
 		const tools = el("div", { className: "actions quick" });
 		for (const [tool, label] of [["check_service", "Check service"], ["edit_service", "Edit service"], ["edit_conf", "Edit config"]]) {
 			if (tool !== "edit_conf" && !env.unit && env.mode !== "remote") continue;
@@ -1102,12 +1115,7 @@ function envPanel(site, env) {
 		extraTools = tools;
 	}
 	if (isTarget(env) && env.mode === "local" && env.exists !== false) add("Move…", () => openCreateProdDialog(site, env));
-	if (env.separate || env.mode === "remote") add("Copy site", () => copySite(site, env), "push-right");
-	if (env.mode === "remote" && env.target !== "prod") add("Move out", async () => {
-		if (await ask({ title: "Move out?", message: `${bindingLabel(env) || env.folder} on ${env.host} becomes a separate site again, and can no longer be published from here. Its files and service are not touched.`, input: false, ok: "Move out" })) {
-			await openTask({ kind: "release_site", site: site.name, target: env.target });
-		}
-	});
+	if (env.separate || env.mode === "remote" && !missing) add("Copy site", () => copySite(site, env), "push-right");
 	if (hasProd(site) && !site.admin) add("Delete site", () => deleteSite(site, isTarget(env) ? "prod" : "test", env), "danger");
 	if (!hasProd(site) && !site.admin) {
 		if (!site.managed_by) add("Copy site", () => copySite(site), "push-right");
@@ -1115,7 +1123,8 @@ function envPanel(site, env) {
 	}
 
 	const panel = el("section", { className: "env " + (isTarget(env) ? "prod" : "") }, heading, meta);
-	if (env.exists === false) panel.append(el("p", { className: "muted", textContent: "Nothing published here yet." }));
+	if (missing) panel.append(el("p", { className: "package-error", textContent: `The site no longer exists on ${env.host}. Publish creates it again. Delete site removes this environment here.` }));
+	else if (env.exists === false) panel.append(el("p", { className: "muted", textContent: "Nothing published here yet." }));
 	if (env.remote_error) panel.append(el("p", { className: "package-error", textContent: "Remote status unavailable: " + env.remote_error }));
 	if (quick.children.length) panel.append(quick);
 	if (settings.children.length) panel.append(settings);
@@ -1203,7 +1212,16 @@ async function copySite(site, sourceEnv) {
 	const suggestUsername = () => {
 		if (!usernameEdited) field("username").value = field("database").value;
 	};
+	// A remote environment is copied on its own server
+	const copyServer = sourceEnv?.mode === "remote" ? sourceEnv.host : "";
+	const showCopyPath = () => {
+		const name = field("target").value.trim() || "…";
+		$("#copy-site-path").textContent = `Copied to ${copyServer ? copyServer + ":" : ""}/var/www/${name}`;
+	};
+	showCopyPath();
+	form.querySelector(".copy-dns-hint").textContent = `For HTTPS, the new binding must point to ${copyServer || "this server"}.`;
 	field("target").oninput = () => {
+		showCopyPath();
 		if (!databaseEdited) {
 			field("database").value = field("target").value;
 			suggestUsername();
@@ -1573,7 +1591,7 @@ prodForm.onsubmit = (event) => {
 
 // Content can be synced from the main site or any environment to the other environments
 function syncDestinations(site, source) {
-	return sortedEnvironments(site.environments).filter((env) => env !== source && isTarget(env) && (env.scripts || []).includes("sync_prod.sh"));
+	return sortedEnvironments(site.environments).filter((env) => env !== source && isTarget(env) && !isMissingEnv(env) && (env.scripts || []).includes("sync_prod.sh"));
 }
 const adoptDialog = $("#dlg-adopt");
 const adoptForm = $("#form-adopt");
