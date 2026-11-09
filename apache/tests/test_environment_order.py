@@ -48,7 +48,7 @@ console.log(JSON.stringify(sortedEnvironments(input).map((env) => env.environmen
 
     def test_move_out_is_a_choice_in_the_move_dialog(self):
         source = (APP / "static/app.js").read_text()
-        self.assertNotIn('add("Move out"', source)
+        self.assertNotIn('if (env.separate) add("Move out"', source)
         self.assertIn('value: "release", textContent: "Separate site (move out)"', source)
         self.assertIn('kind: "release_site"', source)
 

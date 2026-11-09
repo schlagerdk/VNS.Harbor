@@ -302,6 +302,19 @@ def adopted_sites(names):
     return adopted
 
 
+MANAGED_DIR = "/var/lib/vns-managed"
+
+
+def managed_by(name):
+    """The main site and server this site is an environment of, when that is another server."""
+    try:
+        with open(os.path.join(MANAGED_DIR, name), encoding="utf-8") as note:
+            lines = note.read().splitlines()
+    except OSError:
+        return None
+    return {"site": lines[0] if lines else "", "host": lines[1] if len(lines) > 1 else ""}
+
+
 def service_dll(name):
     """Name of the dll a site's service runs, without .dll."""
     match = re.search(r"^ExecStart=(.+)$", read_text(os.path.join(SERVICE_DIR, service_name(name) + ".service")), re.M)
@@ -324,7 +337,8 @@ def adoption_candidates(sites):
         if len(projects) == 1 and not site.get("admin"):
             builders.setdefault(project_assembly(projects[0]), []).append(site["name"])
     for site in sites:
-        if not site["has_project"] and not site.get("admin") and site["kind"] in ("csharp", "umbraco") and len(site["environments"]) == 1:
+        if (not site["has_project"] and not site.get("admin") and not site.get("managed_by")
+                and site["kind"] in ("csharp", "umbraco") and len(site["environments"]) == 1):
             site["adopt_into"] = builders.get(service_dll(site["name"]), [])
 
 
@@ -662,6 +676,7 @@ def site_info(name, states):
         "display_name": display_dns_name(name),
         "kind": kind,
         "has_project": bool(projects),
+        "managed_by": managed_by(name),
         "updates": updates,
         "package_updates": package_updates,
         "umbraco_version": umbraco,
@@ -1177,7 +1192,7 @@ def terminal_scope(payload):
         return "prod" if payload.get("action") == "prod" else "main"
     if payload.get("scope") in ("all", "prod", "test", "main"):
         return "main" if payload["scope"] == "test" else payload["scope"]
-    if kind in ("remote_tool", "create_prod", "sync_env", "move_env"):
+    if kind in ("remote_tool", "create_prod", "sync_env", "move_env", "register_env"):
         return "prod"
     if kind == "script":
         script = payload.get("script", "")
@@ -1188,7 +1203,7 @@ def terminal_scope(payload):
 
 def terminal_auto_close(payload):
     kind = payload.get("kind")
-    if kind in ("shell", "create_site", "copy_site", "copy_env", "create_prod", "sync_env", "move_env", "adopt_site", "release_site", "delete_site", "change_binding", "prod_action", "dotnet_package", "fix_permissions", "publish_both", "bulk", "update_package", "sql_action", "install_sql_tools"):
+    if kind in ("shell", "create_site", "copy_site", "copy_env", "register_env", "create_prod", "sync_env", "move_env", "adopt_site", "release_site", "delete_site", "change_binding", "prod_action", "dotnet_package", "fix_permissions", "publish_both", "bulk", "update_package", "sql_action", "install_sql_tools"):
         return True
     if kind == "remote_tool":
         return payload.get("tool") == "shell"
@@ -1745,23 +1760,31 @@ def build_command(data):
         if tool == "configtest":
             return "Apache config test", [bash, "-c", "clear; apache2ctl configtest"], WEB_ROOT
         abort(400, "Unknown tool")
+    if kind == "register_env":
+        return "Add existing site: " + site_arg(data), [bash, os.path.join(APACHE_DIR, "register_env.sh"), site_arg(data)], APACHE_DIR
     if kind in ("copy_site", "copy_env"):
         source = site_arg(data)
         main = ""
+        copy_remote = False
         if kind == "copy_env":
             # An environment in its own folder is copied like a site, and the copy joins the same main site
             main = source
-            prod = parse_prod(os.path.join(WEB_ROOT, main), target_arg(main, {"target": data.get("environment_id")})) or {}
+            copied_target = target_arg(main, {"target": data.get("environment_id")})
+            prod = parse_prod(os.path.join(WEB_ROOT, main), copied_target) or {}
             source = prod.get("PROD_FOLDER") or ""
-            local = os.path.realpath(prod.get("PROD_LOCAL_PATH") or "")
-            root = os.path.realpath(os.path.join(WEB_ROOT, source))
-            if not prod.get("PROD_LOCAL_PATH") or source == main or source not in site_dirs() or not (local == root or local.startswith(root + os.sep)):
-                abort(400, "Only an environment with its own folder can be copied")
-        if source == ADMIN_SITE or target_ids(os.path.join(WEB_ROOT, source)):
+            copy_remote = not prod.get("PROD_LOCAL_PATH") and prod.get("PROD_TARGET") != "windows"
+            if not copy_remote:
+                local = os.path.realpath(prod.get("PROD_LOCAL_PATH") or "")
+                root = os.path.realpath(os.path.join(WEB_ROOT, source))
+                if not prod.get("PROD_LOCAL_PATH") or source == main or source not in site_dirs() or not (local == root or local.startswith(root + os.sep)):
+                    abort(400, "Only an environment with its own folder can be copied")
+        elif managed_by(source):
+            abort(400, "This site is an environment of a main site on another server. Make the copy from there.")
+        if not copy_remote and (source == ADMIN_SITE or target_ids(os.path.join(WEB_ROOT, source))):
             abort(400, "Admin sites and sites with production targets cannot be copied.")
         target = dns_name(data.get("target", ""), "site name")
         binding = dns_name(data.get("binding", ""), "binding", fully_qualified=True)
-        if any(service_name(name) == service_name(target) for name in site_dirs()):
+        if not copy_remote and any(service_name(name) == service_name(target) for name in site_dirs()):
             abort(400, "The destination site already exists.")
         database = data.get("database", "")
         if not isinstance(database, str) or len(database) > 128 or any(char in database for char in "\0\r\n;\"'"):
@@ -1779,6 +1802,8 @@ def build_command(data):
             argv = [bash, os.path.join(APACHE_DIR, "copy_env.sh"), main, source, target, binding]
         if database.strip():
             argv.append(database.strip())
+        if copy_remote:
+            argv = ["/usr/bin/env", "VNS_COPY_REMOTE=1", "VNS_TARGET=" + copied_target, *argv]
         return "Copy site: " + source, argv, APACHE_DIR
     if kind == "create_site":
         site = dns_name(data.get("site", ""), "site name")
@@ -1934,6 +1959,8 @@ def api_term():
     payload = request.get_json(silent=True) or {}
     title, argv, cwd = build_command(payload)
     extra_env = production_setup_env(payload, payload.get("site", "")) if payload.get("kind") == "create_prod" else None
+    if payload.get("kind") == "register_env":
+        extra_env = production_setup_env(payload, payload.get("site", ""))
     if payload.get("kind") == "move_env":
         extra_env = production_setup_env(payload, payload.get("site", ""), moving=True)
         extra_env["VNS_MOVE_DELETE_LOCAL"] = "y" if payload.get("delete_local") == "y" else "n"

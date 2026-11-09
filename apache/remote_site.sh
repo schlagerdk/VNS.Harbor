@@ -19,6 +19,8 @@ case "${_action}" in
 	status)
 		_database_code=$(cat lib/database_info.py)
 		printf -v _vars '%s DATABASE_CODE=%q' "${_vars}" "${_database_code}"
+		# Tells the admin on the server that this site is managed from here, so it cannot be copied there
+		printf -v _vars '%s MAIN_SITE=%q MAIN_HOST=%q' "${_vars}" "${_site}" "$(hostname -f 2>/dev/null || hostname)"
 		prod_run "${_vars}" <<'REMOTE'
 set -euo pipefail
 python3 - <<'PY'
@@ -63,6 +65,14 @@ try:
     database = database_details(Path("/var/www", site), environment, variables)
 except (OSError, ValueError):
     print("Could not read remote database configuration", file=__import__("sys").stderr)
+try:
+    note = Path("/var/lib/vns-managed", site)
+    managed = os.environ.get("MAIN_SITE", "") + "\n" + os.environ.get("MAIN_HOST", "") + "\n"
+    if os.environ.get("MAIN_SITE") and Path("/var/www", site).is_dir() and (not note.is_file() or note.read_text() != managed):
+        note.parent.mkdir(parents=True, exist_ok=True)
+        note.write_text(managed)
+except OSError as exc:
+    print("Could not write the management note: %s" % exc, file=__import__("sys").stderr)
 print(json.dumps({
     "unit": site if service.is_file() else "",
     "state": state.stdout.strip() if service.is_file() else "",

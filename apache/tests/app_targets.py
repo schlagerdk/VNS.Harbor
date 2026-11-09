@@ -9,8 +9,8 @@ from flask import abort
 
 APP = Path(__file__).resolve().parents[1] / "solutionfiles/admin/app/app.py"
 FUNCTIONS = {"target_folder", "target_ids", "target_scope", "target_arg", "with_target", "remote_key",
-             "adopted_sites", "service_dll", "project_assembly", "adoption_candidates"}
-CONSTANTS = {"TARGET_RE", "TARGET_SCRIPTS"}
+             "adopted_sites", "service_dll", "project_assembly", "adoption_candidates", "managed_by"}
+CONSTANTS = {"TARGET_RE", "TARGET_SCRIPTS", "MANAGED_DIR"}
 
 
 def add_target_helpers(ns):

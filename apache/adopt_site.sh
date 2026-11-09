@@ -26,7 +26,16 @@ if [[ ${1:-} == --release ]]; then
 	export VNS_TARGET=${3:-}
 	[[ -n ${VNS_TARGET} && ${VNS_TARGET} != prod ]] || { echo "Choose the environment to move out." >&2; exit 1; }
 	load_prod_settings
-	if [[ -z ${PROD_LOCAL_PATH} || ${PROD_LOCAL_PATH%/}/ == "${_siteRoot}"/* ]]; then
+	if [[ ${PROD_TARGET} == windows ]]; then
+		echo "Delete this environment instead: on a Windows server that only removes its scripts here." >&2
+		exit 1
+	elif [[ -z ${PROD_LOCAL_PATH} ]]; then
+		# Without the note the admin on the server can copy the site again
+		prod_exec "rm -f $(printf %q "/var/lib/vns-managed/${PROD_FOLDER}")" || {
+			echo "Could not reach ${PROD_IP}. Nothing was changed." >&2
+			exit 1
+		}
+	elif [[ ${PROD_LOCAL_PATH%/}/ == "${_siteRoot}"/* ]]; then
 		echo "This environment is not a separate site, so it cannot be moved out." >&2
 		exit 1
 	fi

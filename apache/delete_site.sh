@@ -58,6 +58,7 @@ remove_service_and_config() {
 	sudo rm -f "/etc/apache2/sites-available/${_name}.conf" "/etc/apache2/sites-enabled/${_name}.conf"
 	sudo rm -f "/var/log/apache2/${_name}-80-error.log" "/var/log/apache2/${_name}-443-error.log" "/var/log/apache2/${_name}-rewrite-error.log"
 	sudo rm -rf "/var/lib/vns-roots/${_name:?}"
+	sudo rm -f "/var/lib/vns-managed/${_name:?}"
 }
 
 remove_certificate() {
@@ -149,6 +150,7 @@ rm -f -- "/etc/systemd/system/${unit}.service"
 rm -f -- "/etc/apache2/sites-available/${SITE}.conf" "/etc/apache2/sites-enabled/${SITE}.conf"
 rm -f -- "/var/log/apache2/${SITE}-80-error.log" "/var/log/apache2/${SITE}-443-error.log" "/var/log/apache2/${SITE}-rewrite-error.log"
 rm -rf -- "/var/lib/vns-roots/${SITE}"
+rm -f -- "/var/lib/vns-managed/${SITE}"
 rm -rf -- "${root:?}"
 if [[ ${DELETE_CERTIFICATE} =~ ^([yY]|[yY][eE][sS])$ ]]; then
 	domain_in_use=0

@@ -9,6 +9,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 import xml.etree.ElementTree as ET
 
@@ -1074,6 +1075,163 @@ class MoveEnvironmentTests(AdoptSiteTests):
         result = self.windows(FAKE_HTTP_STATUS="503")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("WARNING", result.stdout)
+
+
+# Runs what would run on the server, with its system folders moved into $FAKE_REMOTE
+FAKE_SSH = r"""#!/bin/bash
+printf 'ssh %s\n' "${@: -1}" >>"$FAKE_LOG"
+[[ -z ${FAKE_SSH_FAILS:-} ]] || exit 255
+moved() { sed "s#/var/www#$FAKE_REMOTE/www#g; s#/etc/#$FAKE_REMOTE/etc/#g; s#/var/lib/#$FAKE_REMOTE/lib/#g; s#/vns/apache#$FAKE_REMOTE/vns#g"; }
+command=$(printf '%s' "${@: -1}" | moved)
+if [[ $command == *"bash -s"* ]]; then
+	moved | eval "$command"
+else
+	eval "$command"
+fi
+"""
+
+
+@NEEDS_BASH_4
+class RemoteEnvironmentTests(AdoptSiteTests):
+    for _name in [name for name in dir(AdoptSiteTests) if name.startswith("test_")]:
+        locals()[_name] = None
+    del _name
+
+    def setUp(self):
+        super().setUp()
+        for script in ("register_env.sh", "copy_env.sh"):
+            text = (APACHE / script).read_text()
+            (self.apache / script).write_text(re.sub(r"(?m)^\[\[ \$EUID -eq 0 \]\] \|\| exec sudo .*$", "", text))
+        adopt = self.apache / "adopt_site.sh"
+        executable(self.bin / "ssh", FAKE_SSH)
+        self.remote = self.root / "remote"
+        for folder in ("www", "etc/systemd/system", "etc/apache2/sites-available", "lib", "vns"):
+            (self.remote / folder).mkdir(parents=True)
+        self.remote_site("copy.example.test", "App")
+        self.env = os.environ | {"PATH": f"{self.bin}:{os.environ['PATH']}", "FAKE_LOG": str(self.log), "FAKE_REMOTE": str(self.remote)}
+        self.settings = dict(VNS_PROD_IP="server.test", VNS_PROD_USER="root", VNS_PROD_PASSWORD="", VNS_PROD_SSH_PORT="22", VNS_PROD_FOLDER="copy.example.test")
+
+    def remote_site(self, name, dll, working=None, https=True, environment="Staging"):
+        folder = self.remote / "www" / name
+        folder.mkdir(parents=True)
+        (self.remote / f"etc/systemd/system/{service_name(name)}.service").write_text(
+            f"[Service]\nWorkingDirectory={working or '/var/www/' + name}\nExecStart=/usr/lib/dotnet/dotnet /var/www/{name}/{dll}.dll\n"
+            f"Environment=ASPNETCORE_ENVIRONMENT={environment}\n")
+        ssl = "  SSLEngine On\n" if https else ""
+        (self.remote / f"etc/apache2/sites-available/{name}.conf").write_text(f"<VirtualHost *:80>\n  ServerName {name}\n{ssl}</VirtualHost>\n")
+
+    def register(self, **values):
+        return subprocess.run([BASH, str(self.apache / "register_env.sh"), "dev.example.test"], capture_output=True, text=True,
+                              env=self.env | self.settings | values)
+
+    def test_existing_site_is_added_without_publishing(self):
+        result = self.register()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.setting("PROD_IP", "staging"), "server.test")
+        self.assertEqual(self.setting("PROD_FOLDER", "staging"), "copy.example.test")
+        self.assertEqual(self.setting("PROD_BINDING", "staging"), "copy.example.test")
+        self.assertEqual(self.setting("PROD_HTTPS", "staging"), "y")
+        self.assertEqual(self.setting("PROD_ENVIRONMENT", "staging"), "Staging")
+        self.assertEqual((self.scripts / "publish_local.sh").read_text(), "# local publish\n")
+        self.assertNotIn("DOTNET", self.log.read_text())
+        self.assertEqual((self.remote / "lib/vns-managed/copy.example.test").read_text().splitlines()[0], "dev.example.test")
+
+    def test_sites_that_do_not_fit_are_refused(self):
+        self.remote_site("other.example.test", "Other")
+        self.remote_site("nested.example.test", "App", working="/var/www/nested.example.test/_publish")
+        self.remote_site("main.example.test", "App")
+        (self.remote / "www/main.example.test/App.csproj").touch()
+        self.remote_site("taken.example.test", "App")
+        (self.remote / "lib/vns-managed").mkdir()
+        (self.remote / "lib/vns-managed/taken.example.test").write_text("other.main\nother.host\n")
+        for folder, message in (("other.example.test", "would break the site"), ("nested.example.test", "must run from"),
+                                ("main.example.test", "own project"), ("taken.example.test", "already an environment"),
+                                ("missing.example.test", "was not found")):
+            with self.subTest(folder):
+                result = self.register(VNS_PROD_FOLDER=folder)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stderr)
+                self.assertFalse((self.scripts / "targets").exists())
+
+    def test_unreachable_server_changes_nothing(self):
+        result = self.register(FAKE_SSH_FAILS="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue((self.scripts / "publish.sh").exists())
+        self.assertFalse((self.scripts / "targets").exists())
+
+    def environment(self):
+        self.assertEqual(self.register().returncode, 0)
+
+    def test_move_out_changes_nothing_when_the_server_cannot_be_reached(self):
+        self.environment()
+        result = subprocess.run([BASH, str(self.apache / "adopt_site.sh"), "--release", "dev.example.test", "staging"], capture_output=True, text=True,
+                                env=self.env | {"FAKE_SSH_FAILS": "1"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue((self.scripts / "targets/staging").exists())
+
+    def test_move_out_removes_the_note(self):
+        self.environment()
+        note = self.remote / "lib/vns-managed/copy.example.test"
+        self.assertTrue(note.exists())
+        result = subprocess.run([BASH, str(self.apache / "adopt_site.sh"), "--release", "dev.example.test", "staging"], capture_output=True, text=True, env=self.env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(note.exists())
+        self.assertFalse((self.scripts / "targets/staging").exists())
+        self.assertTrue((self.remote / "www/copy.example.test").exists())
+
+    def test_copy_runs_on_the_server_and_is_added_under_the_main_site(self):
+        self.environment()
+        (self.remote / "vns/copy_site.sh").write_text(textwrap.dedent(f"""\
+            #!/bin/bash
+            echo "copy_site $* managed=$VNS_COPY_MANAGED sql=$VNS_COPY_SQL" >>"{self.log}"
+            mkdir -p "{self.remote}/www/$2"
+            printf '[Service]\\nWorkingDirectory=/var/www/%s\\nExecStart=/usr/lib/dotnet/dotnet /var/www/%s/App.dll\\nEnvironment=ASPNETCORE_ENVIRONMENT=Production\\n' "$2" "$2" >"{self.remote}/etc/systemd/system/$2.service"
+            printf 'ServerName %s\\n' "$3" >"{self.remote}/etc/apache2/sites-available/$2.conf"
+        """))
+        result = subprocess.run(
+            [BASH, str(self.apache / "copy_env.sh"), "dev.example.test", "copy.example.test", "kunde.example.test", "kunde.vns.dk"],
+            capture_output=True, text=True, env=self.env | {"VNS_COPY_REMOTE": "1", "VNS_TARGET": "staging", "VNS_COPY_SQL": "pa$$ word"})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        log = self.log.read_text()
+        self.assertIn("copy_site copy.example.test kunde.example.test kunde.vns.dk managed=1 sql=pa$$ word", log)
+        self.assertNotIn("pa$$", "".join(line for line in log.splitlines() if line.startswith("ssh ")), "The password stays out of the command line")
+        self.assertEqual(self.setting("PROD_FOLDER", "production"), "kunde.example.test")
+        self.assertEqual(self.setting("PROD_BINDING", "production"), "kunde.vns.dk")
+        self.assertTrue((self.remote / "lib/vns-managed/kunde.example.test").exists())
+
+
+class ManagedSiteTests(unittest.TestCase):
+    def test_note_is_read(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ns = add_target_helpers({"WEB_ROOT": directory})
+            ns["MANAGED_DIR"] = directory
+            self.assertIsNone(ns["managed_by"]("site.test"))
+            Path(directory, "site.test").write_text("dev.test\nlinux01.test\n")
+            self.assertEqual(ns["managed_by"]("site.test"), {"site": "dev.test", "host": "linux01.test"})
+
+    def test_candidates_skip_a_managed_site(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ns = add_target_helpers({"WEB_ROOT": directory})
+            Path(directory, "dev.test").mkdir()
+            Path(directory, "dev.test/App.csproj").write_text("<Project />")
+            ns.update(service_dll=lambda name: "App", read_text=lambda path: "")
+            sites = [{"name": "dev.test", "has_project": True, "kind": "umbraco", "environments": [{}]},
+                     {"name": "live.test", "has_project": False, "kind": "umbraco", "environments": [{}], "managed_by": {"site": "x", "host": "y"}}]
+            ns["adoption_candidates"](sites)
+            self.assertNotIn("adopt_into", sites[1])
+
+    def test_copy_site_refuses_a_managed_site_unless_the_main_server_asks(self):
+        source = (APACHE / "copy_site.sh").read_text()
+        check = 'if [[ -z ${VNS_COPY_MANAGED:-} && -f /var/lib/vns-managed/${_source} ]]; then'
+        self.assertIn(check, source)
+        self.assertLess(source.index(check), source.index("python3 lib/copy_site.py"))
+        app = (APACHE / "solutionfiles/admin/app/app.py").read_text()
+        self.assertIn("Make the copy from there", app)
+        self.assertIn('if (!site.managed_by) add("Copy site"', (APACHE / "solutionfiles/admin/app/static/app.js").read_text())
+
+    def test_status_writes_the_note_and_delete_removes_it(self):
+        self.assertIn('Path("/var/lib/vns-managed", site)', (APACHE / "remote_site.sh").read_text())
+        self.assertEqual((APACHE / "delete_site.sh").read_text().count("/var/lib/vns-managed/"), 2)
 
 
 class LocalFolderRuleTests(ProductionSetupTests):

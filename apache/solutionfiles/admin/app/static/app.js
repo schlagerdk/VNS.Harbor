@@ -579,6 +579,7 @@ function kindBadges(site) {
 		badges.append(badge);
 	}
 	if (site.admin) badges.append(el("span", { className: "badge admin", textContent: "this admin site" }));
+	if (site.managed_by) badges.append(el("span", { className: "badge", textContent: "Managed from " + (site.managed_by.host || "another server"), title: `Environment of ${site.managed_by.site} on ${site.managed_by.host}. Publish and copy it from there.` }));
 	if (site.updates === "available") badges.append(el("span", { className: "badge updates-available", textContent: "Updates available", title: "NuGet updates were found. Install package updates, then publish the site." }));
 	if (site.updates === "error") badges.append(el("span", { className: "badge updates-error", textContent: "Update check failed", title: "Run Check for updates again. See server logs for details." }));
 	return badges;
@@ -1096,10 +1097,15 @@ function envPanel(site, env) {
 		extraTools = tools;
 	}
 	if (isTarget(env) && env.mode === "local" && env.exists !== false) add("Move…", () => openCreateProdDialog(site, env));
-	if (env.separate) add("Copy site", () => copySite(site, env), "push-right");
+	if (env.separate || env.mode === "remote") add("Copy site", () => copySite(site, env), "push-right");
+	if (env.mode === "remote" && env.target !== "prod") add("Move out", async () => {
+		if (await ask({ title: "Move out?", message: `${bindingLabel(env) || env.folder} on ${env.host} becomes a separate site again, and can no longer be published from here. Its files and service are not touched.`, input: false, ok: "Move out" })) {
+			await openTask({ kind: "release_site", site: site.name, target: env.target });
+		}
+	});
 	if (hasProd(site) && !site.admin) add("Delete site", () => deleteSite(site, isTarget(env) ? "prod" : "test", env), "danger");
 	if (!hasProd(site) && !site.admin) {
-		add("Copy site", () => copySite(site), "push-right");
+		if (!site.managed_by) add("Copy site", () => copySite(site), "push-right");
 		add("Delete site", () => deleteSite(site, "all"), "danger");
 	}
 
@@ -1425,7 +1431,8 @@ function syncProdForm() {
 	const target = prodForm.elements.target.value;
 	const local = target === "local";
 	const windows = target === "windows";
-	const linuxRemote = target === "remote";
+	const existing = target === "existing";
+	const linuxRemote = target === "remote" || existing;
 	$("#prod-local-options").hidden = !local;
 	$("#prod-remote-options").hidden = !linuxRemote;
 	$("#prod-windows-options").hidden = !windows;
@@ -1443,16 +1450,17 @@ function syncProdForm() {
 	prodForm.smb_password.required = windows;
 	const moving = Boolean(prodForm.dataset.moveTarget);
 	const release = target === "release";
-	const noSettings = moving && local || release;
-	$("#prod-folder-row").hidden = windows || noSettings;
+	const noSettings = moving && local || release || existing;
+	$("#prod-folder-row").hidden = windows || noSettings && !existing;
 	$("#prod-binding-row").hidden = noSettings;
 	$("#prod-environment-row").hidden = noSettings;
 	$("#prod-protocol-row").hidden = noSettings;
 	$("#prod-protocol-hint").hidden = noSettings;
-	prodForm.folder.required = !windows && !noSettings;
+	prodForm.folder.required = !windows && (!noSettings || existing);
+	$("#prod-existing-hint").hidden = !existing;
 	$("#prod-move-options").hidden = !moving || local || release;
 	$("#prod-release-hint").hidden = !release;
-	$("#prod-submit").textContent = !moving ? "Add environment" : release ? "Move out" : "Move";
+	$("#prod-submit").textContent = existing ? "Add existing site" : !moving ? "Add environment" : release ? "Move out" : "Move";
 	$("#prod-local-hint").textContent = moving
 		? "The folder is moved, and the service and Apache config follow it. It must be a new folder directly under /var/www, which also becomes the site's name. The binding, port and certificate are unchanged."
 		: "Use a subfolder of this site's folder, or /var/www/<production folder> to keep it outside the main site's folder.";
@@ -1478,6 +1486,9 @@ function openCreateProdDialog(site, moveEnv) {
 		? `Move ${bindingLabel(moveEnv) || moveEnv.unit} to another folder or server.`
 		: "Configure where this site is published to, then publish and sync content automatically when available.";
 	prodForm.elements.target.querySelector("option[value=release]")?.remove();
+	const existingOption = prodForm.elements.target.querySelector("option[value=existing]");
+	existingOption.hidden = Boolean(moveEnv);
+	existingOption.disabled = Boolean(moveEnv);
 	if (moveEnv?.separate) prodForm.elements.target.append(el("option", { value: "release", textContent: "Separate site (move out)" }));
 	const main = site.environments.find((env) => !isTarget(env));
 	const binding = (main && bindingLabel(main)) || siteLabel(site);
@@ -1542,6 +1553,10 @@ prodForm.onsubmit = (event) => {
 	}
 	const data = Object.fromEntries(new FormData(prodForm));
 	data.kind = prodForm.dataset.moveTarget ? "move_env" : "create_prod";
+	if (data.target === "existing") {
+		data.kind = "register_env";
+		data.target = "remote";
+	}
 	if (prodForm.dataset.moveTarget) data.environment_id = prodForm.dataset.moveTarget;
 	data.site = prodForm.dataset.site;
 	run(async () => {
