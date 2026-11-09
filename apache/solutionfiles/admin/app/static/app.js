@@ -576,6 +576,8 @@ function httpsLock(secure) {
 	return el("span", { className: "https-lock " + (secure == null ? "unknown" : secure ? "secure" : "insecure"), title: label, ariaLabel: label }, svgIcon(secure ? "lock" : "unlock"));
 }
 
+const isRemoteEnv = (env) => env.mode === "remote" || env.mode === "windows";
+
 function remoteIcon(env) {
 	return el("span", { className: "remote-icon", title: "Remote server: " + env.host, ariaLabel: "Remote server: " + env.host }, svgIcon("server"));
 }
@@ -601,7 +603,7 @@ function siteCard(site) {
 		const heading = el("div", { className: "site-environment-head" },
 			httpsLock(env.https),
 			el("span", { className: "badge env-" + environment.toLowerCase(), textContent: environment }));
-		if (env.mode === "remote") heading.append(remoteIcon(env));
+		if (isRemoteEnv(env)) heading.append(remoteIcon(env));
 		const pending = publishBadge(env);
 		if (pending) heading.append(el("div", { className: "publish-status" }, pending));
 		group.append(heading);
@@ -902,11 +904,11 @@ function envPanel(site, env) {
 	const heading = el("div", { className: "env-head" },
 		siteActivity(site, env.key === "prod" ? "prod" : "main"),
 		el("span", { className: "dot " + dot }),
-		el("span", { className: "badge " + (env.unit ? "state-" + (env.state || "unknown") : ""), textContent: env.unit ? env.state || "unknown" : env.mode === "remote" ? "remote" : "static" }));
+		el("span", { className: "badge " + (env.unit ? "state-" + (env.state || "unknown") : ""), textContent: env.unit ? env.state || "unknown" : env.mode === "windows" ? "windows" : env.mode === "remote" ? "remote" : "static" }));
 	const environment = site.kind === "python" ? "Live" : env.environment;
 	if (environment) heading.append(el("span", { className: "badge env-" + environment.toLowerCase(), textContent: environment }));
 	heading.append(httpsLock(env.https));
-	if (env.mode === "remote") heading.append(remoteIcon(env));
+	if (isRemoteEnv(env)) heading.append(remoteIcon(env));
 	if (site.has_project && env.key !== "prod" && !hasProd(site) && site.scripts.includes("create_prod.sh")) {
 		heading.append(el("button", { textContent: "Create production site", className: "small create-production",
 			onclick: () => run(() => openCreateProdDialog(site)) }));
@@ -942,6 +944,9 @@ function envPanel(site, env) {
 	if (env.mode === "remote") {
 		meta.append(el("dt", { textContent: "Server" }), el("dd", { textContent: `${env.user || "?"}@${env.host || "?"}:${env.ssh_port || 22}` }));
 		meta.append(el("dt", { textContent: "Folder" }), el("dd", { textContent: env.folder ? "/var/www/" + env.folder : "—" }));
+	} else if (env.mode === "windows") {
+		meta.append(el("dt", { textContent: "Server" }), el("dd", { textContent: `${env.user || "?"}@${env.host || "?"} (Windows)` }));
+		meta.append(el("dt", { textContent: "Folder" }), el("dd", { textContent: env.folder || "—" }));
 	} else {
 		meta.append(el("dt", { textContent: "Folder" }), el("dd", { textContent: "/var/www/" + env.path }));
 		if (env.unit) meta.append(el("dt", { textContent: "Service" }), el("dd", { textContent: env.unit }));
@@ -957,7 +962,7 @@ function envPanel(site, env) {
 	if (env.mode === "remote") {
 		add("Shell", () => openTask({ kind: "remote_tool", site: site.name, tool: "shell" }), "desktop-only");
 		add("Files", () => openFiles("", site.name), "desktop-only");
-	} else {
+	} else if (env.mode !== "windows") {
 		add("Shell", () => openTask({ kind: "shell", site: site.name, path: env.path, scope: env.key === "prod" ? "prod" : "main" }), "desktop-only");
 		add("Files", () => openFiles(env.path), "desktop-only");
 	}
@@ -966,14 +971,14 @@ function envPanel(site, env) {
 	const settings = el("div", { className: "actions quick" });
 	settings.setAttribute("role", "group");
 	settings.setAttribute("aria-label", "Environment settings");
-	if (!site.admin) {
+	if (!site.admin && env.mode !== "windows") {
 		settings.append(el("button", { textContent: "Fix permissions", className: "small", onclick: () => run(async () => {
 			if (await ask({ title: "Fix permissions?", message: "Restore www-data ownership and content access for this environment. Scripts and symbolic links are skipped. No service restart is needed.", input: false, ok: "Fix permissions" })) {
 				await openTask({ kind: "fix_permissions", site: site.name, scope: env.key === "prod" ? "prod" : "test" });
 			}
 		}) }));
 	}
-	if (!hasProd(site) || !site.admin) {
+	if ((!hasProd(site) || !site.admin) && env.mode !== "windows") {
 		settings.append(el("button", { textContent: "Change bindings", className: "small desktop-only", onclick: () => run(() => changeBinding(site, env.key === "prod" ? "prod" : "test", env)) }));
 	}
 	let extraTools = null;
@@ -983,6 +988,7 @@ function envPanel(site, env) {
 		if (!file && label === "Publish" && env.key !== "prod") file = site.scripts.find((f) => /^publish.*\.sh$/.test(f) && f !== "publish_prod.sh");
 		if (!action && !file) continue;
 		if (action && env.mode === "remote" && !env.host) continue;
+		if (action === "issue_certificate" && env.mode === "windows") continue;
 		if (action && env.key !== "prod" && (!env.unit || site.admin) && action === "change_env") continue;
 		(action ? settings : quick).append(el("button", { textContent: label, className: "small" + (action === "change_env" ? " desktop-only" : ""), title: file || action, onclick: () => run(async () => {
 			if (action === "change_env") { openEnvironmentDialog(site, env); return; }
@@ -1150,16 +1156,22 @@ async function deleteSite(site, scope) {
 	const mainEnvironment = environmentLabel(site, main);
 	const prodEnvironment = prod ? environmentLabel(site, prod) : "";
 	const remote = prod && prod.mode === "remote";
+	const windows = prod && prod.mode === "windows";
+	const windowsKept = `The IIS site and its files on ${prod?.host} are not touched; only the production scripts here are removed.`;
 	const target = scope === "prod" ? (bindingLabel(prod) || prod.unit || prod.folder || siteLabel(site)) : siteLabel(site);
 	const what = {
 		all: remote
 			? `This deletes the site and its remote ${prodEnvironment} site on ${prod.host}: files, services, Apache configs and logs on both servers.`
+			: windows
+				? `This deletes the site: its files, service, Apache config and logs. ${windowsKept}`
 			: prod
 				? `This deletes the site and its ${prodEnvironment} site on this server: files, services, Apache configs and logs.`
 				: `This deletes the site: its files, service, Apache config and logs.`,
 		test: `This deletes the ${mainEnvironment} site's files, service and Apache config. The ${prodEnvironment} site is kept.`,
 		prod: remote
 			? `This deletes the ${prodEnvironment} site on ${prod.host}: its files, service, Apache config and logs. The ${mainEnvironment} site is kept.`
+			: windows
+				? `This removes the ${prodEnvironment} target from this site. ${windowsKept} The ${mainEnvironment} site is kept.`
 			: `This deletes the ${prodEnvironment} site: its files, service, Apache config and logs. The ${mainEnvironment} site is kept.`,
 	}[scope];
 	const typed = await ask({
@@ -1172,7 +1184,7 @@ async function deleteSite(site, scope) {
 		? "Also revoke and remove the certificate(s) for the site being deleted? The remote certificate is kept if another enabled site uses the domain."
 		: "Also revoke and remove the certificate(s) for the site being deleted?";
 	const deletedEnvironments = site.environments.filter((env) => scope === "all" || (scope === "prod" ? env.key === "prod" : env.key !== "prod"));
-	if (deletedEnvironments.some((env) => env.https !== false)) {
+	if (deletedEnvironments.some((env) => env.https !== false && env.mode !== "windows")) {
 		certificates = (await ask({ title: "Certificate", message: certificateMessage, input: false, ok: "Remove certificate(s)" })) === true;
 	}
 	await openTask({ kind: "delete_site", site: site.name, certificates, scope });
@@ -1321,20 +1333,30 @@ const prodForm = $("#form-prod");
 function syncProdForm() {
 	const target = prodForm.elements.target.value;
 	const local = target === "local";
+	const windows = target === "windows";
+	const linuxRemote = target === "remote";
 	$("#prod-local-options").hidden = !local;
-	$("#prod-remote-options").hidden = local;
+	$("#prod-remote-options").hidden = !linuxRemote;
+	$("#prod-windows-options").hidden = !windows;
+	$("#prod-folder-row").hidden = windows;
+	$("#prod-protocol-hint").textContent = windows
+		? "The protocol sets the site address used for the check after publishing. Bindings and certificates are managed in IIS."
+		: "HTTPS issues a certificate, which requires DNS for the binding to point to the server. HTTP runs without a certificate.";
+	prodForm.folder.required = !windows;
 	prodForm.local_path.required = local;
-	prodForm.host.required = !local;
-	prodForm.user.required = !local;
-	prodForm.ssh_port.required = !local;
+	prodForm.host.required = linuxRemote;
+	prodForm.user.required = linuxRemote;
+	prodForm.ssh_port.required = linuxRemote;
+	prodForm.smb_share.required = windows;
+	prodForm.smb_user.required = windows;
+	prodForm.smb_password.required = windows;
 	const previous = prodForm.dataset.target;
 	if (previous && previous !== target) {
-		const previousDefaults = previous === "local"
+		const defaultsFor = (name) => name === "local"
 			? { folder: prodForm.dataset.localFolder, binding: prodForm.dataset.localBinding }
 			: { folder: prodForm.dataset.remoteFolder, binding: prodForm.dataset.remoteBinding };
-		const nextDefaults = local
-			? { folder: prodForm.dataset.localFolder, binding: prodForm.dataset.localBinding }
-			: { folder: prodForm.dataset.remoteFolder, binding: prodForm.dataset.remoteBinding };
+		const previousDefaults = defaultsFor(previous);
+		const nextDefaults = defaultsFor(target);
 		if (prodForm.folder.value === previousDefaults.folder) prodForm.folder.value = nextDefaults.folder;
 		if (!prodForm.binding.dataset.edited && prodForm.binding.value === previousDefaults.binding) prodForm.binding.value = nextDefaults.binding;
 	}
@@ -1353,6 +1375,7 @@ function openCreateProdDialog(site) {
 	prodForm.dataset.localFolder = `prod-${siteLabel(site)}`;
 	prodForm.dataset.localBinding = `prod-${siteLabel(site)}`;
 	prodForm.elements.target.value = "remote";
+	prodForm.elements.https.value = main && main.scheme === "http" ? "n" : "y";
 	delete prodForm.dataset.target;
 	syncProdForm();
 	prodForm.dataset.site = site.name;

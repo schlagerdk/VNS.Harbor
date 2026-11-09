@@ -9,7 +9,7 @@ _action=${2:-}
 validate_site_name "${_site}"
 set_site_vars
 load_prod_settings
-[[ -z ${PROD_LOCAL_PATH} ]] || { echo "This is not a remote production target." >&2; exit 1; }
+[[ -z ${PROD_LOCAL_PATH} && ${PROD_TARGET:-} != windows ]] || { echo "This is not a remote production target." >&2; exit 1; }
 validate_site_name "${PROD_FOLDER}"
 [[ ${PROD_IP} =~ ^[A-Za-z0-9][A-Za-z0-9.-]{0,252}$ ]] || { echo "Invalid remote host." >&2; exit 1; }
 [[ ${PROD_USER} =~ ^[A-Za-z_][A-Za-z0-9_.-]{0,63}$ ]] || { echo "Invalid SSH username." >&2; exit 1; }

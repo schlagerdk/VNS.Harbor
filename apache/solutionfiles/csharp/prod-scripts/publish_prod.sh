@@ -2,9 +2,9 @@
 # Publish this C# site (always a Release build) and upload it to a production server over SSH,
 # or into a local folder when PROD_LOCAL_PATH is set (e.g. a second copy of the site on this server).
 # The Release build goes to a temporary folder, so the local publish folder is left untouched.
-# Creates the folder, systemd service, Apache config and certificate on the target if they are missing.
+# Creates the folder, systemd service, Apache config and (unless PROD_HTTPS=n) certificate on the target if they are missing.
 # Requirements on prod: VNS.Linux apache/init.sh has been run, and the login is root or has passwordless sudo.
-# DNS for PROD_BINDING must point to the target server before the certificate can be issued.
+# With HTTPS, DNS for PROD_BINDING must point to the target server before the certificate can be issued.
 # With PROD_LOCAL_PATH use a PROD_FOLDER and PROD_BINDING that differ from the site it is published from.
 if [[ ${VNS_PUBLISH_TRACKED:-} != prod ]]; then
 	exec python3 "@APACHE_DIR@/lib/publish_status.py" run "$(cd "$(dirname "$0")/.." && pwd)" prod /bin/bash "$(realpath "$0")" "$@"
@@ -22,6 +22,7 @@ PROD_PASSWORD=@PROD_PASSWORD@       # SSH password (needs sshpass). Empty = use 
 PROD_SSH_PORT=@PROD_SSH_PORT@
 PROD_FOLDER=@PROD_FOLDER@           # Site name on prod: folder /var/www/<folder>, service and Apache config
 PROD_BINDING=@PROD_BINDING@         # Public domain on prod, e.g. account.vns.dk
+PROD_HTTPS=@PROD_HTTPS@             # n = plain HTTP without a certificate. Read when the Apache config is created
 PROD_ENVIRONMENT="@PROD_ENVIRONMENT@"
 PROD_ADMIN_MAIL="@ADMIN_MAIL@"
 # ---------------------------------------------------------------------------
@@ -107,7 +108,7 @@ fi
 _umbraco=0
 grep -qs "Umbraco.Cms" ./*.csproj && _umbraco=1
 
-_vars="SITE='${PROD_FOLDER}' BINDING='${PROD_BINDING}' ENVIRONMENT='${PROD_ENVIRONMENT}' MAIL='${PROD_ADMIN_MAIL}' PROJECT='${_projectName}' UMBRACO='${_umbraco}' ROOT='${_root}'"
+_vars="SITE='${PROD_FOLDER}' BINDING='${PROD_BINDING}' ENVIRONMENT='${PROD_ENVIRONMENT}' MAIL='${PROD_ADMIN_MAIL}' PROJECT='${_projectName}' UMBRACO='${_umbraco}' ROOT='${_root}' HTTPS='${PROD_HTTPS}'"
 
 echo "Prepare ${PROD_FOLDER} on ${PROD_IP:-this server}"
 run_script <<'REMOTE'
@@ -209,7 +210,7 @@ if ((${#server_aliases[@]})); then
 	printf -v server_alias_line '  ServerAlias %s' "${server_aliases[*]}"
 fi
 
-if [[ ! -e ${certdir}/fullchain.cer ]]; then
+if [[ ${HTTPS} != n && ! -e ${certdir}/fullchain.cer ]]; then
 	[[ -x ${acme} ]] || { echo "acme.sh not found on prod (${acme}). Run apache/init.sh there first." >&2; exit 1; }
 	certificate_domains=("${BINDING}" "${server_aliases[@]}")
 	certificate_args=()
@@ -253,18 +254,48 @@ EOF
 		--fullchain-file "${certdir}/fullchain.cer" --reloadcmd "systemctl reload apache2"
 fi
 
-if ! grep -q "SSLEngine" "${conf}" 2>/dev/null; then
-	echo "Create Apache config"
-	extra=""
-	if [[ ${UMBRACO} == 1 ]]; then
-		extra="
+extra=""
+if [[ ${UMBRACO} == 1 ]]; then
+	extra="
   ProxyPass /robots.txt http://localhost:${PORT}/seo_robots_txt
   ProxyPassReverse /robots.txt http://localhost:${PORT}/seo_robots_txt
 
   ProxyPass /sitemap.xml http://localhost:${PORT}/seo_sitemap_xml
   ProxyPassReverse /sitemap.xml http://localhost:${PORT}/seo_sitemap_xml
 "
+fi
+if [[ ${HTTPS} == n ]]; then
+	# An existing proxy config is kept, so a site that later got a certificate stays on HTTPS
+	if ! grep -q "ProxyPass" "${conf}" 2>/dev/null; then
+		echo "Create Apache config (HTTP only)"
+		cat >"${conf}" <<EOF
+<VirtualHost *:80>
+  ServerAdmin ${MAIL}
+  ServerName ${BINDING}
+${server_alias_line}
+  DocumentRoot ${docroot}
+
+  AllowEncodedSlashes NoDecode
+
+  RewriteEngine On
+  RewriteCond %{HTTP:Upgrade} =websocket [NC]
+  RewriteCond %{HTTP:Connection} upgrade [NC]
+  RewriteRule /(.*) ws://localhost:${PORT}/\$1 [P,L]
+
+  ProxyPreserveHost On
+  ProxyRequests Off
+  ProxyPass /.well-known/acme-challenge/ !
+  RequestHeader set X-Forwarded-Proto "http"
+${extra}
+  ProxyPass / http://localhost:${PORT}/ nocanon
+  ProxyPassReverse / http://localhost:${PORT}/
+
+  ErrorLog /var/log/apache2/${SITE}-80-error.log
+</VirtualHost>
+EOF
 	fi
+elif ! grep -q "SSLEngine" "${conf}" 2>/dev/null; then
+	echo "Create Apache config"
 	cat >"${conf}" <<EOF
 <VirtualHost *:80>
   ServerAdmin ${MAIL}
@@ -384,10 +415,17 @@ run_script <<'REMOTE'
 set -euo pipefail
 dir=${ROOT}
 file=${dir}/appsettings.json
+# The Apache config decides the scheme: it stays correct if a certificate is added later
+scheme=http
+use_https=false
+if grep -q "SSLEngine" "/etc/apache2/sites-available/${SITE}.conf" 2>/dev/null; then
+	scheme=https
+	use_https=true
+fi
 if [[ -f ${file} ]] && grep -q "UmbracoApplicationUrl" "${file}"; then
-	echo "Set UmbracoApplicationUrl to https://${BINDING}"
-	sed -i -E "s|(\"UmbracoApplicationUrl\"[[:space:]]*:[[:space:]]*\")[^\"]*|\1https://${BINDING}|" "${file}"
-	sed -i -E 's/("UseHttps"[[:space:]]*:[[:space:]]*)false/\1true/' "${file}"
+	echo "Set UmbracoApplicationUrl to ${scheme}://${BINDING}"
+	sed -i -E "s|(\"UmbracoApplicationUrl\"[[:space:]]*:[[:space:]]*\")[^\"]*|\1${scheme}://${BINDING}|" "${file}"
+	sed -i -E "s/(\"UseHttps\"[[:space:]]*:[[:space:]]*)(true|false)/\1${use_https}/" "${file}"
 fi
 chown -R www-data:www-data "${dir}"
 python3 /vns/apache/lib/sql_startup.py "${SITE}"

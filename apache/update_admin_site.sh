@@ -154,7 +154,8 @@ for site in sorted(root.iterdir()):
         if path.is_file():
             update_publish_script(path, False)
     path = scripts / "publish_prod.sh"
-    if path.is_file():
+    # A Windows target publishes for win-x64 and has no SSH commands to patch
+    if path.is_file() and not re.search(r"(?m)^PROD_TARGET=windows\b", path.read_text()):
         update_publish_script(path, True)
 
 if not planned and not unchanged:

@@ -11,7 +11,8 @@ load_prod_settings() {
 		exit 1
 	fi
 	PROD_LOCAL_PATH="" PROD_IP="" PROD_USER="" PROD_PASSWORD="" PROD_SSH_PORT=22
-	PROD_FOLDER="" PROD_BINDING="" PROD_PORT_HTTP="" PROD_ADMIN_MAIL=""
+	PROD_FOLDER="" PROD_BINDING="" PROD_PORT_HTTP="" PROD_ADMIN_MAIL="" PROD_HTTPS=""
+	PROD_TARGET="" PROD_WINDOWS_SHARE="" PROD_SMB_USER="" PROD_SMB_PASSWORD="" PROD_SMB_DOMAIN=""
 	# shellcheck disable=SC1090
 	source <(grep -E '^PROD_[A-Z_]+=' "${_script}")
 	if [[ -z ${PROD_FOLDER} || -z ${PROD_BINDING} ]]; then
@@ -19,7 +20,10 @@ load_prod_settings() {
 		exit 1
 	fi
 	_prodScript=${_script}
-	if [[ -n ${PROD_LOCAL_PATH} ]]; then
+	if [[ ${PROD_TARGET} == windows ]]; then
+		_target=${PROD_WINDOWS_SHARE}
+		_root=${PROD_WINDOWS_SHARE}
+	elif [[ -n ${PROD_LOCAL_PATH} ]]; then
 		_target="this server"
 		_root=${PROD_LOCAL_PATH%/}
 	else
@@ -30,6 +34,10 @@ load_prod_settings() {
 
 prod_exec() {
 	local _command=$1 _interactive=${2:-}
+	if [[ ${PROD_TARGET:-} == windows ]]; then
+		echo "This action is not available for a Windows production site. It has no SSH access: use IIS on the server." >&2
+		exit 1
+	fi
 	if [[ -n ${PROD_LOCAL_PATH} ]]; then
 		sudo bash -c "${_command}"
 		return

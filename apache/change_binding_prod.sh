@@ -15,6 +15,10 @@ validate_site_name "${_site}"
 set_site_vars
 
 load_prod_settings
+if [[ ${PROD_TARGET:-} == windows ]]; then
+	echo "The binding of a Windows production site is managed in IIS. Change it there, then update PROD_BINDING in ${_prodScript}." >&2
+	exit 1
+fi
 
 _oldBinding=${PROD_BINDING,,}
 validate_binding "${_oldBinding}"

@@ -378,11 +378,13 @@
     </header>
     <div class="ns-section">Production target</div>
     <div class="ns-grid">
-      <label>Target <select name="target"><option value="remote">Remote server</option><option value="local">Local folder on this server</option></select></label>
-      <label>Production folder / service name <input name="folder" required autocomplete="off" spellcheck="false"></label>
+      <label>Target <select name="target"><option value="remote">Remote Linux server</option><option value="windows">Remote Windows server (IIS)</option><option value="local">Local folder on this server</option></select></label>
+      <label id="prod-folder-row">Production folder / service name <input name="folder" required autocomplete="off" spellcheck="false"></label>
       <label>Production binding (domain) <input name="binding" required autocomplete="off" spellcheck="false"></label>
       <label>Environment <select name="environment"><option>Development</option><option>Test</option><option>Staging</option><option selected>Production</option></select></label>
+      <label>Protocol <select name="https"><option value="y">HTTPS</option><option value="n">HTTP</option></select></label>
     </div>
+    <p class="hint" id="prod-protocol-hint"></p>
     <div id="prod-remote-options">
       <div class="ns-section">SSH connection</div>
       <div class="ns-grid">
@@ -392,6 +394,16 @@
         <label>SSH password <input name="password" type="password" autocomplete="new-password" placeholder="Leave empty to use an SSH key"></label>
       </div>
       <p class="hint">A password is optional when SSH keys are configured. If provided, it is saved in this site's root-only production script.</p>
+    </div>
+    <div id="prod-windows-options" hidden>
+      <div class="ns-section">Windows connection (SMB)</div>
+      <label>Folder of the IIS site <input name="smb_share" required autocomplete="off" spellcheck="false" placeholder="//server/share/site-folder"></label>
+      <div class="ns-grid">
+        <label>SMB username <input name="smb_user" required autocomplete="off" spellcheck="false" value="Administrator"></label>
+        <label>SMB password <input name="smb_password" type="password" required autocomplete="new-password"></label>
+        <label>SMB domain <input name="smb_domain" autocomplete="off" spellcheck="false" placeholder="Leave empty if the server is not on a domain"></label>
+      </div>
+      <p class="hint">The IIS site and its folder must already exist, with the ASP.NET Core Hosting Bundle and IIS URL Rewrite Module installed. web.config is created on the first publish, with the HTTPS redirect and Umbraco's sitemap and robots rewrites when they apply. The password is saved in this site's root-only production scripts.</p>
     </div>
     <div id="prod-local-options" hidden>
       <div class="ns-section">Local production folder</div>

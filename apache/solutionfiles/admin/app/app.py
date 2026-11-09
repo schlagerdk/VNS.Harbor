@@ -249,7 +249,8 @@ def read_text(path):
         return ""
 
 
-PROD_KEYS = ("PROD_LOCAL_PATH", "PROD_IP", "PROD_USER", "PROD_SSH_PORT", "PROD_FOLDER", "PROD_BINDING", "PROD_PORT_HTTP")
+PROD_KEYS = ("PROD_LOCAL_PATH", "PROD_IP", "PROD_USER", "PROD_SSH_PORT", "PROD_FOLDER", "PROD_BINDING", "PROD_PORT_HTTP",
+             "PROD_TARGET", "PROD_WINDOWS_SHARE", "PROD_SMB_USER", "PROD_HTTPS", "PROD_ENVIRONMENT")
 
 
 def parse_prod(root):
@@ -260,8 +261,12 @@ def parse_prod(root):
         return None
     values = {}
     for key in PROD_KEYS:
-        match = re.search(r"^%s=(\S*)" % key, text, re.M)
-        value = match.group(1).strip("'\"") if match else ""
+        match = re.search(r"^%s=((?:\\.|\S)*)" % key, text, re.M)
+        raw = match.group(1) if match else ""
+        try:
+            value = "".join(shlex.split(raw))
+        except ValueError:
+            value = raw.strip("'\"")
         values[key] = "" if value.startswith("@") else value
     return values
 
@@ -515,7 +520,13 @@ def site_info(name, states):
     prod = parse_prod(root)
     if prod:
         local = prod["PROD_LOCAL_PATH"]
-        if local:
+        if prod.get("PROD_TARGET") == "windows":
+            share = prod["PROD_WINDOWS_SHARE"]
+            secure = prod["PROD_HTTPS"] != "n"
+            environments.append({"key": "prod", "label": "Production", "mode": "windows", "unit": "", "state": "", "binding": prod["PROD_BINDING"],
+                                 "port": "", "path": "", "host": share[2:].split("/", 1)[0], "user": prod["PROD_SMB_USER"], "folder": share,
+                                 "environment": prod["PROD_ENVIRONMENT"] or "Unknown", "scheme": "https" if secure else "http", "https": secure})
+        elif local:
             full = os.path.realpath(local)
             inside = full == WEB_ROOT or full.startswith(WEB_ROOT + os.sep)
             unit = prod["PROD_FOLDER"]
@@ -985,7 +996,7 @@ def remote_site(name):
     if name not in site_dirs():
         abort(400, "Unknown site")
     prod = parse_prod(os.path.join(WEB_ROOT, name))
-    if not prod or prod["PROD_LOCAL_PATH"]:
+    if not prod or prod["PROD_LOCAL_PATH"] or prod.get("PROD_TARGET") == "windows":
         abort(400, "This site has no remote production target")
     return prod
 
@@ -1233,13 +1244,28 @@ def display_dns_name(value):
         return value
 
 
+def windows_share(value):
+    """Normalize \\\\server\\share\\folder to //server/share/folder. A folder below the share is required."""
+    if not isinstance(value, str):
+        abort(400, "Invalid Windows folder")
+    share = value.strip().replace("\\", "/").rstrip("/")
+    match = re.fullmatch(r"//([A-Za-z0-9][A-Za-z0-9.-]{0,252})((?:/[^/\x00-\x1f:*?\"<>|]+){2,})", share)
+    if not match or any(part in (".", "..") for part in match.group(2).split("/")):
+        abort(400, "The Windows folder must look like //server/share/folder")
+    return share
+
+
 def production_setup_env(data, site):
     """Validate modal input for create_prod.sh and keep credentials out of argv."""
-    folder = dns_name(data.get("folder", ""), "production site name")
-    binding = dns_name(data.get("binding", ""), "production binding", fully_qualified=True)
     target = data.get("target", "")
-    if target not in ("local", "remote"):
+    if target not in ("local", "remote", "windows"):
         abort(400, "Invalid production target")
+    binding = dns_name(data.get("binding", ""), "production binding", fully_qualified=True)
+    # A Windows site has no folder or service on this side: the binding names it in the admin.
+    folder = binding if target == "windows" else dns_name(data.get("folder", ""), "production site name")
+    https = data.get("https", "y")
+    if https not in ("y", "n"):
+        abort(400, "Invalid production protocol")
     environment = data.get("environment", "Production")
     if environment not in ("Development", "Test", "Staging", "Production"):
         abort(400, "Invalid production environment")
@@ -1259,6 +1285,11 @@ def production_setup_env(data, site):
         "VNS_PROD_USER": "",
         "VNS_PROD_PASSWORD": "",
         "VNS_PROD_SSH_PORT": "",
+        "VNS_PROD_HTTPS": https,
+        "VNS_PROD_SMB_SHARE": "",
+        "VNS_PROD_SMB_USER": "",
+        "VNS_PROD_SMB_PASSWORD": "",
+        "VNS_PROD_SMB_DOMAIN": "",
     }
     test_binding = conf_binding(site).lower()
     if target == "local":
@@ -1276,6 +1307,22 @@ def production_setup_env(data, site):
         if service_name(folder) == service_name(site) or binding == test_binding:
             abort(400, "A local production site needs a different name and binding than the test site")
         values["VNS_PROD_LOCAL_PATH"] = target_path
+    elif target == "windows":
+        user = data.get("smb_user", "")
+        password = data.get("smb_password", "")
+        domain = data.get("smb_domain", "")
+        if not isinstance(user, str) or not re.fullmatch(r"[^\x00-\x1f\"/\\\[\]:;|=,+*?<>@]{1,104}", user):
+            abort(400, "Invalid SMB username. Enter the domain separately.")
+        if not isinstance(password, str) or not 1 <= len(password) <= 4096:
+            abort(400, "Invalid SMB password")
+        if not isinstance(domain, str) or not re.fullmatch(r"[A-Za-z0-9._-]{0,255}", domain):
+            abort(400, "Invalid SMB domain")
+        values.update({
+            "VNS_PROD_SMB_SHARE": windows_share(data.get("smb_share", "")),
+            "VNS_PROD_SMB_USER": user,
+            "VNS_PROD_SMB_PASSWORD": password,
+            "VNS_PROD_SMB_DOMAIN": domain,
+        })
     else:
         host = data.get("host", "")
         user = data.get("user", "")

@@ -22,6 +22,10 @@ case "${_action}" in
 			read -r -p "Issue a new certificate for ${PROD_BINDING} on ${_target}? [y/N]: " _confirm
 		fi
 		[[ ${_confirm} == [yY] || ${_confirm} == [yY][eE][sS] ]] || { echo "Aborted"; exit 1; }
+		if [[ ${PROD_TARGET:-} == windows ]]; then
+			echo "The certificate of a Windows production site is managed in IIS." >&2
+			exit 1
+		fi
 		_umbraco=n
 		[[ -f ${_siteRoot}/scripts/sync_prod.sh ]] && _umbraco=1
 		prod_run "SITE='${PROD_FOLDER}' BINDING='${PROD_BINDING,,}' ACME_SERVER='${_acmeServer}' ROOT='${_root}' MAIL='${PROD_ADMIN_MAIL:-${_adminMail}}' UMBRACO='${_umbraco}'" <<'REMOTE'
@@ -63,6 +67,8 @@ apache2ctl configtest
 systemctl reload apache2
 echo "Certificate installed in ${certdir}"
 REMOTE
+		# The site now runs on HTTPS, also if it was created with plain HTTP
+		sudo perl -pi -e 's/^PROD_HTTPS=\S*/PROD_HTTPS=y/' "${_prodScript}"
 		;;
 	change_env)
 		echo "Production environment of ${PROD_FOLDER} (${_target})"
@@ -80,6 +86,12 @@ REMOTE
 			4 | p | prod | production) _env=Production ;;
 			*) echo "Unknown environment: ${_env}" >&2; exit 1 ;;
 		esac
+		if [[ ${PROD_TARGET:-} == windows ]]; then
+			source lib/windows_prod.sh
+			windows_smb_connect
+			windows_set_environment "${_env}"
+			echo "Now: ${_env} (web.config). IIS restarts the app."
+		else
 		prod_run "SITE='${PROD_FOLDER}' ENVIRONMENT='${_env}'" <<'REMOTE'
 set -euo pipefail
 source /vns/apache/lib/common.sh
@@ -95,6 +107,7 @@ systemctl daemon-reload
 systemctl restart "${unit}"
 systemctl status "${unit}" --no-pager
 REMOTE
+		fi
 		# publish_prod.sh only reads PROD_ENVIRONMENT when it creates a new service; keep it in sync
 		sudo env NEW_ENV="${_env}" perl -pi -e 's/^(PROD_ENVIRONMENT=)(["\x27]?)[^"\x27\s]*\2/$1$2$ENV{NEW_ENV}$2/' "${_prodScript}"
 		;;

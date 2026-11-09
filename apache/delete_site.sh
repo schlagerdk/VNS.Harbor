@@ -28,11 +28,13 @@ _hasProd=0
 _prodLocalPath=""
 _prodFolder=""
 _prodBinding=""
+_prodTarget=""
 if [[ -f ${_prodScript} ]]; then
 	_hasProd=1
 	_prodLocalPath=$(_prodVar PROD_LOCAL_PATH)
 	_prodFolder=$(_prodVar PROD_FOLDER)
 	_prodBinding=$(_prodVar PROD_BINDING)
+	_prodTarget=$(_prodVar PROD_TARGET)
 fi
 if [[ ${_scope} == prod && ${_hasProd} -eq 0 ]]; then
 	echo "This site has no production site." >&2
@@ -85,7 +87,10 @@ fi
 
 # ---- production site
 if [[ ${_scope} != test && ${_hasProd} -eq 1 ]]; then
-	if [[ -n ${_prodLocalPath} ]]; then
+	if [[ ${_prodTarget} == windows ]]; then
+		# The IIS site is managed on the Windows server, and it holds the only copy of its settings and media.
+		echo "The site on the Windows server is not touched: remove the IIS site and its folder there."
+	elif [[ -n ${_prodLocalPath} ]]; then
 		_prodLocalPath=${_prodLocalPath%/}
 		validate_site_name "${_prodFolder}" && [[ ${_prodFolder} != "${_site}" ]] || { echo "Invalid production site name: ${_prodFolder}" >&2; exit 1; }
 		case "${_prodLocalPath}" in
