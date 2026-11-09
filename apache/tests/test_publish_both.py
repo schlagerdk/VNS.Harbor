@@ -103,6 +103,7 @@ const isMissingEnv = () => false;
 const targetFields = () => ({});
 const sortedEnvironments = environments => environments;
 const siteLabel = site => site.display_name || site.name;
+const siteTitle = siteLabel;
 const kindBadges = () => el("span");
 const decorate = () => {};
 const updateSiteActivity = () => {};

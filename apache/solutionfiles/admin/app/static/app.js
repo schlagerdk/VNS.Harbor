@@ -556,6 +556,11 @@ const bindingLink = (binding, asButton) => binding
 const backofficeLink = (binding, asButton) => openLink(binding + "/umbraco", "https://" + binding + "/umbraco", "Umbraco backoffice", asButton);
 const siteLabel = (site) => site.display_name || site.name;
 const bindingLabel = (env) => env.display_binding || env.binding;
+// The name people look for. The folder can have another name, and is listed on the page.
+const siteTitle = (site) => {
+	const main = site.environments?.find((env) => env.key === "main");
+	return (main && bindingLabel(main)) || siteLabel(site);
+};
 const aliasLabels = (env) => env?.display_aliases || env?.aliases || [];
 
 function environmentAddress(env) {
@@ -700,7 +705,7 @@ function siteCard(site) {
 		...(selection ? [selection] : []),
 		el("div", { className: "site-head" },
 			el("span", { className: "site-emblem" }, svgIcon("globe")),
-			el("div", { className: "site-identity" }, el("h3", { className: "site-title", textContent: siteLabel(site) }), badges),
+			el("div", { className: "site-identity" }, el("h3", { className: "site-title", textContent: siteTitle(site), title: site.name }), badges),
 			el("span", { className: "dot " + state, title: state || "Static site" })),
 		actions);
 }
@@ -871,7 +876,7 @@ function renderSite(name) {
 	danger.replaceChildren();
 	danger.hidden = site.admin || !hasProd(site);
 	if (!danger.hidden) danger.append(el("button", { textContent: "Delete everything", className: "danger", onclick: () => run(() => deleteSite(site, "all")) }));
-	const title = el("div", { className: "detail-title" }, el("h2", { textContent: siteLabel(site) }), kindBadges(site));
+	const title = el("div", { className: "detail-title" }, el("h2", { textContent: siteTitle(site) }), kindBadges(site));
 	if ((site.adopt_into || []).length) {
 		title.append(el("button", { textContent: "Move under main site", className: "detail-title-action", onclick: () => run(() => openAdoptDialog(site)) }));
 	}
@@ -1220,8 +1225,16 @@ async function copySite(site, sourceEnv) {
 	};
 	showCopyPath();
 	form.querySelector(".copy-dns-hint").textContent = `For HTTPS, the new binding must point to ${copyServer || "this server"}.`;
+	// A site with a project gets a project of its own
+	const hasProject = site.has_project && !sourceEnv;
+	$("#copy-project-row").hidden = !hasProject;
+	field("project").required = hasProject;
+	field("project").disabled = !hasProject;
+	let projectEdited = false;
+	field("project").oninput = () => { projectEdited = true; };
 	field("target").oninput = () => {
 		showCopyPath();
+		if (hasProject && !projectEdited) field("project").value = field("target").value.trim().replace(/[^A-Za-z0-9._-]/g, "").replace(/^[._-]+/, "");
 		if (!databaseEdited) {
 			field("database").value = field("target").value;
 			suggestUsername();
@@ -1248,6 +1261,7 @@ async function copySite(site, sourceEnv) {
 			try {
 				const payload = { kind: sourceEnv ? "copy_env" : "copy_site", site: site.name, ...(sourceEnv ? { environment_id: sourceEnv.target } : {}),
 					target: field("target").value.trim(), binding: field("binding").value.trim() };
+				if (hasProject) payload.project = field("project").value.trim();
 				if (hasSqlConnection && field("change_connection").checked) {
 					payload.connection = { server: field("server").value.trim(), database: field("database").value.trim(),
 						username: field("username").value.trim(), password: field("password").value };

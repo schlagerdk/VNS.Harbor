@@ -46,6 +46,59 @@ class CopySiteTests(unittest.TestCase):
         return copy_site.prepare("source.test", target, "new.example.test", "4002",
                                  self.web, self.configs, self.services)
 
+    def renamed(self, csproj="<Project>\n  <PropertyGroup>\n    <TargetFramework>net10.0</TargetFramework>\n  </PropertyGroup>\n</Project>\n", project="kunde"):
+        (self.source / "source.test.csproj").write_text(csproj)
+        copy_site.prepare("source.test", "target.test", "new.example.test", "4002", self.web, self.configs, self.services, project=project)
+        return self.web / "target.test"
+
+    def test_new_project_name_renames_the_project_and_what_runs_it(self):
+        (self.source / "bin/Debug").mkdir(parents=True)
+        (self.source / "obj").mkdir()
+        (self.source / "wwwroot/obj").mkdir(parents=True)
+        (self.source / "source.test.deps.json").write_text("{}")
+        (self.source / "App.sln").write_text('Project("{X}") = "source.test", "source.test.csproj", "{Y}"\n')
+        (self.source / ".vns-publish").mkdir()
+        (self.source / ".vns-publish/test.json").write_text("{}")
+        target = self.renamed()
+        self.assertFalse((target / "source.test.csproj").exists())
+        self.assertIn("<RootNamespace>source.test</RootNamespace>", (target / "kunde.csproj").read_text())
+        self.assertIn('"kunde", "kunde.csproj"', (target / "App.sln").read_text())
+        service = (self.services / "target.test.service").read_text()
+        self.assertIn(f"{target}/kunde.dll", service)
+        self.assertNotIn("source.test.dll", service)
+        script = (target / "scripts/publish.sh").read_text()
+        self.assertIn("_projectName=kunde\n", script)
+        self.assertIn("dotnet publish kunde.csproj", script)
+        self.assertIn("systemctl restart target.test", script)
+        for gone in ("source.test.dll", "source.test.deps.json", "bin", "obj", ".vns-publish"):
+            self.assertFalse((target / gone).exists(), gone)
+        self.assertTrue((target / "wwwroot/obj").is_dir(), "Only the project's own bin and obj are skipped")
+        self.assertTrue((target / "appsettings.json").exists())
+        self.assertTrue((self.source / "source.test.csproj").exists(), "The source is not changed")
+        self.assertTrue((self.source / "bin").exists())
+
+    def test_assembly_name_follows_and_an_existing_root_namespace_stays(self):
+        target = self.renamed("<Project><PropertyGroup><AssemblyName>source.test</AssemblyName><RootNamespace>My.Code</RootNamespace></PropertyGroup></Project>")
+        text = (target / "kunde.csproj").read_text()
+        self.assertIn("<AssemblyName>kunde</AssemblyName>", text)
+        self.assertIn("<RootNamespace>My.Code</RootNamespace>", text)
+        self.assertEqual(text.count("RootNamespace>"), 2)
+
+    def test_same_project_name_changes_nothing(self):
+        target = self.renamed(project="source.test")
+        self.assertTrue((target / "source.test.csproj").exists())
+        self.assertTrue((target / "source.test.dll").exists())
+        self.assertIn("source.test.dll", (self.services / "target.test.service").read_text())
+
+    def test_invalid_project_or_no_project_is_refused_before_copying(self):
+        (self.source / "source.test.csproj").write_text("<Project />")
+        with self.assertRaises(ValueError):
+            copy_site.prepare("source.test", "target.test", "new.example.test", "4002", self.web, self.configs, self.services, project="../evil")
+        (self.source / "source.test.csproj").unlink()
+        with self.assertRaises(ValueError):
+            copy_site.prepare("source.test", "target.test", "new.example.test", "4002", self.web, self.configs, self.services, project="kunde")
+        self.assertFalse((self.web / "target.test").exists())
+
     def test_copy_preserves_project_identity_and_changes_deployment_identity(self):
         before = (self.configs / "source.test.conf").read_text()
         self.assertFalse(self.prepare())

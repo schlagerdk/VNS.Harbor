@@ -23,6 +23,11 @@ _https=0
 if grep -qiE '^[[:space:]]*SSLEngine[[:space:]]+on' "/etc/apache2/sites-available/${_source}.conf"; then _https=1; fi
 _databaseArgs=()
 if [[ -n ${4:-} ]]; then _databaseArgs=(--database "$4"); fi
+# A renamed project has no dll with the new name yet: it is built instead of just started
+_project=${VNS_COPY_PROJECT:-}
+_build=0
+if [[ -n ${_project} && ! -f ${_rootPath}/${_source}/${_project}.csproj ]]; then _build=1; fi
+_databaseArgs+=(--project "${_project}")
 python3 lib/copy_site.py "${_source}" "${_site}" "${_binding}" "${_portHttp}" "${_databaseArgs[@]}"
 _changedConnection=${VNS_COPY_SQL:+y}
 unset VNS_COPY_SQL
@@ -43,7 +48,17 @@ if [[ -f ${_servicePath} ]]; then
 		python3 "${_apacheDir}/lib/sql_startup.py" "${_serviceName}"
 	fi
 	systemctl enable "${_serviceName}"
-	systemctl start "${_serviceName}"
+	if ((_build)); then
+		echo "Build ${_project}"
+		_publishScript=${_siteRoot}/scripts/publish.sh
+		[[ -f ${_publishScript} ]] || _publishScript=${_siteRoot}/scripts/publish_local.sh
+		if ! bash "${_publishScript}"; then
+			echo "The copy could not be built. It is in ${_siteRoot}: fix the build and run its Publish." >&2
+			exit 1
+		fi
+	else
+		systemctl start "${_serviceName}"
+	fi
 	systemctl is-active --quiet "${_serviceName}"
 fi
 systemctl reload apache2

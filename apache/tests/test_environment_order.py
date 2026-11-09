@@ -101,6 +101,21 @@ console.log(JSON.stringify([isMissingEnv({mode: "remote", exists: false}), isMis
     isMissingEnv({mode: "remote", exists: true}), isMissingEnv({mode: "local", exists: false})]));"""], capture_output=True, text=True, check=True)
         self.assertEqual(json.loads(result.stdout), [True, False, False, False])
 
+    def test_title_is_the_binding_of_the_main_site(self):
+        source = (APP / "static/app.js").read_text()
+        code = source[source.index("const siteLabel ="):source.index("function environmentAddress")]
+        code = code[:code.index("};", code.index("const siteTitle")) + 2]
+        script = code + """
+console.log(JSON.stringify([
+    siteTitle({name: "folder.test", environments: [{key: "main", binding: "new.test"}, {key: "prod", binding: "other.test"}]}),
+    siteTitle({name: "folder.test", environments: [{key: "main", binding: ""}]}),
+    siteTitle({name: "folder.test", display_name: "Folder", environments: []}),
+]));"""
+        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True)
+        self.assertEqual(json.loads(result.stdout), ["new.test", "folder.test", "Folder"])
+        self.assertIn('el("h2", { textContent: siteTitle(site) })', source)
+        self.assertIn('className: "site-title", textContent: siteTitle(site)', source)
+
     def test_layout_and_wording(self):
         page = (APP / "templates/index.html").read_text()
         layout = re.search(r'<div id="site-layout".*?</div>\s*<section id="site-targets"', page, re.S).group(0)

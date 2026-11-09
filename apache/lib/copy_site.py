@@ -76,9 +76,49 @@ def rewrite(text, source, target, binding, old_port="", new_port=""):
     return text
 
 
+PROJECT_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+
+
+def rename_project_references(text, names, project):
+    """Point a script or service at the new project and dll."""
+    text = re.sub(r"(?m)^_projectName=.*$", "_projectName=" + project, text)
+    for name in names:
+        text = re.sub(r"(?<![\w.-])" + re.escape(name) + r"(?=\.(?:csproj|dll|deps\.json|runtimeconfig\.json)(?![\w.-]))", project, text)
+    return text
+
+
+def rename_project(target, old_project, old_dll, project, working_folder):
+    """Rename the project file and what depends on its name. Namespaces in the code stay as they are."""
+    path = target / (old_project + ".csproj")
+    text = path.read_text(encoding="utf-8-sig")
+    text = re.sub(r"(<AssemblyName>)[^<]*(</AssemblyName>)", lambda m: m[1] + project + m[2], text)
+    # The default namespace follows the project name, and embedded resources are named after it
+    if "<RootNamespace>" not in text:
+        text = re.sub(r"(<PropertyGroup[^>]*>)", lambda m: f"{m[1]}\n    <RootNamespace>{old_project}</RootNamespace>", text, count=1)
+    path.write_text(text, encoding="utf-8")
+    path.rename(target / (project + ".csproj"))
+    user = target / (old_project + ".csproj.user")
+    if user.is_file():
+        user.rename(target / (project + ".csproj.user"))
+    for solution in [*target.glob("*.sln"), *target.glob("*.slnx")]:
+        content = solution.read_text(encoding="utf-8-sig")
+        content = content.replace(old_project + ".csproj", project + ".csproj").replace(f'"{old_project}"', f'"{project}"')
+        solution.write_text(content, encoding="utf-8")
+    # The build makes the new dll. An old one left in the publish folder would be loaded by nothing but still be there.
+    for path in working_folder.glob(old_dll + ".*"):
+        if path.is_file() and path.suffix in (".dll", ".pdb", ".exe", ".json", ".xml"):
+            path.unlink()
+    old_host = working_folder / old_dll
+    if old_host.is_file():
+        old_host.unlink()
+    status = target / ".vns-publish"
+    if status.is_dir():
+        shutil.rmtree(status)
+
+
 def prepare(source_name, target_name, binding, port="", web_root=Path("/var/www"),
             configs=Path("/etc/apache2/sites-available"), services=Path("/etc/systemd/system"),
-            database="", connection=None):
+            database="", connection=None, project=""):
     source_name = normalize_site_name(source_name)
     target_name = normalize_site_name(target_name)
     binding = normalize_dns_name(binding, fully_qualified=True)
@@ -104,6 +144,21 @@ def prepare(source_name, target_name, binding, port="", web_root=Path("/var/www"
         if re.search(r"(?mi)^\s*(?:ServerName|ServerAlias)\s+.*(?<!\S)" + re.escape(binding) + r"(?!\S)", path.read_text()):
             raise ValueError("The new binding is already used by an Apache site.")
     service_text = service.read_text() if service.is_file() else ""
+    old_project = old_dll = ""
+    project_names = []
+    if project:
+        if not PROJECT_RE.fullmatch(project):
+            raise ValueError("Invalid project name. Use letters, numbers, dots, hyphens or underscores.")
+        projects = sorted(source.glob("*.csproj"))
+        if len(projects) != 1:
+            raise ValueError("The source needs exactly one project to rename it.")
+        old_project = projects[0].stem
+        if project == old_project:
+            project = ""
+        else:
+            running = re.search(r"([^\s/\"']+)\.dll(?=[\s\"']|$)", service_text)
+            old_dll = running[1] if running else old_project
+            project_names = [old_project, old_dll]
     if database or connection is not None:
         if connection is not None:
             if not isinstance(connection, dict) or set(connection) != {"server", "database", "username", "password"}:
@@ -136,7 +191,9 @@ def prepare(source_name, target_name, binding, port="", web_root=Path("/var/www"
         raise ValueError("A service copy requires one identifiable HTTP port and a new allocated port.")
     old_port = next(iter(ports), "")
     https = bool(re.search(r"(?mi)^\s*SSLEngine\s+on\b", text))
-    shutil.copytree(source, target, symlinks=True, copy_function=shutil.copy2)
+    # bin and obj hold the old name and are made again by the build
+    skip = (lambda folder, names: [name for name in names if name in ("bin", "obj")] if Path(folder) == source else []) if project else None
+    shutil.copytree(source, target, symlinks=True, copy_function=shutil.copy2, ignore=skip)
     os.chown(target, source.stat().st_uid, source.stat().st_gid)
     for path in target.rglob("*"):
         info = (source / path.relative_to(target)).lstat()
@@ -153,6 +210,8 @@ def prepare(source_name, target_name, binding, port="", web_root=Path("/var/www"
         if original_binding[1] not in (source_name, service_name(source_name)):
             content = re.sub(r"(?<![\w.-])" + re.escape(original_binding[1]) + r"(?![\w.-])", binding, content)
         content = re.sub(r"(?m)^(_binding=).*$", lambda m: m[1] + binding, content)
+        if project:
+            content = rename_project_references(content, project_names, project)
         path.write_text(content)
     for folder in ("venv/bin", ".venv/bin"):
         for path in (target / folder).glob("*"):
@@ -199,8 +258,13 @@ def prepare(source_name, target_name, binding, port="", web_root=Path("/var/www"
         text = re.sub(r"(?m)^(\s*SSLCertificateKeyFile\s+).*$",
                       lambda m: m[1] + f"/etc/ssl/certs/{target_name}_ecc/{target_name}.key", text)
     target_conf.write_text(text)
+    new_service = rewrite(service_text, source, target, binding, old_port, port) if service_text else ""
+    if project:
+        new_service = rename_project_references(new_service, project_names, project)
+        working = re.search(r"(?m)^WorkingDirectory=(.+)$", new_service)
+        rename_project(target, old_project, old_dll, project, Path(working[1].strip()) if working else target)
     if service_text:
-        target_service.write_text(rewrite(service_text, source, target, binding, old_port, port))
+        target_service.write_text(new_service)
     return https
 
 
@@ -211,10 +275,11 @@ if __name__ == "__main__":
     parser.add_argument("binding")
     parser.add_argument("port", nargs="?", default="")
     parser.add_argument("--database", default="")
+    parser.add_argument("--project", default="")
     args = parser.parse_args()
     try:
         secret = os.environ.pop("VNS_COPY_SQL", None)
         prepare(args.source, args.target, args.binding, args.port, database=args.database,
-                connection=json.loads(secret) if secret is not None else None)
+                connection=json.loads(secret) if secret is not None else None, project=args.project)
     except (OSError, ValueError) as exc:
         parser.exit(1, f"Copy site failed: {exc}\n")

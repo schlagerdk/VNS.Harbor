@@ -1800,10 +1800,18 @@ def build_command(data):
         argv = [bash, os.path.join(APACHE_DIR, "copy_site.sh"), source, target, binding]
         if main:
             argv = [bash, os.path.join(APACHE_DIR, "copy_env.sh"), main, source, target, binding]
+        project = data.get("project", "")
+        if project:
+            if main or not isinstance(project, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", project):
+                abort(400, "Invalid project name")
+            if len(glob.glob(os.path.join(glob.escape(os.path.join(WEB_ROOT, source)), "*.csproj"))) != 1:
+                abort(400, "The site needs exactly one project to rename it")
         if database.strip():
             argv.append(database.strip())
         if copy_remote:
             argv = ["/usr/bin/env", "VNS_COPY_REMOTE=1", "VNS_TARGET=" + copied_target, *argv]
+        if project:
+            argv = ["/usr/bin/env", "VNS_COPY_PROJECT=" + project, *argv]
         return "Copy site: " + source, argv, APACHE_DIR
     if kind == "create_site":
         site = dns_name(data.get("site", ""), "site name")

@@ -331,6 +331,10 @@
       <label>New folder<input name="target" required autocomplete="off" placeholder="copy.example.com"></label>
       <label>Binding<input name="binding" required autocomplete="off" placeholder="copy.example.com"></label>
     </div>
+    <div id="copy-project-row" hidden>
+      <label>Project name<input name="project" autocomplete="off" spellcheck="false" maxlength="128" pattern="[A-Za-z0-9][A-Za-z0-9._\-]*"></label>
+      <p class="hint">The project file and dll get this name, and the copy is built. Namespaces in the code are not changed.</p>
+    </div>
     <p class="hint" id="copy-site-path"></p>
     <p class="hint copy-dns-hint">For HTTPS, the new binding must point to this server.</p>
     <label class="copy-connection-toggle"><input name="change_connection" type="checkbox" aria-controls="copy-sql-fields"><span>Change SQL connection strings</span></label>
