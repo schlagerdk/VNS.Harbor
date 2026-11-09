@@ -152,6 +152,11 @@ console.log(JSON.stringify([
         self.assertIn('id="site-targets-count"', page)
         self.assertIn("border-radius: 12px; }", (APP / "static/style.css").read_text().split(".site-targets-head {", 1)[1].split("\n", 1)[0])
 
+    def test_checkbox_style_applies_to_every_dialog(self):
+        css = (APP / "static/style.css").read_text()
+        self.assertIn("dialog.newsite .copy-connection-toggle { flex-direction: row;", css)
+        self.assertNotIn("#dlg-copy-site .copy-connection-toggle", css)
+
     def test_layout_and_wording(self):
         page = (APP / "templates/index.html").read_text()
         layout = re.search(r'<div id="site-layout".*?</div>\s*<section id="site-targets"', page, re.S).group(0)
