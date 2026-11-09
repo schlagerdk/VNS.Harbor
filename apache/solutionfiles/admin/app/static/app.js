@@ -824,6 +824,7 @@ function renderSite(name) {
 			if (await ask({ title: "Sync to all?", message: `Sync content from the main site to:\n${names}`, input: false, ok: "Sync to all" })) await openTask({ kind: "sync_env", site: site.name, source: "main", destination: "all" });
 		}) }));
 	}
+	if ((site.adopt_into || []).length) add("Move under main site", () => openAdoptDialog(site));
 	if (!site.admin && hasProd(site)) add("Delete everything", () => deleteSite(site, "all"), "danger");
 	head.append(el("div", { className: "detail-title" }, el("h2", { textContent: siteLabel(site) }), kindBadges(site)));
 	if (actions.childElementCount) head.append(actions);
@@ -991,17 +992,20 @@ function envPanel(site, env) {
 
 	const actions = el("div", { className: "actions" });
 	const add = (label, handler, className) => actions.append(el("button", { textContent: label, className: "small " + (className || ""), onclick: () => run(handler) }));
+	// The everyday controls sit in the header, like the buttons in the NuGet panel beside it
+	const headActions = el("div", { className: "actions env-head-actions" });
+	const addHead = (label, handler, className) => headActions.append(el("button", { textContent: label, className: "small " + (className || ""), onclick: () => run(handler) }));
 	if (env.unit || env.mode === "remote") {
-		if (env.unit !== site.name || !site.admin) add(env.state === "active" ? "Stop" : "Start", () => serviceAction(site, env, env.state === "active" ? "stop" : "start"));
-		add("Restart", () => serviceAction(site, env, "restart"));
-		add("Logs", () => showLogs(site, env));
+		if (env.unit !== site.name || !site.admin) addHead(env.state === "active" ? "Stop" : "Start", () => serviceAction(site, env, env.state === "active" ? "stop" : "start"));
+		addHead("Restart", () => serviceAction(site, env, "restart"));
+		addHead("Logs", () => showLogs(site, env));
 	}
 	if (env.mode === "remote") {
-		add("Shell", () => openTask({ kind: "remote_tool", site: site.name, tool: "shell", ...targetFields(env) }), "desktop-only");
-		add("Files", () => openFiles("", remoteRef(site, env)), "desktop-only");
+		addHead("Shell", () => openTask({ kind: "remote_tool", site: site.name, tool: "shell", ...targetFields(env) }), "desktop-only");
+		addHead("Files", () => openFiles("", remoteRef(site, env)), "desktop-only");
 	} else if (env.mode !== "windows") {
-		add("Shell", () => openTask({ kind: "shell", site: site.name, path: env.path, scope: isTarget(env) ? "prod" : "main" }), "desktop-only");
-		add("Files", () => openFiles(env.path), "desktop-only");
+		addHead("Shell", () => openTask({ kind: "shell", site: site.name, path: env.path, scope: isTarget(env) ? "prod" : "main" }), "desktop-only");
+		addHead("Files", () => openFiles(env.path), "desktop-only");
 	}
 
 	const quick = el("div", { className: "actions quick" });
@@ -1055,6 +1059,12 @@ function envPanel(site, env) {
 		}
 		extraTools = tools;
 	}
+	if (isTarget(env) && env.mode === "local" && env.exists !== false) add("Move…", () => openCreateProdDialog(site, env));
+	if (env.separate) add("Move out", async () => {
+		if (await ask({ title: "Move out?", message: `${bindingLabel(env) || env.unit} becomes a separate site again. Its files and service are not touched.`, input: false, ok: "Move out" })) {
+			await openTask({ kind: "release_site", site: site.name, target: env.target });
+		}
+	}, "push-right");
 	if (hasProd(site) && !site.admin) add(`Delete ${environmentLabel(site, env)} site`, () => deleteSite(site, isTarget(env) ? "prod" : "test", env), "danger");
 	if (!hasProd(site) && !site.admin) {
 		add("Copy site", () => copySite(site), "push-right");
@@ -1067,7 +1077,8 @@ function envPanel(site, env) {
 	if (quick.children.length) panel.append(quick);
 	if (settings.children.length) panel.append(settings);
 	if (extraTools) panel.append(extraTools);
-	panel.append(actions);
+	if (headActions.children.length) heading.append(headActions);
+	if (actions.children.length) panel.append(actions);
 	return panel;
 }
 
@@ -1399,6 +1410,18 @@ function syncProdForm() {
 	prodForm.smb_share.required = windows;
 	prodForm.smb_user.required = windows;
 	prodForm.smb_password.required = windows;
+	const moving = Boolean(prodForm.dataset.moveTarget);
+	const movingLocal = moving && local;
+	$("#prod-folder-row").hidden = windows || local && moving;
+	$("#prod-binding-row").hidden = movingLocal;
+	$("#prod-environment-row").hidden = movingLocal;
+	$("#prod-protocol-row").hidden = movingLocal;
+	$("#prod-protocol-hint").hidden = movingLocal;
+	prodForm.folder.required = !windows && !movingLocal;
+	$("#prod-move-options").hidden = !moving || local;
+	$("#prod-local-hint").textContent = moving
+		? "The folder is moved, and the service and Apache config follow it. It must be a new folder directly under /var/www, which also becomes the site's name. The binding, port and certificate are unchanged."
+		: "Use a subfolder of this site's folder, or /var/www/<production folder> to keep it outside the main site's folder.";
 	const previous = prodForm.dataset.target;
 	if (previous && previous !== target) {
 		const defaultsFor = (name) => name === "local"
@@ -1411,9 +1434,16 @@ function syncProdForm() {
 	}
 	prodForm.dataset.target = target;
 }
-function openCreateProdDialog(site) {
+function openCreateProdDialog(site, moveEnv) {
 	prodForm.reset();
 	delete prodForm.binding.dataset.edited;
+	delete prodForm.dataset.moveTarget;
+	if (moveEnv) prodForm.dataset.moveTarget = moveEnv.target;
+	$("#prod-title").textContent = moveEnv ? `Move ${environmentLabel(site, moveEnv)}` : "Add environment";
+	$("#prod-description").textContent = moveEnv
+		? `Move ${bindingLabel(moveEnv) || moveEnv.unit} to another folder or server.`
+		: "Configure where this site is published to, then publish and sync content automatically when available.";
+	$("#prod-submit").textContent = moveEnv ? "Move" : "Add environment";
 	const main = site.environments.find((env) => !isTarget(env));
 	const binding = (main && bindingLabel(main)) || siteLabel(site);
 	prodForm.folder.value = siteLabel(site);
@@ -1427,6 +1457,21 @@ function openCreateProdDialog(site) {
 	prodForm.dataset.localBinding = `production-${siteLabel(site)}`;
 	prodForm.elements.target.value = "remote";
 	prodForm.elements.https.value = main && main.scheme === "http" ? "n" : "y";
+	if (moveEnv) {
+		const name = moveEnv.unit || siteLabel(site);
+		const movedBinding = bindingLabel(moveEnv) || binding;
+		prodForm.folder.value = name;
+		prodForm.binding.value = movedBinding;
+		prodForm.binding.dataset.edited = "1";
+		prodForm.local_path.value = `/var/www/${name}`;
+		prodForm.dataset.remoteFolder = name;
+		prodForm.dataset.remoteBinding = movedBinding;
+		prodForm.dataset.localFolder = name;
+		prodForm.dataset.localBinding = movedBinding;
+		prodForm.elements.https.value = moveEnv.scheme === "http" ? "n" : "y";
+		const current = [...prodForm.elements.environment.options].find((option) => option.value === moveEnv.environment);
+		if (current) prodForm.elements.environment.value = current.value;
+	}
 	delete prodForm.dataset.target;
 	syncProdForm();
 	prodForm.dataset.site = site.name;
@@ -1441,7 +1486,7 @@ prodForm.elements.environment.onchange = () => {
 	const local = prodForm.elements.target.value === "local";
 	if (local && prodForm.folder.value === prodForm.dataset.localFolder) prodForm.folder.value = nextFolder;
 	if (local && !prodForm.binding.dataset.edited && prodForm.binding.value === prodForm.dataset.localBinding) prodForm.binding.value = nextFolder;
-	if (/\/_[a-z]+$/.test(prodForm.local_path.value)) prodForm.local_path.value = `/var/www/${prodForm.dataset.siteName}/_${name}`;
+	if (!prodForm.dataset.moveTarget && /\/_[a-z]+$/.test(prodForm.local_path.value)) prodForm.local_path.value = `/var/www/${prodForm.dataset.siteName}/_${name}`;
 	prodForm.dataset.localFolder = nextFolder;
 	prodForm.dataset.localBinding = nextFolder;
 };
@@ -1453,7 +1498,8 @@ $("#prod-cancel").onclick = () => prodDialog.close();
 prodForm.onsubmit = (event) => {
 	event.preventDefault();
 	const data = Object.fromEntries(new FormData(prodForm));
-	data.kind = "create_prod";
+	data.kind = prodForm.dataset.moveTarget ? "move_env" : "create_prod";
+	if (prodForm.dataset.moveTarget) data.environment_id = prodForm.dataset.moveTarget;
 	data.site = prodForm.dataset.site;
 	run(async () => {
 		await openTask(data);
@@ -1466,6 +1512,23 @@ prodForm.onsubmit = (event) => {
 function syncDestinations(site, source) {
 	return sortedEnvironments(site.environments).filter((env) => env !== source && isTarget(env) && (env.scripts || []).includes("sync_prod.sh"));
 }
+const adoptDialog = $("#dlg-adopt");
+const adoptForm = $("#form-adopt");
+function openAdoptDialog(site) {
+	adoptForm.dataset.site = site.name;
+	$("#adopt-site").textContent = siteLabel(site);
+	$("#adopt-main").replaceChildren(...site.adopt_into.map((name) => el("option", { value: name, textContent: name })));
+	adoptDialog.showModal();
+}
+$("#adopt-cancel").onclick = () => adoptDialog.close();
+adoptForm.onsubmit = (event) => {
+	event.preventDefault();
+	const data = { kind: "adopt_site", site: adoptForm.dataset.site, main: adoptForm.elements.main.value };
+	run(async () => {
+		await openTask(data);
+		adoptDialog.close();
+	});
+};
 const syncDialog = $("#dlg-sync");
 const syncForm = $("#form-sync");
 function openSyncDialog(site, source) {

@@ -150,6 +150,17 @@ else
 		echo "A local production site needs a different name and binding than this site." >&2
 		exit 1
 	fi
+	# Outside this site's folder it is a site of its own: its folder, service and Apache config share one name
+	if [[ ${_localPath%/} != "${_siteRoot}"/* ]]; then
+		if [[ ${VNS_PROD_NO_PUBLISH:-} != 1 && ${_localPath%/} != "${_rootPath}/${_prodFolder}" ]]; then
+			echo "A folder outside this site must be ${_rootPath}/${_prodFolder} (${_rootPath}/<production site name>)." >&2
+			exit 1
+		fi
+		if [[ ${VNS_PROD_NO_PUBLISH:-} != 1 && -e ${_localPath} ]]; then
+			echo "${_localPath} already exists." >&2
+			exit 1
+		fi
+	fi
 fi
 
 # The saved settings of the site's other environments, read without running their scripts
@@ -168,7 +179,7 @@ for _file in "${_existing[@]}"; do
 done
 
 # The folder is named after the environment: production, production-2, ...
-_targetId=${_prodEnvironment,,}
+_targetId=${VNS_PROD_ID:-${_prodEnvironment,,}}
 _number=2
 while [[ -e ${_scripts}/targets/${_targetId} ]]; do
 	_targetId=${_prodEnvironment,,}-${_number}
@@ -200,7 +211,11 @@ if [[ ${_target} == windows ]]; then
 	)
 fi
 
-_q() { printf '%q' "$1"; }
+# Single quotes, as %q writes non-ASCII names differently depending on the locale
+_q() {
+	local _quote="'" _escaped="'\\''"
+	printf "'%s'" "${1//${_quote}/${_escaped}}"
+}
 export R_PROD_LOCAL_PATH="$(_q "${_localPath}")" R_PROD_IP="$(_q "${_ip}")" R_PROD_USER="$(_q "${_user}")" \
 	R_PROD_PASSWORD="$(_q "${_password}")" R_PROD_SSH_PORT="$(_q "${_sshPort}")" R_PROD_FOLDER="$(_q "${_prodFolder}")" \
 	R_PROD_BINDING="$(_q "${_prodBinding}")" R_PROD_ENVIRONMENT="${_prodEnvironment}" R_ADMIN_MAIL="${_adminMail}" \
@@ -229,6 +244,11 @@ done
 
 echo "Created in ${_targetFolder}:"
 ls -1 "${_targetFolder}" | sed 's/^/  /'
+
+# adopt_site.sh and move_env.sh do the rest themselves: nothing may be published yet
+if [[ ${VNS_PROD_NO_PUBLISH:-} == 1 ]]; then
+	exit 0
+fi
 
 echo "Publish to ${_prodEnvironment}"
 bash "${_targetFolder}/publish_prod.sh"

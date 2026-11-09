@@ -17,7 +17,7 @@ set_site_vars
 [[ -n ${_from} && -n ${_to} ]] || { echo "Usage: $0 <site> <main|environment> <environment|all>" >&2; exit 1; }
 [[ ${_from} != "${_to}" ]] || { echo "The source and destination are the same." >&2; exit 1; }
 
-_folders=(uSync Views wwwroot/css wwwroot/scripts wwwroot/media)
+_folders=(uSync Views wwwroot/css wwwroot/scripts)
 _targets=()
 while IFS= read -r _id; do _targets+=("${_id}"); done < <(prod_targets)
 _known=" main ${_targets[*]:-} "

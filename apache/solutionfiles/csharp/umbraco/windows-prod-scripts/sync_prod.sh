@@ -1,5 +1,5 @@
 #!/bin/bash
-# Mirror Umbraco content folders (uSync, Views, css, scripts, media) from this site's publish folder to the Windows server.
+# Mirror Umbraco content folders (uSync, Views, css, scripts) from this site's publish folder to the Windows server.
 # Each folder is mirrored (files missing here are deleted on the server), like robocopy /mir.
 #
 # Usage:
@@ -23,7 +23,7 @@ PROD_SMB_DOMAIN=@PROD_SMB_DOMAIN@         # Empty if the server is not on a doma
 # ---------------------------------------------------------------------------
 
 _publishFolder=@PUBLISH_FOLDER@
-_folders=(uSync Views wwwroot/css wwwroot/scripts wwwroot/media)
+_folders=(uSync Views wwwroot/css wwwroot/scripts)   # Add wwwroot/media to also mirror media
 _rcloneOpts=(--create-empty-src-dirs --modify-window 2s --stats 0 -v)
 
 case "${1:-}" in

@@ -13,6 +13,38 @@ prod_targets() {
 	done
 }
 
+# load_main_site: read what create_prod.sh is rendered with from the site in _site
+load_main_site() {
+	local _mail
+	_projects=("${_siteRoot}"/*.csproj)
+	if [[ ! -f ${_projects[0]} || ${#_projects[@]} -ne 1 ]]; then
+		echo "${_site} needs exactly one project." >&2
+		exit 1
+	fi
+	_projectName=$(basename "${_projects[0]}" .csproj)
+	_binding=$(awk '$1 == "ServerName" { print $2; exit }' "${_configPath}")
+	[[ -n ${_binding} ]] || { echo "${_site} has no ServerName." >&2; exit 1; }
+	_mail=$(awk '$1 == "ServerAdmin" { print $2; exit }' "${_configPath}")
+	_adminMail=${_mail:-${_adminMail}}
+	_publishFolder=$(sed -n 's/^WorkingDirectory=//p' "${_servicePath}" | head -n 1)
+	_publishFolder=${_publishFolder%/}
+	if [[ ${_publishFolder} == "${_siteRoot}" || -z ${_publishFolder} ]]; then
+		_publishFolder=.
+	else
+		_publishFolder=$(basename "${_publishFolder}")
+	fi
+	_csharpKind=empty
+	if grep -qs "Umbraco.Cms" "${_projects[0]}"; then _csharpKind=umbraco; fi
+}
+
+# run_create_prod: run the current create_prod.sh template with the VNS_PROD_* settings in the environment
+run_create_prod() {
+	local _script
+	_script=$(mktemp)
+	render "${_solutionFolder}/csharp/scripts/create_prod.sh" >"${_script}"
+	bash "${_script}"
+}
+
 # load_prod_settings: read the PROD_* assignments (the rest of publish_prod.sh is not executed)
 # and set _target (description) and _root (site folder on the production target)
 load_prod_settings() {

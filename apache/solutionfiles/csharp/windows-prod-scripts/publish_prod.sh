@@ -152,7 +152,7 @@ echo "Check ${_siteUrl}"
 _httpStatus=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 180 "${_siteUrl}" || true)
 if [[ ${_httpStatus} =~ ^[234] ]]; then
 	echo "OK: ${_siteUrl} answered with HTTP ${_httpStatus}"
-elif ((_firstPublish)); then
+elif ((_firstPublish)) || [[ ${VNS_MOVING:-} == 1 ]]; then
 	# The first publish has no ConnectionStrings, and DNS or the IIS binding may not be ready yet.
 	echo "WARNING: ${_siteUrl} answered with HTTP ${_httpStatus}. Set the connection string in appsettings.json on the server if the site needs one, and check the IIS binding."
 else

@@ -38,7 +38,7 @@ console.log(JSON.stringify(sortedEnvironments(input).map((env) => env.environmen
         self.assertIn('id="targets-empty"', page)
         self.assertIn('id="btn-empty-add-environment"', page)
         css = (APP / "static/style.css").read_text()
-        self.assertIn(".site-layout.with-packages .package-panel { margin-top: 0; display: flex; flex-direction: column; contain: size; }", css)
+        self.assertIn(".site-layout.with-packages .package-panel { margin-top: 0; display: flex; flex-direction: column; contain: size; border-top: 3px solid var(--blue); }", css)
         self.assertNotIn("gap: 16px; align-items: start; }\n.site-layout", css)
 
     def test_layout_and_wording(self):

@@ -344,7 +344,7 @@ class CertificateAliasTests(unittest.TestCase):
         self.assertIn('awk \'$1 == "ServerAlias"', publish)
         self.assertIn('"${certificate_args[@]}"', publish)
         self.assertIn('${server_alias_line}', publish)
-        self.assertLess(publish.index('server_alias_line=""'), publish.index('if [[ ${HTTPS} != n && ! -e ${certdir}/fullchain.cer ]]'))
+        self.assertLess(publish.index('server_alias_line=""'), publish.index('if [[ ${HTTPS} != n && ! -e ${certdir}/fullchain.cer'))
         self.assertIn("ensure_production_tls_config", prod_action)
         self.assertNotIn("ensure_production_tls_config", change_remote)
         for change in (change_local, change_remote):

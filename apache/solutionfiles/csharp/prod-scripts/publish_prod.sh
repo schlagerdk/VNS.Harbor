@@ -214,7 +214,9 @@ if ((${#server_aliases[@]})); then
 	printf -v server_alias_line '  ServerAlias %s' "${server_aliases[*]}"
 fi
 
-if [[ ${HTTPS} != n && ! -e ${certdir}/fullchain.cer ]]; then
+# A site made before it was an environment can have its certificate in another folder: the config knows where
+configured_certificate=$(awk '$1 == "SSLCertificateFile" { print $2; exit }' "${conf}" 2>/dev/null || true)
+if [[ ${HTTPS} != n && ! -e ${certdir}/fullchain.cer && ! ( -n ${configured_certificate} && -e ${configured_certificate} ) ]]; then
 	[[ -x ${acme} ]] || { echo "acme.sh not found on prod (${acme}). Run apache/init.sh there first." >&2; exit 1; }
 	certificate_domains=("${BINDING}" "${server_aliases[@]}")
 	certificate_args=()
@@ -371,7 +373,7 @@ fi
 
 # Schema files are never uploaded. Once the site exists on the target, its content, settings and data are never
 # overwritten or deleted by a publish (rsync keeps excluded paths when using --delete).
-_keep=(--exclude 'appsettings-schema*.json' --exclude 'umbraco-package-schema.json')
+_keep=(--exclude 'appsettings-schema*.json' --exclude 'umbraco-package-schema.json' --exclude '/scripts/' --exclude '/.vns-publish/')
 if ((_exists)); then
 	_keep+=(--exclude 'appsettings*.json'
 		--exclude '/umbraco/' --exclude '/uSync/' --exclude '/Views/' --exclude '/wwwroot/'

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Mirror Umbraco content folders (uSync, Views, css, scripts, media) from this site's publish folder to production.
+# Mirror Umbraco content folders (uSync, Views, css, scripts) from this site's publish folder to production.
 # Each folder is mirrored (files missing here are deleted on prod), like robocopy /mir.
 _self=$(realpath "$0")
 _scriptFolder=$(dirname "${_self}")

@@ -342,14 +342,17 @@ body.login { display: grid; place-items: center; min-height: 100vh; min-height: 
 #site-head > .detail-title:last-child { margin-bottom: 16px; }
 #site-head > .actions { display: flex; gap: 8px; flex-wrap: wrap; padding-top: 20px; margin-bottom: 20px; }
 .envs { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 16px; }
-.env { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; border-top: 3px solid var(--blue); }
+.env { display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 0 20px 18px; border-top: 3px solid var(--blue); }
 .env.prod { border-top-color: var(--orange); }
-.env-head { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+/* Same header as the NuGet panel beside it */
+.env-head { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 0 -20px 14px; padding: 16px 20px; border-bottom: 1px solid var(--line); border-radius: 9px 9px 0 0; background: linear-gradient(110deg, rgba(163, 113, 247, .08), transparent); }
+.env .env-head-actions { margin: 0 0 0 auto; padding: 0; border: 0; }
+.env > .actions:last-child:not(.quick) { margin-top: auto; padding-top: 12px; }
 .env-head h3 { margin: 0; font-size: 18px; }
 .site-layout.with-packages { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
 .site-layout.with-packages .envs { grid-template-columns: minmax(0, 1fr); }
 /* The main site sets the height: a long package list scrolls inside the panel instead of stretching the row */
-.site-layout.with-packages .package-panel { margin-top: 0; display: flex; flex-direction: column; contain: size; }
+.site-layout.with-packages .package-panel { margin-top: 0; display: flex; flex-direction: column; contain: size; border-top: 3px solid var(--blue); }
 .site-layout.with-packages .package-list { flex: 1; min-height: 0; overflow-y: auto; }
 .targets-empty { min-height: 0; padding: 48px 20px; border: 1px dashed var(--line); border-radius: 12px; }
 .site-targets { margin-top: 24px; }

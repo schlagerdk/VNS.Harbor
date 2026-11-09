@@ -287,6 +287,47 @@ def with_target(argv, target):
     return argv if target == "prod" else ["/usr/bin/env", "VNS_TARGET=" + target, *argv]
 
 
+def adopted_sites(names):
+    """Sites in their own folder that are environments of another site. They are listed under that site only."""
+    adopted = set()
+    for name in names:
+        root = os.path.join(WEB_ROOT, name)
+        for target in target_ids(root):
+            prod = parse_prod(root, target) or {}
+            local = os.path.realpath(prod.get("PROD_LOCAL_PATH") or "")
+            if prod.get("PROD_LOCAL_PATH") and local.startswith(WEB_ROOT + os.sep):
+                folder = os.path.relpath(local, WEB_ROOT).split(os.sep)[0]
+                if folder != name:
+                    adopted.add(folder)
+    return adopted
+
+
+def service_dll(name):
+    """Name of the dll a site's service runs, without .dll."""
+    match = re.search(r"^ExecStart=(.+)$", read_text(os.path.join(SERVICE_DIR, service_name(name) + ".service")), re.M)
+    for argument in shlex.split(match.group(1)) if match else []:
+        if argument.endswith(".dll"):
+            return os.path.basename(argument)[:-4]
+    return ""
+
+
+def project_assembly(project):
+    match = re.search(r"<AssemblyName>\s*([^<\s]+)\s*</AssemblyName>", read_text(project))
+    return match.group(1) if match else os.path.splitext(os.path.basename(project))[0]
+
+
+def adoption_candidates(sites):
+    """For sites without a project: the main sites that build the dll they run. Only those can publish to them."""
+    builders = {}
+    for site in sites:
+        projects = glob.glob(os.path.join(glob.escape(os.path.join(WEB_ROOT, site["name"])), "*.csproj"))
+        if len(projects) == 1 and not site.get("admin"):
+            builders.setdefault(project_assembly(projects[0]), []).append(site["name"])
+    for site in sites:
+        if not site["has_project"] and not site.get("admin") and site["kind"] in ("csharp", "umbraco") and len(site["environments"]) == 1:
+            site["adopt_into"] = builders.get(service_dll(site["name"]), [])
+
+
 def parse_prod(root, target="prod"):
     """An environment's settings block has the details. The password is never read."""
     text = read_text(os.path.join(target_folder(root, target), "publish_prod.sh"))
@@ -294,7 +335,7 @@ def parse_prod(root, target="prod"):
         return None
     values = {}
     for key in PROD_KEYS:
-        match = re.search(r"^%s=((?:\\.|\S)*)" % key, text, re.M)
+        match = re.search(r"""^%s=((?:'[^'\n]*'|"[^"\n]*"|\\.|\S)*)""" % key, text, re.M)
         raw = match.group(1) if match else ""
         try:
             value = "".join(shlex.split(raw))
@@ -578,8 +619,10 @@ def site_info(name, states):
             full = os.path.realpath(local)
             inside = full == WEB_ROOT or full.startswith(WEB_ROOT + os.sep)
             unit = prod["PROD_FOLDER"]
+            # An environment with its own folder under the web root is a separate site that was moved here
+            separate = inside and target != "prod" and os.path.relpath(full, WEB_ROOT).split(os.sep)[0] != name
             environments.append(environment_info(key, "Production", unit, prod["PROD_BINDING"] or conf_binding(unit), prod["PROD_PORT_HTTP"] or service_port(unit),
-                                                 rel(full) if inside else "", states, mode="local", exists=os.path.isdir(full), **details))
+                                                 rel(full) if inside else "", states, mode="local", exists=os.path.isdir(full), separate=separate, **details))
         else:
             environments.append({**details, "key": key, "label": "Production", "mode": "remote", "unit": "", "state": "", "binding": prod["PROD_BINDING"],
                                  "port": prod["PROD_PORT_HTTP"], "path": "", "host": prod["PROD_IP"], "user": prod["PROD_USER"],
@@ -963,12 +1006,15 @@ def installed_template_packages():
 @app.route("/api/sites")
 def api_sites():
     names = site_dirs()
+    adopted = adopted_sites(names)
+    names = [name for name in names if name not in adopted]
     units = []
     for n in names:
         units.extend(site_units(n))
     states = service_states(units)
     with ThreadPoolExecutor(max_workers=8) as executor:
         sites = list(executor.map(lambda name: site_info(name, states), names))
+    adoption_candidates(sites)
     with UPDATE_CHECK_LOCK:
         update_check = dict(UPDATE_CHECK, pending=list(UPDATE_CHECK["pending"]),
                             results=dict(UPDATE_CHECK["results"]), errors=list(UPDATE_CHECK["errors"]))
@@ -1131,7 +1177,7 @@ def terminal_scope(payload):
         return "prod" if payload.get("action") == "prod" else "main"
     if payload.get("scope") in ("all", "prod", "test", "main"):
         return "main" if payload["scope"] == "test" else payload["scope"]
-    if kind in ("remote_tool", "create_prod", "sync_env"):
+    if kind in ("remote_tool", "create_prod", "sync_env", "move_env"):
         return "prod"
     if kind == "script":
         script = payload.get("script", "")
@@ -1142,7 +1188,7 @@ def terminal_scope(payload):
 
 def terminal_auto_close(payload):
     kind = payload.get("kind")
-    if kind in ("shell", "create_site", "copy_site", "create_prod", "sync_env", "delete_site", "change_binding", "prod_action", "dotnet_package", "fix_permissions", "publish_both", "bulk", "update_package", "sql_action", "install_sql_tools"):
+    if kind in ("shell", "create_site", "copy_site", "create_prod", "sync_env", "move_env", "adopt_site", "release_site", "delete_site", "change_binding", "prod_action", "dotnet_package", "fix_permissions", "publish_both", "bulk", "update_package", "sql_action", "install_sql_tools"):
         return True
     if kind == "remote_tool":
         return payload.get("tool") == "shell"
@@ -1307,7 +1353,7 @@ def windows_share(value):
     return share
 
 
-def production_setup_env(data, site):
+def production_setup_env(data, site, moving=False):
     """Validate modal input for create_prod.sh and keep credentials out of argv."""
     target = data.get("target", "")
     if target not in ("local", "remote", "windows"):
@@ -1350,8 +1396,21 @@ def production_setup_env(data, site):
             within_site = os.path.commonpath((site_root, target_path)) == site_root
         except ValueError:
             within_site = False
-        if not within_site or target_path == site_root:
-            abort(400, "Local production files must be stored in a subfolder of this site's folder")
+        if within_site and not moving:
+            if target_path == site_root:
+                abort(400, "Choose a subfolder of this site's folder, or a folder of its own")
+        else:
+            # Outside this site it is a site of its own: its folder, service and Apache config share one name
+            name = os.path.basename(target_path)
+            if within_site or os.path.dirname(target_path) != os.path.realpath(WEB_ROOT):
+                abort(400, "The folder must be directly under %s" % WEB_ROOT)
+            if os.path.exists(target_path):
+                abort(400, "%s already exists" % target_path)
+            if moving:
+                folder = dns_name(name, "production site name")
+                values["VNS_PROD_FOLDER"] = folder
+            elif name != folder:
+                abort(400, "A folder outside this site must have the same name as the production site: %s/%s" % (WEB_ROOT, folder))
         if service_name(folder) == service_name(site) or binding == test_binding:
             abort(400, "A local production site needs a different name and binding than the test site")
         values["VNS_PROD_LOCAL_PATH"] = target_path
@@ -1634,6 +1693,22 @@ def build_command(data):
         site = site_arg(data)
         # api_term replaces the command with the rendered current template
         return "Add environment: " + site, [bash], os.path.join(WEB_ROOT, site, "scripts")
+    if kind == "move_env":
+        site = site_arg(data)
+        target = target_arg(site, {"target": data.get("environment_id")})
+        prod = parse_prod(os.path.join(WEB_ROOT, site), target) or {}
+        if not prod.get("PROD_LOCAL_PATH") or prod.get("PROD_TARGET") == "windows":
+            abort(400, "Only an environment on this server can be moved")
+        return "Move environment: " + site, [bash, os.path.join(APACHE_DIR, "move_env.sh"), site, target], APACHE_DIR
+    if kind == "adopt_site":
+        site = site_arg(data)
+        main = data.get("main", "")
+        if not isinstance(main, str) or main not in site_dirs() or main == site:
+            abort(400, "Unknown main site")
+        return "Move under %s: %s" % (main, site), [bash, os.path.join(APACHE_DIR, "adopt_site.sh"), site, main], APACHE_DIR
+    if kind == "release_site":
+        site = site_arg(data)
+        return "Move out: " + site, [bash, os.path.join(APACHE_DIR, "adopt_site.sh"), "--release", site, target_arg(site, data)], APACHE_DIR
     if kind == "sync_env":
         site = site_arg(data)
         source = data.get("source", "")
@@ -1847,6 +1922,9 @@ def api_term():
     payload = request.get_json(silent=True) or {}
     title, argv, cwd = build_command(payload)
     extra_env = production_setup_env(payload, payload.get("site", "")) if payload.get("kind") == "create_prod" else None
+    if payload.get("kind") == "move_env":
+        extra_env = production_setup_env(payload, payload.get("site", ""), moving=True)
+        extra_env["VNS_MOVE_DELETE_LOCAL"] = "y" if payload.get("delete_local") == "y" else "n"
     if payload.get("kind") == "sql_action" and payload.get("login") is not None:
         extra_env = {"VNS_SQL_LOGIN_PASSWORD": payload["login_password"]}
     if payload.get("kind") == "copy_site" and payload.get("connection") is not None:

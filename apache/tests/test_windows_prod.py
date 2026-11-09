@@ -316,7 +316,14 @@ class WindowsContentTests(ScriptTestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         synced = [call.split()[1] for call in self.calls() if call.startswith("sync ")]
         self.assertEqual(synced, ["uSync", "Views", "wwwroot/css"])
-        self.assertIn("wwwroot/media: SKIPPED", result.stdout)
+        self.assertIn("wwwroot/scripts: SKIPPED", result.stdout)
+
+    def test_media_is_not_synced(self):
+        (self.site / "_publish/wwwroot/media").mkdir(parents=True)
+        result = self.run_script(self.script("sync_prod.sh", UMBRACO_TEMPLATES))
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(any("media" in call for call in self.calls()))
+        self.assertNotIn("media", result.stdout)
 
     def test_sync_dry_run(self):
         (self.site / "_publish/uSync").mkdir(parents=True)
@@ -612,7 +619,7 @@ class WindowsActionTests(ScriptTestCase):
         super().setUp()
         self.apache = self.root / "apache"
         shutil.copytree(APACHE / "lib", self.apache / "lib", ignore=shutil.ignore_patterns("__pycache__"))
-        for script in ("prod_action.sh", "change_binding_prod.sh", "remote_site.sh", "delete_site.sh", "fix_permissions.sh", "sync_env.sh"):
+        for script in ("prod_action.sh", "change_binding_prod.sh", "remote_site.sh", "delete_site.sh", "fix_permissions.sh", "sync_env.sh", "adopt_site.sh"):
             shutil.copy(APACHE / script, self.apache)
         common = self.apache / "lib/common.sh"
         common.write_text(common.read_text().replace("_rootPath=/var/www", f"_rootPath={self.root}/www"))
@@ -768,6 +775,375 @@ class SeveralEnvironmentsTests(WindowsActionTests):
         self.assertEqual(result.stdout.count("not touched"), 3)
         self.assertEqual(self.calls(), [])
         self.assertFalse(self.site_root.exists())
+
+
+@NEEDS_BASH_4
+class AdoptSiteTests(unittest.TestCase):
+    """Run adopt_site.sh from a copy of the apache folder, with /etc and /var/www moved into a temporary folder."""
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.etc = self.root / "etc"
+        self.www = self.root / "www"
+        self.apache = self.root / "apache"
+        self.bin = self.root / "bin"
+        self.bin.mkdir()
+        (self.etc / "systemd/system").mkdir(parents=True)
+        (self.etc / "apache2/sites-available").mkdir(parents=True)
+        shutil.copytree(APACHE / "lib", self.apache / "lib", ignore=shutil.ignore_patterns("__pycache__"))
+        shutil.copytree(APACHE / "solutionfiles/csharp", self.apache / "solutionfiles/csharp",
+                        ignore=lambda folder, names: ["project"] if "project" in names else [])
+        shutil.copy(APACHE / "adopt_site.sh", self.apache)
+        script = self.apache / "adopt_site.sh"
+        script.write_text(script.read_text().replace('[[ $EUID -eq 0 ]] || exec sudo "$0" "$@"\n', ""))
+        common = self.apache / "lib/common.sh"
+        common.write_text(common.read_text().replace("_rootPath=/var/www", f"_rootPath={self.www}").replace('"/etc/', f'"{self.etc}/'))
+        create = self.apache / "solutionfiles/csharp/scripts/create_prod.sh"
+        create.write_text(re.sub(r"(?ms)^if \[\[ \$EUID -ne 0 \]\]; then.*?^fi\n", "", create.read_text(), count=1))
+        executable(self.bin / "dotnet", '#!/bin/bash\necho DOTNET >>"$FAKE_LOG"\n')
+        self.log = self.root / "calls.log"
+        self.log.touch()
+        self.scripts = self.main("dev.example.test", "App")
+        self.published("example.test", "App")
+
+    def main(self, name, project):
+        scripts = self.www / name / "scripts"
+        scripts.mkdir(parents=True)
+        (scripts / "publish.sh").write_text("# local publish\n")
+        (self.www / name / (project + ".csproj")).write_text('<Project><PackageReference Include="Umbraco.Cms" /></Project>\n')
+        self.service(name, project, "_publish", "Test")
+        self.conf(name, "n")
+        return scripts
+
+    def published(self, name, dll, environment="Production", https="y"):
+        (self.www / name).mkdir(parents=True)
+        (self.www / name / "App.dll").touch()
+        self.service(name, dll, "", environment)
+        self.conf(name, https)
+
+    def service(self, name, dll, folder, environment):
+        working = self.www / name / folder if folder else self.www / name
+        (self.etc / f"systemd/system/{service_name(name)}.service").write_text(
+            f"[Service]\nWorkingDirectory={working}\nExecStart=/usr/lib/dotnet/dotnet {working}/{dll}.dll --urls http://localhost:4001\n"
+            f"Environment=ASPNETCORE_ENVIRONMENT={environment}\n")
+
+    def conf(self, name, https):
+        ssl = "  SSLEngine On\n" if https == "y" else ""
+        (self.etc / f"apache2/sites-available/{name}.conf").write_text(
+            f"<VirtualHost *:80>\n  ServerAdmin admin@example.test\n  ServerName {name}\n{ssl}</VirtualHost>\n")
+
+    def adopt(self, *args):
+        return subprocess.run(
+            [BASH, str(self.apache / "adopt_site.sh"), *args], capture_output=True, text=True,
+            env=os.environ | {"PATH": f"{self.bin}:{os.environ['PATH']}", "FAKE_LOG": str(self.log)})
+
+    def setting(self, name, target="production"):
+        lines = [line for line in (self.scripts / "targets" / target / "publish_prod.sh").read_text().splitlines() if line.startswith("PROD_")]
+        return subprocess.run([BASH, "-c", "\n".join(lines) + f'\nprintf %s "${{{name}}}"'], capture_output=True, text=True, check=True).stdout
+
+    def test_site_becomes_an_environment_without_publishing(self):
+        before = (self.etc / "systemd/system/example.test.service").read_text()
+        result = self.adopt("example.test", "dev.example.test")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.setting("PROD_LOCAL_PATH"), str(self.www / "example.test"))
+        self.assertEqual(self.setting("PROD_FOLDER"), "example.test")
+        self.assertEqual(self.setting("PROD_BINDING"), "example.test")
+        self.assertEqual(self.setting("PROD_HTTPS"), "y")
+        self.assertEqual(self.setting("PROD_ENVIRONMENT"), "Production")
+        self.assertEqual(self.log.read_text(), "", "Nothing may be published")
+        self.assertTrue((self.www / "example.test/App.dll").exists())
+        self.assertEqual((self.etc / "systemd/system/example.test.service").read_text(), before)
+        self.assertEqual((self.scripts / "publish_local.sh").read_text(), "# local publish\n")
+
+    def test_http_and_environment_are_read_from_the_site(self):
+        self.published("staging.example.test", "App", "Staging", "n")
+        self.assertEqual(self.adopt("staging.example.test", "dev.example.test").returncode, 0)
+        self.assertEqual(self.setting("PROD_HTTPS", "staging"), "n")
+        self.assertEqual(self.setting("PROD_ENVIRONMENT", "staging"), "Staging")
+
+    def test_international_name_survives_any_locale(self):
+        self.published("tømrer.example.test", "App")
+        result = subprocess.run(
+            [BASH, str(self.apache / "adopt_site.sh"), "tømrer.example.test", "dev.example.test"], capture_output=True, text=True,
+            env=os.environ | {"PATH": f"{self.bin}:{os.environ['PATH']}", "FAKE_LOG": str(self.log), "LC_ALL": "C"})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("PROD_FOLDER='tømrer.example.test'", (self.scripts / "targets/production/publish_prod.sh").read_text())
+
+    def test_other_dll_is_refused(self):
+        self.published("other.example.test", "Other")
+        result = self.adopt("other.example.test", "dev.example.test")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("would break the site", result.stderr)
+        self.assertFalse((self.scripts / "targets").exists())
+
+    def test_assembly_name_in_the_project_counts(self):
+        self.published("renamed.example.test", "Renamed")
+        (self.www / "dev.example.test/App.csproj").write_text("<Project><PropertyGroup><AssemblyName>Renamed</AssemblyName></PropertyGroup></Project>\n")
+        self.assertEqual(self.adopt("renamed.example.test", "dev.example.test").returncode, 0)
+
+    def test_main_sites_and_invalid_input_are_refused(self):
+        self.main("second.example.test", "App")
+        for args, message in ((("second.example.test", "dev.example.test"), "has its own project"),
+                              (("dev.example.test", "dev.example.test"), "under itself"),
+                              (("missing.example.test", "dev.example.test"), "not found")):
+            with self.subTest(args):
+                result = self.adopt(*args)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(message, result.stderr)
+
+    def test_move_out_restores_everything(self):
+        self.assertEqual(self.adopt("example.test", "dev.example.test").returncode, 0)
+        result = self.adopt("--release", "dev.example.test", "production")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse((self.scripts / "targets/production").exists())
+        self.assertEqual((self.scripts / "publish.sh").read_text(), "# local publish\n")
+        self.assertTrue((self.www / "example.test/App.dll").exists())
+
+    def test_move_out_refuses_an_environment_inside_the_main_site(self):
+        folder = self.scripts / "targets/staging"
+        folder.mkdir(parents=True)
+        (folder / "publish_prod.sh").write_text(f"PROD_LOCAL_PATH='{self.www}/dev.example.test/_staging'\nPROD_FOLDER=s.test\nPROD_BINDING=s.test\n")
+        result = self.adopt("--release", "dev.example.test", "staging")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(folder.exists())
+
+
+@NEEDS_BASH_4
+class MoveEnvironmentTests(AdoptSiteTests):
+    """Move a local environment from a copy of the apache folder, with the system folders in a temporary folder."""
+
+    def setUp(self):
+        super().setUp()
+        move = (APACHE / "move_env.sh").read_text().replace('[[ $EUID -eq 0 ]] || exec sudo "$0" "$@"\n', "")
+        move = move.replace("/etc/", f"{self.etc}/").replace("_rootsFolder=/var/lib/vns-roots", f"_rootsFolder={self.root}/roots")
+        (self.apache / "move_env.sh").write_text(move)
+        (self.root / "server").mkdir()
+        for command in ("systemctl", "a2ensite", "a2dissite", "a2enmod"):
+            executable(self.bin / command, f'#!/bin/bash\necho "{command} $*" >>"$FAKE_LOG"\n')
+        executable(self.bin / "apache2ctl", '#!/bin/bash\necho "apache2ctl $*" >>"$FAKE_LOG"\nexit ${FAIL_APACHE:-0}\n')
+        executable(self.bin / "rclone", FAKE_RCLONE)
+        executable(self.bin / "curl", FAKE_CURL)
+        executable(self.bin / "sleep", "#!/bin/bash\n")
+        executable(self.bin / "dotnet", FAKE_DOTNET)
+        executable(self.bin / "sudo", SUDO_REMOVING_ITSELF)
+        # An environment made with Add environment, in a subfolder of the main site
+        self.old = self.www / "dev.example.test/_prod"
+        (self.old / "wwwroot/media").mkdir(parents=True)
+        (self.old / "umbraco/Data").mkdir(parents=True)
+        (self.old / "umbraco/Data/Umbraco.sqlite.db").write_text("data")
+        (self.old / "appsettings.json").write_text("{}")
+        (self.old / "App.dll").write_text("linux build")
+        (self.root / "roots/prod-site").mkdir(parents=True)
+        (self.etc / "systemd/system/prod-site.service").write_text(
+            f"[Unit]\nDescription=Running .NET Core [prod-site]\n[Service]\nWorkingDirectory={self.old}\n"
+            f"ExecStart=/usr/lib/dotnet/dotnet {self.old}/App.dll --urls \"http://localhost:4100\"\nSyslogIdentifier=prod-site\n"
+            f"RootDirectory=/var/lib/vns-roots/prod-site\nBindPaths={self.old}\nReadWritePaths={self.old}\n")
+        (self.etc / "apache2/sites-available/prod-site.conf").write_text(
+            f"<VirtualHost *:80>\n  ServerName prod-site.example.test\n  DocumentRoot {self.old}/wwwroot\n"
+            "  ErrorLog /var/log/apache2/prod-site-80-error.log\n</VirtualHost>\n")
+        self.target = self.scripts / "targets/production"
+        self.target.mkdir(parents=True)
+        (self.target / "publish_prod.sh").write_text(
+            f"PROD_LOCAL_PATH='{self.old}'   # comment\nPROD_FOLDER='prod-site'   # comment\nPROD_BINDING='prod-site.example.test'\n")
+        (self.target / "sync_prod.sh").write_text(f"PROD_LOCAL_PATH='{self.old}'\nPROD_FOLDER='prod-site'\n")
+        (self.scripts / "publish_local.sh").write_text("# local\n")
+        self.scripts.joinpath("publish.sh").unlink()
+        self.log.write_text("")
+
+    # These belong to the parent class and need a site that has not been moved
+    for _name in [name for name in dir(AdoptSiteTests) if name.startswith("test_")]:
+        locals()[_name] = None
+    del _name
+
+    def move(self, **env):
+        return subprocess.run(
+            [BASH, str(self.apache / "move_env.sh"), "dev.example.test", "production"], capture_output=True, text=True,
+            env=os.environ | {"PATH": f"{self.bin}:{os.environ['PATH']}", "FAKE_LOG": str(self.log),
+                              "FAKE_SERVER": str(self.root / "server"), "VNS_PUBLISH_TRACKED": "prod"} | env)
+
+    def windows(self, **env):
+        return self.move(VNS_PROD_TARGET="windows", VNS_PROD_SMB_SHARE="//10.0.0.1/share$/sites/prod.test", VNS_PROD_SMB_USER="Administrator",
+                         VNS_PROD_SMB_PASSWORD="secret", VNS_PROD_SMB_DOMAIN="VNS", VNS_PROD_FOLDER="prod-site.example.test",
+                         VNS_PROD_BINDING="prod-site.example.test", VNS_PROD_ENVIRONMENT="Production", VNS_PROD_HTTPS="y", **env)
+
+    def calls(self):
+        return self.log.read_text().splitlines()
+
+    def test_move_to_a_folder_of_its_own(self):
+        new = self.www / "subsite"
+        result = self.move(VNS_PROD_TARGET="local", VNS_PROD_LOCAL_PATH=str(new))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(self.old.exists())
+        self.assertEqual((new / "umbraco/Data/Umbraco.sqlite.db").read_text(), "data")
+        service = (self.etc / "systemd/system/subsite.service").read_text()
+        self.assertNotIn(str(self.old), service)
+        self.assertIn(f"WorkingDirectory={new}\n", service)
+        self.assertIn(f"{new}/App.dll", service)
+        self.assertIn("localhost:4100", service)
+        self.assertIn("SyslogIdentifier=subsite\n", service)
+        self.assertIn("RootDirectory=/var/lib/vns-roots/subsite\n", service)
+        conf = (self.etc / "apache2/sites-available/subsite.conf").read_text()
+        self.assertIn("ServerName prod-site.example.test", conf, "The binding must not change")
+        self.assertIn(f"DocumentRoot {new}/wwwroot", conf)
+        self.assertIn("/var/log/apache2/subsite-80-error.log", conf)
+        self.assertFalse((self.etc / "systemd/system/prod-site.service").exists())
+        self.assertFalse((self.etc / "apache2/sites-available/prod-site.conf").exists())
+        self.assertTrue((self.root / "roots/subsite").is_dir())
+        settings = (self.target / "publish_prod.sh").read_text()
+        self.assertIn(f"PROD_LOCAL_PATH='{new}'", settings)
+        self.assertIn("PROD_FOLDER='subsite'", settings)
+        self.assertIn("PROD_BINDING='prod-site.example.test'", settings)
+        self.assertIn(f"PROD_LOCAL_PATH='{new}'", (self.target / "sync_prod.sh").read_text())
+        calls = self.calls()
+        self.assertLess(calls.index("systemctl stop prod-site"), calls.index("systemctl start subsite"))
+        self.assertFalse(any(call.startswith("dotnet") for call in calls))
+
+    def test_failed_local_move_restores_everything(self):
+        new = self.www / "subsite"
+        service = (self.etc / "systemd/system/prod-site.service").read_text()
+        settings = (self.target / "publish_prod.sh").read_text()
+        result = self.move(VNS_PROD_TARGET="local", VNS_PROD_LOCAL_PATH=str(new), FAIL_APACHE="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Restoring", result.stderr)
+        self.assertEqual((self.old / "App.dll").read_text(), "linux build")
+        self.assertFalse(new.exists())
+        self.assertEqual((self.etc / "systemd/system/prod-site.service").read_text(), service)
+        self.assertTrue((self.etc / "apache2/sites-available/prod-site.conf").exists())
+        self.assertFalse((self.etc / "systemd/system/subsite.service").exists())
+        self.assertFalse((self.etc / "apache2/sites-available/subsite.conf").exists())
+        self.assertEqual((self.target / "publish_prod.sh").read_text(), settings)
+        self.assertEqual(self.calls()[-1], "systemctl start prod-site")
+
+    def test_existing_or_nested_destination_is_refused(self):
+        (self.www / "taken").mkdir()
+        for path, message in ((self.www / "taken", "already exists"), (self.www / "a/b", "directly|must be")):
+            with self.subTest(path):
+                result = self.move(VNS_PROD_TARGET="local", VNS_PROD_LOCAL_PATH=str(path))
+                self.assertNotEqual(result.returncode, 0)
+                self.assertRegex(result.stderr, message)
+                self.assertTrue(self.old.exists())
+                self.assertNotIn("systemctl stop prod-site", self.calls())
+
+    def test_move_to_windows_copies_content_and_publishes(self):
+        result = self.windows()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = self.calls()
+        copies = [call for call in calls if call.startswith("copy /") and "/_prod" in call.split()[1]]
+        self.assertTrue(any("/_prod/umbraco " in call for call in copies))
+        self.assertTrue(any("/_prod/wwwroot " in call for call in copies))
+        self.assertTrue(any("appsettings*.json" in call for call in copies))
+        self.assertFalse(any(call.split()[1].endswith("/_prod") and "appsettings" not in call for call in copies), "The Linux build must not be copied")
+        self.assertLess(calls.index("systemctl stop prod-site"), self.index_of(calls, "copy /"))
+        self.assertLess(self.index_of(calls, "dotnet publish"), calls.index("systemctl disable prod-site"))
+        self.assertTrue((self.root / "server/web.config").exists())
+        self.assertFalse((self.etc / "systemd/system/prod-site.service").exists())
+        self.assertTrue(self.old.exists(), "The local files are kept unless asked")
+        self.assertFalse((self.scripts / "targets/production-moving").exists())
+        final = (self.target / "publish_prod.sh").read_text()
+        self.assertIn("PROD_TARGET=windows", final)
+        self.assertNotIn("secret", result.stdout + result.stderr)
+
+    @staticmethod
+    def index_of(calls, prefix):
+        return next(number for number, call in enumerate(calls) if call.startswith(prefix))
+
+    def test_local_files_are_deleted_only_when_asked(self):
+        self.assertEqual(self.windows(VNS_MOVE_DELETE_LOCAL="y").returncode, 0)
+        self.assertFalse(self.old.exists())
+
+    def test_failed_publish_keeps_the_environment_running_here(self):
+        executable(self.bin / "dotnet", "#!/bin/bash\nexit 1\n")
+        before = (self.target / "publish_prod.sh").read_text()
+        result = self.windows()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("keeps running", result.stderr)
+        self.assertEqual((self.target / "publish_prod.sh").read_text(), before)
+        self.assertFalse((self.scripts / "targets/production-moving").exists())
+        self.assertTrue((self.etc / "systemd/system/prod-site.service").exists())
+        self.assertTrue((self.etc / "apache2/sites-available/prod-site.conf").exists())
+        self.assertEqual(self.calls()[-1], "systemctl start prod-site")
+
+    def test_wrong_login_never_stops_the_site(self):
+        result = self.windows(FAKE_LOGIN_FAILS="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertNotIn("systemctl stop prod-site", self.calls())
+
+    def test_failed_site_check_during_a_move_is_only_a_warning(self):
+        result = self.windows(FAKE_HTTP_STATUS="503")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("WARNING", result.stdout)
+
+
+class LocalFolderRuleTests(ProductionSetupTests):
+    for _name in [name for name in dir(ProductionSetupTests) if name.startswith("test_")]:
+        locals()[_name] = None
+    del _name
+
+    def local(self, path, **values):
+        return dict(target="local", folder="subsite", binding="subsite.test", local_path=str(path)) | values
+
+    def test_folder_of_its_own_is_allowed_with_the_same_name(self):
+        web = Path(self.temp.name).resolve()
+        result = self.setup_env(self.local(web / "subsite"))
+        self.assertEqual(result["VNS_PROD_LOCAL_PATH"], str(web / "subsite"))
+
+    def test_subfolder_of_the_site_is_still_allowed(self):
+        self.assertTrue(self.setup_env(self.local(self.scripts.parent / "_prod"))["VNS_PROD_LOCAL_PATH"].endswith("/_prod"))
+
+    def test_other_folders_are_refused(self):
+        web = Path(self.temp.name).resolve()
+        (web / "taken").mkdir()
+        for path in (web / "other-name", web / "taken", web / "a/b", "/tmp/subsite", self.scripts.parent, "relative"):
+            values = {"folder": "taken"} if path == web / "taken" else {}
+            with self.subTest(path), self.assertRaises(BadRequest):
+                self.setup_env(self.local(path, **values))
+
+    def test_moving_needs_a_new_folder_outside_the_site_and_takes_its_name(self):
+        web = Path(self.temp.name).resolve()
+        result = self.ns["production_setup_env"](self.local(web / "new.site", folder="old"), "example.test", moving=True)
+        self.assertEqual(result["VNS_PROD_FOLDER"], "new.site")
+        with self.assertRaises(BadRequest):
+            self.ns["production_setup_env"](self.local(self.scripts.parent / "_other"), "example.test", moving=True)
+
+
+class AdoptionListingTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.web = Path(self.temp.name) / "www"
+        self.services = Path(self.temp.name) / "systemd"
+        self.services.mkdir()
+        (self.web / "dev.test/scripts/targets/production").mkdir(parents=True)
+        (self.web / "dev.test/App.csproj").write_text("<Project />")
+        (self.web / "live.test").mkdir()
+        (self.services / "live.test.service").write_text(f"[Service]\nExecStart=/usr/lib/dotnet/dotnet {self.web}/live.test/App.dll\n")
+        source = (APACHE / "solutionfiles/admin/app/app.py").read_text()
+        nodes = [node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef) and node.name in ("parse_prod", "read_text")]
+        nodes += [node for node in ast.parse(source).body if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "PROD_KEYS"]
+        self.ns = {"os": os, "re": re, "shlex": shlex, "WEB_ROOT": os.path.realpath(self.web), "SERVICE_DIR": str(self.services), "service_name": service_name}
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), "listing", "exec"), self.ns)
+        add_target_helpers(self.ns)
+
+    def site(self, name, has_project=False, environments=1):
+        return {"name": name, "has_project": has_project, "kind": "umbraco", "environments": [{}] * environments}
+
+    def test_candidates_must_build_the_same_dll(self):
+        sites = [self.site("dev.test", True), self.site("live.test")]
+        self.ns["adoption_candidates"](sites)
+        self.assertEqual(sites[1]["adopt_into"], ["dev.test"])
+        self.assertNotIn("adopt_into", sites[0])
+        (self.services / "live.test.service").write_text("[Service]\nExecStart=/usr/lib/dotnet/dotnet /x/Other.dll\n")
+        self.ns["adoption_candidates"](sites)
+        self.assertEqual(sites[1]["adopt_into"], [])
+
+    def test_moved_site_is_hidden_but_folders_inside_the_main_site_are_not(self):
+        script = self.web / "dev.test/scripts/targets/production/publish_prod.sh"
+        script.write_text(f"PROD_LOCAL_PATH='{self.ns['WEB_ROOT']}/live.test'\nPROD_FOLDER=live.test\n")
+        self.assertEqual(self.ns["adopted_sites"](["dev.test", "live.test"]), {"live.test"})
+        script.write_text(f"PROD_LOCAL_PATH='{self.ns['WEB_ROOT']}/dev.test/_production'\nPROD_FOLDER=p.test\n")
+        self.assertEqual(self.ns["adopted_sites"](["dev.test", "live.test"]), set())
 
 
 class TargetListingTests(unittest.TestCase):
