@@ -888,13 +888,13 @@ function renderSite(name) {
 		packagesPanel.hidden = false;
 		const updates = new Map((site.package_updates || []).map((item) => [item.name.toLowerCase(), item]));
 		const packages = (site.packages || []).filter((item) => item.name.toLowerCase() !== "microsoft.icu.icu4c.runtime" || updates.has(item.name.toLowerCase()));
-		const packageActions = el("div", { className: "actions package-actions" },
-			el("button", { textContent: "Add", className: "small", title: "Add package", onclick: () => run(() => openPackageDialog(site, "add")) }),
-			el("button", { textContent: "Remove", className: "small", title: "Remove package", onclick: () => run(() => openPackageDialog(site, "remove")) }));
+		const packageActions = el("div", { className: "actions package-actions" });
 		packageActions.append(el("button", { textContent: "Check", className: "small", title: "Check outdated packages", onclick: () => run(() => openTask({ kind: "bulk", sites: [site.name], action: "check" })) }));
 		if (updates.size > 1) {
 			packageActions.append(el("button", { textContent: "Update all", className: "small primary", onclick: () => run(() => updatePackages(site)) }));
 		}
+		packageActions.append(el("button", { textContent: "Add", className: "small package-add", title: "Add package", onclick: () => run(() => openPackageDialog(site, "add")) }),
+			el("button", { textContent: "Remove", className: "small", title: "Remove package", onclick: () => run(() => openPackageDialog(site, "remove")) }));
 		const packageList = el("div", { className: "package-list" });
 		for (const item of packages) {
 			const update = updates.get(item.name.toLowerCase());
