@@ -182,7 +182,7 @@ a.link:hover { text-decoration: underline; }
 .package-heading { display: flex; align-items: center; gap: 10px; }
 .package-head h3 { margin: 0; font-size: 15px; }
 .package-count { padding: 2px 8px; border-radius: 12px; background: rgba(163, 113, 247, .15); color: var(--purple); font-size: 12px; font-weight: 600; }
-.package-head .actions { margin: 0; padding: 0; border: 0; }
+.package-actions { justify-content: flex-end; margin-top: auto; padding: 12px 20px 18px; }
 .package-list { display: flex; flex-direction: column; gap: 8px; padding: 12px 20px; }
 .package-list > p { margin: 12px 0; }
 .package-row { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px 20px; width: 100%; min-width: 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: transparent; text-align: left; white-space: normal; }
@@ -346,8 +346,9 @@ body.login { display: grid; place-items: center; min-height: 100vh; min-height: 
 .env.prod { border-top-color: var(--orange); }
 /* Same header as the NuGet panel beside it */
 .env-head { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 0 -20px 14px; padding: 16px 20px; border-bottom: 1px solid var(--line); border-radius: 9px 9px 0 0; background: linear-gradient(110deg, rgba(163, 113, 247, .08), transparent); }
-.env .env-head-actions { margin: 0 0 0 auto; padding: 0; border: 0; }
 .env > .actions:last-child:not(.quick) { margin-top: auto; padding-top: 12px; }
+.env > .actions.quick:nth-last-child(2) { margin-bottom: 14px; }
+.env-head, .package-head { min-height: 62px; }
 .env-head h3 { margin: 0; font-size: 18px; }
 .site-layout.with-packages { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
 .site-layout.with-packages .envs { grid-template-columns: minmax(0, 1fr); }

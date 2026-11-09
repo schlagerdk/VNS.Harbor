@@ -848,12 +848,12 @@ function renderSite(name) {
 		packagesPanel.hidden = false;
 		const updates = new Map((site.package_updates || []).map((item) => [item.name.toLowerCase(), item]));
 		const packages = (site.packages || []).filter((item) => item.name.toLowerCase() !== "microsoft.icu.icu4c.runtime" || updates.has(item.name.toLowerCase()));
-		const packageActions = el("div", { className: "actions" },
-			el("button", { textContent: "Add", title: "Add package", onclick: () => run(() => openPackageDialog(site, "add")) }),
-			el("button", { textContent: "Remove", title: "Remove package", onclick: () => run(() => openPackageDialog(site, "remove")) }));
-		packageActions.append(el("button", { textContent: "Check", title: "Check outdated packages", onclick: () => run(() => openTask({ kind: "bulk", sites: [site.name], action: "check" })) }));
+		const packageActions = el("div", { className: "actions package-actions" },
+			el("button", { textContent: "Add", className: "small", title: "Add package", onclick: () => run(() => openPackageDialog(site, "add")) }),
+			el("button", { textContent: "Remove", className: "small", title: "Remove package", onclick: () => run(() => openPackageDialog(site, "remove")) }));
+		packageActions.append(el("button", { textContent: "Check", className: "small", title: "Check outdated packages", onclick: () => run(() => openTask({ kind: "bulk", sites: [site.name], action: "check" })) }));
 		if (updates.size > 1) {
-			packageActions.append(el("button", { textContent: "Update all", className: "primary", onclick: () => run(() => updatePackages(site)) }));
+			packageActions.append(el("button", { textContent: "Update all", className: "small primary", onclick: () => run(() => updatePackages(site)) }));
 		}
 		const packageList = el("div", { className: "package-list" });
 		for (const item of packages) {
@@ -880,12 +880,12 @@ function renderSite(name) {
 		}
 		packagesPanel.append(
 			el("div", { className: "package-head" },
-				el("div", { className: "package-heading" }, el("h3", { textContent: "NuGet packages" }), el("span", { className: "package-count", textContent: String(packages.length), title: "Visible package references" })),
-				packageActions),
+				el("div", { className: "package-heading" }, el("h3", { textContent: "NuGet packages" }), el("span", { className: "package-count", textContent: String(packages.length), title: "Visible package references" }))),
 			...(site.package_errors || []).map((message) => el("p", { className: "package-error", textContent: `Could not read package references: ${message}` })),
 			...(site.updates === "error" ? [el("p", { className: "package-error", textContent: "Package update check failed. Run Check to retry." })] : []),
 			...(site.updates === "available" && !updates.size ? [el("p", { className: "muted", textContent: "Run Check to load available package versions." })] : []),
-			packageList);
+			packageList,
+			packageActions);
 	}
 	decorate(head);
 	decorate(envs);
@@ -992,20 +992,17 @@ function envPanel(site, env) {
 
 	const actions = el("div", { className: "actions" });
 	const add = (label, handler, className) => actions.append(el("button", { textContent: label, className: "small " + (className || ""), onclick: () => run(handler) }));
-	// The everyday controls sit in the header, like the buttons in the NuGet panel beside it
-	const headActions = el("div", { className: "actions env-head-actions" });
-	const addHead = (label, handler, className) => headActions.append(el("button", { textContent: label, className: "small " + (className || ""), onclick: () => run(handler) }));
 	if (env.unit || env.mode === "remote") {
-		if (env.unit !== site.name || !site.admin) addHead(env.state === "active" ? "Stop" : "Start", () => serviceAction(site, env, env.state === "active" ? "stop" : "start"));
-		addHead("Restart", () => serviceAction(site, env, "restart"));
-		addHead("Logs", () => showLogs(site, env));
+		if (env.unit !== site.name || !site.admin) add(env.state === "active" ? "Stop" : "Start", () => serviceAction(site, env, env.state === "active" ? "stop" : "start"));
+		add("Restart", () => serviceAction(site, env, "restart"));
+		add("Logs", () => showLogs(site, env));
 	}
 	if (env.mode === "remote") {
-		addHead("Shell", () => openTask({ kind: "remote_tool", site: site.name, tool: "shell", ...targetFields(env) }), "desktop-only");
-		addHead("Files", () => openFiles("", remoteRef(site, env)), "desktop-only");
+		add("Shell", () => openTask({ kind: "remote_tool", site: site.name, tool: "shell", ...targetFields(env) }), "desktop-only");
+		add("Files", () => openFiles("", remoteRef(site, env)), "desktop-only");
 	} else if (env.mode !== "windows") {
-		addHead("Shell", () => openTask({ kind: "shell", site: site.name, path: env.path, scope: isTarget(env) ? "prod" : "main" }), "desktop-only");
-		addHead("Files", () => openFiles(env.path), "desktop-only");
+		add("Shell", () => openTask({ kind: "shell", site: site.name, path: env.path, scope: isTarget(env) ? "prod" : "main" }), "desktop-only");
+		add("Files", () => openFiles(env.path), "desktop-only");
 	}
 
 	const quick = el("div", { className: "actions quick" });
@@ -1077,7 +1074,6 @@ function envPanel(site, env) {
 	if (quick.children.length) panel.append(quick);
 	if (settings.children.length) panel.append(settings);
 	if (extraTools) panel.append(extraTools);
-	if (headActions.children.length) heading.append(headActions);
 	if (actions.children.length) panel.append(actions);
 	return panel;
 }
