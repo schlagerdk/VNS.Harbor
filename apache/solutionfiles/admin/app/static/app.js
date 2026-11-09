@@ -824,10 +824,15 @@ function renderSite(name) {
 	for (const env of sortedEnvironments(site.environments)) {
 		if (env.key === "prod") targets.append(envPanel(site, env));
 	}
-	if (site.has_project && !hasProd(site) && site.scripts.includes("create_prod.sh")) {
-		targetsActions.append(el("button", { textContent: "Add environment", className: "small", onclick: () => run(() => openCreateProdDialog(site)) }));
+	const canAddEnvironment = site.has_project && site.scripts.includes("create_prod.sh");
+	const noEnvironments = !targets.childElementCount;
+	if (canAddEnvironment && !noEnvironments) {
+		targetsActions.append(el("button", { textContent: "Add environment", onclick: () => run(() => openCreateProdDialog(site)) }));
 	}
-	targetsSection.hidden = !targets.childElementCount && !targetsActions.childElementCount;
+	$("#btn-empty-add-environment").onclick = () => run(() => openCreateProdDialog(site));
+	$("#site-targets-head").hidden = noEnvironments;
+	$("#targets-empty").hidden = !(noEnvironments && canAddEnvironment);
+	targetsSection.hidden = noEnvironments && !canAddEnvironment;
 	if (site.has_project && (site.kind === "csharp" || site.kind === "umbraco")) {
 		$("#site-layout").classList.add("with-packages");
 		packagesPanel.hidden = false;
@@ -874,7 +879,8 @@ function renderSite(name) {
 	}
 	decorate(head);
 	decorate(envs);
-	decorate(targetsSection);
+	decorate(targets);
+	decorate(targetsActions);
 	updateSiteActivity();
 	decorate(packagesPanel);
 	if (openMenuState) {
