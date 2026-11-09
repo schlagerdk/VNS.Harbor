@@ -122,6 +122,14 @@ console.log(JSON.stringify([
         self.assertIn("creates it again as a new installation", source)
         self.assertNotIn("publish this site to production", source)
 
+    def test_existing_site_is_a_link_and_not_a_target(self):
+        page = (APP / "templates/index.html").read_text()
+        self.assertNotIn('<option value="existing">', page)
+        self.assertIn('id="prod-existing-toggle"', page)
+        source = (APP / "static/app.js").read_text()
+        self.assertIn('const target = prodForm.dataset.existing ? "existing" : prodForm.elements.target.value;', source)
+        self.assertIn("if (prodForm.dataset.existing) {\n\t\tdata.kind = \"register_env\";", source)
+
     def test_layout_and_wording(self):
         page = (APP / "templates/index.html").read_text()
         layout = re.search(r'<div id="site-layout".*?</div>\s*<section id="site-targets"', page, re.S).group(0)

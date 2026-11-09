@@ -360,6 +360,8 @@ body.login { display: grid; place-items: center; min-height: 100vh; min-height: 
 .site-layout.with-packages .package-panel { margin-top: 0; display: flex; flex-direction: column; contain: size; border-top: 3px solid var(--blue); }
 .site-layout.with-packages .package-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .targets-empty { min-height: 0; padding: 48px 20px; border: 1px dashed var(--line); border-radius: 12px; }
+.prod-existing-switch { margin-top: 14px; }
+.prod-existing-switch .cancel-link { padding: 0; font-size: inherit; }
 .site-targets { margin-top: 32px; padding-top: 28px; border-top: 2px solid var(--line); }
 .site-targets-head .actions.site-targets-right { margin-left: auto; }
 .site-danger { display: flex; justify-content: flex-end; margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line); }

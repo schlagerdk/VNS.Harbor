@@ -398,7 +398,7 @@
     </header>
     <div class="ns-section">Target</div>
     <div class="ns-grid">
-      <label>Target <select name="target"><option value="remote">Remote Linux server</option><option value="existing">Existing site on a remote Linux server</option><option value="windows">Remote Windows server (IIS)</option><option value="local">Local folder on this server</option></select></label>
+      <label id="prod-target-row">Target <select name="target"><option value="remote">Remote Linux server</option><option value="windows">Remote Windows server (IIS)</option><option value="local">Local folder on this server</option></select></label>
       <label id="prod-folder-row">Folder / service name <input name="folder" required autocomplete="off" spellcheck="false"></label>
       <label id="prod-binding-row">Binding (domain) <input name="binding" required autocomplete="off" spellcheck="false"></label>
       <label id="prod-environment-row">Environment <select name="environment"><option>Development</option><option>Test</option><option>Staging</option><option selected>Production</option></select></label>
@@ -436,6 +436,7 @@
       <p class="hint">Settings and content are copied, and the main site's project is published to the server. The site is stopped during the copy. A database on another server is not moved, so check the connection string. With HTTPS, DNS must already point to the new server. If a step fails, the environment keeps running here.</p>
       <label class="check"><input type="checkbox" name="delete_local" value="y"> Delete the local files after a successful move</label>
     </div>
+    <p class="hint prod-existing-switch" id="prod-existing-switch"><span id="prod-existing-text"></span> <button type="button" class="cancel-link" id="prod-existing-toggle"></button></p>
     <menu><button type="button" id="prod-cancel" class="cancel-link">Cancel</button><button type="submit" value="ok" class="primary" id="prod-submit">Add environment</button></menu>
   </form>
 </dialog>

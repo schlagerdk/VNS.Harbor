@@ -1468,10 +1468,14 @@ siteForm.onsubmit = (event) => {
 const prodDialog = $("#dlg-prod");
 const prodForm = $("#form-prod");
 function syncProdForm() {
-	const target = prodForm.elements.target.value;
+	const target = prodForm.dataset.existing ? "existing" : prodForm.elements.target.value;
 	const local = target === "local";
 	const windows = target === "windows";
 	const existing = target === "existing";
+	$("#prod-target-row").hidden = existing;
+	$("#prod-existing-switch").hidden = Boolean(prodForm.dataset.moveTarget);
+	$("#prod-existing-text").textContent = existing ? "Creating something new instead?" : "Already running on a server?";
+	$("#prod-existing-toggle").textContent = existing ? "Add new environment" : "Add existing site";
 	const linuxRemote = target === "remote" || existing;
 	$("#prod-local-options").hidden = !local;
 	$("#prod-remote-options").hidden = !linuxRemote;
@@ -1526,9 +1530,7 @@ function openCreateProdDialog(site, moveEnv) {
 		? `Move ${bindingLabel(moveEnv) || moveEnv.unit} to another folder or server.`
 		: "Configure where this site is published to, then publish and sync content automatically when available.";
 	prodForm.elements.target.querySelector("option[value=release]")?.remove();
-	const existingOption = prodForm.elements.target.querySelector("option[value=existing]");
-	existingOption.hidden = Boolean(moveEnv);
-	existingOption.disabled = Boolean(moveEnv);
+	delete prodForm.dataset.existing;
 	if (moveEnv?.separate) prodForm.elements.target.append(el("option", { value: "release", textContent: "Separate site (move out)" }));
 	const main = site.environments.find((env) => !isTarget(env));
 	const binding = (main && bindingLabel(main)) || siteLabel(site);
@@ -1565,6 +1567,15 @@ function openCreateProdDialog(site, moveEnv) {
 	prodForm.elements.target.focus();
 }
 prodForm.elements.target.onchange = syncProdForm;
+$("#prod-existing-toggle").onclick = () => {
+	if (prodForm.dataset.existing) {
+		delete prodForm.dataset.existing;
+	} else {
+		prodForm.dataset.existing = "1";
+		prodForm.elements.target.value = "remote";
+	}
+	syncProdForm();
+};
 // A local environment gets its own folder and site name, so the defaults follow the environment
 prodForm.elements.environment.onchange = () => {
 	const name = prodForm.elements.environment.value.toLowerCase();
@@ -1593,7 +1604,7 @@ prodForm.onsubmit = (event) => {
 	}
 	const data = Object.fromEntries(new FormData(prodForm));
 	data.kind = prodForm.dataset.moveTarget ? "move_env" : "create_prod";
-	if (data.target === "existing") {
+	if (prodForm.dataset.existing) {
 		data.kind = "register_env";
 		data.target = "remote";
 	}
