@@ -23,6 +23,17 @@ console.log(JSON.stringify(sortedEnvironments(input).map((env) => env.environmen
         self.assertEqual(self.sort(["Production", "Staging", "Test", "Development"]),
                          ["Development", "Test", "Staging", "Production"])
 
+    def test_same_environment_is_sorted_by_binding(self):
+        source = (APP / "static/app.js").read_text()
+        code = source[source.index("const environmentOrder"):source.index("function renderStats")]
+        script = code + """
+const input = [["Production", "tømrer.dk"], ["Production", "help.kikayo.dk"], ["Test", "zz.dk"], ["Production", "Liise.dk"], ["Production", "website.dk"]]
+    .map(([environment, binding]) => ({ environment, binding }));
+console.log(JSON.stringify(sortedEnvironments(input).map((env) => env.binding)));
+"""
+        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True)
+        self.assertEqual(json.loads(result.stdout), ["zz.dk", "help.kikayo.dk", "Liise.dk", "tømrer.dk", "website.dk"])
+
     def test_case_does_not_matter_and_unknown_comes_last(self):
         self.assertEqual(self.sort(["Unknown", "production", "", "TEST"]), ["TEST", "production", "Unknown", ""])
 

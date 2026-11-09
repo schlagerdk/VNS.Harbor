@@ -361,7 +361,10 @@ function environmentRank(env) {
 	const rank = environmentOrder.indexOf((env.environment || "").toLowerCase());
 	return rank < 0 ? environmentOrder.length : rank;
 }
-const sortedEnvironments = (environments) => [...environments].sort((a, b) => environmentRank(a) - environmentRank(b));
+// Within an environment, alphabetically by binding, so a site is easy to find
+const environmentName = (env) => (env.display_binding || env.binding || env.folder || env.unit || "").toLowerCase();
+const sortedEnvironments = (environments) => [...environments].sort((a, b) =>
+	environmentRank(a) - environmentRank(b) || environmentName(a).localeCompare(environmentName(b), "da"));
 
 function renderStats() {
 	const searched = overviewSites().filter(matchesQuery);
