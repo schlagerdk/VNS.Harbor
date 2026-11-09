@@ -71,8 +71,9 @@ console.log(JSON.stringify(sortedEnvironments(input).map((env) => env.environmen
 
     def test_binding_is_the_heading_and_the_overview_button(self):
         source = (APP / "static/app.js").read_text()
-        self.assertIn('heading.prepend(el("h3", { className: "env-title" }, binding));', source)
-        self.assertNotIn('el("dt", { textContent: "Binding" })', source)
+        self.assertIn('if (isTarget(env)) heading.prepend(el("h3", { className: "env-title" }, binding));', source)
+        self.assertIn('if (!isTarget(env)) meta.append(el("dt", { textContent: "Binding" }), el("dd", {}, binding));', source)
+        self.assertIn(".env-head .publish-status { flex-basis: auto; }", (APP / "static/style.css").read_text())
         row = source[source.index("function compactEnvironmentRow"):source.index("function siteCard(")]
         self.assertIn("openLink(bindingLabel(env) || address.hostname, address.url", row)
         self.assertNotIn("Backend", row)
@@ -82,6 +83,8 @@ console.log(JSON.stringify(sortedEnvironments(input).map((env) => env.environmen
         self.assertLess(page.index('id="site-targets-add"'), page.index('id="site-targets-actions"'))
         source = (APP / "static/app.js").read_text()
         self.assertIn('targetsAdd.append(el("button", { textContent: "Add environment"', source)
+        # More specific than the rule that resets the margin of .site-targets-head .actions
+        self.assertIn(".site-targets-head .actions.site-targets-right { margin-left: auto; }", (APP / "static/style.css").read_text())
 
     def test_layout_and_wording(self):
         page = (APP / "templates/index.html").read_text()

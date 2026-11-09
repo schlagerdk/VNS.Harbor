@@ -1001,8 +1001,10 @@ function envPanel(site, env) {
 	const binding = !address.url ? bindingLink("") : site.admin && !isTarget(env)
 		? el("span", { textContent: bindingLabel(env) })
 		: openLink(bindingLabel(env) || address.hostname, address.url, address.title);
-	heading.prepend(el("h3", { className: "env-title" }, binding));
+	// The main site's name is the page's title. Its binding, which can differ, is listed below.
+	if (isTarget(env)) heading.prepend(el("h3", { className: "env-title" }, binding));
 	const meta = el("dl", { className: "meta" });
+	if (!isTarget(env)) meta.append(el("dt", { textContent: "Binding" }), el("dd", {}, binding));
 	if (env.aliases && env.aliases.length) {
 		meta.append(el("dt", { textContent: "Aliases" }), el("dd", { className: "database-name aliases" },
 			...env.aliases.flatMap((alias, index) => [

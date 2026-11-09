@@ -350,6 +350,7 @@ body.login { display: grid; place-items: center; min-height: 100vh; min-height: 
 .env > .actions:last-child:not(.quick) { margin-top: auto; padding-top: 12px; }
 .env > .actions.quick:nth-last-child(2) { margin-bottom: 14px; }
 .env-head, .package-head { min-height: 62px; }
+.env-head .publish-status { flex-basis: auto; }
 .env-head h3 { margin: 0 auto 0 0; min-width: 0; font-size: 18px; overflow-wrap: anywhere; }
 .site-layout.with-packages { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; }
 .site-layout.with-packages .envs { grid-template-columns: minmax(0, 1fr); }
@@ -358,7 +359,7 @@ body.login { display: grid; place-items: center; min-height: 100vh; min-height: 
 .site-layout.with-packages .package-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .targets-empty { min-height: 0; padding: 48px 20px; border: 1px dashed var(--line); border-radius: 12px; }
 .site-targets { margin-top: 32px; padding-top: 28px; border-top: 2px solid var(--line); }
-.site-targets-head .site-targets-right { margin-left: auto; }
+.site-targets-head .actions.site-targets-right { margin-left: auto; }
 .site-danger { display: flex; justify-content: flex-end; margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line); }
 .site-targets-head { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
 .site-targets-head h3 { margin: 0; font-size: 22px; }
