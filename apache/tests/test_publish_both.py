@@ -98,7 +98,7 @@ const assert = require("node:assert/strict");
 const nodes = {};
 const document = {querySelector: () => null, activeElement: null};
 function el(tag, props = {}, ...children) {
-    return Object.assign({children, classList: {add() {}, remove() {}}, get childElementCount() {return this.children.length;}, append(...items) {this.children.push(...items);},
+    return Object.assign({children, dataset: {}, classList: {add() {}, remove() {}}, get childElementCount() {return this.children.length;}, append(...items) {this.children.push(...items);},
         replaceChildren() {this.children = [];}}, props);
 }
 const $ = selector => nodes[selector] ||= el("div");
@@ -107,6 +107,8 @@ const buttonScripts = new Set(["publish_local.sh", "publish.sh", "publish_prod.s
 const hasProd = site => site.prod;
 const isTarget = env => env.key !== "main";
 const isMissingEnv = () => false;
+const filterTargets = () => {};
+const aliasLabels = env => env.aliases || [];
 const bindingLabel = env => env.binding;
 const targetFields = () => ({});
 const sortedEnvironments = environments => environments;

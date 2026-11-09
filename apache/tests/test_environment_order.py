@@ -42,7 +42,8 @@ console.log(JSON.stringify(sortedEnvironments(input).map((env) => env.binding)))
         render = source[source.index("function renderSite("):source.index("async function updatePackages")]
         self.assertIn('if (!isTarget(env)) envs.append(envPanel(site, env));', render)
         self.assertIn("for (const env of sortedEnvironments(site.environments)) {", render)
-        self.assertIn("targets.append(envPanel(site, env));", render)
+        self.assertIn("const panel = envPanel(site, env);", render)
+        self.assertIn("targets.append(panel);", render)
 
     def test_empty_state_and_equal_heights(self):
         page = (APP / "templates/index.html").read_text()
@@ -167,6 +168,29 @@ console.log(JSON.stringify([
         css = (APP / "static/style.css").read_text()
         self.assertIn("dialog.newsite .copy-connection-toggle { flex-direction: row;", css)
         self.assertNotIn("#dlg-copy-site .copy-connection-toggle", css)
+
+    def test_more_row_unfolds_the_card(self):
+        source = (APP / "static/app.js").read_text()
+        self.assertIn("expandedCards.add(site.name); renderSites();", source)
+        self.assertIn("expandedCards.delete(site.name); renderSites();", source)
+        self.assertIn('const listed = compact && !expanded ? allEnvironments.slice(0, maxCardEnvironments) : allEnvironments;', source)
+
+    def test_filter_shows_with_more_than_two_environments_and_matches_all_words(self):
+        source = (APP / "static/app.js").read_text()
+        self.assertIn("search.hidden = targets.childElementCount <= 2;", source)
+        code = source[source.index("function filterTargets()"):source.index('$("#targets-search").oninput')]
+        script = """
+const search = {value: ""}, none = {hidden: true};
+const panels = [{dataset: {search: "help.kikayo.dk production"}}, {dataset: {search: "tømrer.dk production server.test"}}, {dataset: {search: "dev.test development"}}];
+const $ = (selector) => selector === "#targets-search" ? search : selector === "#targets-no-match" ? none : {children: panels};
+""" + code + """
+search.value = "PRODUCTION kikayo"; filterTargets();
+const first = panels.map((panel) => panel.hidden), firstNone = none.hidden;
+search.value = "nothing"; filterTargets();
+console.log(JSON.stringify([first, firstNone, none.hidden]));
+"""
+        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True)
+        self.assertEqual(json.loads(result.stdout), [[False, True, True], True, False])
 
     def test_layout_and_wording(self):
         page = (APP / "templates/index.html").read_text()

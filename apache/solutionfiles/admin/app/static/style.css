@@ -372,6 +372,10 @@ dialog.newsite .copy-connection-toggle + .hint { margin-top: 12px; }
 .prod-existing-switch .cancel-link { padding: 0; font-size: inherit; }
 .site-targets { margin-top: 32px; }
 .site-targets-head .actions.site-targets-right { margin-left: auto; }
+/* In the middle of the bar: the free space is shared with the buttons on the right */
+.site-targets-head .targets-search { flex: 0 1 340px; min-width: 180px; height: 36px; margin-left: auto; padding: 0 16px; border-radius: 18px; background: rgba(0, 0, 0, .25); }
+.site-targets-head .targets-search:not([hidden]) ~ .site-targets-right:empty { display: none; }
+@media (max-width: 700px) { .site-targets-head .targets-search { flex-basis: 100%; order: 3; margin-left: 0; } }
 .site-danger { display: flex; justify-content: flex-end; margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line); }
 /* A header bar in the style of the panels, so the section reads as one block with its cards */
 .site-targets-head { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; padding: 14px 20px; background: linear-gradient(110deg, rgba(163, 113, 247, .1), transparent), var(--panel); border: 1px solid var(--line); border-radius: 12px; }
@@ -567,7 +571,8 @@ a.btn-link .ico { width: 13px; height: 13px; flex: none; }
 .site-link-group.compact a.btn-link.backend { flex-shrink: 0; }
 .site-link-group.compact .badge { flex-shrink: 0; }
 .site-link-group.compact a.btn-link { padding: 3px 8px; font-size: 12px; }
-.site-link-more { padding: 7px 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+.site-links .site-link-more { display: block; width: 100%; margin: 0; padding: 8px 12px; border: 0; border-top: 1px solid var(--line); border-radius: 0; background: transparent; color: var(--muted); font-size: 12px; text-align: left; cursor: pointer; }
+.site-links .site-link-more:hover, .site-links .site-link-more:focus-visible { background: var(--hover); color: var(--text); }
 .site-links:has(.publish-status) .site-environment-links { flex-direction: column; }
 @media (max-width: 420px) {
 	.site { padding: 16px; }

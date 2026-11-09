@@ -618,6 +618,8 @@ function publishBadge(env) {
 }
 
 const maxCardEnvironments = 4;
+// Cards the user has unfolded. Kept while the page is open, also when the list is drawn again.
+const expandedCards = new Set();
 
 // One line: the environment, a button with the binding that opens the site, and the backoffice
 function compactEnvironmentRow(site, env, environment) {
@@ -651,7 +653,8 @@ function siteCard(site) {
 	const actions = el("div", { className: "site-links" });
 	const allEnvironments = sortedEnvironments(site.environments);
 	const compact = allEnvironments.length > 1;
-	const listed = compact ? allEnvironments.slice(0, maxCardEnvironments) : allEnvironments;
+	const expanded = expandedCards.has(site.name);
+	const listed = compact && !expanded ? allEnvironments.slice(0, maxCardEnvironments) : allEnvironments;
 	for (const env of listed) {
 		const production = isTarget(env);
 		const environment = environmentLabel(site, env);
@@ -688,7 +691,11 @@ function siteCard(site) {
 	}
 
 	if (allEnvironments.length > listed.length) {
-		actions.append(el("div", { className: "site-link-more", textContent: `+${allEnvironments.length - listed.length} more` }));
+		actions.append(el("button", { type: "button", className: "site-link-more", textContent: `+${allEnvironments.length - listed.length} more`,
+			ariaExpanded: "false", onclick: (event) => { event.stopPropagation(); expandedCards.add(site.name); renderSites(); } }));
+	} else if (expanded && allEnvironments.length > maxCardEnvironments) {
+		actions.append(el("button", { type: "button", className: "site-link-more", textContent: "Show fewer",
+			ariaExpanded: "true", onclick: (event) => { event.stopPropagation(); expandedCards.delete(site.name); renderSites(); } }));
 	}
 
 	const badges = kindBadges(site);
@@ -891,7 +898,12 @@ function renderSite(name) {
 		if (!isTarget(env)) envs.append(envPanel(site, env));
 	}
 	for (const env of sortedEnvironments(site.environments)) {
-		if (isTarget(env)) targets.append(envPanel(site, env));
+		if (!isTarget(env)) continue;
+		const panel = envPanel(site, env);
+		// What the filter matches: binding, aliases, environment, folder, server
+		panel.dataset.search = [env.binding, bindingLabel(env), ...(env.aliases || []), ...aliasLabels(env), env.environment,
+			env.folder, env.unit, env.path, env.host, env.target].filter(Boolean).join(" ").toLowerCase();
+		targets.append(panel);
 	}
 	const canAddEnvironment = site.has_project && !site.admin && (site.kind === "csharp" || site.kind === "umbraco");
 	const noEnvironments = !targets.childElementCount;
@@ -901,6 +913,15 @@ function renderSite(name) {
 	$("#btn-empty-add-environment").onclick = () => run(() => openCreateProdDialog(site));
 	$("#site-targets-head").hidden = noEnvironments;
 	$("#site-targets-count").textContent = String(targets.childElementCount);
+	// The filter is kept for the same site when the page is drawn again, and cleared for another site
+	const search = $("#targets-search");
+	if (search.dataset.site !== site.name) {
+		search.value = "";
+		search.dataset.site = site.name;
+	}
+	search.hidden = targets.childElementCount <= 2;
+	if (search.hidden) search.value = "";
+	filterTargets();
 	$("#targets-empty").hidden = !(noEnvironments && canAddEnvironment);
 	targetsSection.hidden = noEnvironments && !canAddEnvironment;
 	if (site.has_project && (site.kind === "csharp" || site.kind === "umbraco")) {
@@ -1702,6 +1723,24 @@ adoptForm.onsubmit = (event) => {
 		adoptDialog.close();
 	});
 };
+function filterTargets() {
+	const words = $("#targets-search").value.toLowerCase().split(/\s+/).filter(Boolean);
+	let shown = 0;
+	for (const panel of $("#env-targets").children) {
+		panel.hidden = !words.every((word) => (panel.dataset.search || "").includes(word));
+		if (!panel.hidden) shown += 1;
+	}
+	$("#targets-no-match").hidden = shown > 0 || !words.length;
+}
+$("#targets-search").oninput = filterTargets;
+$("#targets-search").onkeydown = (event) => {
+	if (event.key === "Escape" && event.target.value) {
+		event.stopPropagation();
+		event.target.value = "";
+		filterTargets();
+	}
+};
+
 const syncDialog = $("#dlg-sync");
 const syncForm = $("#form-sync");
 function openSyncDialog(site, source) {
