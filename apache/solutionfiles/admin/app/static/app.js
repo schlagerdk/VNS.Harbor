@@ -647,14 +647,17 @@ function siteCard(site) {
 }
 
 function customScriptGroups(files) {
+	const titleWords = (words) => words.map((word) => {
+		const [first, ...rest] = Array.from(word);
+		return first ? first.toUpperCase() + rest.join("") : "";
+	}).join(" ");
 	const groups = new Map();
 	for (const file of files) {
 		const parts = file.replace(/\.sh$/, "").split(/[_-]+/).filter(Boolean);
 		const category = parts.length > 1 ? parts.shift() : "other";
-		const label = (parts.length ? parts.join(" ") : file.replace(/\.sh$/, ""))
-			.replace(/\b\w/g, (letter) => letter.toUpperCase());
+		const label = titleWords(parts.length ? parts : file.replace(/\.sh$/, "").split(/[_-]+/).filter(Boolean));
 		const key = category.toLowerCase();
-		if (!groups.has(key)) groups.set(key, { label: key === "other" ? "Other" : key.replace(/\b\w/g, (letter) => letter.toUpperCase()), items: [] });
+		if (!groups.has(key)) groups.set(key, { label: key === "other" ? "Other" : titleWords([category]), items: [] });
 		groups.get(key).items.push({ file, label });
 	}
 	return [...groups.values()]
