@@ -617,7 +617,7 @@ function publishBadge(env) {
 		title: env.publish_status === "pending" ? "Project or package configuration has changed since this environment's last successful publish." : "Publish this environment to establish its package baseline." }) : null;
 }
 
-const maxCardEnvironments = 4;
+const maxCardEnvironments = 2;
 // Cards the user has unfolded. Kept while the page is open, also when the list is drawn again.
 const expandedCards = new Set();
 
