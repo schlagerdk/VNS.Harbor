@@ -669,7 +669,8 @@ function scriptSelect(site, className) {
 	const trigger = el("button", {
 		type: "button", className: "small script-menu-trigger", ariaHasPopup: "menu", ariaExpanded: "false",
 		title: "Run a custom script from this site",
-	}, svgIcon("play"), el("span", { textContent: "Run custom script" }), el("span", { className: "script-menu-chevron", "aria-hidden": "true", textContent: "▾" }));
+	}, svgIcon("play"), el("span", { textContent: "Run custom script" }), el("span", { className: "script-menu-chevron" }));
+	trigger.lastChild.setAttribute("aria-hidden", "true");
 	trigger.setAttribute("aria-haspopup", "menu");
 	trigger.setAttribute("aria-expanded", "false");
 	const panel = el("div", {
