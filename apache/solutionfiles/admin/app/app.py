@@ -1647,7 +1647,7 @@ def build_command(data):
             abort(400, "Unknown script")
         for target in targets:
             build_command({"kind": "script", "site": site, "script": "publish_prod.sh", "target": target})
-        return "Publish both: " + site, [
+        return "Publish all: " + site, [
             sys.executable, os.path.join(APACHE_DIR, "lib", "publish_status.py"),
             "both", root, os.path.realpath(os.path.join(folder, local)),
             *(os.path.realpath(os.path.join(target_folder(root, target), "publish_prod.sh")) for target in targets),

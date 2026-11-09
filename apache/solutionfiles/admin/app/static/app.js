@@ -436,7 +436,7 @@ const iconPaths = {
 // label (exact, or a prefix ending in "*") -> [icon, tone]
 const buttonStyles = {
 	"Shell": ["terminal", "blue"], "Server shell": ["terminal", "blue"], "New file": ["file", "blue"], "New folder": ["folder", "blue"], "Upload": ["upload", "blue"], "Browse /": ["folder", "blue"], "Files": ["folder", "blue"], "Manage": ["manage", "blue"],
-	"Publish": ["upload", "green"], "Publish both": ["upload", "green"], "Sync to*": ["sync", "blue"], "Start": ["play", "green"],
+	"Publish": ["upload", "green"], "Publish all": ["upload", "green"], "Sync to*": ["sync", "blue"], "Sync to…": ["sync", "blue"], "Sync to all": ["sync", "blue"], "Start": ["play", "green"],
 	"Check for updates": ["download", "amber"],
 	"Add package": ["download", "green"], "Remove package": ["trash", "red"],
 	"Add": ["download", "green"], "Remove": ["trash", "red"], "Check": ["download", "amber"],
@@ -824,6 +824,7 @@ function renderSite(name) {
 	$("#site-layout").classList.remove("with-packages");
 	packagesPanel.replaceChildren();
 	packagesPanel.hidden = true;
+	$("#site-danger").hidden = true;
 	if (!site && sitesLoaded) { go("#sites"); return; }
 	if (!site) {
 		head.append(el("p", { className: "empty", textContent: allSites.length ? "Site not found." : "Loading…" }));
@@ -832,11 +833,11 @@ function renderSite(name) {
 	const actions = el("div", { className: "actions" });
 	const add = (label, handler, className) => actions.append(el("button", { textContent: label, className: className || "", onclick: () => run(handler) }));
 	if (site.has_project && hasProd(site) && site.scripts.includes("publish_prod.sh") && ["publish_local.sh", "publish.sh"].some((file) => site.scripts.includes(file))) {
-		add("Publish both", async () => {
-			if (await ask({ title: "Publish both?", message: "Publish the test site first, then production (local or remote). Both services are restarted. If test publishing fails, production is not published.", input: false, ok: "Publish both" })) {
+		targetsActions.append(el("button", { textContent: "Publish all", title: "Publish the main site, then every environment", onclick: () => run(async () => {
+			if (await ask({ title: "Publish all?", message: "Publish the main site first, then every environment, one at a time. The services are restarted. If one fails, the rest are not published.", input: false, ok: "Publish all" })) {
 				await openTask({ kind: "publish_both", site: site.name });
 			}
-		});
+		}) }));
 	}
 	if (site.has_project && site.kind !== "csharp" && site.kind !== "umbraco" && site.scripts.includes("outdated.sh")) {
 		actions.append(el("button", { textContent: "Check outdated", title: "outdated.sh", onclick: () => run(() => openTask({ kind: "script", site: site.name, script: "outdated.sh" })) }));
@@ -849,19 +850,16 @@ function renderSite(name) {
 		}
 	}
 	const syncTargets = site.environments.filter((env) => isTarget(env) && (env.scripts || []).includes("sync_prod.sh"));
-	if (syncTargets.length === 1) {
-		const target = syncTargets[0];
-		const label = "Sync to " + (target.environment || "target");
-		actions.append(el("button", { textContent: label, title: "sync_prod.sh", onclick: () => run(async () => {
-			if (await ask({ title: label + "?", message: `Sync content to ${bindingLabel(target) || target.host || siteLabel(site)}.`, input: false, ok: label })) await openTask({ kind: "script", site: site.name, script: "sync_prod.sh", ...targetFields(target) });
-		}) }));
-	} else if (syncTargets.length > 1) {
-		actions.append(el("button", { textContent: "Sync to all", title: "Sync from the main site to every environment", onclick: () => run(async () => {
+	if (syncTargets.length) {
+		targetsActions.append(el("button", { textContent: "Sync to all", title: "Sync from the main site to every environment", onclick: () => run(async () => {
 			const names = syncTargets.map((env) => `${env.environment || env.target}: ${bindingLabel(env) || env.host || ""}`).join("\n");
 			if (await ask({ title: "Sync to all?", message: `Sync content from the main site to:\n${names}`, input: false, ok: "Sync to all" })) await openTask({ kind: "sync_env", site: site.name, source: "main", destination: "all" });
 		}) }));
 	}
-	if (!site.admin && hasProd(site)) add("Delete everything", () => deleteSite(site, "all"), "danger");
+	const danger = $("#site-danger");
+	danger.replaceChildren();
+	danger.hidden = site.admin || !hasProd(site);
+	if (!danger.hidden) danger.append(el("button", { textContent: "Delete everything", className: "danger", onclick: () => run(() => deleteSite(site, "all")) }));
 	const title = el("div", { className: "detail-title" }, el("h2", { textContent: siteLabel(site) }), kindBadges(site));
 	if ((site.adopt_into || []).length) {
 		title.append(el("button", { textContent: "Move under main site", className: "detail-title-action", onclick: () => run(() => openAdoptDialog(site)) }));
@@ -931,6 +929,7 @@ function renderSite(name) {
 	decorate(envs);
 	decorate(targets);
 	decorate(targetsActions);
+	decorate($("#site-danger"));
 	updateSiteActivity();
 	decorate(packagesPanel);
 	if (openMenuState) {
@@ -1098,7 +1097,7 @@ function envPanel(site, env) {
 	}
 	if (isTarget(env) && env.mode === "local" && env.exists !== false) add("Move…", () => openCreateProdDialog(site, env));
 	if (env.separate) add("Copy site", () => copySite(site, env), "push-right");
-	if (hasProd(site) && !site.admin) add(`Delete ${environmentLabel(site, env)} site`, () => deleteSite(site, isTarget(env) ? "prod" : "test", env), "danger");
+	if (hasProd(site) && !site.admin) add("Delete site", () => deleteSite(site, isTarget(env) ? "prod" : "test", env), "danger");
 	if (!hasProd(site) && !site.admin) {
 		add("Copy site", () => copySite(site), "push-right");
 		add("Delete site", () => deleteSite(site, "all"), "danger");

@@ -60,6 +60,15 @@ console.log(JSON.stringify(sortedEnvironments(input).map((env) => env.environmen
         self.assertIn('className: "detail-title-action"', source)
         self.assertNotIn('add("Move under main site"', source)
 
+    def test_site_actions_are_beside_the_environments_and_delete_is_at_the_bottom(self):
+        source = (APP / "static/app.js").read_text()
+        self.assertIn('targetsActions.append(el("button", { textContent: "Publish all"', source)
+        self.assertIn('targetsActions.append(el("button", { textContent: "Sync to all"', source)
+        self.assertIn('danger.append(el("button", { textContent: "Delete everything"', source)
+        self.assertIn('add("Delete site", () => deleteSite(site, isTarget(env) ? "prod" : "test", env), "danger");', source)
+        page = (APP / "templates/index.html").read_text()
+        self.assertLess(page.index('id="site-targets"'), page.index('id="site-danger"'))
+
     def test_layout_and_wording(self):
         page = (APP / "templates/index.html").read_text()
         layout = re.search(r'<div id="site-layout".*?</div>\s*<section id="site-targets"', page, re.S).group(0)

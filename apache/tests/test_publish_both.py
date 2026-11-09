@@ -42,7 +42,7 @@ class PublishBothTests(unittest.TestCase):
                 (self.scripts / local).write_text('echo test >> order\n')
                 (self.scripts / "publish_prod.sh").write_text('echo production >> order\n')
                 title, argv, cwd = self.command()
-                self.assertEqual(title, "Publish both: example.test")
+                self.assertEqual(title, "Publish all: example.test")
                 subprocess.run(argv, cwd=cwd, check=True, capture_output=True)
                 self.assertEqual((self.scripts.parent / "order").read_text(), "test\nproduction\n")
                 (self.scripts / local).unlink()
@@ -116,14 +116,14 @@ const openTask = async payload => tasks.push(payload);
                 scripts: [local, "publish_prod.sh"], environments: [{key: "prod", mode}]};
             allSites = [site];
             renderSite(site.name);
-            const actions = $("#site-head").children[1].children;
-            const button = actions.find(item => item.textContent === "Publish both");
+            const actions = $("#site-targets-actions").children;
+            const button = actions.find(item => item.textContent === "Publish all");
             assert.ok(button);
             tasks = [];
             confirmed = false;
             await button.onclick();
             assert.equal(tasks.length, 0);
-            assert.equal(prompts.at(-1).title, "Publish both?");
+            assert.equal(prompts.at(-1).title, "Publish all?");
             confirmed = true;
             await button.onclick();
             assert.deepEqual(tasks, [{kind: "publish_both", site: site.name}]);
@@ -135,7 +135,7 @@ const openTask = async payload => tasks.push(payload);
     ]) {
         allSites = [{name: "example.test", kind: "csharp", prod, scripts, environments: []}];
         renderSite("example.test");
-        assert.ok(!($("#site-head").children[1]?.children || []).some(item => item.textContent === "Publish both"));
+        assert.ok(!$("#site-targets-actions").children.some(item => item.textContent === "Publish all"));
     }
 })().catch(error => {console.error(error); process.exitCode = 1;});
 """
