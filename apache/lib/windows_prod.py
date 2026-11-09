@@ -4,6 +4,7 @@ Usage:
   windows_prod.py web-config PROJECT ENVIRONMENT HTTPS UMBRACO  Print a new web.config (HTTPS, UMBRACO: y/n)
   windows_prod.py set-environment WEB_CONFIG ENVIRONMENT  Change the environment in an existing web.config
   windows_prod.py prepare-appsettings FILE URL HTTPS      Remove ConnectionStrings and set the Umbraco URL (HTTPS: y/n)
+  windows_prod.py set-url FILE URL HTTPS                  Set the Umbraco URL only
 """
 import json
 import sys
@@ -77,10 +78,11 @@ def set_environment(path, environment):
     tree.write(path, encoding="utf-8", xml_declaration=True)
 
 
-def prepare_appsettings(path, url, https):
+def prepare_appsettings(path, url, https, keep_connections=False):
     with open(path, encoding="utf-8-sig") as stream:
         settings = json.load(stream)
-    settings.pop("ConnectionStrings", None)
+    if not keep_connections:
+        settings.pop("ConnectionStrings", None)
     cms = (settings.get("Umbraco") or {}).get("CMS") or {}
     routing = cms.get("WebRouting") or {}
     if "UmbracoApplicationUrl" in routing:
@@ -100,6 +102,8 @@ def main(args):
         set_environment(args[1], args[2])
     elif len(args) == 4 and args[0] == "prepare-appsettings":
         prepare_appsettings(args[1], args[2], args[3])
+    elif len(args) == 4 and args[0] == "set-url":
+        prepare_appsettings(args[1], args[2], args[3], keep_connections=True)
     else:
         raise SystemExit(__doc__)
 

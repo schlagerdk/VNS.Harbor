@@ -130,6 +130,21 @@ console.log(JSON.stringify([
         self.assertIn('const target = prodForm.dataset.existing ? "existing" : prodForm.elements.target.value;', source)
         self.assertIn("if (prodForm.dataset.existing) {\n\t\tdata.kind = \"register_env\";", source)
 
+    def test_copy_of_a_remote_environment_can_go_to_this_server(self):
+        page = (APP / "templates/index.html").read_text()
+        self.assertIn('<option value="local">This server</option>', page)
+        source = (APP / "static/app.js").read_text()
+        self.assertIn('payload.destination = "local";', source)
+        self.assertIn('field("stop_source").checked = usesSqlite;', source)
+        app = (APP / "app.py").read_text()
+        self.assertIn('copy_here = copy_remote and data.get("destination") == "local"', app)
+        self.assertIn('"VNS_COPY_TO_LOCAL=1"', app)
+
+    def test_migrate_is_offered_on_local_and_remote_environments(self):
+        source = (APP / "static/app.js").read_text()
+        self.assertIn('env.mode === "remote" && !missing)) add("Migrate…"', source)
+        self.assertNotIn('add("Move…"', source)
+
     def test_layout_and_wording(self):
         page = (APP / "templates/index.html").read_text()
         layout = re.search(r'<div id="site-layout".*?</div>\s*<section id="site-targets"', page, re.S).group(0)

@@ -443,7 +443,7 @@ const buttonStyles = {
 	"Fix permissions": ["shield", "teal"], "Update Python packages": ["sync", "blue"],
 	"Add environment": ["server", "purple"],
 	"Move under main site": ["server", "purple"],
-	"Move…": ["server", "purple"],
+	"Migrate…": ["server", "purple"],
 	"Check outdated": ["download", "amber"], "Restart": ["restart", "amber"], "Restart Apache": ["restart", "amber"],
 	"Stop": ["stop", "red"], "Clear logs": ["eraser", "gray"], "Logs": ["file", "gray"],
 	"Admin app log": ["file", "gray"], "Apache error logs": ["file", "teal"],
@@ -850,7 +850,9 @@ function renderSite(name) {
 	const add = (label, handler, className) => actions.append(el("button", { textContent: label, className: className || "", onclick: () => run(handler) }));
 	if (site.has_project && hasProd(site) && site.scripts.includes("publish_prod.sh") && ["publish_local.sh", "publish.sh"].some((file) => site.scripts.includes(file))) {
 		targetsActions.append(el("button", { textContent: "Publish all", title: "Publish the main site, then every environment", onclick: () => run(async () => {
-			if (await ask({ title: "Publish all?", message: "Publish the main site first, then every environment, one at a time. The services are restarted. If one fails, the rest are not published.", input: false, ok: "Publish all" })) {
+			const deleted = site.environments.filter(isMissingEnv).map((env) => bindingLabel(env) || env.folder);
+			const skipped = deleted.length ? `\nSkipped, as they no longer exist on their servers: ${deleted.join(", ")}.` : "";
+			if (await ask({ title: "Publish all?", message: `Publish the main site first, then every environment, one at a time. The services are restarted. If one fails, the rest are not published.${skipped}`, input: false, ok: "Publish all" })) {
 				await openTask({ kind: "publish_both", site: site.name });
 			}
 		}) }));
@@ -1122,7 +1124,7 @@ function envPanel(site, env) {
 		}
 		extraTools = tools;
 	}
-	if (isTarget(env) && env.mode === "local" && env.exists !== false) add("Move…", () => openCreateProdDialog(site, env));
+	if (isTarget(env) && (env.mode === "local" && env.exists !== false || env.mode === "remote" && !missing)) add("Migrate…", () => openCreateProdDialog(site, env));
 	if (env.separate || env.mode === "remote" && !missing) add("Copy site", () => copySite(site, env), "push-right");
 	if (hasProd(site) && !site.admin) add("Delete site", () => deleteSite(site, isTarget(env) ? "prod" : "test", env), "danger");
 	if (!hasProd(site) && !site.admin) {
@@ -1221,13 +1223,23 @@ async function copySite(site, sourceEnv) {
 		if (!usernameEdited) field("username").value = field("database").value;
 	};
 	// A remote environment is copied on its own server
-	const copyServer = sourceEnv?.mode === "remote" ? sourceEnv.host : "";
+	const sourceServer = sourceEnv?.mode === "remote" ? sourceEnv.host : "";
+	$("#copy-destination-row").hidden = !sourceServer;
+	field("destination").disabled = !sourceServer;
+	$("#copy-destination-server").textContent = `Same server (${sourceServer})`;
+	const usesSqlite = sourceEnv?.database === "SQLite";
+	field("stop_source").checked = usesSqlite;
 	const showCopyPath = () => {
+		const toServer = sourceServer && field("destination").value !== "local";
+		const copyServer = toServer ? sourceServer : "";
 		const name = field("target").value.trim() || "…";
 		$("#copy-site-path").textContent = `Copied to ${copyServer ? copyServer + ":" : ""}/var/www/${name}`;
+		form.querySelector(".copy-dns-hint").textContent = `For HTTPS, the new binding must point to ${copyServer || "this server"}.`;
+		$("#copy-stop-row").hidden = toServer || !usesSqlite;
+		$("#copy-local-hint").hidden = toServer;
 	};
 	showCopyPath();
-	form.querySelector(".copy-dns-hint").textContent = `For HTTPS, the new binding must point to ${copyServer || "this server"}.`;
+	field("destination").onchange = showCopyPath;
 	// A site with a project gets a project of its own
 	const hasProject = site.has_project && !sourceEnv;
 	$("#copy-project-row").hidden = !hasProject;
@@ -1265,6 +1277,10 @@ async function copySite(site, sourceEnv) {
 				const payload = { kind: sourceEnv ? "copy_env" : "copy_site", site: site.name, ...(sourceEnv ? { environment_id: sourceEnv.target } : {}),
 					target: field("target").value.trim(), binding: field("binding").value.trim() };
 				if (hasProject) payload.project = field("project").value.trim();
+				if (sourceServer && field("destination").value === "local") {
+					payload.destination = "local";
+					payload.stop_source = field("stop_source").checked;
+				}
 				if (hasSqlConnection && field("change_connection").checked) {
 					payload.connection = { server: field("server").value.trim(), database: field("database").value.trim(),
 						username: field("username").value.trim(), password: field("password").value };
@@ -1494,19 +1510,21 @@ function syncProdForm() {
 	prodForm.smb_password.required = windows;
 	const moving = Boolean(prodForm.dataset.moveTarget);
 	const release = target === "release";
-	const noSettings = moving && local || release || existing;
+	const sameServerMove = moving && local && prodForm.dataset.moveMode !== "remote";
+	const noSettings = sameServerMove || release || existing;
 	$("#prod-folder-row").hidden = windows || noSettings && !existing;
-	$("#prod-binding-row").hidden = noSettings;
+	$("#prod-binding-row").hidden = noSettings && !sameServerMove;
 	$("#prod-environment-row").hidden = noSettings;
 	$("#prod-protocol-row").hidden = noSettings;
 	$("#prod-protocol-hint").hidden = noSettings;
 	prodForm.folder.required = !windows && (!noSettings || existing);
 	$("#prod-existing-hint").hidden = !existing;
-	$("#prod-move-options").hidden = !moving || local || release;
+	$("#prod-move-options").hidden = !moving || sameServerMove || release;
 	$("#prod-release-hint").hidden = !release;
-	$("#prod-submit").textContent = existing ? "Add existing site" : !moving ? "Add environment" : release ? "Move out" : "Move";
-	$("#prod-local-hint").textContent = moving
-		? "The folder is moved, and the service and Apache config follow it. It must be a new folder directly under /var/www, which also becomes the site's name. The binding, port and certificate are unchanged."
+	$("#prod-submit").textContent = existing ? "Add existing site" : !moving ? "Add environment" : release ? "Move out" : "Migrate";
+	$("#prod-local-hint").textContent = sameServerMove
+		? "The folder is moved, and the service and Apache config follow it. It must be a new folder directly under /var/www, which also becomes the site's name. The port is unchanged. A new binding with HTTPS gets a new certificate, so DNS must point here first."
+		: moving ? "It must be a new folder directly under /var/www, which also becomes the site's name."
 		: "Use a subfolder of this site's folder, or /var/www/<production folder> to keep it outside the main site's folder.";
 	const previous = prodForm.dataset.target;
 	if (previous && previous !== target) {
@@ -1524,10 +1542,14 @@ function openCreateProdDialog(site, moveEnv) {
 	prodForm.reset();
 	delete prodForm.binding.dataset.edited;
 	delete prodForm.dataset.moveTarget;
-	if (moveEnv) prodForm.dataset.moveTarget = moveEnv.target;
-	$("#prod-title").textContent = moveEnv ? `Move ${environmentLabel(site, moveEnv)}` : "Add environment";
+	delete prodForm.dataset.moveMode;
+	if (moveEnv) {
+		prodForm.dataset.moveTarget = moveEnv.target;
+		prodForm.dataset.moveMode = moveEnv.mode;
+	}
+	$("#prod-title").textContent = moveEnv ? `Migrate ${environmentLabel(site, moveEnv)}` : "Add environment";
 	$("#prod-description").textContent = moveEnv
-		? `Move ${bindingLabel(moveEnv) || moveEnv.unit} to another folder or server.`
+		? `Migrate ${bindingLabel(moveEnv) || moveEnv.unit || moveEnv.folder} to another folder or server. Everything goes with it.`
 		: "Configure where this site is published to, then publish and sync content automatically when available.";
 	prodForm.elements.target.querySelector("option[value=release]")?.remove();
 	delete prodForm.dataset.existing;
@@ -1546,7 +1568,7 @@ function openCreateProdDialog(site, moveEnv) {
 	prodForm.elements.target.value = moveEnv?.separate ? "release" : "remote";
 	prodForm.elements.https.value = main && main.scheme === "http" ? "n" : "y";
 	if (moveEnv) {
-		const name = moveEnv.unit || siteLabel(site);
+		const name = moveEnv.unit || moveEnv.folder || siteLabel(site);
 		const movedBinding = bindingLabel(moveEnv) || binding;
 		prodForm.folder.value = name;
 		prodForm.binding.value = movedBinding;

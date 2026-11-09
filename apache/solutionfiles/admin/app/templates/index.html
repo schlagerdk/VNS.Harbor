@@ -331,6 +331,11 @@
       <label>New folder<input name="target" required autocomplete="off" placeholder="copy.example.com"></label>
       <label>Binding<input name="binding" required autocomplete="off" placeholder="copy.example.com"></label>
     </div>
+    <div id="copy-destination-row" hidden>
+      <label>Copy to <select name="destination"><option value="server" id="copy-destination-server"></option><option value="local">This server</option></select></label>
+      <label class="copy-connection-toggle" id="copy-stop-row"><input name="stop_source" type="checkbox"><span>Stop the source while copying, so its SQLite database stays consistent</span></label>
+      <p class="hint" id="copy-local-hint">Settings and content are copied, and the main site's project is published to the copy. A connection to the other server's own SQL Server is changed to that server's IP, and it must accept connections from this server, unless you enter a new connection below.</p>
+    </div>
     <div id="copy-project-row" hidden>
       <label>Project name<input name="project" autocomplete="off" spellcheck="false" maxlength="128" pattern="[A-Za-z0-9][A-Za-z0-9._\-]*"></label>
       <p class="hint">The project file and dll get this name, and the copy is built. Namespaces in the code are not changed.</p>
@@ -433,8 +438,8 @@
     <p class="hint" id="prod-existing-hint" hidden>The site is added as it is: nothing is published. Enter its folder name under /var/www on the server. It must run the dll this site builds. From then on it can only be copied from here.</p>
     <p class="hint" id="prod-release-hint" hidden>The environment becomes a separate site again, in the folder it already has. Its files, service and Apache config are not touched, and it can no longer be published from this site until it is moved back.</p>
     <div id="prod-move-options" hidden>
-      <p class="hint">Settings and content are copied, and the main site's project is published to the server. The site is stopped during the copy. A database on another server is not moved, so check the connection string. With HTTPS, DNS must already point to the new server. If a step fails, the environment keeps running here.</p>
-      <label class="check"><input type="checkbox" name="delete_local" value="y"> Delete the local files after a successful move</label>
+      <p class="hint">The site is stopped while the whole folder is copied, including its build, media, logs and a SQLite database, so it runs the same version afterwards. To Windows only settings and content are copied, and it is built there. A SQLite database goes with the files. A database in SQL Server stays where it is: a connection to the old server's own SQL Server is changed to that server's IP, and it must accept connections from the new server. With HTTPS, DNS must already point to the new server. If a step fails, the site keeps running where it is.</p>
+      <label class="check"><input type="checkbox" name="delete_local" value="y"> Delete the old files after a successful migration</label>
     </div>
     <p class="hint prod-existing-switch" id="prod-existing-switch"><span id="prod-existing-text"></span> <button type="button" class="cancel-link" id="prod-existing-toggle"></button></p>
     <menu><button type="button" id="prod-cancel" class="cancel-link">Cancel</button><button type="submit" value="ok" class="primary" id="prod-submit">Add environment</button></menu>

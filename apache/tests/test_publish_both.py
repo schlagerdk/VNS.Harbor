@@ -100,6 +100,7 @@ const buttonScripts = new Set(["publish_local.sh", "publish.sh", "publish_prod.s
 const hasProd = site => site.prod;
 const isTarget = env => env.key !== "main";
 const isMissingEnv = () => false;
+const bindingLabel = env => env.binding;
 const targetFields = () => ({});
 const sortedEnvironments = environments => environments;
 const siteLabel = site => site.display_name || site.name;

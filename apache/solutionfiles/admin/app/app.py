@@ -384,6 +384,18 @@ def https_status(unit):
 REMOTE_STATUS = {}
 
 
+def publishable_targets(site, root):
+    """The environments to publish to together. A site deleted on its server is not created again by accident.
+    A server that does not answer has no exists value, so it is tried and reports its own error."""
+    targets = []
+    for target in target_ids(root):
+        prod = parse_prod(root, target) or {}
+        remote = prod and not prod.get("PROD_LOCAL_PATH") and prod.get("PROD_TARGET") != "windows"
+        if not remote or remote_status(site, target).get("exists") is not False:
+            targets.append(target)
+    return targets
+
+
 def remote_key(site, target="prod"):
     return site if target == "prod" else site + "@" + target
 
@@ -1613,9 +1625,13 @@ def build_command(data):
                 root = os.path.join(WEB_ROOT, site)
                 for target in targets:
                     build_command({"kind": "script", "site": site, "script": "publish_prod.sh", "target": target})
+                active = publishable_targets(site, root)
+                if not active:
+                    tasks.append({"site": site, "skip": "Its environments no longer exist on their servers"})
+                    continue
                 tasks.append({"site": site, "cwd": root, "argv": [
                     sys.executable, os.path.join(APACHE_DIR, "lib", "publish_status.py"), "both", root,
-                    *(os.path.realpath(os.path.join(target_folder(root, target), "publish_prod.sh")) for target in targets)]})
+                    *(os.path.realpath(os.path.join(target_folder(root, target), "publish_prod.sh")) for target in active)]})
                 continue
             else:
                 script = "publish_prod.sh" if action == "prod" else next(
@@ -1665,7 +1681,7 @@ def build_command(data):
         return "Publish all: " + site, [
             sys.executable, os.path.join(APACHE_DIR, "lib", "publish_status.py"),
             "both", root, os.path.realpath(os.path.join(folder, local)),
-            *(os.path.realpath(os.path.join(target_folder(root, target), "publish_prod.sh")) for target in targets),
+            *(os.path.realpath(os.path.join(target_folder(root, target), "publish_prod.sh")) for target in publishable_targets(site, root)),
         ], root
     if kind == "script":
         site = site_arg(data)
@@ -1712,9 +1728,9 @@ def build_command(data):
         site = site_arg(data)
         target = target_arg(site, {"target": data.get("environment_id")})
         prod = parse_prod(os.path.join(WEB_ROOT, site), target) or {}
-        if not prod.get("PROD_LOCAL_PATH") or prod.get("PROD_TARGET") == "windows":
-            abort(400, "Only an environment on this server can be moved")
-        return "Move environment: " + site, [bash, os.path.join(APACHE_DIR, "move_env.sh"), site, target], APACHE_DIR
+        if prod.get("PROD_TARGET") == "windows":
+            abort(400, "An environment on a Windows server cannot be migrated")
+        return "Migrate environment: " + site, [bash, os.path.join(APACHE_DIR, "move_env.sh"), site, target], APACHE_DIR
     if kind == "adopt_site":
         site = site_arg(data)
         main = data.get("main", "")
@@ -1784,7 +1800,8 @@ def build_command(data):
             abort(400, "Admin sites and sites with production targets cannot be copied.")
         target = dns_name(data.get("target", ""), "site name")
         binding = dns_name(data.get("binding", ""), "binding", fully_qualified=True)
-        if not copy_remote and any(service_name(name) == service_name(target) for name in site_dirs()):
+        copy_here = copy_remote and data.get("destination") == "local"
+        if (not copy_remote or copy_here) and any(service_name(name) == service_name(target) for name in site_dirs()):
             abort(400, "The destination site already exists.")
         database = data.get("database", "")
         if not isinstance(database, str) or len(database) > 128 or any(char in database for char in "\0\r\n;\"'"):
@@ -1810,6 +1827,8 @@ def build_command(data):
             argv.append(database.strip())
         if copy_remote:
             argv = ["/usr/bin/env", "VNS_COPY_REMOTE=1", "VNS_TARGET=" + copied_target, *argv]
+            if copy_here:
+                argv[1:1] = ["VNS_COPY_TO_LOCAL=1", "VNS_COPY_STOP=" + ("y" if data.get("stop_source") else "n")]
         if project:
             argv = ["/usr/bin/env", "VNS_COPY_PROJECT=" + project, *argv]
         return "Copy site: " + source, argv, APACHE_DIR

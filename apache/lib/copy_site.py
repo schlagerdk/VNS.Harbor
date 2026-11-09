@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import sys
 
 from domain_names import normalize_dns_name, normalize_site_name, service_name
 from database_info import configuration_json, connection_type
@@ -114,6 +115,76 @@ def rename_project(target, old_project, old_dll, project, working_folder):
     status = target / ".vns-publish"
     if status.is_dir():
         shutil.rmtree(status)
+
+
+LOCAL_SQL_HOSTS = (".", "localhost", "127.0.0.1", "::1", "[::1]", "(local)")
+SQL_SERVER_KEYS = ("server", "data source", "datasource", "address", "addr", "network address")
+
+
+def repoint_connection(connection, server):
+    """Point a connection to a SQL Server on the local machine at another server. Instance and port are kept."""
+    pattern = r'''(?:^|;)\s*([^=;]+)\s*=\s*("(?:[^"]|"")*"|'(?:[^']|'')*'|[^;]*)'''
+    for match in reversed(list(re.finditer(pattern, connection))):
+        if match[1].strip().lower() not in SQL_SERVER_KEYS:
+            continue
+        value = match[2].strip()
+        quote = value[0] if value[:1] in ('"', "'") and value[-1:] == value[:1] else ""
+        inner = value[1:-1] if quote else value
+        parts = re.fullmatch(r"(tcp:|np:|lpc:)?(.*?)([\\,].*)?", inner, re.I | re.S)
+        if parts[2].strip().lower() not in LOCAL_SQL_HOSTS:
+            continue
+        protocol = "tcp:" if parts[1] else ""
+        changed = quote + protocol + server + (parts[3] or "") + quote
+        connection = connection[:match.start(2)] + changed + connection[match.end(2):]
+    return connection
+
+
+def repoint_local_sql(folder, server):
+    """Make the SQL connections in a folder's settings keep using the database on the server they came from."""
+    changes = 0
+    for path in Path(folder).glob("appsettings*.json"):
+        if path.is_symlink():
+            continue
+        data = configuration_json(path.read_text(encoding="utf-8-sig"))
+        connections = data.get("ConnectionStrings", {})
+        changed = False
+        for key, value in connections.items():
+            if isinstance(value, str) and not key.lower().endswith("_providername"):
+                provider = str(connections.get(key + "_ProviderName", "")).lower()
+                if connection_type(value, provider) in ("MS SQL", "SQL Express"):
+                    new = repoint_connection(value, server)
+                    changed = changed or new != value
+                    connections[key] = new
+        if changed:
+            changes += 1
+            path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    return changes
+
+
+def update_connections(folder, database="", connection=None):
+    """Change the SQL connections in a folder's settings, for a copy made from another server."""
+    if not database and connection is None:
+        return
+    if database:
+        database = validate_database_name(database)
+    changes = 0
+    for path in Path(folder).rglob("appsettings*.json"):
+        if path.is_symlink():
+            continue
+        data = configuration_json(path.read_text(encoding="utf-8-sig"))
+        connections = data.get("ConnectionStrings", {})
+        changed = False
+        for key, value in connections.items():
+            if isinstance(value, str) and not key.lower().endswith("_providername"):
+                provider = str(connections.get(key + "_ProviderName", "")).lower()
+                if connection_type(value, provider) in ("MS SQL", "SQL Express", "Azure SQL"):
+                    connections[key] = change_connection(value, connection) if connection is not None else change_database(value, database)
+                    changed = True
+        if changed:
+            changes += 1
+            path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+    if not changes:
+        raise ValueError("No SQL database connection strings were found to change.")
 
 
 def prepare(source_name, target_name, binding, port="", web_root=Path("/var/www"),
@@ -269,6 +340,19 @@ def prepare(source_name, target_name, binding, port="", web_root=Path("/var/www"
 
 
 if __name__ == "__main__":
+    if len(sys.argv) >= 3 and sys.argv[1] == "update-connections":
+        try:
+            secret = os.environ.pop("VNS_COPY_SQL", None)
+            update_connections(sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else "", json.loads(secret) if secret else None)
+        except (OSError, ValueError) as exc:
+            sys.exit(f"Could not change the SQL connection: {exc}")
+        sys.exit(0)
+    if len(sys.argv) == 4 and sys.argv[1] == "repoint-sql":
+        try:
+            print(repoint_local_sql(sys.argv[2], sys.argv[3]))
+        except (OSError, ValueError) as exc:
+            sys.exit(f"Could not change the SQL connection: {exc}")
+        sys.exit(0)
     parser = argparse.ArgumentParser()
     parser.add_argument("source")
     parser.add_argument("target")

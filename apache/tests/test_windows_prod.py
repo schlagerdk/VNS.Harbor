@@ -151,6 +151,17 @@ class WebConfigTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.change_environment("<configuration />")
 
+    def test_set_url_keeps_the_connection_strings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "appsettings.json"
+            path.write_text(json.dumps({"ConnectionStrings": {"db": "x"}, "Umbraco": {"CMS": {
+                "Global": {"UseHttps": True}, "WebRouting": {"UmbracoApplicationUrl": "https://old.test"}}}}))
+            windows_prod.main(["set-url", str(path), "http://new.test", "n"])
+            settings = json.loads(path.read_text())
+        self.assertEqual(settings["ConnectionStrings"], {"db": "x"})
+        self.assertEqual(settings["Umbraco"]["CMS"]["WebRouting"]["UmbracoApplicationUrl"], "http://new.test")
+        self.assertIs(settings["Umbraco"]["CMS"]["Global"]["UseHttps"], False)
+
     def test_first_publish_settings_lose_connection_strings(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "appsettings.json"
@@ -400,6 +411,34 @@ class LinuxHttpTests(ScriptTestCase):
         result, conf = self.prepare("@PROD_HTTPS@")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("acme.sh not found", result.stderr)
+
+    def test_start_block_sets_the_url_in_all_settings_files(self):
+        start = re.findall(r"run_script <<'REMOTE'\n(.*?)\nREMOTE\n", LINUX_TEMPLATE.read_text(), re.S)[1]
+        etc = self.root / "etc"
+        (etc / "apache2/sites-available").mkdir(parents=True)
+        (etc / "apache2/sites-available/prod.test.conf").write_text("SSLEngine On\n")
+        www = self.root / "www"
+        www.mkdir()
+        for name in ("appsettings.json", "appsettings.Production.json"):
+            (www / name).write_text('{"UmbracoApplicationUrl": "https://old.test", "UseHttps": false}')
+        (www / "appsettings.Test.json").write_text('{"Other": 1}')
+        for command in ("systemctl", "chown"):
+            executable(self.bin / command, "#!/bin/bash\n")
+        executable(self.bin / "sleep", "#!/bin/bash\n")
+        script = start.replace("/etc/", f"{etc}/")
+        script = re.sub(r'python3 /vns/apache/lib/sql_startup\.py "\$\{SITE\}"', ":", script)
+        script = re.sub(r'\$\(python3 /vns/apache/lib/domain_names\.py "\$\{SITE\}" unit\)', "unit", script)
+        script = script.replace("sed -i -E", "sed -i '' -E") if sys.platform == "darwin" else script
+        path = self.root / "start.sh"
+        path.write_text(script)
+        result = subprocess.run([BASH, str(path)], capture_output=True, text=True,
+                                env=os.environ | {"PATH": f"{self.bin}:{os.environ['PATH']}", "ROOT": str(www), "SITE": "prod.test", "BINDING": "new.test"})
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for name in ("appsettings.json", "appsettings.Production.json"):
+            text = (www / name).read_text()
+            self.assertIn('"UmbracoApplicationUrl": "https://new.test"', text, name)
+            self.assertIn('"UseHttps": true', text, name)
+        self.assertEqual((www / "appsettings.Test.json").read_text(), '{"Other": 1}')
 
     def test_scheme_for_umbraco_follows_the_apache_config(self):
         text = LINUX_TEMPLATE.read_text()
@@ -1001,6 +1040,31 @@ class MoveEnvironmentTests(AdoptSiteTests):
         self.assertLess(calls.index("systemctl stop prod-site"), calls.index("systemctl start subsite"))
         self.assertFalse(any(call.startswith("dotnet") for call in calls))
 
+    def test_new_binding_on_the_same_server_changes_binding_and_url_in_all_settings(self):
+        executable(self.apache / "change_binding_prod.sh", '#!/bin/bash\necho "change_binding $* target=$VNS_TARGET" >>"$FAKE_LOG"\n')
+        (self.old / "appsettings.Production.json").write_text('{"Umbraco":{"CMS":{"WebRouting":{"UmbracoApplicationUrl": "https://old.test"}}}}')
+        new = self.www / "subsite"
+        result = self.move(VNS_PROD_TARGET="local", VNS_PROD_LOCAL_PATH=str(new), VNS_PROD_BINDING="kunde.example.test")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("change_binding dev.example.test kunde.example.test  --yes target=production", self.log.read_text())
+        self.assertIn("http://kunde.example.test", (new / "appsettings.Production.json").read_text())
+        self.assertIn("systemctl restart subsite", self.log.read_text())
+        self.assertEqual(list(new.glob("*.vns-backup")), [])
+
+    def test_same_binding_on_the_same_server_is_left_alone(self):
+        executable(self.apache / "change_binding_prod.sh", '#!/bin/bash\necho "change_binding" >>"$FAKE_LOG"\n')
+        result = self.move(VNS_PROD_TARGET="local", VNS_PROD_LOCAL_PATH=str(self.www / "subsite"), VNS_PROD_BINDING="prod-site.example.test")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("change_binding", self.log.read_text())
+
+    def test_failed_binding_change_says_the_site_was_moved(self):
+        executable(self.apache / "change_binding_prod.sh", "#!/bin/bash\nexit 1\n")
+        new = self.www / "subsite"
+        result = self.move(VNS_PROD_TARGET="local", VNS_PROD_LOCAL_PATH=str(new), VNS_PROD_BINDING="kunde.example.test")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("its binding could not be changed", result.stderr)
+        self.assertTrue(new.exists(), "The finished move is not undone")
+
     def test_failed_local_move_restores_everything(self):
         new = self.www / "subsite"
         service = (self.etc / "systemd/system/prod-site.service").read_text()
@@ -1104,6 +1168,7 @@ class RemoteEnvironmentTests(AdoptSiteTests):
             (self.apache / script).write_text(re.sub(r"(?m)^\[\[ \$EUID -eq 0 \]\] \|\| exec sudo .*$", "", text))
         adopt = self.apache / "adopt_site.sh"
         executable(self.bin / "ssh", FAKE_SSH)
+        executable(self.bin / "systemctl", '#!/bin/bash\necho "systemctl $*" >>"$FAKE_LOG"\n')
         self.remote = self.root / "remote"
         for folder in ("www", "etc/systemd/system", "etc/apache2/sites-available", "lib", "vns"):
             (self.remote / folder).mkdir(parents=True)
@@ -1185,6 +1250,196 @@ class RemoteEnvironmentTests(AdoptSiteTests):
         result = self.sync_all(FAKE_SSH_FAILS="1")
         self.assertNotIn("SKIPPED", result.stdout)
         self.assertIn("SYNCED", self.log.read_text(), "The sync script reports the connection problem itself")
+
+    def copy_here(self, *extra, **env):
+        self.environment()
+        # Only the fetch is tested here: publishing is covered elsewhere and needs a real server
+        template = self.apache / "solutionfiles/csharp/prod-scripts/publish_prod.sh"
+        template.write_text(template.read_text().replace("#!/bin/bash\n", '#!/bin/bash\necho "PUBLISHED $0" >>"$FAKE_LOG"\nexit ${FAIL_PUBLISH:-0}\n', 1))
+        (self.remote / "www/copy.example.test/umbraco/Data").mkdir(parents=True)
+        (self.remote / "www/copy.example.test/umbraco/Data/Umbraco.sqlite.db").write_text("data")
+        (self.remote / "www/copy.example.test/umbraco/Logs").mkdir()
+        (self.remote / "www/copy.example.test/umbraco/Logs/log.txt").write_text("old log")
+        (self.remote / "www/copy.example.test/App.dll").write_text("build of the source")
+        (self.remote / "www/copy.example.test/appsettings.json").write_text(json.dumps({"ConnectionStrings": {"db": "Server=.;Database=old;Password=x"}}))
+        # Copies what rsync would fetch, from the folders the fake ssh uses
+        executable(self.bin / "rsync", r"""#!/bin/bash
+destination=${@: -1}
+source=${@: -2:1}
+source=${source#*:}
+source=$FAKE_REMOTE/www/${source#/var/www/}
+echo "rsync $*" >>"$FAKE_LOG"
+[[ -z ${FAIL_RSYNC:-} ]] || exit 23
+if [[ " $* " == *"--exclude *"* ]]; then
+	cp "$source"appsettings*.json "$destination"
+else
+	cp -R "$source" "$destination"
+	rm -rf "$destination/umbraco/Logs"
+fi
+""")
+        return subprocess.run(
+            [BASH, str(self.apache / "copy_env.sh"), "dev.example.test", "copy.example.test", "kunde.example.test", "kunde.vns.dk", *extra],
+            capture_output=True, text=True, env=self.env | {"VNS_COPY_REMOTE": "1", "VNS_COPY_TO_LOCAL": "1", "VNS_TARGET": "staging"} | env)
+
+    def test_copy_to_this_server_fetches_content_and_publishes_there(self):
+        result = self.copy_here(VNS_COPY_STOP="y")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        new = self.www / "kunde.example.test"
+        self.assertEqual((new / "umbraco/Data/Umbraco.sqlite.db").read_text(), "data")
+        self.assertTrue((new / "appsettings.json").exists())
+        self.assertFalse((new / "App.dll").exists(), "The build comes from the main site")
+        self.assertFalse((new / "umbraco/Logs").exists())
+        target = next(path for path in (self.scripts / "targets").iterdir() if path.name != "staging")
+        text = (target / "publish_prod.sh").read_text()
+        self.assertIn(f"PROD_LOCAL_PATH='{new}'", text)
+        self.assertIn("PROD_BINDING='kunde.vns.dk'", text)
+        self.assertIn("PROD_FOLDER='kunde.example.test'", text)
+        log = self.log.read_text()
+        self.assertIn("PUBLISHED", log)
+        self.assertLess(log.index("systemctl stop copy.example.test"), log.index("rsync"))
+        self.assertLess(log.rindex("rsync"), log.index("systemctl start copy.example.test"))
+        self.assertLess(log.index("systemctl start copy.example.test"), log.index("PUBLISHED"))
+        self.assertTrue((self.remote / "www/copy.example.test/App.dll").exists(), "The source is not changed")
+
+    def test_source_is_not_stopped_unless_asked(self):
+        self.assertEqual(self.copy_here().returncode, 0)
+        self.assertNotIn("systemctl stop", self.log.read_text())
+
+    def test_source_starts_again_when_the_fetch_fails(self):
+        result = self.copy_here(VNS_COPY_STOP="y", FAIL_RSYNC="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("systemctl start copy.example.test", self.log.read_text())
+        self.assertNotIn("PUBLISHED", self.log.read_text())
+        self.assertFalse((self.www / "kunde.example.test").exists(), "An unfinished copy is removed")
+        self.assertEqual([path.name for path in (self.scripts / "targets").iterdir()], ["staging"])
+        self.assertIn("unfinished copy was removed", result.stderr)
+
+    def test_settings_filter_skips_the_schema_files(self):
+        source = (APACHE / "copy_env.sh").read_text()
+        self.assertLess(source.index("--exclude '/appsettings-schema*.json'"), source.index("--include '/appsettings*.json'"))
+
+    def test_new_database_is_written_to_the_copy_only(self):
+        self.assertEqual(self.copy_here("kunde_db").returncode, 0)
+        settings = json.loads((self.www / "kunde.example.test/appsettings.json").read_text())
+        self.assertIn("kunde_db", settings["ConnectionStrings"]["db"])
+        source = json.loads((self.remote / "www/copy.example.test/appsettings.json").read_text())
+        self.assertIn("Database=old", source["ConnectionStrings"]["db"])
+
+    def test_existing_destination_is_refused_before_anything_happens(self):
+        (self.www / "kunde.example.test").mkdir()
+        result = self.copy_here(VNS_COPY_STOP="y")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("already exists", result.stderr)
+        self.assertNotIn("systemctl stop", self.log.read_text())
+
+    def test_failed_publish_says_where_the_copy_is(self):
+        result = self.copy_here(FAIL_PUBLISH="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("publishing failed", result.stderr)
+        self.assertTrue((self.www / "kunde.example.test/appsettings.json").exists())
+
+    def migrate(self, **values):
+        self.environment()
+        template_marker = '#!/bin/bash\necho "PREPARED ${VNS_MIGRATE_ONLY:-built} $0" >>"$FAKE_LOG"\nexit ${FAIL_PUBLISH:-0}\n'
+        template = self.apache / "solutionfiles/csharp/prod-scripts/publish_prod.sh"
+        template.write_text(template.read_text().replace("#!/bin/bash\n", template_marker, 1))
+        (self.remote / "www/copy.example.test/umbraco/Data").mkdir(parents=True)
+        (self.remote / "www/copy.example.test/umbraco/Data/Umbraco.sqlite.db").write_text("data")
+        (self.remote / "www/copy.example.test/umbraco/Logs").mkdir()
+        (self.remote / "www/copy.example.test/umbraco/Logs/log.txt").write_text("log")
+        (self.remote / "www/copy.example.test/App.dll").write_text("the running build")
+        (self.remote / "www/copy.example.test/custom.txt").write_text("mine")
+        # Both directions, and only the whole folder (a trailing slash on the source)
+        executable(self.bin / "rsync", r"""#!/bin/bash
+destination=${@: -1}
+source=${@: -2:1}
+echo "rsync $source $destination" >>"$FAKE_LOG"
+[[ -z ${FAIL_RSYNC:-} ]] || exit 23
+if [[ $source == *:* ]]; then source=$FAKE_REMOTE/www/${source#*:/var/www/}; fi
+if [[ $destination == *:* ]]; then destination=$FAKE_REMOTE/www/${destination#*:/var/www/}; fi
+mkdir -p "$destination"
+cp -R "${source%/}/." "$destination"
+""")
+        move = (APACHE / "move_env.sh").read_text().replace('[[ $EUID -eq 0 ]] || exec sudo "$0" "$@"\n', "")
+        move = move.replace("_rootsFolder=/var/lib/vns-roots", f"_rootsFolder={self.root}/roots")
+        move = move.replace('_oldService=/etc/', f'_oldService={self.etc}/').replace('_oldConf=/etc/', f'_oldConf={self.etc}/')
+        (self.apache / "move_env.sh").write_text(move)
+        return subprocess.run([BASH, str(self.apache / "move_env.sh"), "dev.example.test", "staging"], capture_output=True, text=True,
+                              env=self.env | dict(VNS_PROD_MODAL="1", VNS_PROD_BINDING="new.vns.dk", VNS_PROD_ENVIRONMENT="Production", VNS_PROD_HTTPS="n") | values)
+
+    def test_migrate_remote_to_this_server_takes_everything_and_builds_nothing(self):
+        new = self.www / "moved.example.test"
+        result = self.migrate(VNS_PROD_TARGET="local", VNS_PROD_LOCAL_PATH=str(new), VNS_PROD_FOLDER="moved.example.test")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for name, content in (("App.dll", "the running build"), ("custom.txt", "mine"), ("umbraco/Logs/log.txt", "log"), ("umbraco/Data/Umbraco.sqlite.db", "data")):
+            self.assertEqual((new / name).read_text(), content, name)
+        log = self.log.read_text()
+        self.assertIn("PREPARED 1", log)
+        self.assertNotIn("DOTNET", log)
+        final = (self.scripts / "targets/staging/publish_prod.sh").read_text()
+        self.assertIn(f"PROD_LOCAL_PATH='{new}'", final)
+        self.assertIn("PROD_BINDING='new.vns.dk'", final)
+        self.assertFalse((self.scripts / "targets/staging-moving").exists())
+        self.assertFalse((self.remote / "etc/systemd/system/copy.example.test.service").exists(), "The source is removed")
+        self.assertTrue((self.remote / "www/copy.example.test/App.dll").exists(), "Its files are kept unless asked")
+        self.assertFalse((self.remote / "lib/vns-managed/copy.example.test").exists())
+
+    def test_migrate_remote_to_another_remote_goes_through_this_server(self):
+        result = self.migrate(VNS_PROD_TARGET="remote", VNS_PROD_IP="other.test", VNS_PROD_USER="root", VNS_PROD_SSH_PORT="22", VNS_PROD_FOLDER="moved.example.test", VNS_MOVE_DELETE_LOCAL="y")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((self.remote / "www/moved.example.test/App.dll").read_text(), "the running build")
+        self.assertEqual((self.remote / "www/moved.example.test/custom.txt").read_text(), "mine")
+        self.assertFalse((self.remote / "www/copy.example.test").exists(), "Its files are deleted when asked")
+        log = [line for line in self.log.read_text().splitlines() if line.startswith("rsync")]
+        self.assertTrue(log[0].split()[1].startswith("root@server.test:"))
+        self.assertTrue(log[1].split()[2].startswith("root@other.test:"))
+        self.assertEqual((self.scripts / "targets/staging/publish_prod.sh").read_text().count("PROD_IP='other.test'"), 1)
+
+    def test_failed_migration_starts_the_source_and_keeps_its_settings(self):
+        before = (self.scripts / "targets").exists()
+        result = self.migrate(VNS_PROD_TARGET="remote", VNS_PROD_IP="other.test", VNS_PROD_USER="root", VNS_PROD_SSH_PORT="22", VNS_PROD_FOLDER="moved.example.test", FAIL_PUBLISH="1")
+        self.assertTrue(before is not None)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("keeps running where it was", result.stderr)
+        log = self.log.read_text()
+        self.assertLess(log.index("systemctl stop copy.example.test"), log.index("systemctl start copy.example.test"))
+        self.assertIn("PROD_IP='server.test'", (self.scripts / "targets/staging/publish_prod.sh").read_text())
+        self.assertFalse((self.scripts / "targets/staging-moving").exists())
+        self.assertTrue((self.remote / "etc/systemd/system/copy.example.test.service").exists())
+
+    def sql_settings(self):
+        (self.remote / "www/copy.example.test/appsettings.json").write_text(json.dumps({"ConnectionStrings": {"db": "Server=.\\SQLEXPRESS;Database=a;User Id=u;Password=p"}}))
+
+    def test_migrate_points_a_local_sql_server_at_the_source_and_leaves_the_source_alone(self):
+        self.sql_settings()
+        new = self.www / "moved.example.test"
+        result = self.migrate(VNS_PROD_TARGET="local", VNS_PROD_LOCAL_PATH=str(new), VNS_PROD_FOLDER="moved.example.test")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Server=server.test\\\\SQLEXPRESS", (new / "appsettings.json").read_text())
+        self.assertIn("now points to server.test", result.stdout)
+        self.assertIn("Server=.", (self.remote / "www/copy.example.test/appsettings.json").read_text())
+
+    def test_migrate_to_another_folder_on_the_same_server_keeps_a_local_sql_server(self):
+        self.sql_settings()
+        result = self.migrate(VNS_PROD_TARGET="remote", VNS_PROD_IP="server.test", VNS_PROD_USER="root", VNS_PROD_SSH_PORT="22", VNS_PROD_FOLDER="moved.example.test")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Server=.", (self.remote / "www/moved.example.test/appsettings.json").read_text())
+
+    def test_copy_to_this_server_points_a_local_sql_server_at_the_source(self):
+        self.assertEqual(self.copy_here().returncode, 0)
+        self.assertIn("Server=server.test", (self.www / "kunde.example.test/appsettings.json").read_text())
+
+    def test_migrating_to_the_same_place_is_refused(self):
+        result = self.migrate(VNS_PROD_TARGET="remote", VNS_PROD_IP="server.test", VNS_PROD_USER="root", VNS_PROD_SSH_PORT="22", VNS_PROD_FOLDER="copy.example.test")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("already in that folder", result.stderr)
+        self.assertNotIn("systemctl stop", self.log.read_text())
+
+    def test_migrate_only_skips_the_build_and_the_upload_in_publish(self):
+        text = LINUX_TEMPLATE.read_text()
+        self.assertLess(text.index("if [[ -z ${_migrateOnly} ]]; then\necho \"Publish (Release)\""), text.index("dotnet publish"))
+        self.assertLess(text.index('if [[ -z ${_migrateOnly} ]]; then\nif ((_local)); then'), text.index("rsync -az --delete"))
+        self.assertLess(text.index("rsync -az --delete"), text.index('echo "Start service"'))
 
     def test_move_out_changes_nothing_when_the_server_cannot_be_reached(self):
         self.environment()
@@ -1404,6 +1659,15 @@ class TargetListingTests(unittest.TestCase):
     def test_with_target_only_changes_named_environments(self):
         self.assertEqual(self.ns["with_target"](["a"], "prod"), ["a"])
         self.assertEqual(self.ns["with_target"](["a"], "staging"), ["/usr/bin/env", "VNS_TARGET=staging", "a"])
+
+    def test_publish_skips_only_a_site_the_server_says_is_gone(self):
+        for name in ("gone", "here", "silent", "local", "windows"):
+            self.add(name)
+        settings = {"gone": {}, "here": {}, "silent": {}, "local": {"PROD_LOCAL_PATH": "/var/www/x"}, "windows": {"PROD_TARGET": "windows"}}
+        answers = {"gone": {"exists": False}, "here": {"exists": True}, "silent": {"state": "unknown"}}
+        self.ns["parse_prod"] = lambda root, target="prod": settings[target] or {"PROD_FOLDER": target}
+        self.ns["remote_status"] = lambda site, target="prod": answers[target]
+        self.assertEqual(self.ns["publishable_targets"]("example.test", self.root), ["here", "local", "silent", "windows"])
 
     def test_scope(self):
         self.assertEqual(self.ns["target_scope"]("prod"), "prod")

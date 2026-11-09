@@ -102,11 +102,15 @@ if ((_local)); then
 	fi
 fi
 
+# move_env.sh has copied the whole site: only the service and Apache config are made, and the service started
+_migrateOnly=${VNS_MIGRATE_ONLY:-}
+if [[ -z ${_migrateOnly} ]]; then
 echo "Publish (Release)"
 dotnet publish "${_projectName}.csproj" -c Release -p:PublishDir="${_publishFolder}" -p:CustomAfterMicrosoftCommonTargets="@APACHE_DIR@/lib/publish.targets" --runtime "${_runtimeIdentifier}" --self-contained false --nologo
 if [[ ! -f ${_publishFolder}/${_projectName}.dll ]]; then
 	echo "Publish failed: ${_projectName}.dll not found in the output" >&2
 	exit 1
+fi
 fi
 
 _umbraco=0
@@ -354,6 +358,7 @@ systemctl reload apache2
 release_port_reservation
 REMOTE
 
+if [[ -z ${_migrateOnly} ]]; then
 if ((_local)); then
 	echo "Publish to local folder ${_root}"
 	${_sudo} mkdir -p "${_root}"
@@ -415,12 +420,12 @@ PY
 	done
 	rsync -az ${_rsyncRemote[@]+"${_rsyncRemote[@]}"} "${_first}/" "${_dest}"
 fi
+fi
 
 echo "Start service"
 run_script <<'REMOTE'
 set -euo pipefail
 dir=${ROOT}
-file=${dir}/appsettings.json
 # The Apache config decides the scheme: it stays correct if a certificate is added later
 scheme=http
 use_https=false
@@ -428,11 +433,13 @@ if grep -q "SSLEngine" "/etc/apache2/sites-available/${SITE}.conf" 2>/dev/null; 
 	scheme=https
 	use_https=true
 fi
-if [[ -f ${file} ]] && grep -q "UmbracoApplicationUrl" "${file}"; then
-	echo "Set UmbracoApplicationUrl to ${scheme}://${BINDING}"
-	sed -i -E "s|(\"UmbracoApplicationUrl\"[[:space:]]*:[[:space:]]*\")[^\"]*|\1${scheme}://${BINDING}|" "${file}"
-	sed -i -E "s/(\"UseHttps\"[[:space:]]*:[[:space:]]*)(true|false)/\1${use_https}/" "${file}"
-fi
+for file in "${dir}"/appsettings*.json; do
+	if [[ -f ${file} ]] && grep -q "UmbracoApplicationUrl" "${file}"; then
+		echo "Set UmbracoApplicationUrl to ${scheme}://${BINDING} in ${file##*/}"
+		sed -i -E "s|(\"UmbracoApplicationUrl\"[[:space:]]*:[[:space:]]*\")[^\"]*|\1${scheme}://${BINDING}|" "${file}"
+		sed -i -E "s/(\"UseHttps\"[[:space:]]*:[[:space:]]*)(true|false)/\1${use_https}/" "${file}"
+	fi
+done
 chown -R www-data:www-data "${dir}"
 python3 /vns/apache/lib/sql_startup.py "${SITE}"
 systemctl start "$(python3 /vns/apache/lib/domain_names.py "${SITE}" unit)"

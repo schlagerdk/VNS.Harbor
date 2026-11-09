@@ -99,6 +99,30 @@ class CopySiteTests(unittest.TestCase):
             copy_site.prepare("source.test", "target.test", "new.example.test", "4002", self.web, self.configs, self.services, project="kunde")
         self.assertFalse((self.web / "target.test").exists())
 
+    def test_local_sql_server_is_repointed_and_keeps_instance_and_port(self):
+        for before, after in (
+            ("Server=.;Database=a;User Id=u;Password=p", "Server=10.0.0.5;Database=a;User Id=u;Password=p"),
+            ("Server=localhost;Database=a", "Server=10.0.0.5;Database=a"),
+            ("Data Source=.\\SQLEXPRESS;Initial Catalog=a", "Data Source=10.0.0.5\\SQLEXPRESS;Initial Catalog=a"),
+            ("Server=tcp:127.0.0.1,1433;Database=a", "Server=tcp:10.0.0.5,1433;Database=a"),
+            ('Server="(local)";Database=a', 'Server="10.0.0.5";Database=a'),
+            ("Server=db.example.test;Database=a", "Server=db.example.test;Database=a"),
+            ("Server=10.0.0.9\\SQL;Database=localhost", "Server=10.0.0.9\\SQL;Database=localhost"),
+        ):
+            with self.subTest(before):
+                self.assertEqual(copy_site.repoint_connection(before, "10.0.0.5"), after)
+
+    def test_settings_only_change_for_sql_server(self):
+        folder = self.root / "settings"
+        folder.mkdir()
+        (folder / "appsettings.json").write_text(json.dumps({"ConnectionStrings": {
+            "db": "Server=.;Database=a", "db_ProviderName": "Microsoft.Data.SqlClient"}}))
+        sqlite = json.dumps({"ConnectionStrings": {"db": "Data Source=|DataDirectory|/Umbraco.sqlite.db", "db_ProviderName": "Microsoft.Data.Sqlite"}})
+        (folder / "appsettings.Production.json").write_text(sqlite)
+        self.assertEqual(copy_site.repoint_local_sql(folder, "10.0.0.5"), 1)
+        self.assertIn("Server=10.0.0.5", (folder / "appsettings.json").read_text())
+        self.assertEqual((folder / "appsettings.Production.json").read_text(), sqlite)
+
     def test_copy_preserves_project_identity_and_changes_deployment_identity(self):
         before = (self.configs / "source.test.conf").read_text()
         self.assertFalse(self.prepare())

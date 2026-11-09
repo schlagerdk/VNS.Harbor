@@ -9,12 +9,13 @@ from flask import abort
 
 APP = Path(__file__).resolve().parents[1] / "solutionfiles/admin/app/app.py"
 FUNCTIONS = {"target_folder", "target_ids", "target_scope", "target_arg", "with_target", "remote_key",
-             "adopted_sites", "service_dll", "project_assembly", "adoption_candidates", "managed_by"}
+             "adopted_sites", "service_dll", "project_assembly", "adoption_candidates", "managed_by", "publishable_targets"}
 CONSTANTS = {"TARGET_RE", "TARGET_SCRIPTS", "MANAGED_DIR"}
 
 
 def add_target_helpers(ns):
-    for name, value in (("glob", glob), ("os", os), ("re", re), ("abort", abort)):
+    for name, value in (("glob", glob), ("os", os), ("re", re), ("abort", abort),
+                        ("parse_prod", lambda root, target="prod": None), ("remote_status", lambda site, target="prod": {})):
         ns.setdefault(name, value)
     nodes = [node for node in ast.parse(APP.read_text()).body
              if (isinstance(node, ast.FunctionDef) and node.name in FUNCTIONS)
