@@ -609,7 +609,7 @@ function publishBadge(env) {
 
 const maxCardEnvironments = 4;
 
-// One line: the environment, the binding as the link to the site, and the backoffice
+// One line: the environment, and a button with the binding that opens the site
 function compactEnvironmentRow(site, env, environment) {
 	const row = el("div", { className: "site-link-group compact" + (isTarget(env) ? " production" : ""), role: "group", ariaLabel: environment + " · " + (bindingLabel(env) || siteLabel(site)) });
 	const address = environmentAddress(env);
@@ -617,15 +617,14 @@ function compactEnvironmentRow(site, env, environment) {
 		httpsLock(env.https),
 		el("span", { className: "badge env-" + environment.toLowerCase(), textContent: environment }));
 	if (isRemoteEnv(env)) head.append(remoteIcon(env));
-	head.append(address.url
-		? Object.assign(openLink(bindingLabel(env) || address.hostname, address.url, environment + ": " + address.title), { className: "link site-environment-binding" })
-		: el("span", { className: "muted", textContent: "No binding" }));
 	row.append(head);
 	if (env.publish_status === "pending") row.append(publishBadge(env));
-	if (site.kind === "umbraco" && address.url) {
-		const backend = openLink("Backend", address.url + "umbraco", environment + " backoffice: " + address.title, true);
-		backend.classList.add("backend");
-		row.append(el("div", { className: "site-environment-links" }, backend));
+	if (address.url) {
+		const frontend = openLink(bindingLabel(env) || address.hostname, address.url, environment + ": " + address.title, true);
+		frontend.classList.add("frontend");
+		row.append(el("div", { className: "site-environment-links" }, frontend));
+	} else {
+		row.append(el("span", { className: "muted", textContent: "No binding" }));
 	}
 	return row;
 }
@@ -817,6 +816,8 @@ function renderSite(name) {
 	const targetsSection = $("#site-targets");
 	const targets = $("#env-targets");
 	const targetsActions = $("#site-targets-actions");
+	const targetsAdd = $("#site-targets-add");
+	targetsAdd.replaceChildren();
 	head.replaceChildren();
 	envs.replaceChildren();
 	targets.replaceChildren();
@@ -876,7 +877,7 @@ function renderSite(name) {
 	const canAddEnvironment = site.has_project && !site.admin && (site.kind === "csharp" || site.kind === "umbraco");
 	const noEnvironments = !targets.childElementCount;
 	if (canAddEnvironment && !noEnvironments) {
-		targetsActions.append(el("button", { textContent: "Add environment", onclick: () => run(() => openCreateProdDialog(site)) }));
+		targetsAdd.append(el("button", { textContent: "Add environment", onclick: () => run(() => openCreateProdDialog(site)) }));
 	}
 	$("#btn-empty-add-environment").onclick = () => run(() => openCreateProdDialog(site));
 	$("#site-targets-head").hidden = noEnvironments;
@@ -930,6 +931,7 @@ function renderSite(name) {
 	decorate(envs);
 	decorate(targets);
 	decorate(targetsActions);
+	decorate(targetsAdd);
 	decorate($("#site-danger"));
 	updateSiteActivity();
 	decorate(packagesPanel);
@@ -999,7 +1001,8 @@ function envPanel(site, env) {
 	const binding = !address.url ? bindingLink("") : site.admin && !isTarget(env)
 		? el("span", { textContent: bindingLabel(env) })
 		: openLink(bindingLabel(env) || address.hostname, address.url, address.title);
-	const meta = el("dl", { className: "meta" }, el("dt", { textContent: "Binding" }), el("dd", {}, binding));
+	heading.prepend(el("h3", { className: "env-title" }, binding));
+	const meta = el("dl", { className: "meta" });
 	if (env.aliases && env.aliases.length) {
 		meta.append(el("dt", { textContent: "Aliases" }), el("dd", { className: "database-name aliases" },
 			...env.aliases.flatMap((alias, index) => [

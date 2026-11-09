@@ -69,6 +69,20 @@ console.log(JSON.stringify(sortedEnvironments(input).map((env) => env.environmen
         page = (APP / "templates/index.html").read_text()
         self.assertLess(page.index('id="site-targets"'), page.index('id="site-danger"'))
 
+    def test_binding_is_the_heading_and_the_overview_button(self):
+        source = (APP / "static/app.js").read_text()
+        self.assertIn('heading.prepend(el("h3", { className: "env-title" }, binding));', source)
+        self.assertNotIn('el("dt", { textContent: "Binding" })', source)
+        row = source[source.index("function compactEnvironmentRow"):source.index("function siteCard(")]
+        self.assertIn("openLink(bindingLabel(env) || address.hostname, address.url", row)
+        self.assertNotIn("Backend", row)
+
+    def test_add_is_on_the_left_and_publish_and_sync_on_the_right(self):
+        page = (APP / "templates/index.html").read_text()
+        self.assertLess(page.index('id="site-targets-add"'), page.index('id="site-targets-actions"'))
+        source = (APP / "static/app.js").read_text()
+        self.assertIn('targetsAdd.append(el("button", { textContent: "Add environment"', source)
+
     def test_layout_and_wording(self):
         page = (APP / "templates/index.html").read_text()
         layout = re.search(r'<div id="site-layout".*?</div>\s*<section id="site-targets"', page, re.S).group(0)
