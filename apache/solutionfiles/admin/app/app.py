@@ -1217,6 +1217,8 @@ def terminal_activity_sites(payload):
 
 def terminal_scope(payload):
     kind = payload.get("kind")
+    if kind == "publish_both" and payload.get("environments_only"):
+        return "prod"
     if kind == "publish_both" or (kind == "bulk" and payload.get("action") == "both"):
         return "all"
     if kind == "bulk":
@@ -1691,19 +1693,25 @@ def build_command(data):
         folder = os.path.join(WEB_ROOT, site, "scripts")
         local = next((name for name in ("publish_local.sh", "publish.sh")
                       if os.path.isfile(os.path.join(folder, name))), None)
-        if not local:
-            abort(400, "This site has no test publish script")
-        build_command({"kind": "script", "site": site, "script": local})
+        # Publish all on the site page publishes the environments only. The multi action also publishes the main site.
+        main_too = not data.get("environments_only")
+        if main_too:
+            if not local:
+                abort(400, "This site has no test publish script")
+            build_command({"kind": "script", "site": site, "script": local})
         root = os.path.join(WEB_ROOT, site)
         targets = target_ids(root)
         if not targets:
             abort(400, "Unknown script")
         for target in targets:
             build_command({"kind": "script", "site": site, "script": "publish_prod.sh", "target": target})
+        active = publishable_targets(site, root)
+        if not active and not main_too:
+            abort(400, "No environment to publish to: they no longer exist on their servers")
         return "Publish all: " + site, [
             sys.executable, os.path.join(APACHE_DIR, "lib", "publish_status.py"),
-            "both", root, os.path.realpath(os.path.join(folder, local)),
-            *(os.path.realpath(os.path.join(target_folder(root, target), "publish_prod.sh")) for target in publishable_targets(site, root)),
+            "both", root, *([os.path.realpath(os.path.join(folder, local))] if main_too else []),
+            *(os.path.realpath(os.path.join(target_folder(root, target), "publish_prod.sh")) for target in active),
         ], root
     if kind == "script":
         site = site_arg(data)

@@ -71,6 +71,13 @@ class PublishBothTests(unittest.TestCase):
                 subprocess.run(argv, cwd=cwd, check=True, capture_output=True)
                 self.assertTrue((self.scripts.parent / ".vns-publish" / (scope + ".json")).is_file())
 
+    def test_environments_only_leaves_the_main_site_out(self):
+        (self.scripts / "publish_local.sh").write_text("exit 0\n")
+        (self.scripts / "publish_prod.sh").write_text("exit 0\n")
+        _, argv, _ = self.ns["build_command"]({"kind": "publish_both", "site": "example.test", "environments_only": True})
+        self.assertNotIn(str((self.scripts / "publish_local.sh").resolve()), argv)
+        self.assertEqual(argv[-1], str((self.scripts / "publish_prod.sh").resolve()))
+
     def test_missing_or_escaping_scripts_are_rejected(self):
         with self.assertRaises(BadRequest):
             self.command()
@@ -129,7 +136,7 @@ const openTask = async payload => tasks.push(payload);
             assert.equal(prompts.at(-1).title, "Publish all?");
             confirmed = true;
             await button.onclick();
-            assert.deepEqual(tasks, [{kind: "publish_both", site: site.name}]);
+            assert.deepEqual(tasks, [{kind: "publish_both", site: site.name, environments_only: true}]);
         }
     }
     for (const [prod, scripts] of [

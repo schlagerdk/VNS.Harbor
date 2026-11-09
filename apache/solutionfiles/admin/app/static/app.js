@@ -852,8 +852,8 @@ function renderSite(name) {
 		targetsActions.append(el("button", { textContent: "Publish all", title: "Publish the main site, then every environment", onclick: () => run(async () => {
 			const deleted = site.environments.filter(isMissingEnv).map((env) => bindingLabel(env) || env.folder);
 			const skipped = deleted.length ? `\nSkipped, as they no longer exist on their servers: ${deleted.join(", ")}.` : "";
-			if (await ask({ title: "Publish all?", message: `Publish the main site first, then every environment, one at a time. The services are restarted. If one fails, the rest are not published.${skipped}`, input: false, ok: "Publish all" })) {
-				await openTask({ kind: "publish_both", site: site.name });
+			if (await ask({ title: "Publish all?", message: `Build the main site and publish it to every environment, one at a time. The main site itself is not published. The services are restarted. If one fails, the rest are not published.${skipped}`, input: false, ok: "Publish all" })) {
+				await openTask({ kind: "publish_both", site: site.name, environments_only: true });
 			}
 		}) }));
 	}

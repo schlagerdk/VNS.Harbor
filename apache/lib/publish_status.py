@@ -181,7 +181,7 @@ def main(args):
     if len(args) == 2 and args[0] == "check":
         check_updates(args[1], show_output=True)
         return 0
-    if len(args) < 4 or args[0] not in ("run", "both"):
+    if len(args) < (3 if args[:1] == ["both"] else 4) or args[0] not in ("run", "both"):
         raise ValueError("Usage: publish_status.py check ROOT | upgrade ROOT [PACKAGE] | run ROOT test|prod COMMAND... | both ROOT LOCAL_SCRIPT PROD_SCRIPT")
     action, root = args[:2]
     if action == "both":
