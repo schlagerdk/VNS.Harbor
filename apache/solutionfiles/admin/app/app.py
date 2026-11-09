@@ -253,10 +253,43 @@ PROD_KEYS = ("PROD_LOCAL_PATH", "PROD_IP", "PROD_USER", "PROD_SSH_PORT", "PROD_F
              "PROD_TARGET", "PROD_WINDOWS_SHARE", "PROD_SMB_USER", "PROD_HTTPS", "PROD_ENVIRONMENT")
 
 
-def parse_prod(root):
-    """A site has a production site when scripts/publish_prod.sh exists; its settings block has the details.
-    The password is never read."""
-    text = read_text(os.path.join(root, "scripts", "publish_prod.sh"))
+TARGET_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
+TARGET_SCRIPTS = ("publish_prod.sh", "sync_prod.sh", "clear_logs_prod.sh")
+
+
+def target_folder(root, target="prod"):
+    """Scripts of an environment: scripts/targets/<id>, or scripts for the older single environment (id "prod")."""
+    return os.path.join(root, "scripts") if target == "prod" else os.path.join(root, "scripts", "targets", target)
+
+
+def target_ids(root):
+    ids = ["prod"] if os.path.isfile(os.path.join(root, "scripts", "publish_prod.sh")) else []
+    for script in sorted(glob.glob(os.path.join(glob.escape(root), "scripts", "targets", "*", "publish_prod.sh"))):
+        name = os.path.basename(os.path.dirname(script))
+        if TARGET_RE.match(name):
+            ids.append(name)
+    return ids
+
+
+def target_scope(target):
+    return "prod" if target == "prod" else "target-" + target
+
+
+def target_arg(site, data):
+    """The environment selected in a request. Without one, the older single environment."""
+    target = data.get("target") or "prod"
+    if not isinstance(target, str) or not TARGET_RE.match(target) or target not in target_ids(os.path.join(WEB_ROOT, site)):
+        abort(400, "Unknown environment")
+    return target
+
+
+def with_target(argv, target):
+    return argv if target == "prod" else ["/usr/bin/env", "VNS_TARGET=" + target, *argv]
+
+
+def parse_prod(root, target="prod"):
+    """An environment's settings block has the details. The password is never read."""
+    text = read_text(os.path.join(target_folder(root, target), "publish_prod.sh"))
     if not text:
         return None
     values = {}
@@ -296,7 +329,13 @@ def https_status(unit):
 REMOTE_STATUS = {}
 
 
-def remote_command(site, action, timeout=60, **kwargs):
+def remote_key(site, target="prod"):
+    return site if target == "prod" else site + "@" + target
+
+
+def remote_command(site, action, timeout=60, target="prod", **kwargs):
+    if target != "prod":
+        kwargs["env"] = {**os.environ, "VNS_TARGET": target}
     try:
         result = subprocess.run(
             ["/bin/bash", os.path.join(APACHE_DIR, "remote_site.sh"), site, action],
@@ -320,12 +359,13 @@ def remote_command(site, action, timeout=60, **kwargs):
     return result
 
 
-def remote_status(site):
-    cached = REMOTE_STATUS.get(site)
+def remote_status(site, target="prod"):
+    key = remote_key(site, target)
+    cached = REMOTE_STATUS.get(key)
     if cached and time.time() - cached[0] < 15:
         return cached[1]
     try:
-        result = remote_command(site, "status", timeout=20, text=True)
+        result = remote_command(site, "status", timeout=20, target=target, text=True)
         status = json.loads(result.stdout)
         if not isinstance(status, dict) or not {"unit", "state", "scheme", "https", "exists"} <= status.keys():
             raise ValueError("Invalid remote status response")
@@ -336,7 +376,7 @@ def remote_status(site):
     except (ValueError, TypeError) as exc:
         app.logger.error("Invalid remote status for %s: %s", site, exc)
         status = {"https": None, "state": "unknown", "remote_error": "Invalid remote status response"}
-    REMOTE_STATUS[site] = (time.time(), status)
+    REMOTE_STATUS[key] = (time.time(), status)
     return status
 
 
@@ -403,9 +443,11 @@ def environment_info(key, label, unit, binding, port, path, states, **extra):
 def site_units(name):
     """Unit names the admin may control for a site: its own service and a local production service."""
     units = [name]
-    prod = parse_prod(os.path.join(WEB_ROOT, name))
-    if prod and prod["PROD_LOCAL_PATH"] and NAME_RE.match(prod["PROD_FOLDER"] or ""):
-        units.append(prod["PROD_FOLDER"])
+    root = os.path.join(WEB_ROOT, name)
+    for target in target_ids(root):
+        prod = parse_prod(root, target)
+        if prod and prod["PROD_LOCAL_PATH"] and NAME_RE.match(prod["PROD_FOLDER"] or ""):
+            units.append(prod["PROD_FOLDER"])
     return units
 
 
@@ -517,26 +559,32 @@ def site_info(name, states):
     environments = [environment_info("main", first_label if kind in ("csharp", "umbraco") else "Live", name, binding, port, name, states,
                                      environment=aspnet.group(1) if aspnet else "", apache=os.path.exists(os.path.join(APACHE_ENABLED, name + ".conf")))]
 
-    prod = parse_prod(root)
-    if prod:
+    for target in target_ids(root):
+        prod = parse_prod(root, target)
+        if not prod:
+            continue
+        key = "prod" if target == "prod" else "target:" + target
+        target_files = [script for script in TARGET_SCRIPTS if os.path.isfile(os.path.join(target_folder(root, target), script))]
+        scripts = sorted(set(scripts) | set(target_files))
+        details = {"target": target, "scripts": target_files}
         local = prod["PROD_LOCAL_PATH"]
         if prod.get("PROD_TARGET") == "windows":
             share = prod["PROD_WINDOWS_SHARE"]
             secure = prod["PROD_HTTPS"] != "n"
-            environments.append({"key": "prod", "label": "Production", "mode": "windows", "unit": "", "state": "", "binding": prod["PROD_BINDING"],
+            environments.append({**details, "key": key, "label": "Production", "mode": "windows", "unit": "", "state": "", "binding": prod["PROD_BINDING"],
                                  "port": "", "path": "", "host": share[2:].split("/", 1)[0], "user": prod["PROD_SMB_USER"], "folder": share,
                                  "environment": prod["PROD_ENVIRONMENT"] or "Unknown", "scheme": "https" if secure else "http", "https": secure})
         elif local:
             full = os.path.realpath(local)
             inside = full == WEB_ROOT or full.startswith(WEB_ROOT + os.sep)
             unit = prod["PROD_FOLDER"]
-            environments.append(environment_info("prod", "Production", unit, prod["PROD_BINDING"] or conf_binding(unit), prod["PROD_PORT_HTTP"] or service_port(unit),
-                                                 rel(full) if inside else "", states, mode="local", exists=os.path.isdir(full)))
+            environments.append(environment_info(key, "Production", unit, prod["PROD_BINDING"] or conf_binding(unit), prod["PROD_PORT_HTTP"] or service_port(unit),
+                                                 rel(full) if inside else "", states, mode="local", exists=os.path.isdir(full), **details))
         else:
-            environments.append({"key": "prod", "label": "Production", "mode": "remote", "unit": "", "state": "", "binding": prod["PROD_BINDING"],
+            environments.append({**details, "key": key, "label": "Production", "mode": "remote", "unit": "", "state": "", "binding": prod["PROD_BINDING"],
                                  "port": prod["PROD_PORT_HTTP"], "path": "", "host": prod["PROD_IP"], "user": prod["PROD_USER"],
                                  "ssh_port": prod["PROD_SSH_PORT"], "folder": prod["PROD_FOLDER"], "environment": "Unknown",
-                                 **remote_status(name)})
+                                 **remote_status(name, target)})
 
     updates = ""
     package_updates = []
@@ -555,7 +603,7 @@ def site_info(name, states):
                 app.logger.warning("Could not read package update status for %s", name)
                 updates = "error"
         for environment in environments:
-            scope = "prod" if environment["key"] == "prod" else "test"
+            scope = target_scope(environment["target"]) if "target" in environment else "test"
             environment["publish_status"] = "unknown"
             if current is not None:
                 try:
@@ -933,11 +981,12 @@ def api_service(name):
     action = data.get("action")
     unit = data.get("unit") or name
     if data.get("scope") == "prod":
-        remote_site(name)
+        target = data.get("target") or "prod"
+        remote_site(name, target)
         if action not in ("start", "stop", "restart"):
             return error("Unknown service action")
-        remote_command(name, action, text=True)
-        REMOTE_STATUS.pop(name, None)
+        remote_command(name, action, target=target, text=True)
+        REMOTE_STATUS.pop(remote_key(name, target), None)
         return jsonify(ok=True)
     if name not in site_dirs() or action not in ("start", "stop", "restart") or unit not in site_units(name):
         return error("Unknown site, service or action")
@@ -983,8 +1032,9 @@ def api_server_logs():
 @app.route("/api/sites/<name>/logs")
 def api_logs(name):
     if request.args.get("scope") == "prod":
-        remote_site(name)
-        return jsonify(text=remote_command(name, "logs", text=True).stdout)
+        target = request.args.get("target") or "prod"
+        remote_site(name, target)
+        return jsonify(text=remote_command(name, "logs", target=target, text=True).stdout)
     unit = request.args.get("unit") or name
     if name not in site_dirs() or unit not in site_units(name):
         return error("Unknown site or service")
@@ -992,10 +1042,12 @@ def api_logs(name):
     return jsonify(text=result.stdout or result.stderr)
 
 
-def remote_site(name):
+def remote_site(name, target="prod"):
     if name not in site_dirs():
         abort(400, "Unknown site")
-    prod = parse_prod(os.path.join(WEB_ROOT, name))
+    if not isinstance(target, str) or not TARGET_RE.match(target):
+        abort(400, "Unknown environment")
+    prod = parse_prod(os.path.join(WEB_ROOT, name), target)
     if not prod or prod["PROD_LOCAL_PATH"] or prod.get("PROD_TARGET") == "windows":
         abort(400, "This site has no remote production target")
     return prod
@@ -1079,7 +1131,7 @@ def terminal_scope(payload):
         return "prod" if payload.get("action") == "prod" else "main"
     if payload.get("scope") in ("all", "prod", "test", "main"):
         return "main" if payload["scope"] == "test" else payload["scope"]
-    if kind in ("remote_tool", "create_prod"):
+    if kind in ("remote_tool", "create_prod", "sync_env"):
         return "prod"
     if kind == "script":
         script = payload.get("script", "")
@@ -1090,7 +1142,7 @@ def terminal_scope(payload):
 
 def terminal_auto_close(payload):
     kind = payload.get("kind")
-    if kind in ("shell", "create_site", "copy_site", "create_prod", "delete_site", "change_binding", "prod_action", "dotnet_package", "fix_permissions", "publish_both", "bulk", "update_package", "sql_action", "install_sql_tools"):
+    if kind in ("shell", "create_site", "copy_site", "create_prod", "sync_env", "delete_site", "change_binding", "prod_action", "dotnet_package", "fix_permissions", "publish_both", "bulk", "update_package", "sql_action", "install_sql_tools"):
         return True
     if kind == "remote_tool":
         return payload.get("tool") == "shell"
@@ -1269,10 +1321,6 @@ def production_setup_env(data, site):
     environment = data.get("environment", "Production")
     if environment not in ("Development", "Test", "Staging", "Production"):
         abort(400, "Invalid production environment")
-    if os.path.isfile(os.path.join(WEB_ROOT, site, "scripts", "publish_prod.sh")):
-        abort(400, "This site already has a production target")
-    if not os.path.isfile(os.path.join(WEB_ROOT, site, "scripts", "create_prod.sh")):
-        abort(400, "This site cannot create a production target")
 
     values = {
         "VNS_PROD_MODAL": "1",
@@ -1468,7 +1516,8 @@ def build_command(data):
             if not any(os.path.isfile(path) for path in glob.glob(os.path.join(WEB_ROOT, site, "*.csproj"))):
                 abort(400, "Multi actions require a C# project file in the site root")
             scripts = info["scripts"]
-            if action in ("prod", "both") and "publish_prod.sh" not in scripts:
+            targets = target_ids(os.path.join(WEB_ROOT, site))
+            if action in ("prod", "both") and not targets:
                 tasks.append({"site": site, "skip": "No production publish script"})
                 continue
             if action in ("add", "remove"):
@@ -1485,6 +1534,15 @@ def build_command(data):
                 continue
             elif action == "both":
                 payload = {"kind": "publish_both", "site": site}
+            elif action == "prod" and targets != ["prod"]:
+                # One environment at a time: they build in the same project folder
+                root = os.path.join(WEB_ROOT, site)
+                for target in targets:
+                    build_command({"kind": "script", "site": site, "script": "publish_prod.sh", "target": target})
+                tasks.append({"site": site, "cwd": root, "argv": [
+                    sys.executable, os.path.join(APACHE_DIR, "lib", "publish_status.py"), "both", root,
+                    *(os.path.realpath(os.path.join(target_folder(root, target), "publish_prod.sh")) for target in targets)]})
+                continue
             else:
                 script = "publish_prod.sh" if action == "prod" else next(
                     (name for name in ("publish_local.sh", "publish.sh") if name in scripts), "")
@@ -1496,12 +1554,13 @@ def build_command(data):
         ], WEB_ROOT
     if kind == "remote_tool":
         site = site_arg(data)
-        remote_site(site)
+        target = data.get("target") or "prod"
+        remote_site(site, target)
         tool = data.get("tool")
         if tool not in ("check_service", "edit_service", "edit_conf", "shell"):
             abort(400, "Unknown remote tool")
-        REMOTE_STATUS.pop(site, None)
-        return "Remote %s: %s" % (tool.replace("_", " "), site), [bash, os.path.join(APACHE_DIR, "remote_site.sh"), site, tool], WEB_ROOT
+        REMOTE_STATUS.pop(remote_key(site, target), None)
+        return "Remote %s: %s" % (tool.replace("_", " "), site), with_target([bash, os.path.join(APACHE_DIR, "remote_site.sh"), site, tool], target), WEB_ROOT
     if kind == "shell":
         site = data.get("site") or ""
         if site:
@@ -1523,17 +1582,22 @@ def build_command(data):
         if not local:
             abort(400, "This site has no test publish script")
         build_command({"kind": "script", "site": site, "script": local})
-        build_command({"kind": "script", "site": site, "script": "publish_prod.sh"})
         root = os.path.join(WEB_ROOT, site)
+        targets = target_ids(root)
+        if not targets:
+            abort(400, "Unknown script")
+        for target in targets:
+            build_command({"kind": "script", "site": site, "script": "publish_prod.sh", "target": target})
         return "Publish both: " + site, [
             sys.executable, os.path.join(APACHE_DIR, "lib", "publish_status.py"),
             "both", root, os.path.realpath(os.path.join(folder, local)),
-            os.path.realpath(os.path.join(folder, "publish_prod.sh")),
+            *(os.path.realpath(os.path.join(target_folder(root, target), "publish_prod.sh")) for target in targets),
         ], root
     if kind == "script":
         site = site_arg(data)
         script = data.get("script", "")
-        folder = os.path.join(WEB_ROOT, site, "scripts")
+        target = target_arg(site, data) if data.get("target") else "prod"
+        folder = target_folder(os.path.join(WEB_ROOT, site), target)
         path = os.path.realpath(os.path.join(folder, script))
         if not SCRIPT_RE.match(script) or os.path.dirname(path) != os.path.realpath(folder) or not os.path.isfile(path):
             abort(400, "Unknown script")
@@ -1541,7 +1605,7 @@ def build_command(data):
         root = os.path.join(WEB_ROOT, site)
         if script in ("publish.sh", "publish_local.sh", "publish_prod.sh") and glob.glob(os.path.join(root, "*.csproj")):
             argv = [sys.executable, os.path.join(APACHE_DIR, "lib", "publish_status.py"),
-                    "run", root, "prod" if script == "publish_prod.sh" else "test", *argv]
+                    "run", root, target_scope(target) if script == "publish_prod.sh" else "test", *argv]
         return "%s: %s" % (site, script), argv, folder
     if kind == "dotnet_package":
         site = site_arg(data)
@@ -1568,10 +1632,18 @@ def build_command(data):
         return title + " (" + site + ")", argv, os.path.dirname(projects[0])
     if kind == "create_prod":
         site = site_arg(data)
-        path = os.path.join(WEB_ROOT, site, "scripts", "create_prod.sh")
-        if not os.path.isfile(path):
-            abort(400, "This site cannot create a production target")
-        return "Create production site: " + site, [bash, path], os.path.dirname(path)
+        # api_term replaces the command with the rendered current template
+        return "Add environment: " + site, [bash], os.path.join(WEB_ROOT, site, "scripts")
+    if kind == "sync_env":
+        site = site_arg(data)
+        source = data.get("source", "")
+        destination = data.get("destination", "")
+        targets = target_ids(os.path.join(WEB_ROOT, site))
+        if source != "main" and source not in targets:
+            abort(400, "Unknown source environment")
+        if destination != "all" and (destination not in targets or destination == source):
+            abort(400, "Unknown destination environment")
+        return "Sync: " + site, [bash, os.path.join(APACHE_DIR, "sync_env.sh"), site, source, destination], APACHE_DIR
     if kind == "unit_tool":
         site = site_arg(data)
         unit = data.get("unit", "")
@@ -1600,7 +1672,7 @@ def build_command(data):
         abort(400, "Unknown tool")
     if kind == "copy_site":
         source = site_arg(data)
-        if source == ADMIN_SITE or os.path.isfile(os.path.join(WEB_ROOT, source, "scripts", "publish_prod.sh")):
+        if source == ADMIN_SITE or target_ids(os.path.join(WEB_ROOT, source)):
             abort(400, "Admin sites and sites with production targets cannot be copied.")
         target = dns_name(data.get("target", ""), "site name")
         binding = dns_name(data.get("binding", ""), "binding", fully_qualified=True)
@@ -1699,9 +1771,10 @@ def build_command(data):
         scope = data.get("scope", "test")
         if scope not in ("test", "prod") or site == ADMIN_SITE:
             abort(400, "Invalid permissions target")
-        if scope == "prod" and not os.path.isfile(os.path.join(WEB_ROOT, site, "scripts", "publish_prod.sh")):
-            abort(400, "This site has no production site")
-        return "Fix permissions: " + site, [bash, os.path.join(APACHE_DIR, "fix_permissions.sh"), site, scope], APACHE_DIR
+        argv = [bash, os.path.join(APACHE_DIR, "fix_permissions.sh"), site, scope]
+        if scope == "prod":
+            argv = with_target(argv, target_arg(site, data))
+        return "Fix permissions: " + site, argv, APACHE_DIR
     if kind == "change_binding":
         site = site_arg(data)
         binding = dns_name(data.get("binding", ""), "binding", fully_qualified=True)
@@ -1723,10 +1796,8 @@ def build_command(data):
             argv.append(aliases)
             argv.append("--yes")
         if data.get("scope") == "prod":
-            if not os.path.isfile(os.path.join(WEB_ROOT, site, "scripts", "publish_prod.sh")):
-                abort(400, "This site has no production site")
             argv[1] = os.path.join(APACHE_DIR, "change_binding_prod.sh")
-            return "Prod bindings: " + site, argv, APACHE_DIR
+            return "Prod bindings: " + site, with_target(argv, target_arg(site, data)), APACHE_DIR
         return "Bindings: " + site, argv, APACHE_DIR
     if kind == "prod_action":
         site = site_arg(data)
@@ -1745,9 +1816,7 @@ def build_command(data):
             if not os.path.isdir(os.path.join(WEB_ROOT, site)):
                 abort(404, "Unknown site")
             return "Test %s: %s" % (action.replace("_", " "), site), [bash, os.path.join(APACHE_DIR, "test_action.sh"), site, action, *args], APACHE_DIR
-        if not os.path.isfile(os.path.join(WEB_ROOT, site, "scripts", "publish_prod.sh")):
-            abort(400, "This site has no production site")
-        return "Prod %s: %s" % (action.replace("_", " "), site), [bash, os.path.join(APACHE_DIR, "prod_action.sh"), site, action, *args], APACHE_DIR
+        return "Prod %s: %s" % (action.replace("_", " "), site), with_target([bash, os.path.join(APACHE_DIR, "prod_action.sh"), site, action, *args], target_arg(site, data)), APACHE_DIR
     if kind == "delete_site":
         site = site_arg(data)
         if site == ADMIN_SITE:
@@ -1756,7 +1825,10 @@ def build_command(data):
         scope = data.get("scope") or "all"
         if scope not in ("all", "test", "prod"):
             abort(400, "Invalid scope")
-        return "Delete " + scope + ": " + site, [bash, os.path.join(APACHE_DIR, "delete_site.sh"), site, certificates, scope], APACHE_DIR
+        argv = [bash, os.path.join(APACHE_DIR, "delete_site.sh"), site, certificates, scope]
+        if scope == "prod":
+            argv = with_target(argv, target_arg(site, data))
+        return "Delete " + scope + ": " + site, argv, APACHE_DIR
     abort(400, "Unknown task")
 
 
@@ -1872,9 +1944,10 @@ def managed_config(site, kind):
     scope = request.args.get("scope", "local")
     if scope not in ("local", "remote"):
         abort(400, "Unknown configuration scope")
+    target = request.args.get("target") or "prod"
     if scope == "remote":
-        remote_site(site)
-        result = remote_command(site, "config", timeout=150, text=True, input=json.dumps(payload))
+        remote_site(site, target)
+        result = remote_command(site, "config", timeout=150, target=target, text=True, input=json.dumps(payload))
     else:
         unit = request.args.get("unit") or site
         if unit not in site_units(site):
@@ -1898,13 +1971,16 @@ def managed_config(site, kind):
     if response.get("encoding_required"):
         app.logger.warning("Configuration for %s is not UTF-8; requesting an explicit encoding", site)
     if action == "apply":
-        REMOTE_STATUS.pop(site, None)
+        REMOTE_STATUS.pop(remote_key(site, target), None)
     return jsonify(response)
 
 
 @app.route("/api/remote-fs/<site>/<action>", methods=["GET", "POST"])
 def remote_fs(site, action):
-    remote_site(site)
+    # The file manager addresses an environment as site@id
+    site, _, target = site.partition("@")
+    target = target or "prod"
+    remote_site(site, target)
     if action not in ("list", "read", "download", "save", "mkdir", "newfile", "rename", "delete", "upload"):
         abort(400, "Unknown file action")
     if request.method == "GET":
@@ -1920,7 +1996,7 @@ def remote_fs(site, action):
     if not isinstance(data, dict):
         abort(400, "Expected a file operation object")
     data["action"] = action
-    result = remote_command(site, "files", timeout=120, input=json.dumps(data).encode("utf-8"))
+    result = remote_command(site, "files", timeout=120, target=target, input=json.dumps(data).encode("utf-8"))
     try:
         response = json.loads(result.stdout)
     except ValueError:

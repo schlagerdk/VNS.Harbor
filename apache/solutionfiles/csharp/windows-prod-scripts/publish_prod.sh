@@ -14,11 +14,15 @@
 # This file contains a password: keep it readable by root only (chmod 700).
 [[ $EUID -eq 0 ]] || exec sudo "$0" "$@"
 # A dry run changes nothing, so it must not be recorded as a publish.
-if [[ ${VNS_PUBLISH_TRACKED:-} != prod && ${1:-} != --dry-run ]]; then
-	exec python3 "@APACHE_DIR@/lib/publish_status.py" run "$(cd "$(dirname "$0")/.." && pwd)" prod /bin/bash "$(realpath "$0")" "$@"
+_self=$(realpath "$0")
+_scriptFolder=$(dirname "${_self}")
+_siteFolder=${_scriptFolder%/scripts*}   # scripts/ or scripts/targets/<environment>/
+_scope=prod
+[[ ${_scriptFolder} != */scripts/targets/* ]] || _scope=target-${_scriptFolder##*/}
+if [[ ${VNS_PUBLISH_TRACKED:-} != "${_scope}" && ${1:-} != --dry-run ]]; then
+	exec python3 "@APACHE_DIR@/lib/publish_status.py" run "${_siteFolder}" "${_scope}" /bin/bash "${_self}" "$@"
 fi
-cd "$(dirname "$0")"
-cd ..
+cd "${_siteFolder}"
 set -euo pipefail
 source "@APACHE_DIR@/lib/dotnet.sh"
 source "@APACHE_DIR@/lib/windows_prod.sh"

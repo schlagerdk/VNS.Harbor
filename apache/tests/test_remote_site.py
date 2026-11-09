@@ -18,6 +18,7 @@ from unittest.mock import Mock, patch
 from flask import Flask, abort, jsonify, request, send_file
 from werkzeug.exceptions import HTTPException
 from apache.lib.domain_names import service_name
+from apache.tests.app_targets import add_target_helpers
 
 
 APACHE = Path(__file__).resolve().parents[1]
@@ -118,7 +119,7 @@ class RemoteApiTests(unittest.TestCase):
             safe_path=lambda path: path, rel=lambda path: path,
             HTTPException=HTTPException, APACHE_DIR=str(APACHE), WEB_ROOT="/var/www",
             REMOTE_STATUS={}, site_dirs=lambda: ["example.test"],
-            parse_prod=lambda root: {"PROD_LOCAL_PATH": "", "PROD_FOLDER": "production.test"},
+            parse_prod=lambda root, target="prod": {"PROD_LOCAL_PATH": "", "PROD_FOLDER": "production.test"},
             site_arg=lambda data: "example.test",
         )
         functions = {"error", "remote_command", "remote_status", "remote_site", "api_service", "api_logs", "build_command", "remote_fs",
@@ -127,6 +128,7 @@ class RemoteApiTests(unittest.TestCase):
         nodes = [node for node in ast.parse(APP_SOURCE.read_text()).body
                  if isinstance(node, ast.FunctionDef) and node.name in functions]
         exec(compile(ast.Module(body=nodes, type_ignores=[]), str(APP_SOURCE), "exec"), self.ns)
+        add_target_helpers(self.ns)
         self.client = self.app.test_client()
 
     def test_service_and_logs_use_remote_target(self):
@@ -135,16 +137,23 @@ class RemoteApiTests(unittest.TestCase):
         response = self.client.post("/api/sites/example.test/service",
                                     json={"scope": "prod", "action": "stop", "unit": "local.test"})
         self.assertEqual(response.status_code, 200)
-        command.assert_called_with("example.test", "stop", text=True)
+        command.assert_called_with("example.test", "stop", target="prod", text=True)
         response = self.client.get("/api/sites/example.test/logs?scope=prod")
         self.assertEqual(response.json["text"], "remote journal")
-        command.assert_called_with("example.test", "logs", text=True)
+        command.assert_called_with("example.test", "logs", target="prod", text=True)
+        response = self.client.post("/api/sites/example.test/service",
+                                    json={"scope": "prod", "action": "restart", "target": "staging"})
+        self.assertEqual(response.status_code, 200)
+        command.assert_called_with("example.test", "restart", target="staging", text=True)
+        self.client.get("/api/sites/example.test/logs?scope=prod&target=staging")
+        command.assert_called_with("example.test", "logs", target="staging", text=True)
+        self.assertEqual(self.client.get("/api/sites/example.test/logs?scope=prod&target=../x").status_code, 400)
         self.assertEqual(self.client.post("/api/sites/example.test/service",
                          json={"scope": "prod", "action": "delete"}).status_code, 400)
 
     def test_unknown_or_local_target_rejected(self):
         self.assertEqual(self.client.get("/api/sites/unknown.test/logs?scope=prod").status_code, 400)
-        self.ns["parse_prod"] = lambda root: {"PROD_LOCAL_PATH": "/var/www/local"}
+        self.ns["parse_prod"] = lambda root, target="prod": {"PROD_LOCAL_PATH": "/var/www/local"}
         self.assertEqual(self.client.get("/api/sites/example.test/logs?scope=prod").status_code, 400)
 
     def test_status_uses_remote_metadata_and_cache(self):

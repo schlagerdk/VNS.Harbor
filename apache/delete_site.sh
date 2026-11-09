@@ -1,10 +1,12 @@
 #!/bin/bash
 # Usage: delete_site.sh [site] [y|n (delete certificates)] [all|test|prod]
-#   all  = the site and its production site (default)
-#   test = only the site itself (a production folder inside the site folder is kept)
-#   prod = only the production site, including a remote production target
+#   all  = the site and all its environments (default)
+#   test = only the site itself (environment folders inside the site folder are kept)
+#   prod = only the environment selected by VNS_TARGET, including a remote one
+# Environments on a Windows server are only removed here: their IIS site and files must be removed on the server.
 cd "$(dirname "$0")"
 source lib/common.sh
+source lib/prod.sh
 clear
 
 _site=${1:-}
@@ -21,24 +23,26 @@ if [[ -f ${_configPath} ]]; then
 	_binding=${_binding:-${_site}}
 fi
 
-# Settings of the production site, read (never executed) from publish_prod.sh
-_prodScript="${_siteRoot}/scripts/publish_prod.sh"
+# Settings of an environment, read (never executed) from its publish_prod.sh
 _prodVar() { sed -n "s/^$1=\([^ #	]*\).*/\1/p" "${_prodScript}" 2>/dev/null | head -n 1 | tr -d "'\\\\\""; }
-_hasProd=0
-_prodLocalPath=""
-_prodFolder=""
-_prodBinding=""
-_prodTarget=""
-if [[ -f ${_prodScript} ]]; then
-	_hasProd=1
-	_prodLocalPath=$(_prodVar PROD_LOCAL_PATH)
-	_prodFolder=$(_prodVar PROD_FOLDER)
-	_prodBinding=$(_prodVar PROD_BINDING)
-	_prodTarget=$(_prodVar PROD_TARGET)
-fi
-if [[ ${_scope} == prod && ${_hasProd} -eq 0 ]]; then
-	echo "This site has no production site." >&2
-	exit 1
+_prodFolderOf() {
+	if [[ $1 == prod ]]; then echo "${_siteRoot}/scripts"; else echo "${_siteRoot}/scripts/targets/$1"; fi
+}
+_allTargets=()
+while IFS= read -r _id; do _allTargets+=("${_id}"); done < <(prod_targets)
+_targets=()
+if [[ ${_scope} == all ]]; then
+	_targets=(${_allTargets[@]+"${_allTargets[@]}"})
+elif [[ ${_scope} == prod ]]; then
+	if [[ -n ${VNS_TARGET:-} ]]; then
+		_targets=("${VNS_TARGET}")
+	elif ((${#_allTargets[@]} == 1)); then
+		_targets=("${_allTargets[0]}")
+	else
+		echo "Choose an environment with VNS_TARGET: ${_allTargets[*]:-this site has none}" >&2
+		exit 1
+	fi
+	[[ -f $(_prodFolderOf "${_targets[0]}")/publish_prod.sh ]] || { echo "This site has no such environment." >&2; exit 1; }
 fi
 
 remove_service_and_config() {
@@ -80,16 +84,32 @@ if [[ -z ${_deleteCertificate} ]]; then
 	read -r -p "Delete certificates? [y/N]: " _deleteCertificate
 fi
 
-if [[ ${_scope} == test && -n ${_prodLocalPath} && ${_prodLocalPath} == "${_siteRoot}"/*/* ]]; then
-	echo "The production folder is nested too deep inside the site folder to keep it. Delete all instead." >&2
-	exit 1
+# Folders of this site's local environments, kept when only the site itself is deleted
+_keepFolders=()
+if [[ ${_scope} == test ]]; then
+	for _id in ${_allTargets[@]+"${_allTargets[@]}"}; do
+		_prodScript=$(_prodFolderOf "${_id}")/publish_prod.sh
+		_prodLocalPath=$(_prodVar PROD_LOCAL_PATH)
+		[[ ${_prodLocalPath} == "${_siteRoot}"/* ]] || continue
+		if [[ ${_prodLocalPath%/} == "${_siteRoot}"/*/* ]]; then
+			echo "The folder ${_prodLocalPath} is nested too deep inside the site folder to keep it. Delete all instead." >&2
+			exit 1
+		fi
+		_keepFolders+=("${_prodLocalPath#"${_siteRoot}"/}")
+	done
 fi
 
-# ---- production site
-if [[ ${_scope} != test && ${_hasProd} -eq 1 ]]; then
+# ---- environments
+for _id in ${_targets[@]+"${_targets[@]}"}; do
+	export VNS_TARGET=${_id}
+	_prodScript=$(_prodFolderOf "${_id}")/publish_prod.sh
+	_prodLocalPath=$(_prodVar PROD_LOCAL_PATH)
+	_prodFolder=$(_prodVar PROD_FOLDER)
+	_prodBinding=$(_prodVar PROD_BINDING)
+	_prodTarget=$(_prodVar PROD_TARGET)
 	if [[ ${_prodTarget} == windows ]]; then
 		# The IIS site is managed on the Windows server, and it holds the only copy of its settings and media.
-		echo "The site on the Windows server is not touched: remove the IIS site and its folder there."
+		echo "The site on the Windows server is not touched: remove the IIS site and its folder at $(_prodVar PROD_WINDOWS_SHARE) yourself."
 	elif [[ -n ${_prodLocalPath} ]]; then
 		_prodLocalPath=${_prodLocalPath%/}
 		validate_site_name "${_prodFolder}" && [[ ${_prodFolder} != "${_site}" ]] || { echo "Invalid production site name: ${_prodFolder}" >&2; exit 1; }
@@ -105,7 +125,6 @@ if [[ ${_scope} != test && ${_hasProd} -eq 1 ]]; then
 	else
 		echo "Delete the remote production site (${_prodFolder})"
 		# Use the saved production connection settings. Do not execute publish_prod.sh.
-		source lib/prod.sh
 		load_prod_settings
 		[[ -z ${PROD_LOCAL_PATH} ]] || { echo "Production target settings are inconsistent." >&2; exit 1; }
 		validate_site_name "${PROD_FOLDER}" || exit 1
@@ -163,23 +182,31 @@ REMOTE
 		fi
 	fi
 	if [[ ${_scope} == prod ]]; then
-		# Put the site back to a test-only site so create_prod.sh can be used again
-		sudo rm -f "${_siteRoot}/scripts/publish_prod.sh" "${_siteRoot}/scripts/sync_prod.sh" "${_siteRoot}/scripts/clear_logs_prod.sh"
-		for _name in publish clear_logs; do
-			if [[ -f ${_siteRoot}/scripts/${_name}_local.sh && ! -e ${_siteRoot}/scripts/${_name}.sh ]]; then
-				sudo mv "${_siteRoot}/scripts/${_name}_local.sh" "${_siteRoot}/scripts/${_name}.sh"
-			fi
-		done
+		if [[ ${_id} == prod ]]; then
+			sudo rm -f "${_siteRoot}/scripts/publish_prod.sh" "${_siteRoot}/scripts/sync_prod.sh" "${_siteRoot}/scripts/clear_logs_prod.sh"
+		else
+			sudo rm -rf "${_siteRoot:?}/scripts/targets/${_id:?}"
+			sudo rm -f "${_siteRoot}/.vns-publish/target-${_id}.json"
+		fi
+		# With no environments left, put the site back to a test-only site
+		if [[ -z $(prod_targets) ]]; then
+			for _name in publish clear_logs; do
+				if [[ -f ${_siteRoot}/scripts/${_name}_local.sh && ! -e ${_siteRoot}/scripts/${_name}.sh ]]; then
+					sudo mv "${_siteRoot}/scripts/${_name}_local.sh" "${_siteRoot}/scripts/${_name}.sh"
+				fi
+			done
+		fi
 	fi
-fi
+done
 
 # ---- the site itself
 if [[ ${_scope} != prod ]]; then
 	remove_service_and_config "${_site}"
-	if [[ ${_scope} == test && -n ${_prodLocalPath} && ${_prodLocalPath} == "${_siteRoot}"/* ]]; then
-		_keep=${_prodLocalPath#"${_siteRoot}"/}
-		echo "Delete the site files (production folder ${_keep} and scripts are kept)"
-		sudo find "${_siteRoot}" -mindepth 1 -maxdepth 1 ! -name "${_keep}" ! -name scripts -exec rm -rf {} +
+	if [[ ${_scope} == test && ${#_keepFolders[@]} -gt 0 ]]; then
+		echo "Delete the site files (environment folders ${_keepFolders[*]} and scripts are kept)"
+		_findKeep=()
+		for _keep in "${_keepFolders[@]}"; do _findKeep+=(! -name "${_keep%/}"); done
+		sudo find "${_siteRoot}" -mindepth 1 -maxdepth 1 "${_findKeep[@]}" ! -name scripts -exec rm -rf {} +
 	else
 		echo "Delete site and files"
 		sudo rm -rf "${_rootPath:?}/${_site:?}"

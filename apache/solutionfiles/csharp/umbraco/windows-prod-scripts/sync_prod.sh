@@ -8,8 +8,10 @@
 #
 # This file contains a password: keep it readable by root only (chmod 700).
 [[ $EUID -eq 0 ]] || exec sudo "$0" "$@"
-cd "$(dirname "$0")"
-cd ..
+_self=$(realpath "$0")
+_scriptFolder=$(dirname "${_self}")
+_siteFolder=${_scriptFolder%/scripts*}   # scripts/ or scripts/targets/<environment>/
+cd "${_siteFolder}"
 set -euo pipefail
 source "@APACHE_DIR@/lib/windows_prod.sh"
 
@@ -31,7 +33,8 @@ case "${1:-}" in
 esac
 
 windows_smb_connect
-cd "${_publishFolder}"
+# sync_env.sh sets VNS_SYNC_SOURCE when the content comes from another environment
+cd "${VNS_SYNC_SOURCE:-${_publishFolder}}"
 
 _failed=0
 for _folder in "${_folders[@]}"; do

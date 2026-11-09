@@ -153,10 +153,10 @@ for site in sorted(root.iterdir()):
         path = scripts / name
         if path.is_file():
             update_publish_script(path, False)
-    path = scripts / "publish_prod.sh"
     # A Windows target publishes for win-x64 and has no SSH commands to patch
-    if path.is_file() and not re.search(r"(?m)^PROD_TARGET=windows\b", path.read_text()):
-        update_publish_script(path, True)
+    for path in [scripts / "publish_prod.sh", *sorted(scripts.glob("targets/*/publish_prod.sh"))]:
+        if path.is_file() and not re.search(r"(?m)^PROD_TARGET=windows\b", path.read_text()):
+            update_publish_script(path, True)
 
 if not planned and not unchanged:
     print(f"No C# publish scripts found in {root}.")

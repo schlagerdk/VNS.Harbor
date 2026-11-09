@@ -15,6 +15,7 @@ from flask import Flask, abort, jsonify
 from werkzeug.exceptions import BadRequest
 
 from apache.lib.domain_names import display_dns_name, normalize_dns_name, normalize_site_name, service_name
+from apache.tests.app_targets import add_target_helpers
 
 APACHE = Path(__file__).resolve().parents[1]
 APP = APACHE / "solutionfiles/admin/app"
@@ -65,7 +66,7 @@ class UnicodeScriptTests(unittest.TestCase):
         self.ns = dict(re=re, os=os, glob=glob, sys=sys, abort=abort,
                        site_arg=lambda data: data["site"], service_name=service_name, APACHE_DIR=str(APACHE))
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "script validation", "exec"), self.ns)
-
+        add_target_helpers(self.ns)
     def test_unicode_script_is_listed_and_can_be_run(self):
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory) / "example.test" / "scripts"
@@ -103,6 +104,7 @@ class DotnetTemplateTests(unittest.TestCase):
                      "parse_dotnet_templates", "api_dotnet_templates", "dotnet_template_output",
                      "installed_dotnet_templates", "parse_template_packages", "installed_template_packages")]
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "dotnet templates", "exec"), self.ns)
+        add_target_helpers(self.ns)
         columns = (42, 20, 18, 30)
         rows = [
             ("Template Name", "Short Name", "Language", "Tags"),
@@ -216,6 +218,7 @@ class CreateCommandTests(unittest.TestCase):
                    "app": Flask(__name__), "subprocess": subprocess}
         self.ns["default_umbraco_version"] = lambda: "18.3.1"
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "create command", "exec"), self.ns)
+        add_target_helpers(self.ns)
         self.data = dict(kind="create_site", site="example.test", binding="example.test",
                          type="csharp", csharp="empty", certificate="n")
 
@@ -337,6 +340,7 @@ class DomainNameTests(unittest.TestCase):
                   "SERVICE_DIR": str(root / "services"), "subprocess": Mock(run=runner),
                   "read_text": lambda path: Path(path).read_text()}
             exec(compile(ast.Module(body=nodes, type_ignores=[]), "unicode sites", "exec"), ns)
+            add_target_helpers(ns)
             self.assertIn(name, ns["site_dirs"]())
             self.assertTrue(ns["unit_of"](name))
             self.assertEqual(ns["service_port"](name), "4100")

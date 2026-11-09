@@ -12,6 +12,7 @@ from unittest.mock import Mock, patch
 
 from flask import Flask, abort, jsonify, request
 from werkzeug.exceptions import BadRequest, InternalServerError
+from apache.tests.app_targets import add_target_helpers
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -581,6 +582,7 @@ class SqlApiTests(unittest.TestCase):
         names = {"api_sql_connections", "api_sql_status", "build_command"}
         nodes = [node for node in ast.parse(source.read_text()).body if isinstance(node, ast.FunctionDef) and node.name in names]
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "sql API", "exec"), self.ns)
+        add_target_helpers(self.ns)
         self.client = self.app.test_client()
 
     def test_missing_tools_blocks_connection_setup_and_allows_installer(self):

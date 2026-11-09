@@ -8,6 +8,7 @@ from unittest.mock import Mock, patch
 from flask import Flask, jsonify, request
 
 from apache.lib.domain_names import service_name
+from apache.tests.app_targets import add_target_helpers
 
 
 class ServerLogTests(unittest.TestCase):
@@ -22,6 +23,7 @@ class ServerLogTests(unittest.TestCase):
         nodes = [node for node in ast.parse(source.read_text()).body
                  if isinstance(node, ast.FunctionDef) and node.name == "api_server_logs"]
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "server logs", "exec"), self.ns)
+        add_target_helpers(self.ns)
         self.client = self.app.test_client()
 
     def test_admin_journal_is_bounded_and_has_no_pager(self):

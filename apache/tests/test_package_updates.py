@@ -14,6 +14,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from flask import Flask, jsonify, request
+from apache.tests.app_targets import add_target_helpers
 
 
 APACHE = Path(__file__).resolve().parents[1]
@@ -263,6 +264,7 @@ class UpdateCheckApiTests(unittest.TestCase):
         nodes = [node for node in ast.parse((APP / "app.py").read_text()).body
                  if isinstance(node, ast.FunctionDef) and node.name in names]
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "update check API", "exec"), self.ns)
+        add_target_helpers(self.ns)
         self.client = self.app.test_client()
 
     def test_start_filters_projects_and_duplicate_requests_do_not_restart(self):

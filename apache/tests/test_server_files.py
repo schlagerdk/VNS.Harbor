@@ -18,6 +18,7 @@ from flask import Flask, abort, jsonify, redirect, request, send_file, session
 from werkzeug.exceptions import BadRequest
 
 from apache.lib.remote_files import contains_editable_files, editable_file, file_metadata
+from apache.tests.app_targets import add_target_helpers
 
 
 APP = Path(__file__).resolve().parents[1] / "solutionfiles/admin/app"
@@ -51,6 +52,7 @@ class ServerFilesTests(unittest.TestCase):
         nodes = [node for node in ast.parse((APP / "app.py").read_text()).body
                  if isinstance(node, ast.FunctionDef) and node.name in names]
         exec(compile(ast.Module(body=nodes, type_ignores=[]), str(APP / "app.py"), "exec"), self.ns)
+        add_target_helpers(self.ns)
         self.client = self.app.test_client()
         with self.client.session_transaction() as state:
             state.update(user="test-admin", csrf="test-csrf")

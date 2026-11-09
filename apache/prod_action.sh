@@ -27,7 +27,7 @@ case "${_action}" in
 			exit 1
 		fi
 		_umbraco=n
-		[[ -f ${_siteRoot}/scripts/sync_prod.sh ]] && _umbraco=1
+		[[ -f $(dirname "${_prodScript}")/sync_prod.sh ]] && _umbraco=1
 		prod_run "SITE='${PROD_FOLDER}' BINDING='${PROD_BINDING,,}' ACME_SERVER='${_acmeServer}' ROOT='${_root}' MAIL='${PROD_ADMIN_MAIL:-${_adminMail}}' UMBRACO='${_umbraco}'" <<'REMOTE'
 set -euo pipefail
 acme=/etc/acmesh/acme.sh

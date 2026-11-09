@@ -428,6 +428,18 @@
   </form>
 </dialog>
 
+<dialog id="dlg-sync" class="newsite" aria-labelledby="sync-title">
+  <form method="dialog" id="form-sync">
+    <header class="ns-head">
+      <span class="ns-icon" aria-hidden="true">↔</span>
+      <div><h2 id="sync-title">Sync content</h2><p id="sync-source"></p></div>
+    </header>
+    <label>Sync to <select name="destination" id="sync-destination"></select></label>
+    <p class="hint">uSync, Views, css, scripts and on Windows media are mirrored. Files that are missing in the source are deleted in the destination. A folder that is missing in the source is skipped.</p>
+    <menu><button type="button" id="sync-cancel" class="cancel-link">Cancel</button><button type="submit" class="primary">Sync</button></menu>
+  </form>
+</dialog>
+
 <dialog id="dlg-package" class="newsite">
   <form method="dialog" id="form-package">
     <header class="ns-head">

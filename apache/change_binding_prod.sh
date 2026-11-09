@@ -57,7 +57,7 @@ fi
 [[ ${_confirm,,} == y || ${_confirm,,} == yes ]] || { echo "Aborted"; exit 1; }
 
 _umbraco=n
-[[ -f ${_siteRoot}/scripts/sync_prod.sh ]] && _umbraco=1
+[[ -f $(dirname "${_prodScript}")/sync_prod.sh ]] && _umbraco=1
 _vars="SITE='${PROD_FOLDER}' OLD='${_oldBinding}' NEW='${_newBinding}' ALIASES='${_newAliases}' ROOT='${_root}' ACME_SERVER='${_acmeServer}' MAIL='${PROD_ADMIN_MAIL:-${_adminMail}}' UMBRACO='${_umbraco}'"
 
 prod_run "${_vars}" <<'REMOTE'

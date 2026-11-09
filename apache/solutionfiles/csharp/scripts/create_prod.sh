@@ -1,10 +1,10 @@
 #!/bin/bash
 # Add a production target to this site: a remote Linux server (SSH), a local folder, or an IIS site on a Windows server (SMB).
 # Asks for the production settings, then:
-#   publish.sh -> publish_local.sh, clear_logs.sh -> clear_logs_local.sh
-#   creates publish_prod.sh, clear_logs_prod.sh and sync_prod.sh (Umbraco) with the answers filled in
+#   publish.sh -> publish_local.sh, clear_logs.sh -> clear_logs_local.sh (the first time)
+#   creates scripts/targets/<environment>/ with publish_prod.sh, clear_logs_prod.sh and sync_prod.sh (Umbraco)
 # Publishes production, then syncs content when available. Production is always a Release build.
-# This script deletes itself after the production scripts have been created.
+# Run it again to add another environment.
 set -euo pipefail
 
 if [[ $EUID -ne 0 ]]; then
@@ -33,8 +33,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [[ ! -f ${_scripts}/publish.sh || -e ${_scripts}/publish_local.sh || -e ${_scripts}/publish_prod.sh ]]; then
-	echo "A production target has already been created for this site (or publish.sh is missing)." >&2
+if [[ ! -f ${_scripts}/publish.sh && ! -f ${_scripts}/publish_local.sh ]]; then
+	echo "This site has no publish.sh." >&2
 	exit 1
 fi
 
@@ -151,6 +151,31 @@ else
 		exit 1
 	fi
 fi
+
+# The saved settings of the site's other environments, read without running their scripts
+_existing=("${_scripts}/publish_prod.sh" "${_scripts}"/targets/*/publish_prod.sh)
+for _file in "${_existing[@]}"; do
+	[[ -f ${_file} ]] || continue
+	(
+		PROD_LOCAL_PATH="" PROD_FOLDER="" PROD_TARGET=""
+		source <(grep -E '^PROD_[A-Z_]+=' "${_file}")
+		[[ ${_target} == local && -n ${PROD_LOCAL_PATH} ]] || exit 0
+		if [[ ${PROD_LOCAL_PATH%/} == "${_localPath%/}" || $(normalize_dns_name "${PROD_FOLDER}" unit) == "$(normalize_dns_name "${_prodFolder}" unit)" ]]; then
+			echo "Another environment on this server already uses that folder or site name." >&2
+			exit 1
+		fi
+	)
+done
+
+# The folder is named after the environment: production, production-2, ...
+_targetId=${_prodEnvironment,,}
+_number=2
+while [[ -e ${_scripts}/targets/${_targetId} ]]; do
+	_targetId=${_prodEnvironment,,}-${_number}
+	_number=$((_number + 1))
+done
+_targetFolder=${_scripts}/targets/${_targetId}
+
 echo
 echo "Target:   ${_target}${_ip:+ (${_user}@${_ip}:${_sshPort})}${_localPath:+ (${_localPath})}${_smbShare:+ (${_smbUser}@${_smbShare})}"
 echo "Site:     ${_prodFolder}"
@@ -195,20 +220,20 @@ done
 unset R_PROD_PASSWORD R_PROD_SMB_PASSWORD
 [[ -f ${_tmp}/publish_prod.sh ]] || { echo "Template publish_prod.sh not found." >&2; exit 1; }
 
-mv "${_scripts}/publish.sh" "${_scripts}/publish_local.sh"
+[[ ! -f ${_scripts}/publish.sh ]] || mv "${_scripts}/publish.sh" "${_scripts}/publish_local.sh"
 [[ ! -f ${_scripts}/clear_logs.sh ]] || mv "${_scripts}/clear_logs.sh" "${_scripts}/clear_logs_local.sh"
+install -d -m 700 "${_scripts}/targets" "${_targetFolder}"
 for _file in "${_tmp}"/*.sh; do
-	install -m 700 "${_file}" "${_scripts}/$(basename "${_file}")"
+	install -m 700 "${_file}" "${_targetFolder}/$(basename "${_file}")"
 done
 
-echo "Created in ${_scripts}:"
-ls -1 "${_scripts}" | grep -E '_(local|prod)\.sh$' | sed 's/^/  /'
-rm -f -- "${_self}"
+echo "Created in ${_targetFolder}:"
+ls -1 "${_targetFolder}" | sed 's/^/  /'
 
-echo "Publish to production"
-bash "${_scripts}/publish_prod.sh"
-if [[ -f ${_scripts}/sync_prod.sh ]]; then
-	echo "Sync content to production"
-	bash "${_scripts}/sync_prod.sh"
+echo "Publish to ${_prodEnvironment}"
+bash "${_targetFolder}/publish_prod.sh"
+if [[ -f ${_targetFolder}/sync_prod.sh ]]; then
+	echo "Sync content to ${_prodEnvironment}"
+	bash "${_targetFolder}/sync_prod.sh"
 fi
-echo "Production setup complete."
+echo "Environment ${_targetId} is ready."

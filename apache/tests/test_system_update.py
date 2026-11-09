@@ -13,6 +13,7 @@ import uuid
 from unittest.mock import Mock
 
 from flask import Flask, abort, jsonify, request
+from apache.tests.app_targets import add_target_helpers
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -37,6 +38,7 @@ class SystemUpdateTests(unittest.TestCase):
         nodes = [node for node in ast.parse((APP / "app.py").read_text()).body
                  if isinstance(node, ast.FunctionDef) and node.name == "api_system_update"]
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "system updates", "exec"), self.ns)
+        add_target_helpers(self.ns)
         self.client = self.app.test_client()
 
     def test_changed_and_matching_revisions_and_cache(self):
@@ -98,6 +100,7 @@ class SystemUpdateTests(unittest.TestCase):
         self.app = Flask("update jobs")
         self.ns["app"] = self.app
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "update jobs", "exec"), self.ns)
+        add_target_helpers(self.ns)
         client = self.app.test_client()
         self.assertEqual(client.get("/api/system-update/run").json["status"], "idle")
         from unittest.mock import patch

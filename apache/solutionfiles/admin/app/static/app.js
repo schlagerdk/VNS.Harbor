@@ -350,7 +350,10 @@ function siteState(site) {
 	if (!units.length) return "";
 	return units.some((e) => e.state === "active") ? "active" : "inactive";
 }
-const hasProd = (site) => site.environments.some((e) => e.key === "prod");
+const isTarget = (env) => env.key !== "main";
+const hasProd = (site) => site.environments.some(isTarget);
+const targetFields = (env) => (env && env.target && env.target !== "prod" ? { target: env.target } : {});
+const remoteRef = (site, env) => (env.target && env.target !== "prod" ? `${site.name}@${env.target}` : site.name);
 
 // Environments are always listed as Development, Test, Staging, Production. Anything else comes last.
 const environmentOrder = ["development", "test", "staging", "production"];
@@ -605,7 +608,7 @@ function siteCard(site) {
 	const state = siteState(site);
 	const actions = el("div", { className: "site-links" });
 	for (const env of sortedEnvironments(site.environments)) {
-		const production = env.key === "prod";
+		const production = isTarget(env);
 		const environment = environmentLabel(site, env);
 		const group = el("div", { className: "site-link-group" + (production ? " production" : ""), role: "group", ariaLabel: environment + " · " + (bindingLabel(env) || siteLabel(site)) });
 		const heading = el("div", { className: "site-environment-head" },
@@ -808,23 +811,29 @@ function renderSite(name) {
 			}
 		}
 	}
-	if (hasProd(site) && site.scripts.includes("sync_prod.sh")) {
-		const target = site.environments.find((env) => env.key === "prod");
+	const syncTargets = site.environments.filter((env) => isTarget(env) && (env.scripts || []).includes("sync_prod.sh"));
+	if (syncTargets.length === 1) {
+		const target = syncTargets[0];
 		const label = "Sync to " + (target.environment || "target");
 		actions.append(el("button", { textContent: label, title: "sync_prod.sh", onclick: () => run(async () => {
-			if (await ask({ title: label + "?", message: `Sync content to ${bindingLabel(target) || target.host || siteLabel(site)}.`, input: false, ok: label })) await openTask({ kind: "script", site: site.name, script: "sync_prod.sh" });
+			if (await ask({ title: label + "?", message: `Sync content to ${bindingLabel(target) || target.host || siteLabel(site)}.`, input: false, ok: label })) await openTask({ kind: "script", site: site.name, script: "sync_prod.sh", ...targetFields(target) });
+		}) }));
+	} else if (syncTargets.length > 1) {
+		actions.append(el("button", { textContent: "Sync to all", title: "Sync from the main site to every environment", onclick: () => run(async () => {
+			const names = syncTargets.map((env) => `${env.environment || env.target}: ${bindingLabel(env) || env.host || ""}`).join("\n");
+			if (await ask({ title: "Sync to all?", message: `Sync content from the main site to:\n${names}`, input: false, ok: "Sync to all" })) await openTask({ kind: "sync_env", site: site.name, source: "main", destination: "all" });
 		}) }));
 	}
 	if (!site.admin && hasProd(site)) add("Delete everything", () => deleteSite(site, "all"), "danger");
 	head.append(el("div", { className: "detail-title" }, el("h2", { textContent: siteLabel(site) }), kindBadges(site)));
 	if (actions.childElementCount) head.append(actions);
 	for (const env of site.environments) {
-		if (env.key !== "prod") envs.append(envPanel(site, env));
+		if (!isTarget(env)) envs.append(envPanel(site, env));
 	}
 	for (const env of sortedEnvironments(site.environments)) {
-		if (env.key === "prod") targets.append(envPanel(site, env));
+		if (isTarget(env)) targets.append(envPanel(site, env));
 	}
-	const canAddEnvironment = site.has_project && site.scripts.includes("create_prod.sh");
+	const canAddEnvironment = site.has_project && !site.admin && (site.kind === "csharp" || site.kind === "umbraco");
 	const noEnvironments = !targets.childElementCount;
 	if (canAddEnvironment && !noEnvironments) {
 		targetsActions.append(el("button", { textContent: "Add environment", onclick: () => run(() => openCreateProdDialog(site)) }));
@@ -915,7 +924,7 @@ const hasScriptButton = (site, file) => buttonScripts.has(file) && (site.has_pro
 
 // [script candidates or null, button label, confirmation text (null = none; the script asks itself), prod_action name]
 function quickActions(env) {
-	if (env.key === "prod") {
+	if (isTarget(env)) {
 		return [
 			[["publish_prod.sh"], "Publish", "Build and publish this site to production. The service is restarted."],
 			[["clear_logs_prod.sh"], "Clear logs", "Delete the production logs."],
@@ -934,7 +943,7 @@ function quickActions(env) {
 function envPanel(site, env) {
 	const dot = env.unit ? env.state || "unknown" : "";
 	const heading = el("div", { className: "env-head" },
-		siteActivity(site, env.key === "prod" ? "prod" : "main"),
+		siteActivity(site, isTarget(env) ? "prod" : "main"),
 		el("span", { className: "dot " + dot }),
 		el("span", { className: "badge " + (env.unit ? "state-" + (env.state || "unknown") : ""), textContent: env.unit ? env.state || "unknown" : env.mode === "windows" ? "windows" : env.mode === "remote" ? "remote" : "static" }));
 	const environment = site.kind === "python" ? "Live" : env.environment;
@@ -946,7 +955,7 @@ function envPanel(site, env) {
 
 	const scheme = env.scheme || "https";
 	const address = environmentAddress(env);
-	const binding = !address.url ? bindingLink("") : site.admin && env.key !== "prod"
+	const binding = !address.url ? bindingLink("") : site.admin && !isTarget(env)
 		? el("span", { textContent: bindingLabel(env) })
 		: openLink(bindingLabel(env) || address.hostname, address.url, address.title);
 	const meta = el("dl", { className: "meta" }, el("dt", { textContent: "Binding" }), el("dd", {}, binding));
@@ -988,10 +997,10 @@ function envPanel(site, env) {
 		add("Logs", () => showLogs(site, env));
 	}
 	if (env.mode === "remote") {
-		add("Shell", () => openTask({ kind: "remote_tool", site: site.name, tool: "shell" }), "desktop-only");
-		add("Files", () => openFiles("", site.name), "desktop-only");
+		add("Shell", () => openTask({ kind: "remote_tool", site: site.name, tool: "shell", ...targetFields(env) }), "desktop-only");
+		add("Files", () => openFiles("", remoteRef(site, env)), "desktop-only");
 	} else if (env.mode !== "windows") {
-		add("Shell", () => openTask({ kind: "shell", site: site.name, path: env.path, scope: env.key === "prod" ? "prod" : "main" }), "desktop-only");
+		add("Shell", () => openTask({ kind: "shell", site: site.name, path: env.path, scope: isTarget(env) ? "prod" : "main" }), "desktop-only");
 		add("Files", () => openFiles(env.path), "desktop-only");
 	}
 
@@ -1002,53 +1011,57 @@ function envPanel(site, env) {
 	if (!site.admin && env.mode !== "windows") {
 		settings.append(el("button", { textContent: "Fix permissions", className: "small", onclick: () => run(async () => {
 			if (await ask({ title: "Fix permissions?", message: "Restore www-data ownership and content access for this environment. Scripts and symbolic links are skipped. No service restart is needed.", input: false, ok: "Fix permissions" })) {
-				await openTask({ kind: "fix_permissions", site: site.name, scope: env.key === "prod" ? "prod" : "test" });
+				await openTask({ kind: "fix_permissions", site: site.name, scope: isTarget(env) ? "prod" : "test", ...targetFields(env) });
 			}
 		}) }));
 	}
 	if ((!hasProd(site) || !site.admin) && env.mode !== "windows") {
-		settings.append(el("button", { textContent: "Change bindings", className: "small desktop-only", onclick: () => run(() => changeBinding(site, env.key === "prod" ? "prod" : "test", env)) }));
+		settings.append(el("button", { textContent: "Change bindings", className: "small desktop-only", onclick: () => run(() => changeBinding(site, isTarget(env) ? "prod" : "test", env)) }));
 	}
 	let extraTools = null;
 	for (const [files, label, confirm, action] of quickActions(env)) {
 		if (label === "Publish" && !site.has_project) continue;
-		let file = files && files.find((f) => site.scripts.includes(f));
-		if (!file && label === "Publish" && env.key !== "prod") file = site.scripts.find((f) => /^publish.*\.sh$/.test(f) && f !== "publish_prod.sh");
+		let file = files && files.find((f) => (isTarget(env) ? env.scripts || [] : site.scripts).includes(f));
+		if (!file && label === "Publish" && !isTarget(env)) file = site.scripts.find((f) => /^publish.*\.sh$/.test(f) && f !== "publish_prod.sh");
 		if (!action && !file) continue;
 		if (action && env.mode === "remote" && !env.host) continue;
 		if (action === "issue_certificate" && env.mode === "windows") continue;
-		if (action && env.key !== "prod" && (!env.unit || site.admin) && action === "change_env") continue;
+		if (action && !isTarget(env) && (!env.unit || site.admin) && action === "change_env") continue;
 		(action ? settings : quick).append(el("button", { textContent: label, className: "small" + (action === "change_env" ? " desktop-only" : ""), title: file || action, onclick: () => run(async () => {
 			if (action === "change_env") { openEnvironmentDialog(site, env); return; }
 			if (confirm && !(await ask({ title: `${label}?`, message: `${confirm} (${siteLabel(site)})`, input: false, ok: label }))) return;
-			await openTask(action ? { kind: "prod_action", site: site.name, action, scope: env.key === "prod" ? "prod" : "test" } : { kind: "script", site: site.name, script: file });
+			await openTask(action ? { kind: "prod_action", site: site.name, action, scope: isTarget(env) ? "prod" : "test", ...targetFields(env) } : { kind: "script", site: site.name, script: file, ...targetFields(env) });
 		}) }));
 	}
-	if (env.key !== "prod" && site.scripts.some((file) => !hasScriptButton(site, file))) quick.append(scriptSelect(site));
+	// The main site's only destination already has its button at the top of the page
+	if (syncDestinations(site, env).length > (isTarget(env) ? 0 : 1)) {
+		quick.append(el("button", { textContent: "Sync to…", className: "small", title: "Sync content from this environment", onclick: () => run(() => openSyncDialog(site, env)) }));
+	}
+	if (!isTarget(env) && site.scripts.some((file) => !hasScriptButton(site, file))) quick.append(scriptSelect(site));
 	if (env.unit || env.mode === "remote" || env.apache) {
 		const tools = el("div", { className: "actions quick" });
 		for (const [tool, label] of [["check_service", "Check service"], ["edit_service", "Edit service"], ["edit_conf", "Edit config"]]) {
 			if (tool !== "edit_conf" && !env.unit && env.mode !== "remote") continue;
 			tools.append(el("button", { textContent: label, className: "small" + (tool === "check_service" ? "" : " desktop-only"), onclick: () => run(() => tool === "check_service"
-				? openTask({ kind: env.mode === "remote" ? "remote_tool" : "unit_tool", site: site.name, unit: env.unit, tool, scope: env.key === "prod" ? "prod" : "main" })
+				? openTask({ kind: env.mode === "remote" ? "remote_tool" : "unit_tool", site: site.name, unit: env.unit, tool, scope: isTarget(env) ? "prod" : "main", ...targetFields(env) })
 				: editConfiguration(site, env, tool === "edit_service" ? "service" : "conf")) }));
 		}
 		if (site.kind === "csharp" || site.kind === "umbraco") {
 			for (const filename of ["appsettings.json"]) {
 				if (env.mode !== "remote" && !(env.editable_configs || []).includes(filename)) continue;
 				tools.append(el("button", { textContent: "Edit " + filename, className: "small desktop-only", onclick: () => run(() =>
-					editFile(env.mode === "remote" ? filename : join(env.publish_path, filename), env.mode === "remote" ? site.name : "")) }));
+					editFile(env.mode === "remote" ? filename : join(env.publish_path, filename), env.mode === "remote" ? remoteRef(site, env) : "")) }));
 			}
 		}
 		extraTools = tools;
 	}
-	if (hasProd(site) && !site.admin) add(`Delete ${environmentLabel(site, env)} site`, () => deleteSite(site, env.key === "prod" ? "prod" : "test"), "danger");
+	if (hasProd(site) && !site.admin) add(`Delete ${environmentLabel(site, env)} site`, () => deleteSite(site, isTarget(env) ? "prod" : "test", env), "danger");
 	if (!hasProd(site) && !site.admin) {
 		add("Copy site", () => copySite(site), "push-right");
 		add("Delete site", () => deleteSite(site, "all"), "danger");
 	}
 
-	const panel = el("section", { className: "env " + (env.key === "prod" ? "prod" : "") }, heading, meta);
+	const panel = el("section", { className: "env " + (isTarget(env) ? "prod" : "") }, heading, meta);
 	if (env.exists === false) panel.append(el("p", { className: "muted", textContent: "Nothing published here yet." }));
 	if (env.remote_error) panel.append(el("p", { className: "package-error", textContent: "Remote status unavailable: " + env.remote_error }));
 	if (quick.children.length) panel.append(quick);
@@ -1061,7 +1074,7 @@ function envPanel(site, env) {
 async function serviceAction(site, env, action) {
 	const unit = env.unit || env.folder;
 	if (action !== "start" && !(await ask({ title: `${action === "stop" ? "Stop" : "Restart"} ${bindingLabel(env) || siteLabel(site)}?`, message: bindingLabel(env) || siteLabel(site), input: false, ok: action === "stop" ? "Stop" : "Restart", danger: action === "stop" }))) return;
-	await api(`/api/sites/${encodeURIComponent(site.name)}/service`, { json: { action, unit: env.unit, scope: env.mode === "remote" ? "prod" : "local" } });
+	await api(`/api/sites/${encodeURIComponent(site.name)}/service`, { json: { action, unit: env.unit, scope: env.mode === "remote" ? "prod" : "local", ...targetFields(env) } });
 	toast(`${unit}: ${action} done`, "ok");
 	await loadSites();
 }
@@ -1079,7 +1092,7 @@ async function refreshLogs() {
 	let data;
 	try {
 		data = await api(logsTarget.source ? `/api/server-logs?source=${logsTarget.source}`
-			: `/api/sites/${encodeURIComponent(logsTarget.site.name)}/logs?unit=${encodeURIComponent(logsTarget.env.unit)}&scope=${logsTarget.env.mode === "remote" ? "prod" : "local"}`);
+			: `/api/sites/${encodeURIComponent(logsTarget.site.name)}/logs?unit=${encodeURIComponent(logsTarget.env.unit)}&scope=${logsTarget.env.mode === "remote" ? "prod" : "local"}${logsTarget.env.target && logsTarget.env.target !== "prod" ? "&target=" + encodeURIComponent(logsTarget.env.target) : ""}`);
 	} catch (error) {
 		$("#logs-text").textContent = error.message;
 		throw error;
@@ -1114,7 +1127,7 @@ async function changeBinding(site, scope, env) {
 	const aliases = bindings.extra.trim();
 	const currentAliases = aliasLabels(env).join(" ").toLowerCase();
 	if (binding !== current || aliases.replace(/,/g, " ").trim().replace(/\s+/g, " ").toLowerCase() !== currentAliases) {
-		await openTask({ kind: "change_binding", site: site.name, binding, aliases, scope });
+		await openTask({ kind: "change_binding", site: site.name, binding, aliases, scope, ...targetFields(scope === "prod" ? env : null) });
 	}
 }
 
@@ -1125,7 +1138,7 @@ async function copySite(site) {
 	$("#copy-site-icon").replaceChildren(svgIcon("file"));
 	const field = (name) => form.elements.namedItem(name);
 	const hasSqlConnection = site.environments.some((env) =>
-		env.key !== "prod" && ["MS SQL", "SQL Express", "Azure SQL"].includes(env.database));
+		!isTarget(env) && ["MS SQL", "SQL Express", "Azure SQL"].includes(env.database));
 	field("change_connection").closest("label").hidden = !hasSqlConnection;
 	field("change_connection").disabled = !hasSqlConnection;
 	const sqlFields = $("#copy-sql-fields");
@@ -1178,17 +1191,25 @@ async function copySite(site) {
 	dialog.showModal();
 }
 
-async function deleteSite(site, scope) {
-	const prod = site.environments.find((e) => e.key === "prod");
+async function deleteSite(site, scope, selected) {
+	const allTargets = site.environments.filter(isTarget);
+	const prod = scope === "prod" && selected ? selected : allTargets[0];
 	const main = site.environments.find((e) => e.key === "main");
 	const mainEnvironment = environmentLabel(site, main);
 	const prodEnvironment = prod ? environmentLabel(site, prod) : "";
 	const remote = prod && prod.mode === "remote";
 	const windows = prod && prod.mode === "windows";
-	const windowsKept = `The IIS site and its files on ${prod?.host} are not touched; only the production scripts here are removed.`;
+	const windowsKept = `The IIS site and its files on ${prod?.host} are not touched; remove them on the server yourself.`;
+	const describeTarget = (env) => {
+		const place = env.mode === "windows" ? `${env.host} (Windows: only removed here, delete the IIS site and its files yourself)`
+			: env.mode === "remote" ? `${env.host} (files, service and Apache config)` : "this server (files, service and Apache config)";
+		return `• ${environmentLabel(site, env)}, ${bindingLabel(env) || env.folder || ""} on ${place}`;
+	};
 	const target = scope === "prod" ? (bindingLabel(prod) || prod.unit || prod.folder || siteLabel(site)) : siteLabel(site);
 	const what = {
-		all: remote
+		all: allTargets.length > 1
+			? `This deletes the site and all its environments:\n${allTargets.map(describeTarget).join("\n")}`
+			: remote
 			? `This deletes the site and its remote ${prodEnvironment} site on ${prod.host}: files, services, Apache configs and logs on both servers.`
 			: windows
 				? `This deletes the site: its files, service, Apache config and logs. ${windowsKept}`
@@ -1211,11 +1232,11 @@ async function deleteSite(site, scope) {
 	const certificateMessage = remote && scope !== "test"
 		? "Also revoke and remove the certificate(s) for the site being deleted? The remote certificate is kept if another enabled site uses the domain."
 		: "Also revoke and remove the certificate(s) for the site being deleted?";
-	const deletedEnvironments = site.environments.filter((env) => scope === "all" || (scope === "prod" ? env.key === "prod" : env.key !== "prod"));
+	const deletedEnvironments = site.environments.filter((env) => scope === "all" || (scope === "prod" ? env === prod : !isTarget(env)));
 	if (deletedEnvironments.some((env) => env.https !== false && env.mode !== "windows")) {
 		certificates = (await ask({ title: "Certificate", message: certificateMessage, input: false, ok: "Remove certificate(s)" })) === true;
 	}
-	await openTask({ kind: "delete_site", site: site.name, certificates, scope });
+	await openTask({ kind: "delete_site", site: site.name, certificates, scope, ...(scope === "prod" ? { target: prod.target || "prod" } : {}) });
 }
 
 $("#search").oninput = (event) => {
@@ -1393,15 +1414,17 @@ function syncProdForm() {
 function openCreateProdDialog(site) {
 	prodForm.reset();
 	delete prodForm.binding.dataset.edited;
-	const main = site.environments.find((env) => env.key !== "prod");
+	const main = site.environments.find((env) => !isTarget(env));
 	const binding = (main && bindingLabel(main)) || siteLabel(site);
 	prodForm.folder.value = siteLabel(site);
 	prodForm.binding.value = binding;
-	prodForm.local_path.value = `/var/www/${site.name}/_prod`;
+	prodForm.dataset.siteName = site.name;
+	prodForm.dataset.siteLabel = siteLabel(site);
+	prodForm.local_path.value = `/var/www/${site.name}/_production`;
 	prodForm.dataset.remoteFolder = siteLabel(site);
 	prodForm.dataset.remoteBinding = binding;
-	prodForm.dataset.localFolder = `prod-${siteLabel(site)}`;
-	prodForm.dataset.localBinding = `prod-${siteLabel(site)}`;
+	prodForm.dataset.localFolder = `production-${siteLabel(site)}`;
+	prodForm.dataset.localBinding = `production-${siteLabel(site)}`;
 	prodForm.elements.target.value = "remote";
 	prodForm.elements.https.value = main && main.scheme === "http" ? "n" : "y";
 	delete prodForm.dataset.target;
@@ -1411,6 +1434,17 @@ function openCreateProdDialog(site) {
 	prodForm.elements.target.focus();
 }
 prodForm.elements.target.onchange = syncProdForm;
+// A local environment gets its own folder and site name, so the defaults follow the environment
+prodForm.elements.environment.onchange = () => {
+	const name = prodForm.elements.environment.value.toLowerCase();
+	const nextFolder = `${name}-${prodForm.dataset.siteLabel}`;
+	const local = prodForm.elements.target.value === "local";
+	if (local && prodForm.folder.value === prodForm.dataset.localFolder) prodForm.folder.value = nextFolder;
+	if (local && !prodForm.binding.dataset.edited && prodForm.binding.value === prodForm.dataset.localBinding) prodForm.binding.value = nextFolder;
+	if (/\/_[a-z]+$/.test(prodForm.local_path.value)) prodForm.local_path.value = `/var/www/${prodForm.dataset.siteName}/_${name}`;
+	prodForm.dataset.localFolder = nextFolder;
+	prodForm.dataset.localBinding = nextFolder;
+};
 prodForm.folder.oninput = () => {
 	if (!prodForm.binding.dataset.edited) prodForm.binding.value = prodForm.folder.value;
 };
@@ -1428,12 +1462,39 @@ prodForm.onsubmit = (event) => {
 	});
 };
 
+// Content can be synced from the main site or any environment to the other environments
+function syncDestinations(site, source) {
+	return sortedEnvironments(site.environments).filter((env) => env !== source && isTarget(env) && (env.scripts || []).includes("sync_prod.sh"));
+}
+const syncDialog = $("#dlg-sync");
+const syncForm = $("#form-sync");
+function openSyncDialog(site, source) {
+	syncForm.dataset.site = site.name;
+	syncForm.dataset.source = isTarget(source) ? source.target : "main";
+	$("#sync-source").textContent = `From ${environmentLabel(site, source)}: ${bindingLabel(source) || siteLabel(site)}`;
+	const destinations = syncDestinations(site, source);
+	const options = destinations.map((env) => el("option", { value: env.target, textContent: `${environmentLabel(site, env)}: ${bindingLabel(env) || env.host || env.target}` }));
+	if (destinations.length > 1) options.push(el("option", { value: "all", textContent: "All other environments" }));
+	$("#sync-destination").replaceChildren(...options);
+	syncDialog.showModal();
+}
+$("#sync-cancel").onclick = () => syncDialog.close();
+syncForm.onsubmit = (event) => {
+	event.preventDefault();
+	const data = { kind: "sync_env", site: syncForm.dataset.site, source: syncForm.dataset.source, destination: syncForm.elements.destination.value };
+	run(async () => {
+		await openTask(data);
+		syncDialog.close();
+	});
+};
+
 const environmentDialog = $("#dlg-environment");
 const environmentForm = $("#form-environment");
 function openEnvironmentDialog(site, env) {
 	environmentForm.reset();
 	environmentForm.dataset.site = site.name;
-	environmentForm.dataset.scope = env.key === "prod" ? "prod" : "test";
+	environmentForm.dataset.scope = isTarget(env) ? "prod" : "test";
+	environmentForm.dataset.target = env.target && env.target !== "prod" ? env.target : "";
 	const choices = [...environmentForm.querySelectorAll("input[name=environment]")];
 	const selected = choices.find((input) => input.value.toLowerCase() === (env.environment || "").toLowerCase());
 	if (selected) selected.checked = true;
@@ -1450,6 +1511,7 @@ environmentForm.onsubmit = (event) => {
 		kind: "prod_action", action: "change_env",
 		site: environmentForm.dataset.site, scope: environmentForm.dataset.scope,
 		environment: environmentForm.elements.environment.value,
+		...(environmentForm.dataset.target ? { target: environmentForm.dataset.target } : {}),
 	};
 	run(async () => {
 		await openTask(data);
@@ -1845,7 +1907,7 @@ async function editFile(path, remoteSite = null) {
 
 async function editConfiguration(site, env, kind) {
 	if (!(await discardOk())) return;
-	const url = `/api/sites/${encodeURIComponent(site.name)}/config/${kind}?scope=${env.mode === "remote" ? "remote" : "local"}&unit=${encodeURIComponent(env.unit)}`;
+	const url = `/api/sites/${encodeURIComponent(site.name)}/config/${kind}?scope=${env.mode === "remote" ? "remote" : "local"}&unit=${encodeURIComponent(env.unit)}${env.target && env.target !== "prod" ? "&target=" + encodeURIComponent(env.target) : ""}`;
 	let data = await api(url);
 	if (data.encoding_required) {
 		const dialog = $("#dlg-encoding");

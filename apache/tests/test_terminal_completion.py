@@ -7,6 +7,7 @@ import threading
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock
+from apache.tests.app_targets import add_target_helpers
 
 
 APP = Path(__file__).resolve().parents[1] / "solutionfiles/admin/app"
@@ -20,7 +21,7 @@ class TerminalCompletionTests(unittest.TestCase):
         self.ns = {"re": re, "codecs": codecs, "BUFFER_MAX": 1024, "REMOTE_STATUS": {},
                    "os": SimpleNamespace(read=Mock())}
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "terminal completion", "exec"), self.ns)
-
+        add_target_helpers(self.ns)
     def test_open_shells_do_not_mark_sites_as_working(self):
         activity = self.ns["terminal_activity_sites"]
         for payload in (

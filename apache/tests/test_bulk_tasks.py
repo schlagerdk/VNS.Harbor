@@ -12,6 +12,7 @@ import unittest
 
 from flask import abort
 from werkzeug.exceptions import BadRequest
+from apache.tests.app_targets import add_target_helpers
 
 
 APACHE = Path(__file__).resolve().parents[1]
@@ -41,7 +42,7 @@ class BulkTests(unittest.TestCase):
                        VERSION_RE=re.compile(r"^[A-Za-z0-9_.-]+$"),
                        site_arg=lambda data: data["site"], site_info=self.info)
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "bulk API", "exec"), self.ns)
-
+        add_target_helpers(self.ns)
     def info(self, name, _):
         return {"kind": "csharp", "scripts": [
             path.name for path in (self.root / name / "scripts").glob("*.sh")]}

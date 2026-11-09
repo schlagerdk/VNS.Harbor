@@ -17,6 +17,7 @@ from werkzeug.exceptions import BadRequest
 
 from apache.lib.domain_names import normalize_dns_name, normalize_site_name, service_name
 from apache.lib import windows_prod
+from apache.tests.app_targets import add_target_helpers
 
 APACHE = Path(__file__).resolve().parents[1]
 WINDOWS_TEMPLATES = APACHE / "solutionfiles/csharp/windows-prod-scripts"
@@ -417,6 +418,7 @@ class ProductionSetupTests(unittest.TestCase):
                    "conf_binding": lambda site: "example.test", "_normalize_dns_name": normalize_dns_name,
                    "_normalize_site_name": normalize_site_name, "service_name": service_name}
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "production env", "exec"), self.ns)
+        add_target_helpers(self.ns)
         self.windows = dict(target="windows", binding="prod.test", smb_share="//10.0.0.1/share$/sites/prod.test",
                             smb_user="Administrator", smb_password="secret", smb_domain="VNS", https="n")
 
@@ -481,7 +483,7 @@ class TemplateTests(unittest.TestCase):
     def test_windows_scripts_have_the_names_the_admin_buttons_use(self):
         self.assertEqual({path.name for path in WINDOWS_TEMPLATES.glob("*.sh")}, {"publish_prod.sh"})
         self.assertEqual({path.name for path in UMBRACO_TEMPLATES.glob("*.sh")}, {"sync_prod.sh", "clear_logs_prod.sh"})
-        self.assertIn("VNS_PUBLISH_TRACKED:-} != prod", (WINDOWS_TEMPLATES / "publish_prod.sh").read_text())
+        self.assertIn('VNS_PUBLISH_TRACKED:-} != "${_scope}"', (WINDOWS_TEMPLATES / "publish_prod.sh").read_text())
 
     def test_actions_without_ssh_are_refused_for_windows(self):
         self.assertIn("PROD_TARGET:-} == windows", (APACHE / "lib/prod.sh").read_text())
@@ -533,8 +535,8 @@ class CreateProdTests(ScriptTestCase):
                            VNS_PROD_SMB_USER="Administrator", VNS_PROD_SMB_PASSWORD="pa$$ 'w\"ord", VNS_PROD_SMB_DOMAIN="VNS",
                            VNS_PROD_HTTPS="n", **env)
 
-    def setting(self, name, script="publish_prod.sh"):
-        lines = [line for line in (self.scripts / script).read_text().splitlines() if line.startswith("PROD_")]
+    def setting(self, name, script="publish_prod.sh", target="staging"):
+        lines = [line for line in (self.scripts / "targets" / target / script).read_text().splitlines() if line.startswith("PROD_")]
         code = "\n".join(lines) + f'\nprintf %s "${{{name}}}"'
         return subprocess.run([BASH, "-c", code], capture_output=True, text=True, check=True).stdout
 
@@ -544,7 +546,7 @@ class CreateProdTests(ScriptTestCase):
         self.assertEqual((self.scripts / "publish_local.sh").read_text(), "# local publish\n")
         self.assertEqual((self.scripts / "clear_logs_local.sh").read_text(), "# local logs\n")
         for name in ("publish_prod.sh", "sync_prod.sh", "clear_logs_prod.sh"):
-            path = self.scripts / name
+            path = self.scripts / "targets/staging" / name
             self.assertEqual(path.stat().st_mode & 0o777, 0o700)
             self.assertNotRegex(path.read_text(), r"@[A-Z_]+@")
             self.assertEqual(self.setting("PROD_SMB_PASSWORD", name), "pa$$ 'w\"ord")
@@ -560,28 +562,46 @@ class CreateProdTests(ScriptTestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Could not open", result.stderr)
         self.assertTrue((self.scripts / "publish.sh").exists())
-        self.assertFalse((self.scripts / "publish_prod.sh").exists())
+        self.assertFalse((self.scripts / "targets").exists())
         self.assertFalse(any(call.startswith("dotnet") for call in self.calls()))
 
     def test_empty_project_gets_no_umbraco_scripts(self):
         self.assertEqual(self.windows(kind="empty").returncode, 0)
-        self.assertFalse((self.scripts / "sync_prod.sh").exists())
-        self.assertFalse((self.scripts / "clear_logs_prod.sh").exists())
+        self.assertFalse((self.scripts / "targets/staging/sync_prod.sh").exists())
+        self.assertFalse((self.scripts / "targets/staging/clear_logs_prod.sh").exists())
 
     def test_share_without_a_folder_is_refused(self):
         result = self.create(VNS_PROD_TARGET="windows", VNS_PROD_SMB_SHARE="//10.0.0.1/share$", VNS_PROD_SMB_USER="a", VNS_PROD_SMB_PASSWORD="b")
         self.assertNotEqual(result.returncode, 0)
-        self.assertFalse((self.scripts / "publish_prod.sh").exists())
+        self.assertFalse((self.scripts / "targets").exists())
+
+    def test_several_environments_get_their_own_folders(self):
+        self.assertEqual(self.windows().returncode, 0)
+        self.assertEqual(self.windows().returncode, 0)
+        self.assertEqual(self.windows(VNS_PROD_ENVIRONMENT="Production").returncode, 0)
+        self.assertEqual(sorted(path.name for path in (self.scripts / "targets").iterdir()),
+                         ["production", "staging", "staging-2"])
+        self.assertTrue((self.site / ".vns-publish/target-staging-2.json").exists())
+        self.assertEqual((self.scripts / "publish_local.sh").read_text(), "# local publish\n")
+
+    def test_two_local_environments_cannot_share_a_folder(self):
+        executable(self.bin / "dotnet", "#!/bin/bash\nexit 1\n")
+        local = dict(VNS_PROD_TARGET="local", VNS_PROD_LOCAL_PATH=str(self.site / "_prod"), VNS_PROD_HTTPS="n")
+        self.create(**local)
+        result = self.create(**local, VNS_PROD_ENVIRONMENT="Production")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("already uses that folder", result.stderr)
+        self.assertFalse((self.scripts / "targets/production").exists())
 
     def test_linux_targets_save_the_protocol_and_use_the_linux_templates(self):
         executable(self.bin / "dotnet", "#!/bin/bash\nexit 1\n")
         executable(self.bin / "ssh", "#!/bin/bash\necho x86_64\n")
         self.create(VNS_PROD_TARGET="remote", VNS_PROD_IP="server.test", VNS_PROD_USER="root", VNS_PROD_SSH_PORT="22", VNS_PROD_HTTPS="n")
         self.assertEqual(self.setting("PROD_HTTPS"), "n")
-        text = (self.scripts / "publish_prod.sh").read_text()
+        text = (self.scripts / "targets/staging/publish_prod.sh").read_text()
         self.assertNotIn("PROD_TARGET=windows", text)
         self.assertIn("HTTPS='${PROD_HTTPS}'", text)
-        self.assertIn("rsync", (self.scripts / "sync_prod.sh").read_text())
+        self.assertIn("rsync", (self.scripts / "targets/staging/sync_prod.sh").read_text())
 
 
 @NEEDS_BASH_4
@@ -592,7 +612,7 @@ class WindowsActionTests(ScriptTestCase):
         super().setUp()
         self.apache = self.root / "apache"
         shutil.copytree(APACHE / "lib", self.apache / "lib", ignore=shutil.ignore_patterns("__pycache__"))
-        for script in ("prod_action.sh", "change_binding_prod.sh", "remote_site.sh", "delete_site.sh", "fix_permissions.sh"):
+        for script in ("prod_action.sh", "change_binding_prod.sh", "remote_site.sh", "delete_site.sh", "fix_permissions.sh", "sync_env.sh"):
             shutil.copy(APACHE / script, self.apache)
         common = self.apache / "lib/common.sh"
         common.write_text(common.read_text().replace("_rootPath=/var/www", f"_rootPath={self.root}/www"))
@@ -653,6 +673,153 @@ class WindowsActionTests(ScriptTestCase):
         self.assertEqual((self.scripts / "publish.sh").read_text(), "# local\n")
 
 
+@NEEDS_BASH_4
+class SeveralEnvironmentsTests(WindowsActionTests):
+    # This one expects a single environment. With several, test_delete_without_choosing... covers the refusal.
+    test_delete_production_keeps_the_server_and_restores_the_test_site = None
+
+    def setUp(self):
+        super().setUp()
+        self.site_root = self.root / "www/example.test"
+        for name in ("staging", "production"):
+            folder = self.scripts / "targets" / name
+            folder.mkdir(parents=True)
+            folder.joinpath("publish_prod.sh").write_text(render_template(
+                WINDOWS_TEMPLATES / "publish_prod.sh", self.values | {"PROD_BINDING": name + ".test", "PROD_FOLDER": name + ".test"}))
+            folder.joinpath("sync_prod.sh").write_text(
+                '#!/bin/bash\nprintf "%s from %s\\n" ' + name + ' "${VNS_SYNC_SOURCE:-main}" >>"$FAKE_LOG"\nexit ${FAIL_SYNC:-0}\n')
+            executable(folder / "clear_logs_prod.sh", "# clear\n")
+        (self.scripts / "sync_prod.sh").write_text('#!/bin/bash\necho "prod from ${VNS_SYNC_SOURCE:-main}" >>"$FAKE_LOG"\n')
+        (self.site_root / "_publish/uSync").mkdir(parents=True)
+        # The tests are not root, and the script re-runs itself with sudo when it is not
+        env_script = self.apache / "sync_env.sh"
+        env_script.write_text(env_script.read_text().replace('[[ $EUID -eq 0 ]] || exec sudo "$0" "$@"\n', ""))
+
+    def run_with(self, script, *args, **env):
+        return self.run_script(self.apache / script, *args, **env)
+
+    def test_vns_target_selects_the_environment(self):
+        result = self.run_with("change_binding_prod.sh", "example.test", "new.test", "", "--yes", VNS_TARGET="staging")
+        self.assertIn(str(self.scripts / "targets/staging/publish_prod.sh"), result.stderr)
+
+    def test_unknown_or_unsafe_target_is_refused(self):
+        for target in ("../../etc", "missing", "A"):
+            with self.subTest(target):
+                result = self.run_with("prod_action.sh", "example.test", "change_env", "Test", VNS_TARGET=target)
+                self.assertNotEqual(result.returncode, 0)
+
+    def test_sync_from_main_to_all(self):
+        result = self.run_with("sync_env.sh", "example.test", "main", "all")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(sorted(call for call in self.calls() if " from " in call),
+                         ["prod from main", "production from main", "staging from main"])
+
+    def test_sync_between_environments_uses_a_temporary_copy_and_skips_the_source(self):
+        result = self.run_with("sync_env.sh", "example.test", "staging", "all")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = [call for call in self.calls() if " from " in call]
+        self.assertEqual(sorted(call.split()[0] for call in calls), ["prod", "production"])
+        source = calls[0].split()[-1]
+        self.assertNotEqual(source, "main")
+        self.assertFalse(Path(source).exists(), "The temporary copy is removed afterwards")
+        self.assertLess(self.index("lsf "), self.index(calls[0].split()[0] + " from"))
+
+    def test_sync_to_one_environment(self):
+        self.assertEqual(self.run_with("sync_env.sh", "example.test", "main", "staging").returncode, 0)
+        self.assertEqual([call for call in self.calls() if " from " in call], ["staging from main"])
+
+    def test_failed_pull_stops_before_anything_is_mirrored(self):
+        result = self.run_with("sync_env.sh", "example.test", "staging", "production", FAKE_LOGIN_FAILS="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse([call for call in self.calls() if " from " in call])
+
+    def test_failed_destination_is_reported_and_the_rest_continue(self):
+        result = self.run_with("sync_env.sh", "example.test", "main", "all", FAIL_SYNC="1")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("errors in 2 environment", result.stderr)
+        self.assertIn("prod from main", self.calls())
+
+    def test_sync_refuses_same_source_and_destination(self):
+        self.assertNotEqual(self.run_with("sync_env.sh", "example.test", "staging", "staging").returncode, 0)
+        self.assertNotEqual(self.run_with("sync_env.sh", "example.test", "unknown", "all").returncode, 0)
+
+    def test_delete_one_environment_keeps_the_others(self):
+        result = self.run_with("delete_site.sh", "example.test", "n", "prod", VNS_TARGET="staging")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse((self.scripts / "targets/staging").exists())
+        self.assertTrue((self.scripts / "targets/production").exists())
+        self.assertTrue((self.scripts / "publish_prod.sh").exists())
+        self.assertFalse((self.scripts / "publish.sh").exists(), "Other environments remain")
+
+    def test_delete_without_choosing_an_environment_is_refused(self):
+        result = self.run_with("delete_site.sh", "example.test", "n", "prod")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("VNS_TARGET", result.stderr)
+        self.assertTrue((self.scripts / "targets/staging").exists())
+
+    def test_last_environment_restores_the_test_site_scripts(self):
+        for target in ("staging", "production", "prod"):
+            self.assertEqual(self.run_with("delete_site.sh", "example.test", "n", "prod", VNS_TARGET=target).returncode, 0)
+        self.assertTrue((self.scripts / "publish.sh").exists())
+
+    def test_delete_everything_reports_every_windows_environment(self):
+        result = self.run_with("delete_site.sh", "example.test", "n", "all")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout.count("not touched"), 3)
+        self.assertEqual(self.calls(), [])
+        self.assertFalse(self.site_root.exists())
+
+
+class TargetListingTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.web = Path(self.temp.name)
+        self.scripts = self.web / "example.test/scripts"
+        (self.scripts / "targets").mkdir(parents=True)
+        self.ns = add_target_helpers({"WEB_ROOT": str(self.web)})
+        self.root = str(self.web / "example.test")
+
+    def add(self, name):
+        folder = self.scripts / "targets" / name
+        folder.mkdir()
+        (folder / "publish_prod.sh").touch()
+
+    def test_old_single_environment_comes_first(self):
+        self.add("staging")
+        self.add("production")
+        (self.scripts / "publish_prod.sh").touch()
+        self.assertEqual(self.ns["target_ids"](self.root), ["prod", "production", "staging"])
+
+    def test_invalid_folders_are_ignored(self):
+        self.add("Bad Name")
+        (self.scripts / "targets/empty").mkdir()
+        self.assertEqual(self.ns["target_ids"](self.root), [])
+
+    def test_target_arg_refuses_unknown_and_defaults_to_the_old_one(self):
+        self.add("staging")
+        self.assertEqual(self.ns["target_arg"]("example.test", {"target": "staging"}), "staging")
+        for target in ("missing", "../x", 5):
+            with self.subTest(target), self.assertRaises(BadRequest):
+                self.ns["target_arg"]("example.test", {"target": target})
+        with self.assertRaises(BadRequest):
+            self.ns["target_arg"]("example.test", {})
+
+    def test_with_target_only_changes_named_environments(self):
+        self.assertEqual(self.ns["with_target"](["a"], "prod"), ["a"])
+        self.assertEqual(self.ns["with_target"](["a"], "staging"), ["/usr/bin/env", "VNS_TARGET=staging", "a"])
+
+    def test_scope(self):
+        self.assertEqual(self.ns["target_scope"]("prod"), "prod")
+        self.assertEqual(self.ns["target_scope"]("staging"), "target-staging")
+
+    def test_publish_status_scope_of_a_script(self):
+        from apache.lib import publish_status
+        self.assertEqual(publish_status.script_scope("/s/scripts/publish_local.sh"), "test")
+        self.assertEqual(publish_status.script_scope("/s/scripts/publish_prod.sh"), "prod")
+        self.assertEqual(publish_status.script_scope("/s/scripts/targets/staging-2/publish_prod.sh"), "target-staging-2")
+
+
 class WindowsUpdaterTests(unittest.TestCase):
     def test_script_updater_leaves_windows_scripts_alone(self):
         source = (APACHE / "update_admin_site.sh").read_text()
@@ -666,10 +833,13 @@ class WindowsUpdaterTests(unittest.TestCase):
             (scripts.parent / "App.csproj").write_text("<Project />\n")
             text = render_template(WINDOWS_TEMPLATES / "publish_prod.sh", {"APACHE_DIR": "/vns/apache"})
             (scripts / "publish_prod.sh").write_text(text)
+            (scripts / "targets/staging").mkdir(parents=True)
+            (scripts / "targets/staging/publish_prod.sh").write_text(text)
             result = subprocess.run([sys.executable, "-c", updater, str(root / "www"), str(root / "apache")],
                                     capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual((scripts / "publish_prod.sh").read_text(), text)
+            self.assertEqual((scripts / "targets/staging/publish_prod.sh").read_text(), text)
 
 
 if __name__ == "__main__":

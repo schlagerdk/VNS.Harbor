@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from flask import abort
 from werkzeug.exceptions import BadRequest
+from apache.tests.app_targets import add_target_helpers
 
 
 APACHE = Path(__file__).resolve().parents[1]
@@ -89,6 +90,7 @@ class SitePermissionsTests(unittest.TestCase):
                          r"^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$"),
                      "ADMIN_SITE": "admin.test", "APACHE_DIR": str(APACHE), "WEB_ROOT": str(self.base)}
         exec(compile(ast.Module(body=nodes, type_ignores=[]), str(source), "exec"), namespace)
+        add_target_helpers(namespace)
         command = namespace["build_command"]
         for scope in ("test", "prod"):
             if scope == "prod":
@@ -112,6 +114,7 @@ class SitePermissionsTests(unittest.TestCase):
                          r"^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$"),
                      "ADMIN_SITE": "admin.test", "APACHE_DIR": str(APACHE), "WEB_ROOT": str(self.base)}
         exec(compile(ast.Module(body=nodes, type_ignores=[]), str(source), "exec"), namespace)
+        add_target_helpers(namespace)
         (self.root / "scripts").mkdir()
         (self.root / "scripts/publish_prod.sh").touch()
         command = namespace["build_command"]

@@ -1,11 +1,26 @@
 #!/bin/bash
-# Helpers for the production environment of a site (settings in <site>/scripts/publish_prod.sh).
-# Needs _siteRoot (set_site_vars). Source after lib/common.sh.
+# Helpers for the environments of a site. Each has its settings in <site>/scripts/targets/<id>/publish_prod.sh,
+# or in <site>/scripts/publish_prod.sh for an environment made before several were possible (id "prod").
+# Needs _siteRoot (set_site_vars). Source after lib/common.sh. VNS_TARGET selects the environment.
+
+# prod_targets: print the id of every environment of this site
+prod_targets() {
+	local _folder
+	[[ ! -f ${_siteRoot}/scripts/publish_prod.sh ]] || echo prod
+	for _folder in "${_siteRoot}"/scripts/targets/*/; do
+		[[ -f ${_folder}publish_prod.sh ]] || continue
+		basename "${_folder}"
+	done
+}
 
 # load_prod_settings: read the PROD_* assignments (the rest of publish_prod.sh is not executed)
 # and set _target (description) and _root (site folder on the production target)
 load_prod_settings() {
-	local _script="${_siteRoot}/scripts/publish_prod.sh"
+	local _id=${VNS_TARGET:-prod} _script="${_siteRoot}/scripts/publish_prod.sh"
+	if [[ ${_id} != prod ]]; then
+		[[ ${_id} =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]] || { echo "Invalid environment: ${_id}" >&2; exit 1; }
+		_script="${_siteRoot}/scripts/targets/${_id}/publish_prod.sh"
+	fi
 	if [[ ! -f ${_script} ]]; then
 		echo "This site has no production site (missing ${_script})." >&2
 		exit 1

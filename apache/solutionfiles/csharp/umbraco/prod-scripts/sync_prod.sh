@@ -1,8 +1,10 @@
 #!/bin/bash
 # Mirror Umbraco content folders (uSync, Views, css, scripts, media) from this site's publish folder to production.
 # Each folder is mirrored (files missing here are deleted on prod), like robocopy /mir.
-cd "$(dirname "$0")"
-cd ..
+_self=$(realpath "$0")
+_scriptFolder=$(dirname "${_self}")
+_siteFolder=${_scriptFolder%/scripts*}   # scripts/ or scripts/targets/<environment>/
+cd "${_siteFolder}"
 set -euo pipefail
 
 # ---- Production settings (filled in by create_prod.sh, edit if needed) -----
@@ -43,7 +45,8 @@ else
 	_run() { "${_ssh[@]}" "${_target}" "$1"; }
 fi
 
-cd "${_publishFolder}"
+# sync_env.sh sets VNS_SYNC_SOURCE when the content comes from another environment
+cd "${VNS_SYNC_SOURCE:-${_publishFolder}}"
 
 sync_folder() {
 	local _label=$1 _path=$2

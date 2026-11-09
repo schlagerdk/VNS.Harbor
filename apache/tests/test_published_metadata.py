@@ -9,6 +9,7 @@ import shlex
 import tempfile
 import unittest
 from types import SimpleNamespace
+from apache.tests.app_targets import add_target_helpers
 
 
 APP = Path(__file__).resolve().parents[1] / "solutionfiles/admin/app/app.py"
@@ -21,6 +22,7 @@ class PublishedMetadataTests(unittest.TestCase):
         namespace = dict(glob=glob, json=json, os=os, re=re, shlex=shlex,
                          app=SimpleNamespace(logger=logging.getLogger(__name__)))
         exec(compile(ast.Module(body=nodes, type_ignores=[]), str(APP), "exec"), namespace)
+        add_target_helpers(namespace)
         self.read = namespace["published_project_info"]
 
     def test_published_umbraco_without_csproj(self):

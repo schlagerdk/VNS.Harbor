@@ -10,6 +10,7 @@ import sys
 import tempfile
 from types import SimpleNamespace
 import unittest
+from apache.tests.app_targets import add_target_helpers
 
 
 APACHE = Path(__file__).resolve().parents[1]
@@ -159,11 +160,13 @@ class PublishStatusTests(unittest.TestCase):
                   environment_info=lambda key, *args, **kwargs: {
                       "key": key, "binding": "xn--5cab8c.test",
                       "aliases": ["www.xn--5cab8c.test"]},
-                  parse_prod=lambda root: dict(PROD_LOCAL_PATH="", PROD_BINDING="prod.test",
+                  parse_prod=lambda root, target="prod": dict(PROD_LOCAL_PATH="", PROD_BINDING="prod.test",
                                               PROD_PORT_HTTP="4001", PROD_IP="remote.test",
                                               PROD_USER="root", PROD_SSH_PORT="22", PROD_FOLDER="prod.test"),
-                  remote_status=lambda name: {}, app=SimpleNamespace(logger=logging.getLogger(__name__)))
+                  remote_status=lambda name, target="prod": {}, app=SimpleNamespace(logger=logging.getLogger(__name__)))
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "site publish status", "exec"), ns)
+        add_target_helpers(ns)
+        ns["target_ids"] = lambda root: ["prod"]
         site = ns["site_info"]("example.test", {})
         self.assertEqual(site["name"], "example.test")
         self.assertEqual(site["display_name"], "example.test")
@@ -204,7 +207,7 @@ assert.equal(publishBadge({}), null);
             ("prod", APACHE / "solutionfiles/csharp/prod-scripts/publish_prod.sh"),
         ):
             text = template.read_text()
-            self.assertIn("VNS_PUBLISH_TRACKED:-} != " + scope, text)
+            self.assertIn("VNS_PUBLISH_TRACKED:-} != " + ('"${_scope}"' if scope == "prod" else scope), text)
             self.assertIn('"@APACHE_DIR@/lib/publish_status.py" run', text)
 
     def test_existing_create_prod_renderer_gets_tracking_helper_path(self):

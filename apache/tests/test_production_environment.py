@@ -10,6 +10,7 @@ from flask import abort
 from werkzeug.exceptions import BadRequest
 
 from apache.lib.domain_names import normalize_dns_name, normalize_site_name, service_name
+from apache.tests.app_targets import add_target_helpers
 
 APACHE = Path(__file__).resolve().parents[1]
 
@@ -29,6 +30,7 @@ class ProductionEnvironmentTests(unittest.TestCase):
                   "conf_binding": lambda site: "example.test", "_normalize_dns_name": normalize_dns_name,
                   "_normalize_site_name": normalize_site_name, "service_name": service_name}
             exec(compile(ast.Module(body=nodes, type_ignores=[]), "production env", "exec"), ns)
+            add_target_helpers(ns)
             for target in ("local", "remote"):
                 data = dict(target=target, folder="prod.test", binding="prod.test",
                             local_path=str(scripts.parent / "_prod"),

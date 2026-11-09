@@ -90,7 +90,7 @@ def prepare(source_name, target_name, binding, port="", web_root=Path("/var/www"
     target_service = services / (service_name(target_name) + ".service")
     if source.is_symlink() or not source.is_dir() or not conf.is_file():
         raise ValueError("The source must be a local site with an Apache configuration.")
-    if (source / "scripts/publish_prod.sh").exists():
+    if (source / "scripts/publish_prod.sh").exists() or any(source.glob("scripts/targets/*/publish_prod.sh")):
         raise ValueError("Sites with a production target cannot be copied.")
     if target.exists() or target.is_symlink() or target_conf.exists() or target_service.exists():
         raise ValueError("The destination folder, configuration or service already exists.")

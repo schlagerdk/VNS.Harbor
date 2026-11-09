@@ -10,6 +10,7 @@ import unittest
 
 from flask import abort
 from werkzeug.exceptions import BadRequest
+from apache.tests.app_targets import add_target_helpers
 
 
 APP = Path(__file__).resolve().parents[1] / "solutionfiles/admin/app"
@@ -31,7 +32,7 @@ class PublishBothTests(unittest.TestCase):
                    "SCRIPT_RE": re.compile(r"^[A-Za-z0-9_.-]+\.sh$"),
                    "site_arg": lambda data: "example.test"}
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "publish both", "exec"), self.ns)
-
+        add_target_helpers(self.ns)
     def command(self):
         return self.ns["build_command"]({"kind": "publish_both", "site": "example.test"})
 
@@ -97,6 +98,8 @@ const $ = selector => nodes[selector] ||= el("div");
 let allSites = [], sitesLoaded = true, confirmed = false, tasks = [], prompts = [];
 const buttonScripts = new Set(["publish_local.sh", "publish.sh", "publish_prod.sh"]);
 const hasProd = site => site.prod;
+const isTarget = env => env.key !== "main";
+const targetFields = () => ({});
 const sortedEnvironments = environments => environments;
 const siteLabel = site => site.display_name || site.name;
 const kindBadges = () => el("span");

@@ -29,9 +29,17 @@ console.log(JSON.stringify(sortedEnvironments(input).map((env) => env.environmen
     def test_detail_page_keeps_the_main_site_first_and_sorts_the_rest(self):
         source = (APP / "static/app.js").read_text()
         render = source[source.index("function renderSite("):source.index("async function updatePackages")]
-        self.assertIn('if (env.key !== "prod") envs.append(envPanel(site, env));', render)
+        self.assertIn('if (!isTarget(env)) envs.append(envPanel(site, env));', render)
         self.assertIn("for (const env of sortedEnvironments(site.environments)) {", render)
         self.assertIn("targets.append(envPanel(site, env));", render)
+
+    def test_empty_state_and_equal_heights(self):
+        page = (APP / "templates/index.html").read_text()
+        self.assertIn('id="targets-empty"', page)
+        self.assertIn('id="btn-empty-add-environment"', page)
+        css = (APP / "static/style.css").read_text()
+        self.assertIn(".site-layout.with-packages .package-panel { margin-top: 0; display: flex; flex-direction: column; contain: size; }", css)
+        self.assertNotIn("gap: 16px; align-items: start; }\n.site-layout", css)
 
     def test_layout_and_wording(self):
         page = (APP / "templates/index.html").read_text()

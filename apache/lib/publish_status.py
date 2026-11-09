@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -158,6 +159,14 @@ def upgrade_packages(root, name=None):
     return 0
 
 
+def script_scope(script):
+    """The publish status of a script: test, prod, or target-<id> for scripts/targets/<id>/publish_prod.sh."""
+    path = Path(script)
+    if path.parent.parent.name == "targets" and path.parent.parent.parent.name == "scripts":
+        return "target-" + path.parent.name
+    return "prod" if path.name == "publish_prod.sh" else "test"
+
+
 def run_publish(root, scope, command):
     value = fingerprint(root)
     result = subprocess.run(command, cwd=root, env=os.environ | {"VNS_PUBLISH_TRACKED": scope})
@@ -176,12 +185,14 @@ def main(args):
         raise ValueError("Usage: publish_status.py check ROOT | upgrade ROOT [PACKAGE] | run ROOT test|prod COMMAND... | both ROOT LOCAL_SCRIPT PROD_SCRIPT")
     action, root = args[:2]
     if action == "both":
-        if len(args) != 4:
-            raise ValueError("Expected test and production publish scripts")
-        result = run_publish(root, "test", ["/bin/bash", args[2]])
-        return result or run_publish(root, "prod", ["/bin/bash", args[3]])
+        # The scripts run one at a time, and the first failure stops the rest
+        for script in args[2:]:
+            result = run_publish(root, script_scope(script), ["/bin/bash", script])
+            if result:
+                return result
+        return 0
     scope = args[2]
-    if scope not in ("test", "prod"):
+    if not re.fullmatch(r"test|prod|target-[a-z0-9][a-z0-9-]{0,62}", scope):
         raise ValueError("Invalid publish scope")
     return run_publish(root, scope, args[3:])
 
