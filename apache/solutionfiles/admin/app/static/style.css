@@ -397,8 +397,30 @@ dialog.files-dialog { padding: 18px; }
 .list { position: relative; overflow-x: auto; }
 .env .actions.quick { margin-top: 12px; }
 .env .actions.quick button { background: var(--accent-soft, transparent); }
-.env .actions.quick .script-select { appearance: none; max-width: 100%; min-width: 150px; padding: 6px 32px 6px 12px; border-radius: 8px; border-color: var(--blue); color: var(--blue); background-color: rgba(88,166,255,.08); cursor: pointer; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2358a6ff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; }
-.script-select option, .script-select optgroup { color: var(--text); background: var(--panel2); }
+.env .actions.quick .script-menu-trigger { background: linear-gradient(135deg, rgba(88, 166, 255, .13), rgba(163, 113, 247, .1)); }
+.env .actions.quick .script-menu-trigger:hover, .env .actions.quick .script-menu-trigger[aria-expanded="true"] { background: rgba(88, 166, 255, .18); }
+.env .actions.quick .script-menu-item { background: transparent; }
+.env .actions.quick .script-menu-item:hover, .env .actions.quick .script-menu-item:focus-visible { background: rgba(88, 166, 255, .1); }
+.site:has(.script-menu-panel:not([hidden])), .env:has(.script-menu-panel:not([hidden])) { z-index: 10; }
+.script-menu { position: relative; display: inline-flex; }
+.script-menu-trigger { display: inline-flex; align-items: center; gap: 7px; min-height: 32px; border-color: rgba(88, 166, 255, .4); color: var(--blue); background: linear-gradient(135deg, rgba(88, 166, 255, .13), rgba(163, 113, 247, .1)); }
+.script-menu-trigger:hover, .script-menu-trigger[aria-expanded="true"] { border-color: var(--blue); background: rgba(88, 166, 255, .18); }
+.script-menu-trigger .ico { width: 14px; height: 14px; margin: 0; }
+.script-menu-chevron { margin-left: 2px; color: var(--muted); font-size: 11px; transition: transform .15s; }
+.script-menu-trigger[aria-expanded="true"] .script-menu-chevron { transform: rotate(180deg); }
+.script-menu-panel { position: absolute; top: calc(100% + 8px); left: 0; z-index: 30; width: min(360px, calc(100vw - 40px)); max-height: min(460px, 65vh); overflow: auto; padding: 8px; border: 1px solid rgba(88, 166, 255, .28); border-radius: 12px; background: linear-gradient(145deg, rgba(88, 166, 255, .08), transparent 48%), var(--panel); box-shadow: 0 18px 48px rgba(0, 0, 0, .55), 0 0 0 1px rgba(255, 255, 255, .025); }
+.script-menu-header { position: sticky; top: -8px; z-index: 1; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 12px; margin: -8px -8px 4px; padding: 13px 14px 11px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--panel) 94%, #20334a); }
+.script-menu-eyebrow { grid-column: 1 / -1; color: var(--blue); font-size: 9px; font-weight: 700; letter-spacing: .13em; }
+.script-menu-header strong { font-size: 13px; }
+.script-menu-count { align-self: center; color: var(--muted); font-size: 11px; }
+.script-menu-group { padding: 7px 4px 5px; }
+.script-menu-group + .script-menu-group { border-top: 1px solid var(--line); }
+.script-menu-group h4 { margin: 0 0 5px; padding: 0 8px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+.script-menu-item { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-width: 0; padding: 8px; border-color: transparent; background: transparent; text-align: left; }
+.script-menu-item:hover, .script-menu-item:focus-visible { border-color: rgba(88, 166, 255, .25); background: rgba(88, 166, 255, .1); }
+.script-menu-item-label { min-width: 0; overflow-wrap: anywhere; font-weight: 500; }
+.script-menu-item code { max-width: 52%; overflow: hidden; color: var(--muted); font: 10px/1.4 ui-monospace, Menlo, Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { .script-menu-chevron { transition: none; } }
 .badge.version { text-transform: none; color: #fff; background: #57606a; }
 .badge.version[data-major="0"] { background: #8250df; }
 .badge.version[data-major="1"] { background: #0969da; }

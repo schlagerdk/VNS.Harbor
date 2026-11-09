@@ -84,20 +84,22 @@ class PublishBothTests(unittest.TestCase):
 
     def test_button_visibility_confirmation_and_task(self):
         source = (APP / "static/app.js").read_text()
-        render = source[source.index("function renderSite(name) {"):source.index("// Scripts that have their own button")]
+        render = source[source.index("function renderSite(name) {"):source.index("// Scripts with dedicated controls")]
         harness = r"""
 const assert = require("node:assert/strict");
 const nodes = {};
 function el(tag, props = {}, ...children) {
-    return Object.assign({children, append(...items) {this.children.push(...items);},
+    return Object.assign({children, get childElementCount() {return this.children.length;}, append(...items) {this.children.push(...items);},
         replaceChildren() {this.children = [];}}, props);
 }
 const $ = selector => nodes[selector] ||= el("div");
 let allSites = [], sitesLoaded = true, confirmed = false, tasks = [], prompts = [];
 const buttonScripts = new Set(["publish_local.sh", "publish.sh", "publish_prod.sh"]);
 const hasProd = site => site.prod;
+const siteLabel = site => site.display_name || site.name;
 const kindBadges = () => el("span");
 const decorate = () => {};
+const updateSiteActivity = () => {};
 const envPanel = () => el("div");
 const run = handler => handler();
 const ask = async options => {prompts.push(options); return confirmed;};
@@ -105,7 +107,7 @@ const openTask = async payload => tasks.push(payload);
 (async () => {
     for (const mode of ["local", "remote"]) {
         for (const local of ["publish_local.sh", "publish.sh"]) {
-            const site = {name: "example.test", kind: "csharp", prod: true,
+            const site = {name: "example.test", kind: "csharp", prod: true, has_project: true,
                 scripts: [local, "publish_prod.sh"], environments: [{key: "prod", mode}]};
             allSites = [site];
             renderSite(site.name);
@@ -128,7 +130,7 @@ const openTask = async payload => tasks.push(payload);
     ]) {
         allSites = [{name: "example.test", kind: "csharp", prod, scripts, environments: []}];
         renderSite("example.test");
-        assert.ok(!$("#site-head").children[1].children.some(item => item.textContent === "Publish both"));
+        assert.ok(!($("#site-head").children[1]?.children || []).some(item => item.textContent === "Publish both"));
     }
 })().catch(error => {console.error(error); process.exitCode = 1;});
 """

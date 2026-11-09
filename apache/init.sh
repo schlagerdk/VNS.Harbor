@@ -10,7 +10,10 @@ _dotnetChannel=10.0
 
 echo Install prerequisites
 sudo apt-get update
-sudo apt-get install -y curl tar git ca-certificates uuid-runtime python3 python3-venv python3-pip cron
+sudo apt-get install -y curl unzip tar git ca-certificates uuid-runtime python3 python3-venv python3-pip cron
+
+echo Install rclone
+curl -fsSL https://rclone.org/install.sh | sudo bash
 
 echo Install apache2
 sudo apt-get install -y apache2

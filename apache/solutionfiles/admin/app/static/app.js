@@ -646,33 +646,107 @@ function siteCard(site) {
 		actions);
 }
 
-const scriptNames = {
-	"publish.sh": "Publish", "publish_local.sh": "Publish (test)", "publish_prod.sh": "Publish to production",
-	"sync_prod.sh": "Sync content to production", "clear_logs.sh": "Clear logs", "clear_logs_local.sh": "Clear logs (test)",
-	"clear_logs_prod.sh": "Clear logs (production)", "create_prod.sh": "Create production site", "change_env.sh": "Change environment (Test / Production)",
-	"outdated.sh": "Check outdated packages", "edit_conf.sh": "Edit Apache config", "issue_certificat.sh": "Issue certificate",
-	"restart_apache.sh": "Restart Apache", "set_password.sh": "Change admin password", "fix_permissions.sh": "Fix permissions",
-	"update_packages.sh": "Update Python packages",
-};
-const scriptLabel = (file) => scriptNames[file] || file.replace(/\.sh$/, "").replace(/[_-]+/g, " ").replace(/^./, (c) => c.toUpperCase());
+function customScriptGroups(files) {
+	const groups = new Map();
+	for (const file of files) {
+		const parts = file.replace(/\.sh$/, "").split(/[_-]+/).filter(Boolean);
+		const category = parts.length > 1 ? parts.shift() : "other";
+		const label = (parts.length ? parts.join(" ") : file.replace(/\.sh$/, ""))
+			.replace(/\b\w/g, (letter) => letter.toUpperCase());
+		const key = category.toLowerCase();
+		if (!groups.has(key)) groups.set(key, { label: key === "other" ? "Other" : key.replace(/\b\w/g, (letter) => letter.toUpperCase()), items: [] });
+		groups.get(key).items.push({ file, label });
+	}
+	return [...groups.values()]
+		.map((group) => ({ ...group, items: group.items.sort((a, b) => a.label.localeCompare(b.label)) }))
+		.sort((a, b) => (a.label === "Other") - (b.label === "Other") || a.label.localeCompare(b.label));
+}
 
 function scriptSelect(site, className) {
-	const select = el("select", { className: "script-select " + (className || ""), ariaLabel: "Run site script", title: "Run a script from the site's scripts folder" }, el("option", { textContent: "Run script…", value: "" }));
-	const groups = [["Production", (f) => f.includes("_prod")], ["Site", (f) => !f.includes("_prod")]];
-	for (const [label, test] of groups) {
-		const files = site.scripts.filter((f) => test(f) && !hasScriptButton(site, f));
-		if (!files.length) continue;
-		const group = el("optgroup", { label });
-		for (const file of files) group.append(el("option", { textContent: scriptLabel(file), value: file, title: file }));
-		select.append(group);
+	const files = site.scripts.filter((file) => !hasScriptButton(site, file));
+	const groups = customScriptGroups(files);
+	const menu = el("div", { className: "script-menu " + (className || "") });
+	const trigger = el("button", {
+		type: "button", className: "small script-menu-trigger", ariaHasPopup: "menu", ariaExpanded: "false",
+		title: "Run a custom script from this site",
+	}, svgIcon("play"), el("span", { textContent: "Run custom script" }), el("span", { className: "script-menu-chevron", "aria-hidden": "true", textContent: "▾" }));
+	trigger.setAttribute("aria-haspopup", "menu");
+	trigger.setAttribute("aria-expanded", "false");
+	const panel = el("div", {
+		className: "script-menu-panel", role: "menu", ariaLabel: "Custom site scripts", hidden: true,
+	}, el("div", { className: "script-menu-header" },
+		el("span", { className: "script-menu-eyebrow", textContent: "SITE AUTOMATIONS" }),
+		el("strong", { textContent: "Custom scripts" }),
+		el("span", { className: "script-menu-count", textContent: String(files.length) + (files.length === 1 ? " script" : " scripts") })));
+	panel.setAttribute("role", "menu");
+	panel.setAttribute("aria-label", "Custom site scripts");
+	for (const group of groups) {
+		const section = el("section", { className: "script-menu-group", role: "group", ariaLabel: group.label });
+		section.setAttribute("role", "group");
+		section.setAttribute("aria-label", group.label);
+		section.append(el("h4", { textContent: group.label }));
+		for (const { file, label } of group.items) {
+			const item = el("button", {
+				type: "button", className: "script-menu-item", role: "menuitem", title: file,
+				onclick: (event) => {
+					event.stopPropagation();
+					panel.hidden = true;
+					trigger.setAttribute("aria-expanded", "false");
+					run(() => openTask({ kind: "script", site: site.name, script: file }));
+				},
+			}, el("span", { className: "script-menu-item-label", textContent: label }),
+			el("code", { textContent: file }));
+			item.setAttribute("role", "menuitem");
+			section.append(item);
+		}
+		panel.append(section);
 	}
-	select.onchange = () => {
-		const script = select.value;
-		select.value = "";
-		if (script) run(() => openTask({ kind: "script", site: site.name, script }));
+	trigger.onclick = (event) => {
+		event.stopPropagation();
+		const open = panel.hidden;
+		document.querySelectorAll(".script-menu-panel:not([hidden])").forEach((other) => { other.hidden = true; });
+		document.querySelectorAll(".script-menu-trigger[aria-expanded=true]").forEach((other) => other.setAttribute("aria-expanded", "false"));
+		panel.hidden = !open;
+		trigger.setAttribute("aria-expanded", String(open));
+		if (open) panel.querySelector('[role="menuitem"]')?.focus();
 	};
-	return select;
+	menu.append(trigger, panel);
+	menu.addEventListener("click", (event) => event.stopPropagation());
+	return menu;
 }
+
+document.addEventListener("click", (event) => {
+	if (event.target.closest?.(".script-menu")) return;
+	document.querySelectorAll(".script-menu-panel:not([hidden])").forEach((panel) => { panel.hidden = true; });
+	document.querySelectorAll(".script-menu-trigger[aria-expanded=true]").forEach((trigger) => trigger.setAttribute("aria-expanded", "false"));
+});
+document.addEventListener("keydown", (event) => {
+	const trigger = document.querySelector(".script-menu-trigger[aria-expanded=true]");
+	if (event.key === "Escape") {
+		if (!trigger) return;
+		trigger.closest(".script-menu").querySelector(".script-menu-panel").hidden = true;
+		trigger.setAttribute("aria-expanded", "false");
+		trigger.focus();
+		return;
+	}
+	const menuTrigger = event.target.closest?.(".script-menu-trigger");
+	if (menuTrigger && (event.key === "ArrowDown" || event.key === "ArrowUp")) {
+		if (menuTrigger.getAttribute("aria-expanded") !== "true") menuTrigger.click();
+		const items = [...menuTrigger.closest(".script-menu").querySelectorAll('[role="menuitem"]')];
+		items[event.key === "ArrowUp" ? items.length - 1 : 0]?.focus();
+		event.preventDefault();
+		return;
+	}
+	const item = event.target.closest?.('[role="menuitem"]');
+	if (!item || !["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+	const items = [...item.closest('[role="menu"]').querySelectorAll('[role="menuitem"]')];
+	const index = items.indexOf(item);
+	const next = event.key === "Home" ? 0
+		: event.key === "End" ? items.length - 1
+		: (index + (event.key === "ArrowDown" ? 1 : items.length - 1)) % items.length;
+	items[next].focus();
+	event.preventDefault();
+});
 
 function renderSite(name) {
 	const site = allSites.find((s) => s.name === name);
@@ -778,7 +852,7 @@ async function updatePackages(site, update) {
 	await openTask({ kind: "update_package", site: site.name, ...(update ? { package: update.name } : {}) });
 }
 
-// Scripts that have their own button and are therefore left out of the "Run script…" list
+// Scripts with dedicated controls are omitted from the custom scripts menu.
 const buttonScripts = new Set(["publish.sh", "publish_local.sh", "publish_prod.sh", "create_prod.sh", "sync_prod.sh", "clear_logs.sh", "clear_logs_local.sh", "clear_logs_prod.sh", "issue_certificat.sh", "change_env.sh", "restart_service.sh", "check_service.sh", "edit_service.sh", "edit_conf.sh", "restart_apache.sh", "outdated.sh", "set_password.sh", "fix_permissions.sh", "update_packages.sh"]);
 const projectScripts = new Set(["publish.sh", "publish_local.sh", "publish_prod.sh", "outdated.sh", "create_prod.sh"]);
 const hasScriptButton = (site, file) => buttonScripts.has(file) && (site.has_project || !projectScripts.has(file));

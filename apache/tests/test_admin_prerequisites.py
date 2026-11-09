@@ -30,6 +30,13 @@ sudo() {
     if [[ "$1" == apt-get && "$2" == update && "$TEST_FAIL" == 1 ]]; then
         return 1
     fi
+    if [[ "$1" == apt-get && "$2" == install ]]; then
+        echo "APT_INSTALL:$*"
+    fi
+    if [[ "$1" == bash && "$#" == 1 ]]; then
+        command bash
+        return $?
+    fi
     if [[ "$1" == touch ]]; then
         command touch "$TEST_MARKER"
     fi
@@ -38,7 +45,11 @@ sudo() {
     fi
 }
 clear() { :; }
-curl() { :; }
+curl() {
+    if [[ "$*" == *https://rclone.org/install.sh* ]]; then
+        printf 'echo RCLONE_INSTALLER_RAN\\n'
+    fi
+}
 git() { :; }
 rm() { :; }
 mktemp() { printf '%s\\n' "$TEST_TMP"; }
@@ -61,6 +72,9 @@ source "$1"
     def test_completed_initialization_allows_standalone_installer(self):
         result = self.run_script("init.sh")
         self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("APT_INSTALL:apt-get install -y curl unzip tar git ca-certificates uuid-runtime python3 python3-venv python3-pip cron",
+                      result.stdout)
+        self.assertIn("RCLONE_INSTALLER_RAN", result.stdout)
         self.assertTrue(self.marker.is_file())
         result = self.run_script("install_admin_site.sh")
         self.assertEqual(result.returncode, 0, result.stderr)
