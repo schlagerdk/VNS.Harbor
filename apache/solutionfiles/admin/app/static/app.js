@@ -352,6 +352,14 @@ function siteState(site) {
 }
 const hasProd = (site) => site.environments.some((e) => e.key === "prod");
 
+// Environments are always listed as Development, Test, Staging, Production. Anything else comes last.
+const environmentOrder = ["development", "test", "staging", "production"];
+function environmentRank(env) {
+	const rank = environmentOrder.indexOf((env.environment || "").toLowerCase());
+	return rank < 0 ? environmentOrder.length : rank;
+}
+const sortedEnvironments = (environments) => [...environments].sort((a, b) => environmentRank(a) - environmentRank(b));
+
 function renderStats() {
 	const searched = overviewSites().filter(matchesQuery);
 	const count = (test) => searched.filter(test).length;
@@ -430,7 +438,7 @@ const buttonStyles = {
 	"Add package": ["download", "green"], "Remove package": ["trash", "red"],
 	"Add": ["download", "green"], "Remove": ["trash", "red"], "Check": ["download", "amber"],
 	"Fix permissions": ["shield", "teal"], "Update Python packages": ["sync", "blue"],
-	"Create production site": ["server", "purple"],
+	"Add environment": ["server", "purple"],
 	"Check outdated": ["download", "amber"], "Restart": ["restart", "amber"], "Restart Apache": ["restart", "amber"],
 	"Stop": ["stop", "red"], "Clear logs": ["eraser", "gray"], "Logs": ["file", "gray"],
 	"Admin app log": ["file", "gray"], "Apache error logs": ["file", "teal"],
@@ -596,7 +604,7 @@ function publishBadge(env) {
 function siteCard(site) {
 	const state = siteState(site);
 	const actions = el("div", { className: "site-links" });
-	for (const env of site.environments) {
+	for (const env of sortedEnvironments(site.environments)) {
 		const production = env.key === "prod";
 		const environment = environmentLabel(site, env);
 		const group = el("div", { className: "site-link-group" + (production ? " production" : ""), role: "group", ariaLabel: environment + " · " + (bindingLabel(env) || siteLabel(site)) });
@@ -765,8 +773,15 @@ function renderSite(name) {
 	const head = $("#site-head");
 	const envs = $("#envs");
 	const packagesPanel = $("#site-packages");
+	const targetsSection = $("#site-targets");
+	const targets = $("#env-targets");
+	const targetsActions = $("#site-targets-actions");
 	head.replaceChildren();
 	envs.replaceChildren();
+	targets.replaceChildren();
+	targetsActions.replaceChildren();
+	targetsSection.hidden = true;
+	$("#site-layout").classList.remove("with-packages");
 	packagesPanel.replaceChildren();
 	packagesPanel.hidden = true;
 	if (!site && sitesLoaded) { go("#sites"); return; }
@@ -803,8 +818,18 @@ function renderSite(name) {
 	if (!site.admin && hasProd(site)) add("Delete everything", () => deleteSite(site, "all"), "danger");
 	head.append(el("div", { className: "detail-title" }, el("h2", { textContent: siteLabel(site) }), kindBadges(site)));
 	if (actions.childElementCount) head.append(actions);
-	for (const env of site.environments) envs.append(envPanel(site, env));
+	for (const env of site.environments) {
+		if (env.key !== "prod") envs.append(envPanel(site, env));
+	}
+	for (const env of sortedEnvironments(site.environments)) {
+		if (env.key === "prod") targets.append(envPanel(site, env));
+	}
+	if (site.has_project && !hasProd(site) && site.scripts.includes("create_prod.sh")) {
+		targetsActions.append(el("button", { textContent: "Add environment", className: "small", onclick: () => run(() => openCreateProdDialog(site)) }));
+	}
+	targetsSection.hidden = !targets.childElementCount && !targetsActions.childElementCount;
 	if (site.has_project && (site.kind === "csharp" || site.kind === "umbraco")) {
+		$("#site-layout").classList.add("with-packages");
 		packagesPanel.hidden = false;
 		const updates = new Map((site.package_updates || []).map((item) => [item.name.toLowerCase(), item]));
 		const packages = (site.packages || []).filter((item) => item.name.toLowerCase() !== "microsoft.icu.icu4c.runtime" || updates.has(item.name.toLowerCase()));
@@ -849,6 +874,7 @@ function renderSite(name) {
 	}
 	decorate(head);
 	decorate(envs);
+	decorate(targetsSection);
 	updateSiteActivity();
 	decorate(packagesPanel);
 	if (openMenuState) {
@@ -909,10 +935,6 @@ function envPanel(site, env) {
 	if (environment) heading.append(el("span", { className: "badge env-" + environment.toLowerCase(), textContent: environment }));
 	heading.append(httpsLock(env.https));
 	if (isRemoteEnv(env)) heading.append(remoteIcon(env));
-	if (site.has_project && env.key !== "prod" && !hasProd(site) && site.scripts.includes("create_prod.sh")) {
-		heading.append(el("button", { textContent: "Create production site", className: "small create-production",
-			onclick: () => run(() => openCreateProdDialog(site)) }));
-	}
 	const pending = publishBadge(env);
 	if (pending) heading.append(el("div", { className: "publish-status" }, pending));
 

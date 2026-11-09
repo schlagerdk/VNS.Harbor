@@ -90,13 +90,14 @@ const assert = require("node:assert/strict");
 const nodes = {};
 const document = {querySelector: () => null, activeElement: null};
 function el(tag, props = {}, ...children) {
-    return Object.assign({children, get childElementCount() {return this.children.length;}, append(...items) {this.children.push(...items);},
+    return Object.assign({children, classList: {add() {}, remove() {}}, get childElementCount() {return this.children.length;}, append(...items) {this.children.push(...items);},
         replaceChildren() {this.children = [];}}, props);
 }
 const $ = selector => nodes[selector] ||= el("div");
 let allSites = [], sitesLoaded = true, confirmed = false, tasks = [], prompts = [];
 const buttonScripts = new Set(["publish_local.sh", "publish.sh", "publish_prod.sh"]);
 const hasProd = site => site.prod;
+const sortedEnvironments = environments => environments;
 const siteLabel = site => site.display_name || site.name;
 const kindBadges = () => el("span");
 const decorate = () => {};

@@ -346,7 +346,15 @@ body.login { display: grid; place-items: center; min-height: 100vh; min-height: 
 .env.prod { border-top-color: var(--orange); }
 .env-head { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
 .env-head h3 { margin: 0; font-size: 18px; }
-.env-head .create-production { margin-left: auto; }
+.site-layout.with-packages { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start; }
+.site-layout.with-packages .envs { grid-template-columns: minmax(0, 1fr); }
+.site-layout.with-packages .package-panel { margin-top: 0; }
+.site-targets { margin-top: 24px; }
+.site-targets-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.site-targets-head h3 { margin: 0; font-size: 15px; }
+.site-targets-head .actions { margin: 0; padding: 0; border: 0; }
+.env-targets { grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); }
+@media (max-width: 1000px) { .site-layout.with-packages { grid-template-columns: minmax(0, 1fr); } .env-targets { grid-template-columns: minmax(0, 1fr); } }
 .env .actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 14px; }
 
 #dock { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; background: rgba(1, 4, 9, .72); backdrop-filter: blur(3px); }
