@@ -116,6 +116,12 @@ console.log(JSON.stringify([
         self.assertIn('el("h2", { textContent: siteTitle(site) })', source)
         self.assertIn('className: "site-title", textContent: siteTitle(site)', source)
 
+    def test_confirmation_names_the_environment_it_acts_on(self):
+        source = (APP / "static/app.js").read_text()
+        self.assertIn("message: `${confirmText} (${bindingLabel(env) || siteLabel(site)})`", source)
+        self.assertIn("creates it again as a new installation", source)
+        self.assertNotIn("publish this site to production", source)
+
     def test_layout_and_wording(self):
         page = (APP / "templates/index.html").read_text()
         layout = re.search(r'<div id="site-layout".*?</div>\s*<section id="site-targets"', page, re.S).group(0)

@@ -983,9 +983,9 @@ const hasScriptButton = (site, file) => buttonScripts.has(file) && (site.has_pro
 function quickActions(env) {
 	if (isTarget(env)) {
 		return [
-			[["publish_prod.sh"], "Publish", "Build and publish this site to production. The service is restarted."],
-			[["clear_logs_prod.sh"], "Clear logs", "Delete the production logs."],
-			[null, "Issue certificate", "Issue a new certificate for the production binding.", "issue_certificate"],
+			[["publish_prod.sh"], "Publish", "Build the main site and publish it to this environment. The service is restarted."],
+			[["clear_logs_prod.sh"], "Clear logs", "Delete the logs of this environment."],
+			[null, "Issue certificate", "Issue a new certificate for this environment's binding.", "issue_certificate"],
 			[null, "Change environment", null, "change_env"],
 		];
 	}
@@ -1093,7 +1093,10 @@ function envPanel(site, env) {
 		if (action && !isTarget(env) && (!env.unit || site.admin) && action === "change_env") continue;
 		(action ? settings : quick).append(el("button", { textContent: label, className: "small" + (action === "change_env" ? " desktop-only" : ""), title: file || action, onclick: () => run(async () => {
 			if (action === "change_env") { openEnvironmentDialog(site, env); return; }
-			if (confirm && !(await ask({ title: `${label}?`, message: `${confirm} (${siteLabel(site)})`, input: false, ok: label }))) return;
+			const confirmText = missing && label === "Publish"
+				? `The site no longer exists on ${env.host}. This creates it again as a new installation, without its old content and database.`
+				: confirm;
+			if (confirmText && !(await ask({ title: `${label}?`, message: `${confirmText} (${bindingLabel(env) || siteLabel(site)})`, input: false, ok: label }))) return;
 			await openTask(action ? { kind: "prod_action", site: site.name, action, scope: isTarget(env) ? "prod" : "test", ...targetFields(env) } : { kind: "script", site: site.name, script: file, ...targetFields(env) });
 		}) }));
 	}
