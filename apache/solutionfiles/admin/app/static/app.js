@@ -668,7 +668,6 @@ function scriptSelect(site, className) {
 	const menu = el("div", { className: "script-menu " + (className || "") });
 	const trigger = el("button", {
 		type: "button", className: "small script-menu-trigger", ariaHasPopup: "menu", ariaExpanded: "false",
-		title: "Run a custom script from this site",
 	}, svgIcon("play"), el("span", { textContent: "Run custom script" }), el("span", { className: "script-menu-chevron" }));
 	trigger.lastChild.setAttribute("aria-hidden", "true");
 	trigger.setAttribute("aria-haspopup", "menu");
@@ -688,7 +687,7 @@ function scriptSelect(site, className) {
 		section.append(el("h4", { textContent: group.label }));
 		for (const { file, label } of group.items) {
 			const item = el("button", {
-				type: "button", className: "script-menu-item", role: "menuitem", title: file,
+				type: "button", className: "script-menu-item", role: "menuitem",
 				onclick: (event) => {
 					event.stopPropagation();
 					panel.hidden = true;
@@ -697,6 +696,7 @@ function scriptSelect(site, className) {
 				},
 			}, el("span", { className: "script-menu-item-label", textContent: label }),
 			el("code", { textContent: file }));
+			item.dataset.script = file;
 			item.setAttribute("role", "menuitem");
 			section.append(item);
 		}
@@ -750,6 +750,12 @@ document.addEventListener("keydown", (event) => {
 });
 
 function renderSite(name) {
+	const openMenu = document.querySelector("#envs .script-menu-panel:not([hidden])");
+	const activeMenuItem = document.activeElement?.closest?.(".script-menu-item");
+	const openMenuState = openMenu ? {
+		scrollTop: openMenu.scrollTop,
+		focusedScript: activeMenuItem?.dataset.script || null,
+	} : null;
 	const site = allSites.find((s) => s.name === name);
 	const head = $("#site-head");
 	const envs = $("#envs");
@@ -840,6 +846,18 @@ function renderSite(name) {
 	decorate(envs);
 	updateSiteActivity();
 	decorate(packagesPanel);
+	if (openMenuState) {
+		const panel = document.querySelector("#envs .script-menu-panel");
+		const menu = panel?.closest(".script-menu");
+		if (panel && menu) {
+			panel.hidden = false;
+			menu.querySelector(".script-menu-trigger").setAttribute("aria-expanded", "true");
+			panel.scrollTop = openMenuState.scrollTop;
+			const focusedItem = openMenuState.focusedScript
+				&& [...panel.querySelectorAll(".script-menu-item")].find((item) => item.dataset.script === openMenuState.focusedScript);
+			(focusedItem || menu.querySelector(".script-menu-trigger")).focus();
+		}
+	}
 }
 
 async function updatePackages(site, update) {

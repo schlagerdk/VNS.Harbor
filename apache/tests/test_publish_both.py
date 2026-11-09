@@ -88,6 +88,7 @@ class PublishBothTests(unittest.TestCase):
         harness = r"""
 const assert = require("node:assert/strict");
 const nodes = {};
+const document = {querySelector: () => null, activeElement: null};
 function el(tag, props = {}, ...children) {
     return Object.assign({children, get childElementCount() {return this.children.length;}, append(...items) {this.children.push(...items);},
         replaceChildren() {this.children = [];}}, props);
