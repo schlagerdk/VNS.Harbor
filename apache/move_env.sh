@@ -3,13 +3,17 @@
 #   local    VNS_PROD_LOCAL_PATH=/var/www/<name>, _BINDING, _ENVIRONMENT, _HTTPS
 #   remote   VNS_PROD_IP, _USER, _PASSWORD, _SSH_PORT, _FOLDER, _BINDING, _ENVIRONMENT, _HTTPS
 #   windows  VNS_PROD_SMB_SHARE, _SMB_USER, _SMB_PASSWORD, _SMB_DOMAIN, _BINDING, _ENVIRONMENT, _HTTPS
+#   same     VNS_PROD_FOLDER, _BINDING, _ENVIRONMENT, _HTTPS. Another folder on the source's remote server
 # The environment can be on this server or on a remote Linux server.
 # On this server to this server, the folder is moved and the service and Apache config follow it.
 # Otherwise the whole folder is copied, also the build, so the site runs the same version afterwards. It is only built
 # for Windows and for another CPU architecture. A database in SQL Server stays where it is: a connection to the source's
 # own machine is pointed at that machine. A SQLite database is part of the files.
 # The source's service and Apache config are removed only when that has worked. VNS_MOVE_DELETE_LOCAL=y then also
-# deletes its files. If a step fails, the source runs as before. Files already copied to the destination are left there.
+# deletes its files. If a step fails, the source runs as before, and a new folder on Linux is removed again.
+# With VNS_ENV_COPY=1 the environment is copied, and the copy becomes a new environment: the source stays as it is, and is
+# only stopped during the copy with VNS_COPY_STOP=y. VNS_COPY_DATABASE and VNS_COPY_SQL set a new connection for the copy.
+# A Windows server can be copied from. Only settings and content can be fetched from it, so the copy is always built.
 set -euo pipefail
 [[ $EUID -eq 0 ]] || exec sudo "$0" "$@"
 cd "$(dirname "$0")"
@@ -23,12 +27,18 @@ set_site_vars
 export VNS_TARGET=${2:-}
 [[ -n ${VNS_TARGET} ]] || { echo "Choose the environment to move." >&2; exit 1; }
 load_prod_settings
-if [[ ${PROD_TARGET} == windows ]]; then
-	echo "An environment on a Windows server cannot be migrated." >&2
-	exit 1
-fi
+_copy=${VNS_ENV_COPY:-}
+_sourceWindows=0
 _sourceRemote=0
-[[ -n ${PROD_LOCAL_PATH} ]] || _sourceRemote=1
+if [[ ${PROD_TARGET} == windows ]]; then
+	if [[ -z ${_copy} ]]; then
+		echo "An environment on a Windows server cannot be migrated, as its IIS site cannot be stopped or removed from here. It can be copied." >&2
+		exit 1
+	fi
+	_sourceWindows=1
+elif [[ -z ${PROD_LOCAL_PATH} ]]; then
+	_sourceRemote=1
+fi
 
 _oldId=${VNS_TARGET}
 _oldRoot=${_root%/}
@@ -38,7 +48,18 @@ _oldService=/etc/systemd/system/${_oldUnit}.service
 _oldConf=/etc/apache2/sites-available/${_oldName}.conf
 _oldScripts=$(dirname "${_prodScript}")
 _destination=${VNS_PROD_TARGET:-}
-if ((_sourceRemote)); then
+if [[ ${_destination} == same ]]; then
+	# The saved login of the source: it never passes through the browser
+	if [[ ${_sourceRemote} != 1 ]]; then
+		echo "Only an environment on a remote Linux server can use its own server." >&2
+		exit 1
+	fi
+	export VNS_PROD_TARGET=remote VNS_PROD_IP=${PROD_IP} VNS_PROD_USER=${PROD_USER} VNS_PROD_PASSWORD=${PROD_PASSWORD} VNS_PROD_SSH_PORT=${PROD_SSH_PORT}
+	_destination=remote
+fi
+if ((_sourceWindows)); then
+	:
+elif ((_sourceRemote)); then
 	prod_exec "test -d $(printf %q "${_oldRoot}")" || { echo "${_oldRoot} was not found on ${PROD_IP}." >&2; exit 1; }
 else
 	[[ -d ${_oldRoot} ]] || { echo "The folder ${_oldRoot} does not exist." >&2; exit 1; }
@@ -47,7 +68,9 @@ else
 fi
 
 source_control() {
-	if ((_sourceRemote)); then
+	if ((_sourceWindows)); then
+		return 0
+	elif ((_sourceRemote)); then
 		prod_exec "systemctl $1 $(printf %q "${_oldUnit}")"
 	else
 		systemctl "$1" "${_oldUnit}"
@@ -190,6 +213,18 @@ move_local() {
 }
 
 # ---- to a remote Linux or Windows server
+# Settings and content of a Windows server. Its build cannot run on Linux.
+fetch_windows_source() (
+	source lib/windows_prod.sh
+	windows_smb_connect
+	rclone copy "${_windowsTarget}" "${_contentRoot}" --exclude '/appsettings-schema*.json' --include '/appsettings*.json' --exclude '*' --modify-window 2s --stats 0
+	for _folder in umbraco uSync Views wwwroot App_Data; do
+		rclone lsf "${_windowsTarget}/${_folder}" --max-depth 1 >/dev/null 2>&1 || continue
+		echo "Copy ${_folder}"
+		rclone copy "${_windowsTarget}/${_folder}" "${_contentRoot}/${_folder}" --create-empty-src-dirs --modify-window 2s --stats 0
+	done
+)
+
 # The source's folder as rsync sees it
 fetch_source() {
 	_ssh=(ssh -p "${PROD_SSH_PORT}" -o StrictHostKeyChecking=accept-new)
@@ -230,17 +265,34 @@ copy_everything() (
 repoint_destination_sql() (
 	export VNS_TARGET=$1
 	_sourceServer=${_sourceHost}
+	_sameServer=0
 	load_prod_settings
 	if [[ ${PROD_TARGET} != windows ]]; then
-		if [[ -n ${PROD_LOCAL_PATH} && ${_sourceRemote} == 0 ]] || [[ -z ${PROD_LOCAL_PATH} && ${PROD_IP} == "${_sourceServer}" ]]; then
-			exit 0
+		if [[ -n ${PROD_LOCAL_PATH} && ${_sourceRemote} == 0 && ${_sourceWindows} == 0 ]] || [[ -z ${PROD_LOCAL_PATH} && ${PROD_IP} == "${_sourceServer}" ]]; then
+			_sameServer=1
 		fi
+	fi
+	_newConnection=0
+	[[ -z ${VNS_COPY_DATABASE:-} && -z ${VNS_COPY_SQL:-} ]] || _newConnection=1
+	if ((_sameServer && !_newConnection)); then
+		exit 0
 	fi
 	_settings=$(mktemp -d)
 	trap 'rm -rf "${_settings}"' EXIT
 	cp "${_contentRoot}"/appsettings*.json "${_settings}/" 2>/dev/null || exit 0
-	_changed=$(python3 lib/copy_site.py repoint-sql "${_settings}" "${_sourceServer}")
-	[[ ${_changed} == 0 ]] || echo "The SQL connection now points to ${_sourceServer}. That SQL Server must accept connections from the new server."
+	_changed=0
+	if ((_newConnection)); then
+		python3 lib/copy_site.py update-connections "${_settings}" "${VNS_COPY_DATABASE:-}"
+		_changed=1
+	fi
+	# A connection entered by hand is used as it is. A new database name on the source's own SQL Server still needs its address.
+	if [[ -z ${VNS_COPY_SQL:-} ]] && ((!_sameServer)); then
+		_repointed=$(python3 lib/copy_site.py repoint-sql "${_settings}" "${_sourceServer}")
+		if [[ ${_repointed} != 0 ]]; then
+			_changed=1
+			echo "The SQL connection now points to ${_sourceServer}. That SQL Server must accept connections from the new server."
+		fi
+	fi
 	if [[ ${PROD_TARGET} != windows && ${_changed} == 0 ]]; then
 		exit 0
 	fi
@@ -266,6 +318,37 @@ repoint_destination_sql() (
 		_sudo=""
 		[[ ${PROD_USER} == root ]] || _sudo="sudo -n"
 		rsync -az -e "${_ssh[*]}" --rsync-path="${_sudo:+${_sudo} }rsync" "${_settings}/" "${PROD_USER}@${PROD_IP}:${_root}/"
+	fi
+)
+
+# Never mix a migration or copy into a site that is already at the destination
+destination_is_free() (
+	export VNS_TARGET=$1
+	load_prod_settings
+	if [[ ${PROD_TARGET} == windows ]]; then
+		source lib/windows_prod.sh
+		windows_smb_connect
+		if rclone lsf "${_windowsTarget}" --max-depth 1 --files-only | grep -qix 'appsettings.json'; then
+			echo "${PROD_WINDOWS_SHARE} already holds a site. Empty the folder or choose another." >&2
+			exit 1
+		fi
+	elif [[ -z ${PROD_LOCAL_PATH} ]]; then
+		if prod_exec "test -e $(printf %q "${_root}")"; then
+			echo "${_root} already exists on ${PROD_IP}. Choose another folder." >&2
+			exit 1
+		fi
+	fi
+)
+
+remove_new_linux_folder() (
+	export VNS_TARGET=$1
+	load_prod_settings
+	if [[ ${PROD_TARGET} == windows ]]; then
+		echo "Files already copied to ${PROD_WINDOWS_SHARE} are left there. Empty the folder before you try again." >&2
+	elif [[ -n ${PROD_LOCAL_PATH} ]]; then
+		rm -rf "${_root:?}"
+	else
+		prod_exec "rm -rf $(printf %q "${_root}")" || echo "Could not remove ${_root} on ${PROD_IP}." >&2
 	fi
 )
 
@@ -315,10 +398,19 @@ copy_content() (
 move_to_server() {
 	# Not local: undo_server_move runs when the script exits and needs them
 	_moving=${_oldId}-moving
-	_newScripts=${_siteRoot}/scripts/targets/${_moving}
 	_finalId=${_oldId}
 	local _number=2
-	if [[ ${_oldId} == prod ]]; then
+	if [[ -n ${_copy} ]]; then
+		# A new environment of its own, named like any other
+		_moving=$(printf '%s' "${VNS_PROD_ENVIRONMENT:-production}" | tr '[:upper:]' '[:lower:]')
+		while [[ -e ${_siteRoot}/scripts/targets/${_moving} ]]; do
+			_moving=$(printf '%s' "${VNS_PROD_ENVIRONMENT:-production}" | tr '[:upper:]' '[:lower:]')-${_number}
+			_number=$((_number + 1))
+		done
+		_number=2
+	fi
+	_newScripts=${_siteRoot}/scripts/targets/${_moving}
+	if [[ ${_oldId} == prod && -z ${_copy} ]]; then
 		# The older single environment moves into its own folder
 		_finalId=$(printf '%s' "${VNS_PROD_ENVIRONMENT:-production}" | tr '[:upper:]' '[:lower:]')
 		while [[ -e ${_siteRoot}/scripts/targets/${_finalId} ]]; do
@@ -343,7 +435,10 @@ move_to_server() {
 	fi
 	_contentRoot=${_oldRoot}
 	_fetchFolder=""
-	if ((_sourceRemote)); then
+	if ((_sourceWindows)); then
+		_sourceHost=${PROD_WINDOWS_SHARE#//}
+		_sourceHost=${_sourceHost%%/*}
+	elif ((_sourceRemote)); then
 		_sourceHost=${PROD_IP}
 	else
 		_sourceHost=$(hostname -I 2>/dev/null | awk '{ print $1 }' || true)
@@ -352,14 +447,22 @@ move_to_server() {
 
 	# Runs on every exit: only an unfinished move is undone
 	_moved=0
+	_sourceStopped=0
+	_destinationStarted=0
 	undo_server_move() {
 		local _status=$?
 		if ((!_moved)); then
-			echo "The migration failed, so ${_oldName} keeps running where it was." >&2
-			echo "Files already copied to the destination are left there." >&2
+			if [[ -n ${_copy} ]]; then
+				echo "The copy failed. ${_oldName} is not changed." >&2
+			else
+				echo "The migration failed, so ${_oldName} keeps running where it was." >&2
+			fi
+			if ((_destinationStarted)); then remove_new_linux_folder "${_moving}" || true; fi
 			rm -rf "${_newScripts}"
 			rm -f "${_siteRoot}/.vns-publish/target-${_moving}.json"
-			source_control start || echo "WARNING: could not start ${_oldName} again." >&2
+			if ((_sourceStopped)); then
+				source_control start || echo "WARNING: could not start ${_oldName} again." >&2
+			fi
 		fi
 		[[ -z ${_fetchFolder} ]] || rm -rf "${_fetchFolder}"
 		exit "${_status}"
@@ -370,29 +473,50 @@ move_to_server() {
 	load_main_site
 	VNS_PROD_ID=${_moving} VNS_PROD_NO_PUBLISH=1 VNS_PROD_MODAL=1 run_create_prod
 	unset VNS_PROD_PASSWORD VNS_PROD_SMB_PASSWORD
+	destination_is_free "${_moving}"
 
-	echo "Stop ${_oldName}, so its database and files stay consistent while they are copied"
-	source_control stop
-	if ((_sourceRemote)); then
+	if [[ -z ${_copy} || ${VNS_COPY_STOP:-} == y ]]; then
+		echo "Stop ${_oldName}, so its database and files stay consistent while they are copied"
+		_sourceStopped=1
+		source_control stop
+	fi
+	_destinationStarted=1
+	if ((_sourceRemote || _sourceWindows)); then
 		# The servers have no access to each other, so the files go through this server
 		_fetchFolder=$(mktemp -d)
 		_contentRoot=${_fetchFolder}
-		echo "Fetch ${_oldRoot} from ${PROD_IP}"
-		fetch_source
+		echo "Fetch ${_oldRoot}"
+		if ((_sourceWindows)); then fetch_windows_source; else fetch_source; fi
 	fi
 
 	if [[ ${_destination} == windows ]]; then
 		# Windows runs another build, so only settings and content are copied
 		copy_content "${_moving}"
 		repoint_destination_sql "${_moving}"
+		if [[ -n ${_copy} && ${_sourceStopped} == 1 ]]; then
+			_sourceStopped=0
+			source_control start
+		fi
 		echo "Publish to the new server"
 		VNS_MOVING=1 bash "${_newScripts}/publish_prod.sh"
 	else
 		echo "Copy everything to the destination"
 		copy_everything "${_moving}"
 		repoint_destination_sql "${_moving}"
-		_sourceArch=$(if ((_sourceRemote)); then prod_exec "uname -m"; else uname -m; fi)
-		if [[ ${_sourceArch} == "$(server_architecture "${_moving}")" ]]; then
+		if [[ -n ${_copy} && ${_sourceStopped} == 1 ]]; then
+			_sourceStopped=0
+			source_control start
+		fi
+		_sourceArch=""
+		if ((_sourceRemote)); then
+			_sourceArch=$(prod_exec "uname -m")
+		elif ((!_sourceWindows)); then
+			_sourceArch=$(uname -m)
+		fi
+		if [[ ${_sourceWindows} == 1 ]]; then
+			echo "A Windows build cannot run on Linux, so the project is built for it"
+			VNS_MOVING=1 bash "${_newScripts}/publish_prod.sh"
+		elif [[ ${_sourceArch} == "$(server_architecture "${_moving}")" ]]; then
 			echo "Create the service and Apache config"
 			VNS_PUBLISH_TRACKED=target-${_moving} VNS_MIGRATE_ONLY=1 bash "${_newScripts}/publish_prod.sh"
 		else
@@ -401,8 +525,14 @@ move_to_server() {
 		fi
 	fi
 
-	echo "Remove ${_oldName} from where it was"
 	_moved=1
+	if [[ -n ${_copy} ]]; then
+		[[ -z ${_fetchFolder} ]] || rm -rf "${_fetchFolder}"
+		echo "${_oldName} is copied, and the copy is the environment ${_moving}. ${_oldName} is not changed."
+		return 0
+	fi
+
+	echo "Remove ${_oldName} from where it was"
 	if ((_sourceRemote)); then
 		remove_remote_source
 		[[ ${VNS_MOVE_DELETE_LOCAL:-} == y ]] || echo "The files are kept in ${_oldRoot} on ${PROD_IP}."
@@ -432,7 +562,7 @@ move_to_server() {
 }
 
 case "${_destination}" in
-	local) if ((_sourceRemote)); then move_to_server; else move_local; fi ;;
+	local) if ((_sourceRemote || _sourceWindows)) || [[ -n ${_copy} ]]; then move_to_server; else move_local; fi ;;
 	remote | windows) move_to_server ;;
 	*) echo "The destination must be local, remote or windows." >&2; exit 1 ;;
 esac

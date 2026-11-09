@@ -12,7 +12,7 @@ validate_binding "${_binding}"
 set_site_vars
 trap release_port_reservation EXIT
 trap 'echo "FAILED: Copy is incomplete. Inspect the new site before retrying; the source was not changed." >&2' ERR
-if [[ -z ${VNS_COPY_MANAGED:-} && -f /var/lib/vns-managed/${_source} ]]; then
+if [[ -f /var/lib/vns-managed/${_source} ]]; then
 	echo "${_source} is an environment of the main site $(head -n 1 "/var/lib/vns-managed/${_source}") on $(sed -n 2p "/var/lib/vns-managed/${_source}"). Make the copy from there." >&2
 	exit 1
 fi

@@ -897,6 +897,7 @@ function renderSite(name) {
 	}
 	$("#btn-empty-add-environment").onclick = () => run(() => openCreateProdDialog(site));
 	$("#site-targets-head").hidden = noEnvironments;
+	$("#site-targets-count").textContent = String(targets.childElementCount);
 	$("#targets-empty").hidden = !(noEnvironments && canAddEnvironment);
 	targetsSection.hidden = noEnvironments && !canAddEnvironment;
 	if (site.has_project && (site.kind === "csharp" || site.kind === "umbraco")) {
@@ -1125,7 +1126,7 @@ function envPanel(site, env) {
 		extraTools = tools;
 	}
 	if (isTarget(env) && (env.mode === "local" && env.exists !== false || env.mode === "remote" && !missing)) add("Migrate…", () => openCreateProdDialog(site, env));
-	if (env.separate || env.mode === "remote" && !missing) add("Copy site", () => copySite(site, env), "push-right");
+	if (isTarget(env) && (env.mode === "local" && env.exists !== false || env.mode === "windows" || env.mode === "remote" && !missing)) add("Copy site", () => openCreateProdDialog(site, env, true), "push-right");
 	if (hasProd(site) && !site.admin) add("Delete site", () => deleteSite(site, isTarget(env) ? "prod" : "test", env), "danger");
 	if (!hasProd(site) && !site.admin) {
 		if (!site.managed_by) add("Copy site", () => copySite(site), "push-right");
@@ -1203,14 +1204,14 @@ async function changeBinding(site, scope, env) {
 	}
 }
 
-async function copySite(site, sourceEnv) {
+async function copySite(site) {
 	const dialog = $("#dlg-copy-site");
 	const form = $("#form-copy-site");
 	form.reset();
 	$("#copy-site-icon").replaceChildren(svgIcon("file"));
 	const field = (name) => form.elements.namedItem(name);
 	const hasSqlConnection = site.environments.some((env) =>
-		(sourceEnv ? env === sourceEnv : !isTarget(env)) && ["MS SQL", "SQL Express", "Azure SQL"].includes(env.database));
+		!isTarget(env) && ["MS SQL", "SQL Express", "Azure SQL"].includes(env.database));
 	field("change_connection").closest("label").hidden = !hasSqlConnection;
 	field("change_connection").disabled = !hasSqlConnection;
 	const sqlFields = $("#copy-sql-fields");
@@ -1222,26 +1223,12 @@ async function copySite(site, sourceEnv) {
 	const suggestUsername = () => {
 		if (!usernameEdited) field("username").value = field("database").value;
 	};
-	// A remote environment is copied on its own server
-	const sourceServer = sourceEnv?.mode === "remote" ? sourceEnv.host : "";
-	$("#copy-destination-row").hidden = !sourceServer;
-	field("destination").disabled = !sourceServer;
-	$("#copy-destination-server").textContent = `Same server (${sourceServer})`;
-	const usesSqlite = sourceEnv?.database === "SQLite";
-	field("stop_source").checked = usesSqlite;
 	const showCopyPath = () => {
-		const toServer = sourceServer && field("destination").value !== "local";
-		const copyServer = toServer ? sourceServer : "";
-		const name = field("target").value.trim() || "…";
-		$("#copy-site-path").textContent = `Copied to ${copyServer ? copyServer + ":" : ""}/var/www/${name}`;
-		form.querySelector(".copy-dns-hint").textContent = `For HTTPS, the new binding must point to ${copyServer || "this server"}.`;
-		$("#copy-stop-row").hidden = toServer || !usesSqlite;
-		$("#copy-local-hint").hidden = toServer;
+		$("#copy-site-path").textContent = `Copied to /var/www/${field("target").value.trim() || "…"}`;
 	};
 	showCopyPath();
-	field("destination").onchange = showCopyPath;
 	// A site with a project gets a project of its own
-	const hasProject = site.has_project && !sourceEnv;
+	const hasProject = site.has_project;
 	$("#copy-project-row").hidden = !hasProject;
 	field("project").required = hasProject;
 	field("project").disabled = !hasProject;
@@ -1274,13 +1261,9 @@ async function copySite(site, sourceEnv) {
 			const submit = form.querySelector('[type="submit"]');
 			submit.disabled = true;
 			try {
-				const payload = { kind: sourceEnv ? "copy_env" : "copy_site", site: site.name, ...(sourceEnv ? { environment_id: sourceEnv.target } : {}),
+				const payload = { kind: "copy_site", site: site.name,
 					target: field("target").value.trim(), binding: field("binding").value.trim() };
 				if (hasProject) payload.project = field("project").value.trim();
-				if (sourceServer && field("destination").value === "local") {
-					payload.destination = "local";
-					payload.stop_source = field("stop_source").checked;
-				}
 				if (hasSqlConnection && field("change_connection").checked) {
 					payload.connection = { server: field("server").value.trim(), database: field("database").value.trim(),
 						username: field("username").value.trim(), password: field("password").value };
@@ -1509,19 +1492,44 @@ function syncProdForm() {
 	prodForm.smb_user.required = windows;
 	prodForm.smb_password.required = windows;
 	const moving = Boolean(prodForm.dataset.moveTarget);
+	const copying = Boolean(prodForm.dataset.copy);
 	const release = target === "release";
-	const sameServerMove = moving && local && prodForm.dataset.moveMode !== "remote";
+	const same = target === "same";
+	const sameServerMove = moving && !copying && local && prodForm.dataset.moveMode === "local";
 	const noSettings = sameServerMove || release || existing;
-	$("#prod-folder-row").hidden = windows || noSettings && !existing;
+	$("#prod-folder-row").hidden = windows || moving && local || noSettings && !existing;
 	$("#prod-binding-row").hidden = noSettings && !sameServerMove;
 	$("#prod-environment-row").hidden = noSettings;
 	$("#prod-protocol-row").hidden = noSettings;
 	$("#prod-protocol-hint").hidden = noSettings;
-	prodForm.folder.required = !windows && (!noSettings || existing);
+	prodForm.folder.required = !windows && !(moving && local) && (!noSettings || existing);
+	prodForm.binding.required = !release && !existing;
+	const fromWindows = prodForm.dataset.moveMode === "windows";
+	const hasSql = fromWindows || prodForm.dataset.moveSql === "1";
+	const copyOptions = copying && !release;
+	$("#prod-copy-options").hidden = !copyOptions;
+	$("#prod-stop-row").hidden = prodForm.dataset.moveDatabase !== "SQLite";
+	$("#prod-connection-row").hidden = !hasSql;
+	const newConnection = copyOptions && hasSql && prodForm.elements.change_connection.checked;
+	$("#prod-sql-fields").hidden = !newConnection;
+	$("#prod-sql-fields").disabled = !newConnection;
+	$("#prod-delete-row").hidden = copying;
+	$("#prod-move-hint").textContent = windows
+		? "Settings and content are copied, and the project is built for Windows. A connection to the source's own SQL Server is changed to its address, which must accept connections from the new server. With a Windows target, the IIS site and its folder must already exist."
+		: fromWindows
+			? "Settings and content are copied from Windows while its site runs, and the project is built for the destination. A connection to the Windows server's own SQL Server is changed to its address."
+			: `${copying ? "The whole folder is copied" : "The site is stopped while the whole folder is copied"}, including its build, media, logs and a SQLite database, so it runs the same version. A connection to the source's own SQL Server is changed to its address, which must accept connections from the new server. With HTTPS, DNS must already point to the new server.`;
+	const destinationServer = same ? prodForm.dataset.moveHost : target === "remote" || existing ? prodForm.host.value.trim() || "…" : "";
+	const destinationPath = windows ? prodForm.smb_share.value.trim() || "…"
+		: local ? prodForm.local_path.value.trim() || "…"
+			: `${destinationServer}:/var/www/${prodForm.folder.value.trim() || "…"}`;
+	$("#prod-dest-path").hidden = !moving || release;
+	$("#prod-dest-path").textContent = `${copying ? "Copied" : "Migrated"} to ${destinationPath}`;
 	$("#prod-existing-hint").hidden = !existing;
 	$("#prod-move-options").hidden = !moving || sameServerMove || release;
+	prodForm.elements.delete_local.disabled = copying;
 	$("#prod-release-hint").hidden = !release;
-	$("#prod-submit").textContent = existing ? "Add existing site" : !moving ? "Add environment" : release ? "Move out" : "Migrate";
+	$("#prod-submit").textContent = existing ? "Add existing site" : !moving ? "Add environment" : release ? "Move out" : copying ? "Copy" : "Migrate";
 	$("#prod-local-hint").textContent = sameServerMove
 		? "The folder is moved, and the service and Apache config follow it. It must be a new folder directly under /var/www, which also becomes the site's name. The port is unchanged. A new binding with HTTPS gets a new certificate, so DNS must point here first."
 		: moving ? "It must be a new folder directly under /var/www, which also becomes the site's name."
@@ -1538,8 +1546,18 @@ function syncProdForm() {
 	}
 	prodForm.dataset.target = target;
 }
-function openCreateProdDialog(site, moveEnv) {
+function openCreateProdDialog(site, moveEnv, copying = false) {
 	prodForm.reset();
+	delete prodForm.dataset.copy;
+	if (copying) prodForm.dataset.copy = "1";
+	delete prodForm.dataset.moveDatabase;
+	delete prodForm.dataset.moveSql;
+	delete prodForm.dataset.moveHost;
+	if (moveEnv) {
+		prodForm.dataset.moveDatabase = moveEnv.database || "";
+		prodForm.dataset.moveSql = ["MS SQL", "SQL Express", "Azure SQL"].includes(moveEnv.database) ? "1" : "";
+		prodForm.dataset.moveHost = moveEnv.host || "";
+	}
 	delete prodForm.binding.dataset.edited;
 	delete prodForm.dataset.moveTarget;
 	delete prodForm.dataset.moveMode;
@@ -1547,13 +1565,17 @@ function openCreateProdDialog(site, moveEnv) {
 		prodForm.dataset.moveTarget = moveEnv.target;
 		prodForm.dataset.moveMode = moveEnv.mode;
 	}
-	$("#prod-title").textContent = moveEnv ? `Migrate ${environmentLabel(site, moveEnv)}` : "Add environment";
+	$("#prod-title").textContent = moveEnv ? `${copying ? "Copy" : "Migrate"} ${environmentLabel(site, moveEnv)}` : "Add environment";
 	$("#prod-description").textContent = moveEnv
-		? `Migrate ${bindingLabel(moveEnv) || moveEnv.unit || moveEnv.folder} to another folder or server. Everything goes with it.`
+		? copying
+			? `Copy ${bindingLabel(moveEnv) || moveEnv.unit || moveEnv.folder} to a new folder or server. It stays as it is, and the copy becomes a new environment here.`
+			: `Migrate ${bindingLabel(moveEnv) || moveEnv.unit || moveEnv.folder} to another folder or server. Everything goes with it.`
 		: "Configure where this site is published to, then publish and sync content automatically when available.";
 	prodForm.elements.target.querySelector("option[value=release]")?.remove();
 	delete prodForm.dataset.existing;
-	if (moveEnv?.separate) prodForm.elements.target.append(el("option", { value: "release", textContent: "Separate site (move out)" }));
+	prodForm.elements.target.querySelector("option[value=same]")?.remove();
+	if (moveEnv?.mode === "remote") prodForm.elements.target.prepend(el("option", { value: "same", textContent: `Same server (${moveEnv.host})` }));
+	if (moveEnv?.separate && !copying) prodForm.elements.target.append(el("option", { value: "release", textContent: "Separate site (move out)" }));
 	const main = site.environments.find((env) => !isTarget(env));
 	const binding = (main && bindingLabel(main)) || siteLabel(site);
 	prodForm.folder.value = siteLabel(site);
@@ -1565,14 +1587,15 @@ function openCreateProdDialog(site, moveEnv) {
 	prodForm.dataset.remoteBinding = binding;
 	prodForm.dataset.localFolder = `production-${siteLabel(site)}`;
 	prodForm.dataset.localBinding = `production-${siteLabel(site)}`;
-	prodForm.elements.target.value = moveEnv?.separate ? "release" : "remote";
+	prodForm.elements.target.value = moveEnv?.separate && !copying ? "release" : moveEnv?.mode === "remote" ? "same" : copying ? "local" : "remote";
 	prodForm.elements.https.value = main && main.scheme === "http" ? "n" : "y";
 	if (moveEnv) {
-		const name = moveEnv.unit || moveEnv.folder || siteLabel(site);
-		const movedBinding = bindingLabel(moveEnv) || binding;
+		// A copy needs its own name and binding, a migration keeps them unless they are changed
+		const name = copying ? "" : moveEnv.unit || moveEnv.folder || siteLabel(site);
+		const movedBinding = copying ? "" : bindingLabel(moveEnv) || binding;
 		prodForm.folder.value = name;
 		prodForm.binding.value = movedBinding;
-		prodForm.binding.dataset.edited = "1";
+		if (!copying) prodForm.binding.dataset.edited = "1";
 		prodForm.local_path.value = `/var/www/${name}`;
 		prodForm.dataset.remoteFolder = name;
 		prodForm.dataset.remoteBinding = movedBinding;
@@ -1611,12 +1634,20 @@ prodForm.elements.environment.onchange = () => {
 };
 prodForm.folder.oninput = () => {
 	if (!prodForm.binding.dataset.edited) prodForm.binding.value = prodForm.folder.value;
+	syncProdForm();
 };
+prodForm.local_path.oninput = () => {
+	if (prodForm.dataset.copy && !prodForm.binding.dataset.edited) prodForm.binding.value = prodForm.local_path.value.trim().split("/").pop();
+	syncProdForm();
+};
+prodForm.host.oninput = syncProdForm;
+prodForm.smb_share.oninput = syncProdForm;
+prodForm.elements.change_connection.onchange = syncProdForm;
 prodForm.binding.oninput = () => { prodForm.binding.dataset.edited = "1"; };
 $("#prod-cancel").onclick = () => prodDialog.close();
 prodForm.onsubmit = (event) => {
 	event.preventDefault();
-	if (prodForm.elements.target.value === "release") {
+	if (prodForm.elements.target.value === "release" && !prodForm.dataset.copy) {
 		const release = { kind: "release_site", site: prodForm.dataset.site, target: prodForm.dataset.moveTarget };
 		run(async () => {
 			await openTask(release);
@@ -1631,6 +1662,14 @@ prodForm.onsubmit = (event) => {
 		data.target = "remote";
 	}
 	if (prodForm.dataset.moveTarget) data.environment_id = prodForm.dataset.moveTarget;
+	if (prodForm.dataset.copy) {
+		data.copy = true;
+		data.stop_source = prodForm.elements.stop_source.checked && prodForm.dataset.moveDatabase === "SQLite";
+		if (!$("#prod-sql-fields").hidden) {
+			data.connection = { server: data.conn_server.trim(), database: data.conn_database.trim(), username: data.conn_username.trim(), password: data.conn_password };
+		}
+	}
+	for (const key of ["conn_server", "conn_database", "conn_username", "conn_password", "change_connection"]) delete data[key];
 	data.site = prodForm.dataset.site;
 	run(async () => {
 		await openTask(data);

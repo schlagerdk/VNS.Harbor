@@ -88,7 +88,7 @@ console.log(JSON.stringify(sortedEnvironments(input).map((env) => env.environmen
 
     def test_copy_dialog_shows_the_destination(self):
         self.assertIn('id="copy-site-path"', (APP / "templates/index.html").read_text())
-        self.assertIn('`Copied to ${copyServer ? copyServer + ":" : ""}/var/www/${name}`', (APP / "static/app.js").read_text())
+        self.assertIn('`Copied to /var/www/${field("target").value.trim() || "…"}`', (APP / "static/app.js").read_text())
 
     def test_site_deleted_on_its_server_is_shown_and_only_publish_and_delete_remain(self):
         source = (APP / "static/app.js").read_text()
@@ -130,20 +130,27 @@ console.log(JSON.stringify([
         self.assertIn('const target = prodForm.dataset.existing ? "existing" : prodForm.elements.target.value;', source)
         self.assertIn("if (prodForm.dataset.existing) {\n\t\tdata.kind = \"register_env\";", source)
 
-    def test_copy_of_a_remote_environment_can_go_to_this_server(self):
-        page = (APP / "templates/index.html").read_text()
-        self.assertIn('<option value="local">This server</option>', page)
-        source = (APP / "static/app.js").read_text()
-        self.assertIn('payload.destination = "local";', source)
-        self.assertIn('field("stop_source").checked = usesSqlite;', source)
-        app = (APP / "app.py").read_text()
-        self.assertIn('copy_here = copy_remote and data.get("destination") == "local"', app)
-        self.assertIn('"VNS_COPY_TO_LOCAL=1"', app)
-
     def test_migrate_is_offered_on_local_and_remote_environments(self):
         source = (APP / "static/app.js").read_text()
         self.assertIn('env.mode === "remote" && !missing)) add("Migrate…"', source)
         self.assertNotIn('add("Move…"', source)
+
+    def test_copy_and_migrate_share_one_dialog(self):
+        source = (APP / "static/app.js").read_text()
+        self.assertIn('add("Copy site", () => openCreateProdDialog(site, env, true), "push-right")', source)
+        self.assertIn('add("Migrate…", () => openCreateProdDialog(site, env));', source)
+        self.assertIn('value: "same", textContent: `Same server (${moveEnv.host})`', source)
+        self.assertIn("data.copy = true;", source)
+        self.assertNotIn("copy_env", source)
+        app = (APP / "app.py").read_text()
+        self.assertNotIn("copy_env", app)
+        self.assertIn('extra_env["VNS_ENV_COPY"] = "1"', app)
+        self.assertFalse((APACHE / "copy_env.sh").exists())
+
+    def test_environments_header_is_a_bar_with_a_count(self):
+        page = (APP / "templates/index.html").read_text()
+        self.assertIn('id="site-targets-count"', page)
+        self.assertIn("border-radius: 12px; }", (APP / "static/style.css").read_text().split(".site-targets-head {", 1)[1].split("\n", 1)[0])
 
     def test_layout_and_wording(self):
         page = (APP / "templates/index.html").read_text()

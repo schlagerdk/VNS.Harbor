@@ -426,6 +426,23 @@ def remote_command(site, action, timeout=60, target="prod", **kwargs):
     return result
 
 
+def sync_prod_binding(site, target, binding):
+    """A binding changed on the server is saved here too, also in scripts made before publish read it from the server."""
+    if not re.fullmatch(r"[A-Za-z0-9.-]{1,253}", binding):
+        return
+    path = os.path.join(target_folder(os.path.join(WEB_ROOT, site), target), "publish_prod.sh")
+    try:
+        with open(path, encoding="utf-8") as stream:
+            text = stream.read()
+        saved = re.search(r"^PROD_BINDING=(\S*)", text, re.M)
+        if not saved or saved.group(1).strip("'\"") == binding:
+            return
+        with open(path, "w", encoding="utf-8") as stream:
+            stream.write(text[:saved.start(1)] + "'" + binding + "'" + text[saved.end(1):])
+    except OSError as exc:
+        app.logger.warning("Could not save the binding of %s: %s", site, exc)
+
+
 def remote_status(site, target="prod"):
     key = remote_key(site, target)
     cached = REMOTE_STATUS.get(key)
@@ -438,6 +455,8 @@ def remote_status(site, target="prod"):
             raise ValueError("Invalid remote status response")
         if not status.get("binding"):
             status.pop("binding", None)
+        else:
+            sync_prod_binding(site, target, status["binding"])
     except HTTPException as exc:
         status = {"https": None, "state": "unknown", "remote_error": exc.description}
     except (ValueError, TypeError) as exc:
@@ -1215,7 +1234,7 @@ def terminal_scope(payload):
 
 def terminal_auto_close(payload):
     kind = payload.get("kind")
-    if kind in ("shell", "create_site", "copy_site", "copy_env", "register_env", "create_prod", "sync_env", "move_env", "adopt_site", "release_site", "delete_site", "change_binding", "prod_action", "dotnet_package", "fix_permissions", "publish_both", "bulk", "update_package", "sql_action", "install_sql_tools"):
+    if kind in ("shell", "create_site", "copy_site", "register_env", "create_prod", "sync_env", "move_env", "adopt_site", "release_site", "delete_site", "change_binding", "prod_action", "dotnet_package", "fix_permissions", "publish_both", "bulk", "update_package", "sql_action", "install_sql_tools"):
         return True
     if kind == "remote_tool":
         return payload.get("tool") == "shell"
@@ -1383,7 +1402,7 @@ def windows_share(value):
 def production_setup_env(data, site, moving=False):
     """Validate modal input for create_prod.sh and keep credentials out of argv."""
     target = data.get("target", "")
-    if target not in ("local", "remote", "windows"):
+    if target not in ("local", "remote", "windows", *(("same",) if moving else ())):
         abort(400, "Invalid production target")
     binding = dns_name(data.get("binding", ""), "production binding", fully_qualified=True)
     # A Windows site has no folder or service on this side: the binding names it in the admin.
@@ -1441,6 +1460,9 @@ def production_setup_env(data, site, moving=False):
         if service_name(folder) == service_name(site) or binding == test_binding:
             abort(400, "A local production site needs a different name and binding than the test site")
         values["VNS_PROD_LOCAL_PATH"] = target_path
+    elif target == "same":
+        # move_env.sh uses the login saved for the source
+        pass
     elif target == "windows":
         user = data.get("smb_user", "")
         password = data.get("smb_password", "")
@@ -1728,9 +1750,9 @@ def build_command(data):
         site = site_arg(data)
         target = target_arg(site, {"target": data.get("environment_id")})
         prod = parse_prod(os.path.join(WEB_ROOT, site), target) or {}
-        if prod.get("PROD_TARGET") == "windows":
+        if prod.get("PROD_TARGET") == "windows" and not data.get("copy"):
             abort(400, "An environment on a Windows server cannot be migrated")
-        return "Migrate environment: " + site, [bash, os.path.join(APACHE_DIR, "move_env.sh"), site, target], APACHE_DIR
+        return ("Copy" if data.get("copy") else "Migrate") + " environment: " + site, [bash, os.path.join(APACHE_DIR, "move_env.sh"), site, target], APACHE_DIR
     if kind == "adopt_site":
         site = site_arg(data)
         main = data.get("main", "")
@@ -1778,30 +1800,15 @@ def build_command(data):
         abort(400, "Unknown tool")
     if kind == "register_env":
         return "Add existing site: " + site_arg(data), [bash, os.path.join(APACHE_DIR, "register_env.sh"), site_arg(data)], APACHE_DIR
-    if kind in ("copy_site", "copy_env"):
+    if kind == "copy_site":
         source = site_arg(data)
-        main = ""
-        copy_remote = False
-        if kind == "copy_env":
-            # An environment in its own folder is copied like a site, and the copy joins the same main site
-            main = source
-            copied_target = target_arg(main, {"target": data.get("environment_id")})
-            prod = parse_prod(os.path.join(WEB_ROOT, main), copied_target) or {}
-            source = prod.get("PROD_FOLDER") or ""
-            copy_remote = not prod.get("PROD_LOCAL_PATH") and prod.get("PROD_TARGET") != "windows"
-            if not copy_remote:
-                local = os.path.realpath(prod.get("PROD_LOCAL_PATH") or "")
-                root = os.path.realpath(os.path.join(WEB_ROOT, source))
-                if not prod.get("PROD_LOCAL_PATH") or source == main or source not in site_dirs() or not (local == root or local.startswith(root + os.sep)):
-                    abort(400, "Only an environment with its own folder can be copied")
-        elif managed_by(source):
+        if managed_by(source):
             abort(400, "This site is an environment of a main site on another server. Make the copy from there.")
-        if not copy_remote and (source == ADMIN_SITE or target_ids(os.path.join(WEB_ROOT, source))):
+        if source == ADMIN_SITE or target_ids(os.path.join(WEB_ROOT, source)):
             abort(400, "Admin sites and sites with production targets cannot be copied.")
         target = dns_name(data.get("target", ""), "site name")
         binding = dns_name(data.get("binding", ""), "binding", fully_qualified=True)
-        copy_here = copy_remote and data.get("destination") == "local"
-        if (not copy_remote or copy_here) and any(service_name(name) == service_name(target) for name in site_dirs()):
+        if any(service_name(name) == service_name(target) for name in site_dirs()):
             abort(400, "The destination site already exists.")
         database = data.get("database", "")
         if not isinstance(database, str) or len(database) > 128 or any(char in database for char in "\0\r\n;\"'"):
@@ -1815,20 +1822,14 @@ def build_command(data):
                         char in value for char in "\0\r\n"):
                     abort(400, "Invalid SQL connection field: " + key)
         argv = [bash, os.path.join(APACHE_DIR, "copy_site.sh"), source, target, binding]
-        if main:
-            argv = [bash, os.path.join(APACHE_DIR, "copy_env.sh"), main, source, target, binding]
         project = data.get("project", "")
         if project:
-            if main or not isinstance(project, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", project):
+            if not isinstance(project, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", project):
                 abort(400, "Invalid project name")
             if len(glob.glob(os.path.join(glob.escape(os.path.join(WEB_ROOT, source)), "*.csproj"))) != 1:
                 abort(400, "The site needs exactly one project to rename it")
         if database.strip():
             argv.append(database.strip())
-        if copy_remote:
-            argv = ["/usr/bin/env", "VNS_COPY_REMOTE=1", "VNS_TARGET=" + copied_target, *argv]
-            if copy_here:
-                argv[1:1] = ["VNS_COPY_TO_LOCAL=1", "VNS_COPY_STOP=" + ("y" if data.get("stop_source") else "n")]
         if project:
             argv = ["/usr/bin/env", "VNS_COPY_PROJECT=" + project, *argv]
         return "Copy site: " + source, argv, APACHE_DIR
@@ -1991,9 +1992,19 @@ def api_term():
     if payload.get("kind") == "move_env":
         extra_env = production_setup_env(payload, payload.get("site", ""), moving=True)
         extra_env["VNS_MOVE_DELETE_LOCAL"] = "y" if payload.get("delete_local") == "y" else "n"
+        if payload.get("copy"):
+            extra_env["VNS_ENV_COPY"] = "1"
+            extra_env["VNS_COPY_STOP"] = "y" if payload.get("stop_source") else "n"
+            connection = payload.get("connection")
+            if connection is not None:
+                if (not isinstance(connection, dict) or set(connection) != {"server", "database", "username", "password"}
+                        or any(not isinstance(value, str) or not value.strip() or len(value) > 4096 or any(char in value for char in "\0\r\n")
+                               for value in connection.values())):
+                    abort(400, "Enter SQL server, database, username and password.")
+                extra_env["VNS_COPY_SQL"] = json.dumps(connection)
     if payload.get("kind") == "sql_action" and payload.get("login") is not None:
         extra_env = {"VNS_SQL_LOGIN_PASSWORD": payload["login_password"]}
-    if payload.get("kind") in ("copy_site", "copy_env") and payload.get("connection") is not None:
+    if payload.get("kind") == "copy_site" and payload.get("connection") is not None:
         extra_env = {"VNS_COPY_SQL": json.dumps(payload["connection"])}
     if payload.get("kind") == "create_prod":
         argv = ["/bin/bash", render_create_prod_script(payload["site"])]

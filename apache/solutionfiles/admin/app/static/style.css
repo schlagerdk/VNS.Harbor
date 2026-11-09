@@ -361,12 +361,23 @@ body.login { display: grid; place-items: center; min-height: 100vh; min-height: 
 .site-layout.with-packages .package-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .targets-empty { min-height: 0; padding: 48px 20px; border: 1px dashed var(--line); border-radius: 12px; }
 .prod-existing-switch { margin-top: 14px; }
+dialog.newsite .hint { margin-top: 8px; line-height: 1.55; }
+dialog.newsite .hint + .hint { margin-top: 10px; }
+dialog.newsite .copy-connection-toggle { margin-top: 14px; }
+dialog.newsite .copy-connection-toggle + .hint { margin-top: 12px; }
+#copy-destination-row { margin-top: 4px; }
+.copy-server-fields { margin: 12px 0 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; }
+.copy-server-fields legend { padding: 0 6px; color: var(--muted); font-size: 12px; }
+#prod-move-options, #prod-copy-options { margin-top: 12px; }
+.prod-dest-path { color: var(--text, inherit); }
 .prod-existing-switch .cancel-link { padding: 0; font-size: inherit; }
-.site-targets { margin-top: 32px; padding-top: 28px; border-top: 2px solid var(--line); }
+.site-targets { margin-top: 32px; }
 .site-targets-head .actions.site-targets-right { margin-left: auto; }
 .site-danger { display: flex; justify-content: flex-end; margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--line); }
-.site-targets-head { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; }
-.site-targets-head h3 { margin: 0; font-size: 22px; }
+/* A header bar in the style of the panels, so the section reads as one block with its cards */
+.site-targets-head { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; padding: 14px 20px; background: linear-gradient(110deg, rgba(163, 113, 247, .1), transparent), var(--panel); border: 1px solid var(--line); border-radius: 12px; }
+.site-targets-title { display: flex; align-items: center; gap: 10px; }
+.site-targets-head h3 { margin: 0; font-size: 18px; }
 .site-targets-head .actions { margin: 0; padding: 0; border: 0; }
 .env-targets { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 @media (max-width: 1000px) { .site-layout.with-packages { grid-template-columns: minmax(0, 1fr); } .site-layout.with-packages .package-panel { contain: none; } .env-targets { grid-template-columns: minmax(0, 1fr); } }

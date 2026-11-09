@@ -127,6 +127,11 @@ root=${ROOT}
 docroot=${root}/wwwroot
 conf=/etc/apache2/sites-available/${SITE}.conf
 service=/etc/systemd/system/${unit}.service
+# The binding can have been changed on the server: its Apache config decides
+if [[ -f ${conf} ]]; then
+	configured_binding=$(awk '$1 == "ServerName" { print $2; exit }' "${conf}")
+	BINDING=${configured_binding:-${BINDING}}
+fi
 certdir=/etc/ssl/certs/${BINDING}_ecc
 acme=/etc/acmesh/acme.sh
 source /vns/apache/lib/common.sh
@@ -426,7 +431,9 @@ echo "Start service"
 run_script <<'REMOTE'
 set -euo pipefail
 dir=${ROOT}
-# The Apache config decides the scheme: it stays correct if a certificate is added later
+# The Apache config decides the scheme and binding: they stay correct if they are changed on the server
+configured_binding=$(awk '$1 == "ServerName" { print $2; exit }' "/etc/apache2/sites-available/${SITE}.conf" 2>/dev/null || true)
+BINDING=${configured_binding:-${BINDING}}
 scheme=http
 use_https=false
 if grep -q "SSLEngine" "/etc/apache2/sites-available/${SITE}.conf" 2>/dev/null; then
