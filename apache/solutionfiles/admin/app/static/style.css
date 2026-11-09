@@ -338,6 +338,7 @@ body.login { display: grid; place-items: center; min-height: 100vh; min-height: 
 
 .detail-title { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 12px; }
 .detail-title h2 { margin: 0; font-size: 26px; }
+.detail-title .detail-title-action { margin-left: auto; }
 .sql-heading { margin-bottom: 16px; }
 #site-head > .detail-title:last-child { margin-bottom: 16px; }
 #site-head > .actions { display: flex; gap: 8px; flex-wrap: wrap; padding-top: 20px; margin-bottom: 20px; }
@@ -354,13 +355,13 @@ body.login { display: grid; place-items: center; min-height: 100vh; min-height: 
 .site-layout.with-packages .envs { grid-template-columns: minmax(0, 1fr); }
 /* The main site sets the height: a long package list scrolls inside the panel instead of stretching the row */
 .site-layout.with-packages .package-panel { margin-top: 0; display: flex; flex-direction: column; contain: size; border-top: 3px solid var(--blue); }
-.site-layout.with-packages .package-list { flex: 1; min-height: 0; overflow-y: auto; }
+.site-layout.with-packages .package-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .targets-empty { min-height: 0; padding: 48px 20px; border: 1px dashed var(--line); border-radius: 12px; }
-.site-targets { margin-top: 24px; }
+.site-targets { margin-top: 36px; }
 .site-targets-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
-.site-targets-head h3 { margin: 0; font-size: 15px; }
+.site-targets-head h3 { margin: 0; font-size: 22px; }
 .site-targets-head .actions { margin: 0; padding: 0; border: 0; }
-.env-targets { grid-template-columns: repeat(auto-fill, minmax(420px, 1fr)); }
+.env-targets { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 @media (max-width: 1000px) { .site-layout.with-packages { grid-template-columns: minmax(0, 1fr); } .site-layout.with-packages .package-panel { contain: none; } .env-targets { grid-template-columns: minmax(0, 1fr); } }
 .env .actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 14px; }
 
@@ -540,6 +541,12 @@ a.btn-link .ico { width: 13px; height: 13px; flex: none; }
 .site-environment-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .site-environment-head .badge { font-size: 10px; padding: 4px 7px; }
 .site-environment-links { display: flex; align-items: stretch; gap: 6px; flex-shrink: 0; }
+.site-link-group.compact { padding: 7px 12px; }
+.site-link-group.compact .site-environment-head { flex: 1; flex-wrap: nowrap; min-width: 0; }
+.site-link-group.compact .badge { flex-shrink: 0; }
+.site-environment-binding { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.site-link-group.compact a.btn-link { padding: 3px 8px; font-size: 12px; }
+.site-link-more { padding: 7px 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
 .site-links:has(.publish-status) .site-environment-links { flex-direction: column; }
 @media (max-width: 420px) {
 	.site { padding: 16px; }

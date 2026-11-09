@@ -424,6 +424,7 @@
       <label>Absolute folder path <input name="local_path" required autocomplete="off" spellcheck="false"></label>
       <p class="hint" id="prod-local-hint"></p>
     </div>
+    <p class="hint" id="prod-release-hint" hidden>The environment becomes a separate site again, in the folder it already has. Its files, service and Apache config are not touched, and it can no longer be published from this site until it is moved back.</p>
     <div id="prod-move-options" hidden>
       <p class="hint">Settings and content are copied, and the main site's project is published to the server. The site is stopped during the copy. A database on another server is not moved, so check the connection string. With HTTPS, DNS must already point to the new server. If a step fails, the environment keeps running here.</p>
       <label class="check"><input type="checkbox" name="delete_local" value="y"> Delete the local files after a successful move</label>

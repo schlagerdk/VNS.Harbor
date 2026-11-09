@@ -41,6 +41,25 @@ console.log(JSON.stringify(sortedEnvironments(input).map((env) => env.environmen
         self.assertIn(".site-layout.with-packages .package-panel { margin-top: 0; display: flex; flex-direction: column; contain: size; border-top: 3px solid var(--blue); }", css)
         self.assertNotIn("gap: 16px; align-items: start; }\n.site-layout", css)
 
+    def test_environments_have_the_width_of_the_main_site(self):
+        css = (APP / "static/style.css").read_text()
+        self.assertIn(".site-layout.with-packages { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);", css)
+        self.assertIn(".env-targets { grid-template-columns: repeat(2, minmax(0, 1fr)); }", css)
+
+    def test_move_out_is_a_choice_in_the_move_dialog(self):
+        source = (APP / "static/app.js").read_text()
+        self.assertNotIn('add("Move out"', source)
+        self.assertIn('value: "release", textContent: "Separate site (move out)"', source)
+        self.assertIn('kind: "release_site"', source)
+
+    def test_package_list_keeps_the_scroll_to_itself(self):
+        self.assertIn("overflow-y: auto; overscroll-behavior: contain;", (APP / "static/style.css").read_text())
+
+    def test_move_under_main_site_is_in_the_title(self):
+        source = (APP / "static/app.js").read_text()
+        self.assertIn('className: "detail-title-action"', source)
+        self.assertNotIn('add("Move under main site"', source)
+
     def test_layout_and_wording(self):
         page = (APP / "templates/index.html").read_text()
         layout = re.search(r'<div id="site-layout".*?</div>\s*<section id="site-targets"', page, re.S).group(0)

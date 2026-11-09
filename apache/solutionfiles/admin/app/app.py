@@ -1188,7 +1188,7 @@ def terminal_scope(payload):
 
 def terminal_auto_close(payload):
     kind = payload.get("kind")
-    if kind in ("shell", "create_site", "copy_site", "create_prod", "sync_env", "move_env", "adopt_site", "release_site", "delete_site", "change_binding", "prod_action", "dotnet_package", "fix_permissions", "publish_both", "bulk", "update_package", "sql_action", "install_sql_tools"):
+    if kind in ("shell", "create_site", "copy_site", "copy_env", "create_prod", "sync_env", "move_env", "adopt_site", "release_site", "delete_site", "change_binding", "prod_action", "dotnet_package", "fix_permissions", "publish_both", "bulk", "update_package", "sql_action", "install_sql_tools"):
         return True
     if kind == "remote_tool":
         return payload.get("tool") == "shell"
@@ -1745,8 +1745,18 @@ def build_command(data):
         if tool == "configtest":
             return "Apache config test", [bash, "-c", "clear; apache2ctl configtest"], WEB_ROOT
         abort(400, "Unknown tool")
-    if kind == "copy_site":
+    if kind in ("copy_site", "copy_env"):
         source = site_arg(data)
+        main = ""
+        if kind == "copy_env":
+            # An environment in its own folder is copied like a site, and the copy joins the same main site
+            main = source
+            prod = parse_prod(os.path.join(WEB_ROOT, main), target_arg(main, {"target": data.get("environment_id")})) or {}
+            source = prod.get("PROD_FOLDER") or ""
+            local = os.path.realpath(prod.get("PROD_LOCAL_PATH") or "")
+            root = os.path.realpath(os.path.join(WEB_ROOT, source))
+            if not prod.get("PROD_LOCAL_PATH") or source == main or source not in site_dirs() or not (local == root or local.startswith(root + os.sep)):
+                abort(400, "Only an environment with its own folder can be copied")
         if source == ADMIN_SITE or target_ids(os.path.join(WEB_ROOT, source)):
             abort(400, "Admin sites and sites with production targets cannot be copied.")
         target = dns_name(data.get("target", ""), "site name")
@@ -1765,6 +1775,8 @@ def build_command(data):
                         char in value for char in "\0\r\n"):
                     abort(400, "Invalid SQL connection field: " + key)
         argv = [bash, os.path.join(APACHE_DIR, "copy_site.sh"), source, target, binding]
+        if main:
+            argv = [bash, os.path.join(APACHE_DIR, "copy_env.sh"), main, source, target, binding]
         if database.strip():
             argv.append(database.strip())
         return "Copy site: " + source, argv, APACHE_DIR
@@ -1927,7 +1939,7 @@ def api_term():
         extra_env["VNS_MOVE_DELETE_LOCAL"] = "y" if payload.get("delete_local") == "y" else "n"
     if payload.get("kind") == "sql_action" and payload.get("login") is not None:
         extra_env = {"VNS_SQL_LOGIN_PASSWORD": payload["login_password"]}
-    if payload.get("kind") == "copy_site" and payload.get("connection") is not None:
+    if payload.get("kind") in ("copy_site", "copy_env") and payload.get("connection") is not None:
         extra_env = {"VNS_COPY_SQL": json.dumps(payload["connection"])}
     if payload.get("kind") == "create_prod":
         argv = ["/bin/bash", render_create_prod_script(payload["site"])]

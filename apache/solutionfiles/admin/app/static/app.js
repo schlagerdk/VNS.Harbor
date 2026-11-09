@@ -370,7 +370,7 @@ function renderStats() {
 		["all", "All", searched.length],
 		["running", "Running", count((s) => siteState(s) === "active")],
 		["stopped", "Stopped", count((s) => siteState(s) === "inactive")],
-		["prod", "With prod", count(hasProd)],
+		["prod", "With environments", count(hasProd)],
 	];
 	for (const kind of Object.keys(kindLabel)) {
 		const n = count((s) => s.kind === kind);
@@ -442,6 +442,8 @@ const buttonStyles = {
 	"Add": ["download", "green"], "Remove": ["trash", "red"], "Check": ["download", "amber"],
 	"Fix permissions": ["shield", "teal"], "Update Python packages": ["sync", "blue"],
 	"Add environment": ["server", "purple"],
+	"Move under main site": ["server", "purple"],
+	"Move…": ["server", "purple"],
 	"Check outdated": ["download", "amber"], "Restart": ["restart", "amber"], "Restart Apache": ["restart", "amber"],
 	"Stop": ["stop", "red"], "Clear logs": ["eraser", "gray"], "Logs": ["file", "gray"],
 	"Admin app log": ["file", "gray"], "Apache error logs": ["file", "teal"],
@@ -604,12 +606,43 @@ function publishBadge(env) {
 		title: env.publish_status === "pending" ? "Project or package configuration has changed since this environment's last successful publish." : "Publish this environment to establish its package baseline." }) : null;
 }
 
+const maxCardEnvironments = 4;
+
+// One line: the environment, the binding as the link to the site, and the backoffice
+function compactEnvironmentRow(site, env, environment) {
+	const row = el("div", { className: "site-link-group compact" + (isTarget(env) ? " production" : ""), role: "group", ariaLabel: environment + " · " + (bindingLabel(env) || siteLabel(site)) });
+	const address = environmentAddress(env);
+	const head = el("div", { className: "site-environment-head" },
+		httpsLock(env.https),
+		el("span", { className: "badge env-" + environment.toLowerCase(), textContent: environment }));
+	if (isRemoteEnv(env)) head.append(remoteIcon(env));
+	head.append(address.url
+		? Object.assign(openLink(bindingLabel(env) || address.hostname, address.url, environment + ": " + address.title), { className: "link site-environment-binding" })
+		: el("span", { className: "muted", textContent: "No binding" }));
+	row.append(head);
+	if (env.publish_status === "pending") row.append(publishBadge(env));
+	if (site.kind === "umbraco" && address.url) {
+		const backend = openLink("Backend", address.url + "umbraco", environment + " backoffice: " + address.title, true);
+		backend.classList.add("backend");
+		row.append(el("div", { className: "site-environment-links" }, backend));
+	}
+	return row;
+}
+
 function siteCard(site) {
 	const state = siteState(site);
 	const actions = el("div", { className: "site-links" });
-	for (const env of sortedEnvironments(site.environments)) {
+	const allEnvironments = sortedEnvironments(site.environments);
+	const compact = allEnvironments.length > 1;
+	const listed = compact ? allEnvironments.slice(0, maxCardEnvironments) : allEnvironments;
+	for (const env of listed) {
 		const production = isTarget(env);
 		const environment = environmentLabel(site, env);
+		if (compact) {
+			const row = compactEnvironmentRow(site, env, environment);
+			actions.append(row);
+			continue;
+		}
 		const group = el("div", { className: "site-link-group" + (production ? " production" : ""), role: "group", ariaLabel: environment + " · " + (bindingLabel(env) || siteLabel(site)) });
 		const heading = el("div", { className: "site-environment-head" },
 			httpsLock(env.https),
@@ -635,6 +668,10 @@ function siteCard(site) {
 		}
 		group.append(links);
 		actions.append(group);
+	}
+
+	if (allEnvironments.length > listed.length) {
+		actions.append(el("div", { className: "site-link-more", textContent: `+${allEnvironments.length - listed.length} more` }));
 	}
 
 	const badges = kindBadges(site);
@@ -824,9 +861,12 @@ function renderSite(name) {
 			if (await ask({ title: "Sync to all?", message: `Sync content from the main site to:\n${names}`, input: false, ok: "Sync to all" })) await openTask({ kind: "sync_env", site: site.name, source: "main", destination: "all" });
 		}) }));
 	}
-	if ((site.adopt_into || []).length) add("Move under main site", () => openAdoptDialog(site));
 	if (!site.admin && hasProd(site)) add("Delete everything", () => deleteSite(site, "all"), "danger");
-	head.append(el("div", { className: "detail-title" }, el("h2", { textContent: siteLabel(site) }), kindBadges(site)));
+	const title = el("div", { className: "detail-title" }, el("h2", { textContent: siteLabel(site) }), kindBadges(site));
+	if ((site.adopt_into || []).length) {
+		title.append(el("button", { textContent: "Move under main site", className: "detail-title-action", onclick: () => run(() => openAdoptDialog(site)) }));
+	}
+	head.append(title);
 	if (actions.childElementCount) head.append(actions);
 	for (const env of site.environments) {
 		if (!isTarget(env)) envs.append(envPanel(site, env));
@@ -1057,11 +1097,7 @@ function envPanel(site, env) {
 		extraTools = tools;
 	}
 	if (isTarget(env) && env.mode === "local" && env.exists !== false) add("Move…", () => openCreateProdDialog(site, env));
-	if (env.separate) add("Move out", async () => {
-		if (await ask({ title: "Move out?", message: `${bindingLabel(env) || env.unit} becomes a separate site again. Its files and service are not touched.`, input: false, ok: "Move out" })) {
-			await openTask({ kind: "release_site", site: site.name, target: env.target });
-		}
-	}, "push-right");
+	if (env.separate) add("Copy site", () => copySite(site, env), "push-right");
 	if (hasProd(site) && !site.admin) add(`Delete ${environmentLabel(site, env)} site`, () => deleteSite(site, isTarget(env) ? "prod" : "test", env), "danger");
 	if (!hasProd(site) && !site.admin) {
 		add("Copy site", () => copySite(site), "push-right");
@@ -1138,14 +1174,14 @@ async function changeBinding(site, scope, env) {
 	}
 }
 
-async function copySite(site) {
+async function copySite(site, sourceEnv) {
 	const dialog = $("#dlg-copy-site");
 	const form = $("#form-copy-site");
 	form.reset();
 	$("#copy-site-icon").replaceChildren(svgIcon("file"));
 	const field = (name) => form.elements.namedItem(name);
 	const hasSqlConnection = site.environments.some((env) =>
-		!isTarget(env) && ["MS SQL", "SQL Express", "Azure SQL"].includes(env.database));
+		(sourceEnv ? env === sourceEnv : !isTarget(env)) && ["MS SQL", "SQL Express", "Azure SQL"].includes(env.database));
 	field("change_connection").closest("label").hidden = !hasSqlConnection;
 	field("change_connection").disabled = !hasSqlConnection;
 	const sqlFields = $("#copy-sql-fields");
@@ -1182,7 +1218,7 @@ async function copySite(site) {
 			const submit = form.querySelector('[type="submit"]');
 			submit.disabled = true;
 			try {
-				const payload = { kind: "copy_site", site: site.name,
+				const payload = { kind: sourceEnv ? "copy_env" : "copy_site", site: site.name, ...(sourceEnv ? { environment_id: sourceEnv.target } : {}),
 					target: field("target").value.trim(), binding: field("binding").value.trim() };
 				if (hasSqlConnection && field("change_connection").checked) {
 					payload.connection = { server: field("server").value.trim(), database: field("database").value.trim(),
@@ -1407,14 +1443,17 @@ function syncProdForm() {
 	prodForm.smb_user.required = windows;
 	prodForm.smb_password.required = windows;
 	const moving = Boolean(prodForm.dataset.moveTarget);
-	const movingLocal = moving && local;
-	$("#prod-folder-row").hidden = windows || local && moving;
-	$("#prod-binding-row").hidden = movingLocal;
-	$("#prod-environment-row").hidden = movingLocal;
-	$("#prod-protocol-row").hidden = movingLocal;
-	$("#prod-protocol-hint").hidden = movingLocal;
-	prodForm.folder.required = !windows && !movingLocal;
-	$("#prod-move-options").hidden = !moving || local;
+	const release = target === "release";
+	const noSettings = moving && local || release;
+	$("#prod-folder-row").hidden = windows || noSettings;
+	$("#prod-binding-row").hidden = noSettings;
+	$("#prod-environment-row").hidden = noSettings;
+	$("#prod-protocol-row").hidden = noSettings;
+	$("#prod-protocol-hint").hidden = noSettings;
+	prodForm.folder.required = !windows && !noSettings;
+	$("#prod-move-options").hidden = !moving || local || release;
+	$("#prod-release-hint").hidden = !release;
+	$("#prod-submit").textContent = !moving ? "Add environment" : release ? "Move out" : "Move";
 	$("#prod-local-hint").textContent = moving
 		? "The folder is moved, and the service and Apache config follow it. It must be a new folder directly under /var/www, which also becomes the site's name. The binding, port and certificate are unchanged."
 		: "Use a subfolder of this site's folder, or /var/www/<production folder> to keep it outside the main site's folder.";
@@ -1439,7 +1478,8 @@ function openCreateProdDialog(site, moveEnv) {
 	$("#prod-description").textContent = moveEnv
 		? `Move ${bindingLabel(moveEnv) || moveEnv.unit} to another folder or server.`
 		: "Configure where this site is published to, then publish and sync content automatically when available.";
-	$("#prod-submit").textContent = moveEnv ? "Move" : "Add environment";
+	prodForm.elements.target.querySelector("option[value=release]")?.remove();
+	if (moveEnv?.separate) prodForm.elements.target.append(el("option", { value: "release", textContent: "Separate site (move out)" }));
 	const main = site.environments.find((env) => !isTarget(env));
 	const binding = (main && bindingLabel(main)) || siteLabel(site);
 	prodForm.folder.value = siteLabel(site);
@@ -1451,7 +1491,7 @@ function openCreateProdDialog(site, moveEnv) {
 	prodForm.dataset.remoteBinding = binding;
 	prodForm.dataset.localFolder = `production-${siteLabel(site)}`;
 	prodForm.dataset.localBinding = `production-${siteLabel(site)}`;
-	prodForm.elements.target.value = "remote";
+	prodForm.elements.target.value = moveEnv?.separate ? "release" : "remote";
 	prodForm.elements.https.value = main && main.scheme === "http" ? "n" : "y";
 	if (moveEnv) {
 		const name = moveEnv.unit || siteLabel(site);
@@ -1493,6 +1533,14 @@ prodForm.binding.oninput = () => { prodForm.binding.dataset.edited = "1"; };
 $("#prod-cancel").onclick = () => prodDialog.close();
 prodForm.onsubmit = (event) => {
 	event.preventDefault();
+	if (prodForm.elements.target.value === "release") {
+		const release = { kind: "release_site", site: prodForm.dataset.site, target: prodForm.dataset.moveTarget };
+		run(async () => {
+			await openTask(release);
+			prodDialog.close();
+		});
+		return;
+	}
 	const data = Object.fromEntries(new FormData(prodForm));
 	data.kind = prodForm.dataset.moveTarget ? "move_env" : "create_prod";
 	if (prodForm.dataset.moveTarget) data.environment_id = prodForm.dataset.moveTarget;

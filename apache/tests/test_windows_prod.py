@@ -1108,6 +1108,44 @@ class LocalFolderRuleTests(ProductionSetupTests):
             self.ns["production_setup_env"](self.local(self.scripts.parent / "_other"), "example.test", moving=True)
 
 
+class CopyEnvironmentTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.log = self.root / "calls.log"
+        shutil.copy(APACHE / "copy_env.sh", self.root)
+        text = (self.root / "copy_env.sh").read_text()
+        (self.root / "copy_env.sh").write_text(re.sub(r"(?m)^\[\[ \$EUID -eq 0 \]\] \|\| exec sudo .*$", "", text))
+
+    def stub(self, name, status=0):
+        (self.root / name).write_text(f'#!/bin/bash\necho "{name} $*" >>"{self.log}"\nexit {status}\n')
+
+    def run_copy(self, *args):
+        return subprocess.run([BASH, str(self.root / "copy_env.sh"), *args], capture_output=True, text=True)
+
+    def test_copy_then_register_under_the_main_site(self):
+        self.stub("copy_site.sh")
+        self.stub("adopt_site.sh")
+        result = self.run_copy("dev.test", "website.test", "new.test", "new.example.test", "newdb")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.log.read_text().splitlines(), [
+            "copy_site.sh website.test new.test new.example.test newdb", "adopt_site.sh new.test dev.test"])
+
+    def test_failed_copy_registers_nothing(self):
+        self.stub("copy_site.sh", 1)
+        self.stub("adopt_site.sh")
+        self.assertNotEqual(self.run_copy("dev.test", "website.test", "new.test", "new.example.test").returncode, 0)
+        self.assertNotIn("adopt_site.sh", self.log.read_text())
+
+    def test_failed_registration_says_the_copy_is_a_separate_site(self):
+        self.stub("copy_site.sh")
+        self.stub("adopt_site.sh", 1)
+        result = self.run_copy("dev.test", "website.test", "new.test", "new.example.test")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("separate site", result.stderr)
+
+
 class AdoptionListingTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
