@@ -1532,6 +1532,10 @@ function syncSiteForm() {
 	if (csharp) run(loadDotnetTemplates);
 }
 siteForm.addEventListener("change", (event) => { if (event.target.name === "type") syncSiteForm(); });
+// Choosing a kind with the mouse moves on to the folder name. Arrow keys between the kinds keep the focus there.
+siteForm.addEventListener("click", (event) => {
+	if (event.detail > 0 && event.target.closest(".type-card")) setTimeout(() => siteForm.site.focus());
+});
 siteForm.elements.template.oninput = syncTemplateVersion;
 siteForm.site.oninput = () => { if (!siteForm.binding.dataset.edited) siteForm.binding.value = siteForm.site.value; };
 siteForm.binding.oninput = () => { siteForm.binding.dataset.edited = "1"; };
