@@ -830,6 +830,7 @@ def site_info(name, states):
         "package_errors": package_errors,
         "scripts": scripts,
         "admin": name == ADMIN_SITE,
+        "answers_any_name": default_site_name() == name,
         "environments": environments,
     }
 
@@ -1542,6 +1543,19 @@ def site_arg(data):
     return site
 
 
+DEFAULT_SITE_LINK = "/etc/apache2/sites-enabled/00-vns-default.conf"
+
+
+def default_site_name():
+    """The site that answers any name no other site has, as set up by create_site.sh with the binding *"""
+    try:
+        target = os.readlink(DEFAULT_SITE_LINK)
+    except OSError:
+        return ""
+    name = os.path.basename(target)
+    return name[:-5] if name.endswith(".conf") else ""
+
+
 def dns_name(value, label, fully_qualified=False, short=False):
     """A site folder name, a fully qualified DNS name, or with short also one without a dot"""
     try:
@@ -2033,7 +2047,6 @@ def build_command(data):
     if kind == "create_site":
         site = dns_name(data.get("site", ""), "site name")
         site_type = data.get("type", "")
-        binding = dns_name(data.get("binding", ""), "binding", fully_qualified=True)
         if site_type not in ("html", "python", "csharp"):
             abort(400, "Invalid site name, type or binding")
         if any(service_name(existing) == service_name(site) for existing in site_dirs()):
@@ -2041,6 +2054,18 @@ def build_command(data):
         certificate = data.get("certificate", "y")
         if certificate not in ("y", "n"):
             abort(400, "Invalid certificate option")
+        # * is the site that answers any name: only without a certificate, as is a name without a dot
+        binding = data.get("binding", "")
+        if not isinstance(binding, str):
+            abort(400, "Invalid binding")
+        if binding in ("", "*"):
+            binding = "*"
+            if certificate == "y":
+                abort(400, "A site that answers any name cannot have a certificate")
+            if default_site_name():
+                abort(400, default_site_name() + " already answers any name. Only one site can.")
+        else:
+            binding = dns_name(binding, "binding", fully_qualified=certificate == "y", short=certificate == "n")
         args = [site, site_type, "", "", "", binding, "", "", certificate]
         if site_type == "csharp":
             legacy = "csharp" in data

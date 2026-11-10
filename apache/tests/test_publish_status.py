@@ -151,7 +151,7 @@ class PublishStatusTests(unittest.TestCase):
         nodes = [node for node in ast.parse((APP / "app.py").read_text()).body
                  if isinstance(node, ast.FunctionDef) and node.name == "site_info"]
         from apache.lib import data_sync
-        ns = dict(os=os, glob=glob, re=re, _publish_module=tracking, _data_sync_module=data_sync, WEB_ROOT=str(self.root.parent),
+        ns = dict(os=os, glob=glob, re=re, _publish_module=tracking, _data_sync_module=data_sync, default_site_name=lambda: "", WEB_ROOT=str(self.root.parent),
                   APACHE_SITES=str(self.root), APACHE_ENABLED=str(self.root), SERVICE_DIR=str(self.root),
                   SCRIPT_RE=re.compile(r".*\.sh$"), ADMIN_SITE="admin.test",
                   read_text=lambda path: Path(path).read_text() if Path(path).is_file() else "",

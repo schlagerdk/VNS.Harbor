@@ -215,7 +215,7 @@ class CreateCommandTests(unittest.TestCase):
                    "_normalize_site_name": normalize_site_name, "service_name": service_name,
                    "installed_template_packages": lambda: {"custom": {"package": "Custom.Templates"}},
                    "installed_dotnet_templates": lambda: [{"short_name": name} for name in ("web", "webapi", "custom")],
-                   "app": Flask(__name__), "subprocess": subprocess}
+                   "app": Flask(__name__), "subprocess": subprocess, "default_site_name": lambda: ""}
         self.ns["default_umbraco_version"] = lambda: "18.3.1"
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "create command", "exec"), self.ns)
         add_target_helpers(self.ns)
@@ -307,6 +307,17 @@ class CreateCommandTests(unittest.TestCase):
                     self.assertEqual(args[6], "xn--5cab8c.dk")
         self.assertEqual(self.command(site="æøå.dk", project="æøå.dk")[6], "xn--5cab8c.dk")
         self.assertEqual(self.command(site="æøå.dk", project="Example")[6], "Example")
+
+    def test_an_empty_binding_answers_any_name_only_without_a_certificate(self):
+        self.assertEqual(self.command(binding="")[7], "*")
+        self.assertEqual(self.command(binding="*")[7], "*")
+        self.assertEqual(self.command(binding="sql-01")[7], "sql-01")
+        for changes in ({"binding": "", "certificate": "y"}, {"binding": "sql-01", "certificate": "y"}):
+            with self.subTest(**changes), self.assertRaises(BadRequest):
+                self.command(**changes)
+        self.ns["default_site_name"] = lambda: "other.test"
+        with self.assertRaisesRegex(BadRequest, "already answers any name"):
+            self.command(binding="")
 
     def test_idn_duplicates_and_invalid_inputs_are_rejected(self):
         self.ns["site_dirs"] = lambda: ["xn--5cab8c.dk"]

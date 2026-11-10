@@ -56,6 +56,11 @@ remove_service_and_config() {
 	fi
 	echo "Delete apache config and logs for ${_name}"
 	sudo rm -f "/etc/apache2/sites-available/${_name}.conf" "/etc/apache2/sites-enabled/${_name}.conf"
+	# The site that answers any name has one more link to its config
+	if [[ $(default_site) == "${_name}" ]]; then
+		echo "${_name} no longer answers any name"
+		sudo rm -f "${_defaultSiteLink}"
+	fi
 	sudo rm -f "/var/log/apache2/${_name}-80-error.log" "/var/log/apache2/${_name}-443-error.log" "/var/log/apache2/${_name}-rewrite-error.log"
 	sudo rm -rf "/var/lib/vns-roots/${_name:?}"
 	sudo rm -f "/var/lib/vns-managed/${_name:?}"
@@ -201,9 +206,22 @@ REMOTE
 	fi
 done
 
+# Ubuntu's own default site serves /var/www/html from 000-default.conf and default-ssl.conf, not from a config
+# named after the folder. Deleting the html folder removes both, so they no longer answer any name.
+_ubuntuDefault=n
+if [[ ${_site} == html ]] && grep -qsE "^[[:space:]]*DocumentRoot[[:space:]]+${_rootPath}/html/?[[:space:]]*$" /etc/apache2/sites-available/000-default.conf; then
+	_ubuntuDefault=y
+fi
+
 # ---- the site itself
 if [[ ${_scope} != prod ]]; then
 	remove_service_and_config "${_site}"
+	if [[ ${_ubuntuDefault} == y ]]; then
+		echo "Delete Apache's default site: 000-default.conf and default-ssl.conf"
+		sudo a2dissite -q 000-default default-ssl >/dev/null 2>&1 || true
+		sudo rm -f /etc/apache2/sites-available/000-default.conf /etc/apache2/sites-available/default-ssl.conf \
+			/etc/apache2/sites-enabled/000-default.conf /etc/apache2/sites-enabled/default-ssl.conf
+	fi
 	if [[ ${_scope} == test && ${#_keepFolders[@]} -gt 0 ]]; then
 		echo "Delete the site files (environment folders ${_keepFolders[*]} and scripts are kept)"
 		_findKeep=()
@@ -213,7 +231,8 @@ if [[ ${_scope} != prod ]]; then
 		echo "Delete site and files"
 		sudo rm -rf "${_rootPath:?}/${_site:?}"
 	fi
-	remove_certificate "${_binding}" "${_certificateDirectory}" || exit 1
+	# Apache's default site has no binding and no certificate of its own
+	[[ ${_ubuntuDefault} == y ]] || remove_certificate "${_binding}" "${_certificateDirectory}" || exit 1
 fi
 
 echo "Reload daemon"

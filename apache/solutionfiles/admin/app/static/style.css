@@ -705,3 +705,4 @@ dialog.newsite .sync-select-all { margin-left: auto; padding: 0; border: 0; back
 dialog.newsite .sync-select-all:hover { background: transparent; text-decoration: underline; }
 .sync-choice:has(input:checked)::after { content: "\2713"; position: absolute; top: 10px; right: 12px; color: var(--env-tone); font-weight: 700; }
 #files.files-windows th:nth-child(4), #files.files-windows td:nth-child(4), #files.files-windows th:nth-child(5), #files.files-windows td:nth-child(5) { display: none; }
+.meta .badge.any-name { margin-left: 8px; background: rgba(63, 185, 80, .15); color: var(--green); vertical-align: middle; }

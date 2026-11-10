@@ -1088,7 +1088,8 @@ function envPanel(site, env) {
 		: openLink(bindingLabel(env) || address.hostname, address.url, address.title);
 	// The main site's name is the page's title. Its binding, which can differ, is listed below.
 	if (isTarget(env)) heading.prepend(el("h3", { className: "env-title", textContent: bindingLabel(env) || address.hostname }));
-	const meta = el("dl", { className: "meta" }, el("dt", { textContent: "Binding" }), el("dd", {}, binding));
+	const meta = el("dl", { className: "meta" }, el("dt", { textContent: "Binding" }), el("dd", {}, binding,
+		...(site.answers_any_name && !isTarget(env) ? [el("span", { className: "badge any-name", title: "Apache sends a request for a name that no other site has to this site", textContent: "any name" })] : [])));
 	if (env.aliases && env.aliases.length) {
 		meta.append(el("dt", { textContent: "Aliases" }), el("dd", { className: "database-name aliases" },
 			...env.aliases.flatMap((alias, index) => [
@@ -1533,7 +1534,7 @@ function syncSiteForm() {
 siteForm.addEventListener("change", (event) => { if (event.target.name === "type") syncSiteForm(); });
 siteForm.elements.template.oninput = syncTemplateVersion;
 siteForm.site.oninput = () => { if (!siteForm.binding.dataset.edited) siteForm.binding.value = siteForm.site.value; };
-siteForm.binding.oninput = () => { siteForm.binding.dataset.edited = "1"; };
+siteForm.binding.oninput = () => { siteForm.binding.dataset.edited = "1"; siteForm.binding.setCustomValidity(""); };
 $("#btn-new-site").onclick = () => { siteForm.reset(); siteForm.elements.template.setCustomValidity(""); delete siteForm.binding.dataset.edited; syncSiteForm(); dialog.showModal(); siteForm.site.focus(); };
 $("#btn-empty-new-site").onclick = () => $("#btn-new-site").click();
 $("#site-cancel").onclick = (e) => { e.preventDefault(); dialog.close(); };
@@ -1554,6 +1555,11 @@ siteForm.onsubmit = (event) => {
 			field.value = name ? match?.short_name || "umbraco" : "";
 		}
 		const data = Object.fromEntries(new FormData(siteForm));
+		// No binding: the site answers any name no other site has, which only works without a certificate
+		data.binding = data.binding.trim() || "*";
+		siteForm.binding.setCustomValidity(data.binding === "*" && data.certificate === "y"
+			? "A site that answers any name cannot have a certificate. Choose HTTP only, or enter a binding." : "");
+		if (!siteForm.binding.reportValidity()) return;
 		if (data.type === "csharp" && data.template?.toLowerCase() === "umbraco" && !data.version?.trim()) {
 			data.version = defaultUmbracoVersion;
 		}

@@ -63,6 +63,43 @@ validate_binding() {
 	done
 }
 
+# The site that answers any name: Apache sends a request for a name no site has to the first site it loads on
+# the port, so this link sorts before every other config, also Ubuntu's 000-default.conf. It points to the
+# site's own config, so the site keeps its own name and config as well.
+_defaultSiteLink=/etc/apache2/sites-enabled/00-vns-default.conf
+
+# This server's own name, for a site that answers any name
+server_own_name() {
+	local _name
+	_name=$(hostname -f 2>/dev/null || true)
+	[[ ${_name} =~ ^[A-Za-z0-9.-]+$ ]] || _name=$(hostname)
+	[[ ${_name} =~ ^[A-Za-z0-9.-]+$ ]] || _name=localhost
+	printf '%s\n' "${_name}" | tr '[:upper:]' '[:lower:]'
+}
+
+# The folder name of the site that answers any name, or nothing
+default_site() {
+	local _target
+	_target=$(readlink "${_defaultSiteLink}" 2>/dev/null || true)
+	[[ -n ${_target} ]] || return 0
+	_target=${_target##*/}
+	printf '%s\n' "${_target%.conf}"
+}
+
+# Make _site the site that answers any name
+make_default_site() {
+	local _current
+	_current=$(default_site)
+	if [[ -n ${_current} && ${_current} != "${_site}" ]]; then
+		echo "${_current} already answers any name. Only one site can: delete it or give it a binding first." >&2
+		return 1
+	fi
+	echo "Make ${_site} answer any name"
+	sudo ln -sfn "../sites-available/${_site}.conf" "${_defaultSiteLink}"
+	sudo apache2ctl configtest
+	sudo systemctl reload apache2
+}
+
 # A binding or alias of a site. With _httpOnly=1, a site without a certificate, it may be a name without a dot,
 # like a server's own name on the local network: a certificate needs a public name with one.
 normalize_site_binding() {

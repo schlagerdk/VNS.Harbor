@@ -61,13 +61,30 @@ if [[ ${_type} == csharp ]]; then
 fi
 
 if [[ -z ${_binding} && ${_site} == *.* ]]; then
-	ask _binding "Enter site URL binding" "${_site}"
+	ask _binding "Enter site URL binding (* = answer any name, HTTP only)" "${_site}"
 else
-	ask _binding "Enter site URL binding"
+	ask _binding "Enter site URL binding (* = answer any name, HTTP only)"
 fi
-_binding=$(normalize_dns_name "${_binding}" binding)
-validate_binding "${_binding}"
-_binding=${_binding,,}
+# * is the site that answers any name no other site has, like Apache's own default site. It has no
+# certificate, and keeps this server's own name as its binding.
+_defaultSite=n
+if [[ ${_binding} == "*" ]]; then
+	if [[ ${_createCertificate} != n ]]; then
+		echo "A site that answers any name cannot have a certificate. Answer n to the certificate question." >&2
+		exit 1
+	fi
+	_current=$(default_site)
+	if [[ -n ${_current} ]]; then
+		echo "${_current} already answers any name. Only one site can: delete it or give it a binding first." >&2
+		exit 1
+	fi
+	_defaultSite=y
+	_binding=$(server_own_name)
+fi
+# A site without a certificate may use a name without a dot
+_httpOnly=0
+[[ ${_createCertificate} != n ]] || _httpOnly=1
+_binding=$(normalize_site_binding "${_binding}")
 
 set_site_vars
 if [[ -e ${_servicePath} ]]; then
@@ -279,9 +296,11 @@ case "${_type}" in
 esac
 
 release_port_reservation
+[[ ${_defaultSite} != y ]] || make_default_site
 _scheme=http
 [[ ${_createCertificate} == n ]] || _scheme=https
 echo "Site created: ${_scheme}://${_binding}/ (folder: ${_site})"
+[[ ${_defaultSite} != y ]] || echo "It also answers any name that no other site has, like http://<server-ip>/."
 if [[ ${_type} == csharp ]]; then
 	echo "Run ${_siteRoot}/scripts/create_prod.sh when you want a production target for this site."
 fi
