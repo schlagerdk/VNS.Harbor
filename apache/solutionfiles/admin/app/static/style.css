@@ -747,3 +747,6 @@ button[data-tone="pink"] { --tone: #db61a2; }
 #dlg-data-sync label.sync-option { flex-direction: row; align-items: center; justify-content: flex-start; margin: 0; text-align: left; font-size: inherit; color: inherit; }
 #dlg-data-sync label.sync-option.main { margin-bottom: 12px; }
 #dlg-data-sync .sync-options-row + .ns-section { margin-top: 24px; }
+/* The environment's colour marks the card and its name; what is synced is shown in neutral chips */
+.sync-chip { background: rgba(255, 255, 255, .07); color: var(--muted); }
+.sync-choice:has(input:checked) { background: color-mix(in srgb, var(--env-tone) 6%, transparent); }
