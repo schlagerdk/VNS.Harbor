@@ -1,6 +1,6 @@
 #!/bin/bash
 # Usage: data_sync.sh <site> settings <main|environment>
-#        data_sync.sh <site> sync <main|environment> <main|environment> [--dry-run]
+#        data_sync.sh <site> sync <main|environment> <destination[,destination...]> [--dry-run]
 # settings: set uSync in the appsettings.json of the main site or one environment by its data sync settings
 #   (scripts/data_sync.json, saved by the admin), then restart it so uSync reads them.
 # sync: sync data from one site to another, when both have data sync on, the source may send and the destination
@@ -96,27 +96,48 @@ case "${_action}" in
 			*) echo "Unknown option: $5" >&2; exit 1 ;;
 		esac
 		valid_id "${_from}"
-		valid_id "${_to}"
-		_kinds=$(python3 lib/data_sync.py kinds "${_siteRoot}" "${_from}" "${_to}") || exit 1
-		echo "Sync ${_kinds// / and } from ${_from} to ${_to}. Nothing is deleted on ${_to}."
-		if [[ ${_to} != main ]]; then
+		[[ -n ${_to} ]] || { echo "Choose a destination." >&2; exit 1; }
+		# Every destination is checked before anything is synced
+		for _id in ${_to//,/ }; do
+			valid_id "${_id}"
+			python3 lib/data_sync.py kinds "${_siteRoot}" "${_from}" "${_id}" >/dev/null || exit 1
+		done
+		# One destination: settings from the main site, then the data merged in, then a restart to import it.
+		# Every step stops it on its own, as set -e is off in the if that runs it.
+		sync_one() (
+			local _id=$1 _kinds
+			_kinds=$(python3 lib/data_sync.py kinds "${_siteRoot}" "${_from}" "${_id}") || exit 1
 			echo
-			echo "== 1. Settings from the main site to ${_to} =="
-			bash sync_env.sh "${_site}" main "${_to}" ${_dryRun[@]+"${_dryRun[@]}"}
+			echo "######## ${_id}: ${_kinds// / and } from ${_from}. Nothing is deleted on ${_id}."
+			if [[ ${_id} != main ]]; then
+				echo
+				echo "== Settings from the main site to ${_id} =="
+				bash sync_env.sh "${_site}" main "${_id}" ${_dryRun[@]+"${_dryRun[@]}"} || exit 1
+			fi
+			echo
+			echo "== Data from ${_from} to ${_id} =="
+			bash sync_env.sh "${_site}" "${_from}" "${_id}" --data "${_kinds// /,}" ${_dryRun[@]+"${_dryRun[@]}"} || exit 1
+			if ((${#_dryRun[@]})); then
+				echo "DRY RUN: ${_id} is not restarted."
+				exit 0
+			fi
+			# The destination imports what it received at startup. Its settings are applied again on the way,
+			# so a destination edited by hand still imports.
+			echo
+			echo "== Import on ${_id} =="
+			apply_settings "${_id}" || exit 1
+			echo "uSync on ${_id} imports the data as it starts. Its log in the backoffice shows the result."
+		)
+		_failed=()
+		for _id in ${_to//,/ }; do
+			sync_one "${_id}" || { echo "${_id}: FAILED" >&2; _failed+=("${_id}"); }
+		done
+		if ((${#_failed[@]})); then
+			echo "Data sync failed for: ${_failed[*]}" >&2
+			exit 1
 		fi
 		echo
-		echo "== Data from ${_from} to ${_to} =="
-		bash sync_env.sh "${_site}" "${_from}" "${_to}" --data "${_kinds// /,}" ${_dryRun[@]+"${_dryRun[@]}"}
-		if ((${#_dryRun[@]})); then
-			echo "DRY RUN: ${_to} is not restarted."
-			exit 0
-		fi
-		# The destination imports what it received at startup. Its settings are applied again on the way,
-		# so a destination edited by hand still imports.
-		echo
-		echo "== Import on ${_to} =="
-		apply_settings "${_to}"
-		echo "Done. uSync on ${_to} imports the data as it starts. Its log in the backoffice shows the result."
+		echo "Done."
 		;;
 	*)
 		echo "Usage: $0 <site> settings <main|environment> | sync <from> <to> [--dry-run]" >&2

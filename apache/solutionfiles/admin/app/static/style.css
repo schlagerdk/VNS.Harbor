@@ -690,7 +690,8 @@ a.btn-link .ico { width: 13px; height: 13px; flex: none; }
 .sync-chips { display: flex; gap: 6px; margin-top: 6px; }
 .sync-chip { padding: 1px 8px; border-radius: 999px; background: color-mix(in srgb, var(--env-tone) 16%, transparent); color: var(--env-tone); font-size: 11px; font-weight: 600; text-transform: capitalize; }
 @media (max-width: 440px) { .sync-choices { grid-template-columns: 1fr; } }
-dialog.newsite .sync-options ~ .hint, dialog.newsite .data-sync-options ~ .hint { margin-top: 22px; }
+dialog.newsite .sync-options ~ .hint { margin-top: 12px; }
+dialog.newsite .data-sync-options ~ .hint { margin-top: 22px; }
 /* With a Manage row, the Site row above it starts the bottom block of the card */
 .env > .actions:not(.quick):has(+ .actions:last-child:not(.quick)) { margin-top: auto; padding-top: 12px; }
 .env > .actions:not(.quick):has(+ .actions:last-child:not(.quick))[data-group]::before { top: 13px; }
@@ -699,3 +700,7 @@ dialog.newsite .sync-options ~ .hint, dialog.newsite .data-sync-options ~ .hint 
 .remote-icon .os-logo { display: inline-flex; }
 .remote-icon .os-logo svg { width: 16px; height: 16px; }
 .remote-icon .os-linux svg { width: 19px; height: 19px; margin: -2px 0; }
+.sync-options legend { display: flex; align-items: center; width: 100%; }
+dialog.newsite .sync-select-all { margin-left: auto; padding: 0; border: 0; background: transparent; color: var(--blue); font-size: 12px; font-weight: 500; letter-spacing: 0; text-transform: none; cursor: pointer; }
+dialog.newsite .sync-select-all:hover { background: transparent; text-decoration: underline; }
+.sync-choice:has(input:checked)::after { content: "\2713"; position: absolute; top: 10px; right: 12px; color: var(--env-tone); font-weight: 700; }

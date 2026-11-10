@@ -1871,23 +1871,40 @@ function openSyncDialog(site, source, data = false) {
 	$("#sync-from-env").className = "sync-env-name env-" + environmentLabel(site, source).toLowerCase();
 	$("#sync-from-binding").textContent = bindingLabel(source) || siteLabel(site);
 	const destinations = data ? dataSyncDestinations(site, source) : syncDestinations(site, source);
-	// One card per destination, in the colour of its environment
+	// One card per destination, in the colour of its environment. Several can be chosen.
 	const card = (value, title, sub, tone, chips = []) => el("label", { className: `type-card environment-option sync-choice env-${tone}` },
-		el("input", { type: "radio", name: "destination", value, required: true }),
+		el("input", { type: "checkbox", name: "destination", value, onchange: updateSyncSelection }),
 		el("span", { className: "tc-title", textContent: title }),
 		el("span", { className: "tc-sub", textContent: sub }),
 		...(chips.length ? [el("span", { className: "sync-chips" }, ...chips.map((chip) => el("span", { className: "sync-chip", textContent: chip })))] : []));
 	const cards = destinations.map((env) => card(isTarget(env) ? env.target : "main", environmentLabel(site, env),
 		bindingLabel(env) || env.host || env.target, environmentLabel(site, env).toLowerCase(), data ? dataSyncKinds(source, env) : []));
-	if (!data && destinations.length > 1) cards.push(card("all", "All other environments", `${destinations.length} environments, one at a time`, "all"));
 	$("#sync-destination").replaceChildren(...cards);
 	cards[0].querySelector("input").checked = true;
+	$("#sync-select-all").hidden = cards.length < 2;
+	updateSyncSelection();
 	syncDialog.showModal();
 }
 $("#sync-cancel").onclick = () => syncDialog.close();
+const syncChoices = () => [...$("#sync-destination").querySelectorAll("input[name=destination]")];
+function updateSyncSelection() {
+	const chosen = syncChoices().filter((input) => input.checked).length;
+	const all = chosen === syncChoices().length;
+	$("#sync-select-all").textContent = all ? "Select none" : "Select all";
+	const verb = syncForm.dataset.data ? "Sync data" : "Sync";
+	$("#sync-submit").textContent = chosen > 1 ? `${verb} to ${chosen}` : verb;
+	$("#sync-submit").disabled = chosen === 0;
+}
+$("#sync-select-all").onclick = () => {
+	const all = syncChoices().every((input) => input.checked);
+	for (const input of syncChoices()) input.checked = !all;
+	updateSyncSelection();
+};
 syncForm.onsubmit = (event) => {
 	event.preventDefault();
-	const data = { kind: syncForm.dataset.data ? "data_sync" : "sync_env", site: syncForm.dataset.site, source: syncForm.dataset.source, destination: syncForm.elements.destination.value };
+	const destination = syncChoices().filter((input) => input.checked).map((input) => input.value);
+	if (!destination.length) return;
+	const data = { kind: syncForm.dataset.data ? "data_sync" : "sync_env", site: syncForm.dataset.site, source: syncForm.dataset.source, destination };
 	run(async () => {
 		await openTask(data);
 		syncDialog.close();

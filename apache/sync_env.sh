@@ -1,5 +1,5 @@
 #!/bin/bash
-# Usage: sync_env.sh <site> <main|environment> <environment|all> [--dry-run]
+# Usage: sync_env.sh <site> <main|environment> <environment[,environment...]|all> [--dry-run]
 #        sync_env.sh <site> <main|environment> <main|environment> --data <content,media> [--dry-run]
 # Sync settings from the main site, or from one environment, to one or all of the site's other environments.
 # With --data it syncs data instead: in each uSync version folder Content and Dictionary for content, Media and
@@ -54,8 +54,13 @@ if [[ -n ${_data} ]]; then
 else
 	for _id in ${_targets[@]+"${_targets[@]}"}; do
 		[[ ${_id} != "${_from}" ]] || continue
-		[[ ${_to} == all || ${_to} == "${_id}" ]] && _destinations+=("${_id}")
+		[[ ${_to} == all || ",${_to}," == *",${_id},"* ]] && _destinations+=("${_id}")
 	done
+	if [[ ${_to} != all ]]; then
+		for _id in ${_to//,/ }; do
+			[[ ${_id} != main && ${_known} == *" ${_id} "* ]] || { echo "Unknown destination: ${_id}" >&2; exit 1; }
+		done
+	fi
 fi
 ((${#_destinations[@]})) || { echo "No environment to sync to." >&2; exit 1; }
 

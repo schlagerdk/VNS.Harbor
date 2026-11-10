@@ -1842,12 +1842,16 @@ def build_command(data):
         return "Data sync settings: " + site, [bash, os.path.join(APACHE_DIR, "data_sync.sh"), site, "settings", site_id], APACHE_DIR
     if kind == "data_sync":
         site = site_arg(data)
-        source, destination = data_sync_id(site, data.get("source")), data_sync_id(site, data.get("destination"))
-        try:
-            _data_sync_module.kinds(_data_sync_module.load(os.path.join(WEB_ROOT, site)), source, destination)
-        except ValueError as exc:
-            abort(400, str(exc))
-        return "Sync data: " + site, [bash, os.path.join(APACHE_DIR, "data_sync.sh"), site, "sync", source, destination], APACHE_DIR
+        source = data_sync_id(site, data.get("source"))
+        destinations = destination_list(data.get("destination"))
+        config = _data_sync_module.load(os.path.join(WEB_ROOT, site))
+        for destination in destinations:
+            data_sync_id(site, destination)
+            try:
+                _data_sync_module.kinds(config, source, destination)
+            except ValueError as exc:
+                abort(400, str(exc))
+        return "Sync data: " + site, [bash, os.path.join(APACHE_DIR, "data_sync.sh"), site, "sync", source, ",".join(destinations)], APACHE_DIR
     if kind == "sync_env":
         site = site_arg(data)
         source = data.get("source", "")
@@ -1855,8 +1859,11 @@ def build_command(data):
         targets = target_ids(os.path.join(WEB_ROOT, site))
         if source != "main" and source not in targets:
             abort(400, "Unknown source environment")
-        if destination != "all" and (destination not in targets or destination == source):
-            abort(400, "Unknown destination environment")
+        if destination != "all":
+            destinations = destination_list(destination)
+            if any(item not in targets or item == source for item in destinations):
+                abort(400, "Unknown destination environment")
+            destination = ",".join(destinations)
         return "Sync: " + site, [bash, os.path.join(APACHE_DIR, "sync_env.sh"), site, source, destination], APACHE_DIR
     if kind == "unit_tool":
         site = site_arg(data)
@@ -2167,6 +2174,15 @@ def ws_term(ws, sid):
 # ---------------------------------------------------------------- files API
 
 MAX_EDIT_BYTES = 2 * 1024 * 1024
+
+
+def destination_list(value):
+    """One or more destinations, as a list or separated by commas, each once"""
+    items = value if isinstance(value, list) else str(value or "").split(",")
+    destinations = list(dict.fromkeys(item for item in items if isinstance(item, str) and item))
+    if not destinations or len(destinations) > 50:
+        abort(400, "Choose at least one destination")
+    return destinations
 
 
 def data_sync_id(site, value):
