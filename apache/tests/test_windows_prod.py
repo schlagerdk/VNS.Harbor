@@ -442,7 +442,7 @@ class LinuxHttpTests(ScriptTestCase):
 class ProductionSetupTests(unittest.TestCase):
     def setUp(self):
         source = (APACHE / "solutionfiles/admin/app/app.py").read_text()
-        wanted = ("production_setup_env", "dns_name", "windows_share", "parse_prod", "read_text")
+        wanted = ("production_setup_env", "dns_name", "windows_share", "windows_site_folder", "parse_prod", "read_text")
         nodes = [node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef) and node.name in wanted]
         nodes += [node for node in ast.parse(source).body
                   if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "PROD_KEYS"]
@@ -457,7 +457,7 @@ class ProductionSetupTests(unittest.TestCase):
                    "_normalize_site_name": normalize_site_name, "service_name": service_name}
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "production env", "exec"), self.ns)
         add_target_helpers(self.ns)
-        self.windows = dict(target="windows", binding="prod.test", smb_share="//10.0.0.1/share$/sites/prod.test",
+        self.windows = dict(target="windows", folder="prod.test", binding="prod.test", smb_share="//10.0.0.1/share$/sites",
                             smb_user="Administrator", smb_password="secret", smb_domain="VNS", https="n")
 
     def setup_env(self, data):
@@ -472,11 +472,20 @@ class ProductionSetupTests(unittest.TestCase):
         self.assertEqual(result["VNS_PROD_FOLDER"], "prod.test")
 
     def test_windows_path_style_is_accepted(self):
-        result = self.setup_env(self.windows | {"smb_share": "\\\\10.0.0.1\\share$\\sites\\My Site\\"})
-        self.assertEqual(result["VNS_PROD_SMB_SHARE"], "//10.0.0.1/share$/sites/My Site")
+        result = self.setup_env(self.windows | {"smb_share": "\\\\10.0.0.1\\share$\\My Sites\\"})
+        self.assertEqual(result["VNS_PROD_SMB_SHARE"], "//10.0.0.1/share$/My Sites/prod.test")
+
+    def test_a_share_that_already_ends_in_the_folder_is_not_doubled(self):
+        for share in ("//10.0.0.1/share$/sites/prod.test", "//10.0.0.1/share$/sites/PROD.test/"):
+            with self.subTest(share=share):
+                self.assertEqual(self.setup_env(self.windows | {"smb_share": share})["VNS_PROD_SMB_SHARE"].lower(),
+                                 "//10.0.0.1/share$/sites/prod.test")
+        # The share alone gets the folder
+        self.assertEqual(self.setup_env(self.windows | {"smb_share": "//10.0.0.1/share$"})["VNS_PROD_SMB_SHARE"],
+                         "//10.0.0.1/share$/prod.test")
 
     def test_invalid_windows_input_is_refused(self):
-        for change in ({"smb_share": "//10.0.0.1/share$"}, {"smb_share": "//10.0.0.1/share$/../x"}, {"smb_share": "D:/site"},
+        for change in ({"smb_share": "//10.0.0.1"}, {"smb_share": "//10.0.0.1/share$/../x"}, {"folder": ""}, {"smb_share": "D:/site"},
                        {"smb_share": "//10.0.0.1/share$/a|b"}, {"smb_share": ["x"]}, {"smb_password": ""},
                        {"smb_user": "VNS\\Administrator"}, {"smb_user": ""}, {"smb_domain": "a b"}, {"https": "maybe"}):
             with self.subTest(change), self.assertRaises(BadRequest):

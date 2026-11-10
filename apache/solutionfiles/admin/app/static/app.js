@@ -1594,11 +1594,9 @@ function syncProdForm() {
 	$("#prod-local-options").hidden = !local;
 	$("#prod-remote-options").hidden = !linuxRemote;
 	$("#prod-windows-options").hidden = !windows;
-	$("#prod-folder-row").hidden = windows;
 	$("#prod-protocol-hint").textContent = windows
 		? "The protocol sets the site address used for the check after publishing. Bindings and certificates are managed in IIS."
 		: "HTTPS issues a certificate, which requires DNS for the binding to point to the server. HTTP runs without a certificate.";
-	prodForm.folder.required = !windows;
 	prodForm.local_path.required = local;
 	prodForm.host.required = linuxRemote;
 	prodForm.user.required = linuxRemote;
@@ -1612,12 +1610,17 @@ function syncProdForm() {
 	const same = target === "same";
 	const sameServerMove = moving && !copying && local && prodForm.dataset.moveMode === "local";
 	const noSettings = sameServerMove || release;
-	$("#prod-folder-row").hidden = windows || moving && local || noSettings;
+	$("#prod-folder-row").hidden = moving && local || noSettings;
+	$("#prod-folder-label").textContent = windows ? "Folder name" : "Folder / service name";
+	// On Windows the IIS site's folder is the share and the folder name, shown in full
+	const share = prodForm.smb_share.value.trim().replace(/\\/g, "/").replace(/\/+$/, "");
+	const folderName = prodForm.folder.value.trim();
+	$("#prod-windows-path").textContent = `IIS site folder: ${share || "//server/share"}${share && share.split("/").pop().toLowerCase() === folderName.toLowerCase() ? "" : "/" + (folderName || "…")}`;
 	$("#prod-binding-row").hidden = noSettings && !sameServerMove;
 	$("#prod-environment-row").hidden = noSettings;
 	$("#prod-protocol-row").hidden = noSettings;
 	$("#prod-protocol-hint").hidden = noSettings;
-	prodForm.folder.required = !windows && !(moving && local) && !noSettings;
+	prodForm.folder.required = !(moving && local) && !noSettings;
 	prodForm.binding.required = !release;
 	const fromWindows = prodForm.dataset.moveMode === "windows";
 	const hasSql = fromWindows || prodForm.dataset.moveSql === "1";
@@ -1720,6 +1723,12 @@ function openCreateProdDialog(site, moveEnv, copying = false) {
 		prodForm.elements.https.value = moveEnv.scheme === "http" ? "n" : "y";
 		const current = [...prodForm.elements.environment.options].find((option) => option.value === moveEnv.environment);
 		if (current) prodForm.elements.environment.value = current.value;
+	}
+	// Another environment on a Windows server gives the share and login it was set up with
+	const windowsEnv = !moveEnv && site.environments.find((env) => env.mode === "windows" && env.folder);
+	if (windowsEnv) {
+		prodForm.smb_share.value = windowsEnv.folder.split("/").slice(0, -1).join("/");
+		if (windowsEnv.user) prodForm.smb_user.value = windowsEnv.user;
 	}
 	// The fields start with the remote defaults: a new environment on this server gets its own folder and binding
 	prodForm.dataset.target = moveEnv ? prodForm.elements.target.value : "remote";

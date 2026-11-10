@@ -1586,14 +1586,25 @@ def windows_share(value):
     return share
 
 
+def windows_site_folder(base, folder):
+    """The IIS site's folder: the share the sites are in, and the site's folder name, like /var/www/<folder> on
+    Linux. A share that already ends in the folder name is used as it is, so a full path is not doubled."""
+    if not isinstance(base, str):
+        abort(400, "Invalid Windows share")
+    base = base.strip().replace("\\", "/").rstrip("/")
+    if base.rsplit("/", 1)[-1].lower() == folder.lower() and base.count("/") >= 4:
+        return windows_share(base)
+    return windows_share(base + "/" + folder)
+
+
 def production_setup_env(data, site, moving=False):
     """Validate modal input for create_prod.sh and keep credentials out of argv."""
     target = data.get("target", "")
     if target not in ("local", "remote", "windows", *(("same",) if moving else ())):
         abort(400, "Invalid production target")
     binding = dns_name(data.get("binding", ""), "production binding", fully_qualified=True)
-    # A Windows site has no folder or service on this side: the binding names it in the admin.
-    folder = binding if target == "windows" else dns_name(data.get("folder", ""), "production site name")
+    # On Windows the folder name is the IIS site's folder in the share, and its name in the admin
+    folder = dns_name(data.get("folder", ""), "production site name")
     https = data.get("https", "y")
     if https not in ("y", "n"):
         abort(400, "Invalid production protocol")
@@ -1661,7 +1672,7 @@ def production_setup_env(data, site, moving=False):
         if not isinstance(domain, str) or not re.fullmatch(r"[A-Za-z0-9._-]{0,255}", domain):
             abort(400, "Invalid SMB domain")
         values.update({
-            "VNS_PROD_SMB_SHARE": windows_share(data.get("smb_share", "")),
+            "VNS_PROD_SMB_SHARE": windows_site_folder(data.get("smb_share", ""), folder),
             "VNS_PROD_SMB_USER": user,
             "VNS_PROD_SMB_PASSWORD": password,
             "VNS_PROD_SMB_DOMAIN": domain,

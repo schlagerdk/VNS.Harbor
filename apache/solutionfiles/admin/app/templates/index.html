@@ -405,7 +405,7 @@
     </div>
     <div class="ns-section">Site</div>
     <div class="ns-grid">
-      <label id="prod-folder-row">Folder / service name <input name="folder" required autocomplete="off" spellcheck="false"></label>
+      <label id="prod-folder-row"><span id="prod-folder-label">Folder / service name</span> <input name="folder" required autocomplete="off" spellcheck="false"></label>
       <label id="prod-binding-row">Binding (domain) <input name="binding" required autocomplete="off" spellcheck="false"></label>
       <label id="prod-environment-row">Environment <select name="environment"><option>Development</option><option>Test</option><option>Staging</option><option selected>Production</option></select></label>
       <label id="prod-protocol-row">Protocol <select name="https"><option value="y">HTTPS</option><option value="n">HTTP</option></select></label>
@@ -423,13 +423,14 @@
     </div>
     <div id="prod-windows-options" hidden>
       <div class="ns-section">Windows connection (SMB)</div>
-      <label>Folder of the IIS site <input name="smb_share" required autocomplete="off" spellcheck="false" placeholder="//server/share/site-folder"></label>
+      <label>Share with the sites' folders <input name="smb_share" required autocomplete="off" spellcheck="false" placeholder="//server/share/folder"></label>
       <div class="ns-grid">
         <label>SMB username <input name="smb_user" required autocomplete="off" spellcheck="false" value="Administrator"></label>
         <label>SMB password <input name="smb_password" type="password" required autocomplete="new-password"></label>
         <label>SMB domain <input name="smb_domain" autocomplete="off" spellcheck="false" placeholder="Empty if no domain"></label>
       </div>
-      <p class="hint">The IIS site and its folder must already exist, with the ASP.NET Core Hosting Bundle and IIS URL Rewrite Module installed. web.config is created on the first publish, with the HTTPS redirect and Umbraco's sitemap and robots rewrites when they apply. If the share already holds this site, it is adopted as it is: its environment is read from its web.config, and nothing is published or changed there. The password is saved in this site's root-only production scripts.</p>
+      <p class="hint prod-dest-path" id="prod-windows-path"></p>
+      <p class="hint">The IIS site's folder is the share and the folder name, like /var/www/&lt;folder&gt; on Linux. The IIS site and its folder must already exist, with the ASP.NET Core Hosting Bundle and IIS URL Rewrite Module installed. web.config is created on the first publish, with the HTTPS redirect and Umbraco's sitemap and robots rewrites when they apply. If the share already holds this site, it is adopted as it is: its environment is read from its web.config, and nothing is published or changed there. The password is saved in this site's root-only production scripts.</p>
     </div>
     <div id="prod-local-options" hidden>
       <div class="ns-section">Local folder</div>
