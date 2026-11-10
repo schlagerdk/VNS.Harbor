@@ -229,6 +229,9 @@ function showView(name) {
 	currentView = name;
 	// The site search belongs to the sites: it is hidden on the SQL page
 	document.body.dataset.view = name;
+	// Settings switches between the two: SQL Server from the sites, Web server from SQL Server
+	$("#settings-sql").hidden = name === "sql";
+	$("#settings-web").hidden = name !== "sql";
 	for (const view of views) $("#view-" + view).hidden = view !== name;
 	if (name === "sites" && $("#dock").hidden && !$("#search").hidden) $("#search").focus({ preventScroll: true });
 }
@@ -2787,11 +2790,9 @@ function decorateSql() {
 }
 
 $("#settings-sql").onclick = () => go("#sql");
-// With SQL Server as the start page, it is the home: Settings links to the sites as Web server instead
+// With SQL Server as the start page, it is the home: its page has no link back to the sites
 function applyStartView() {
 	const sql = startView === "sql";
-	$("#settings-sql").hidden = sql;
-	$("#settings-web").hidden = !sql;
 	$("#sql-back-bar").hidden = sql;
 	const brand = document.querySelector(".brand");
 	brand.href = sql ? "#sql" : "#sites";

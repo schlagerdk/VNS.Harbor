@@ -211,6 +211,8 @@ console.log(JSON.stringify([first, firstNone, none.hidden]));
         self.assertIn('id="dlg-start-view"', page)
         self.assertIn('id="settings-web"', page)
         self.assertIn('$("#sql-back-bar").hidden = sql;', source)
+        self.assertIn('$("#settings-sql").hidden = name === "sql";', source)
+        self.assertIn('$("#settings-web").hidden = name !== "sql";', source)
         self.assertIn('if (currentView === "site") go("#sites");', source)
         self.assertIn('body[data-view="sql"] .page-header #search { display: none; }', (APP / "static/style.css").read_text())
         for label in ("SQL Server", "Web server", "Start page…", "Site keep-alive"):
