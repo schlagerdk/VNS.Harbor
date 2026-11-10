@@ -714,3 +714,35 @@ dialog.newsite .sync-select-all:hover { background: transparent; text-decoration
 .sync-choice .tc-title { color: var(--text); overflow-wrap: anywhere; }
 .sync-choice .tc-sub { color: var(--env-tone); font-weight: 600; font-size: 12px; }
 .sync-from-site { color: var(--text); font-weight: 600; }
+button[data-tone="pink"] { --tone: #db61a2; }
+
+/* Sync setup: cards to turn on, with arrows for the direction. Send points up and out, receive down and in. */
+#dlg-data-sync .ns-section { display: flex; align-items: baseline; gap: 10px; }
+.sync-section-note { color: var(--muted); font-size: 12px; font-weight: 400; letter-spacing: 0; text-transform: none; }
+.sync-options-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 10px; }
+.sync-options-row:first-child { margin-top: 0; }
+.sync-option { --option-tone: var(--blue); position: relative; display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255, 255, 255, .02); cursor: pointer; transition: border-color .15s, background .15s; }
+.sync-option.out { --option-tone: var(--green); }
+.sync-option.in { --option-tone: #39c5cf; }
+.sync-option.main { --option-tone: #db61a2; margin-bottom: 12px; }
+.sync-option[hidden] { display: none; }
+.sync-option input { position: absolute; opacity: 0; pointer-events: none; }
+.sync-option:hover { border-color: color-mix(in srgb, var(--option-tone) 60%, var(--line)); }
+.sync-option-icon { display: inline-flex; align-items: center; justify-content: center; flex: none; width: 34px; height: 34px; border-radius: 9px; background: rgba(255, 255, 255, .04); color: var(--muted); transition: background .15s, color .15s; }
+.sync-option-icon .ico { width: 18px; height: 18px; margin: 0; }
+.sync-option-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sync-option-title { color: var(--text); font-size: 14px; font-weight: 600; }
+.sync-option-sub { color: var(--muted); font-size: 12px; }
+.sync-option:has(input:checked) { border-color: var(--option-tone); background: color-mix(in srgb, var(--option-tone) 10%, transparent); box-shadow: 0 0 0 1px var(--option-tone) inset; }
+.sync-option:has(input:checked) .sync-option-icon { background: color-mix(in srgb, var(--option-tone) 22%, transparent); color: var(--option-tone); }
+.sync-option:has(input:checked)::after { content: "\2713"; position: absolute; top: 8px; right: 12px; color: var(--option-tone); font-weight: 700; }
+.sync-option:has(input:focus-visible) { border-color: var(--option-tone); }
+.data-sync-options.off .sync-option { cursor: default; }
+.data-sync-options.off .sync-option:hover { border-color: var(--line); }
+#dlg-data-sync .data-sync-options { display: block; margin-top: 0; }
+#dlg-data-sync .ns-section + .sync-options-row { margin-top: 0; }
+@media (max-width: 560px) { .sync-options-row { grid-template-columns: 1fr; } }
+/* Beside the dialog's own label layout, which stacks a label's contents */
+#dlg-data-sync label.sync-option { flex-direction: row; align-items: center; justify-content: flex-start; margin: 0; text-align: left; font-size: inherit; color: inherit; }
+#dlg-data-sync label.sync-option.main { margin-bottom: 12px; }
+#dlg-data-sync .sync-options-row + .ns-section { margin-top: 24px; }
