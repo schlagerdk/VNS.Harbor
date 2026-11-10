@@ -463,7 +463,7 @@ const buttonStyles = {
 	"SQL Server": ["server", "purple"], "Web server": ["globe", "blue"], "Start page…": ["sliders", "purple"], "Site keep-alive": ["activity", "green"],
 	"Admin app log": ["file", "gray"], "Apache error logs": ["file", "teal"],
 	"Copy site": ["file", "blue"],
-	"Issue certificate": ["shield", "teal"], "Change environment": ["sliders", "purple"], "Change bindings": ["globe", "blue"],
+	"Issue certificate": ["shield", "teal"], "Change environment": ["sliders", "purple"], "Data sync…": ["sliders", "teal"], "Sync data…": ["sync", "green"], "Change bindings": ["globe", "blue"],
 	"Check service": ["activity", "teal"], "Test Apache config": ["activity", "teal"], "Admin site": ["manage", "gray"],
 	"Edit service": ["pencil", "amber"], "Edit config": ["pencil", "amber"], "Edit appsettings.json": ["pencil", "amber"], "Delete*": ["trash", "red"],
 };
@@ -891,9 +891,9 @@ function renderSite(name) {
 	}
 	const syncTargets = site.environments.filter((env) => isTarget(env) && !isMissingEnv(env) && (env.scripts || []).includes("sync_prod.sh"));
 	if (syncTargets.length) {
-		targetsActions.append(el("button", { textContent: "Sync to all", title: "Sync from the main site to every environment", onclick: () => run(async () => {
+		targetsActions.append(el("button", { textContent: "Sync to all", title: "Sync settings from the main site to every environment", onclick: () => run(async () => {
 			const names = syncTargets.map((env) => `${env.environment || env.target}: ${bindingLabel(env) || env.host || ""}`).join("\n");
-			if (await ask({ title: "Sync to all?", message: `Sync content from the main site to:\n${names}`, input: false, ok: "Sync to all" })) await openTask({ kind: "sync_env", site: site.name, source: "main", destination: "all" });
+			if (await ask({ title: "Sync to all?", message: `Sync settings from the main site to:\n${names}\n\nContent and media are not touched.`, input: false, ok: "Sync to all" })) await openTask({ kind: "sync_env", site: site.name, source: "main", destination: "all" });
 		}) }));
 	}
 	const danger = $("#site-danger");
@@ -1141,7 +1141,13 @@ function envPanel(site, env) {
 	}
 	// The main site's only destination already has its button at the top of the page
 	if (!missing && syncDestinations(site, env).length > (isTarget(env) ? 0 : 1)) {
-		quick.append(el("button", { textContent: "Sync to…", className: "small", title: "Sync content from this environment", onclick: () => run(() => openSyncDialog(site, env)) }));
+		quick.append(el("button", { textContent: "Sync to…", className: "small", title: "Sync settings from this site", onclick: () => run(() => openSyncDialog(site, env)) }));
+	}
+	if (site.kind === "umbraco" && !missing && !site.admin) {
+		if (dataSyncDestinations(site, env).length) {
+			quick.append(el("button", { textContent: "Sync data…", className: "small", title: "Merge content and media from this site into another", onclick: () => run(() => openSyncDialog(site, env, true)) }));
+		}
+		settings.append(el("button", { textContent: "Data sync…", className: "small desktop-only", title: dataSyncSummary(env), onclick: () => run(() => openDataSyncDialog(site, env)) }));
 	}
 	if (!isTarget(env) && site.scripts.some((file) => !hasScriptButton(site, file))) quick.append(scriptSelect(site));
 	if (env.mode === "windows") {
@@ -1723,6 +1729,63 @@ prodForm.onsubmit = (event) => {
 };
 
 // Content can be synced from the main site or any environment to the other environments
+// Data syncs from a site that can send to one that can receive, when both have it on, with what both take part with
+const dataSyncKinds = (from, to) => {
+	const source = from.data_sync || {}, destination = to.data_sync || {};
+	if (!source.enabled || !destination.enabled || !source.send || !destination.receive) return [];
+	return ["content", "media"].filter((kind) => source[kind] && destination[kind]);
+};
+function dataSyncDestinations(site, source) {
+	return sortedEnvironments(site.environments).filter((env) => env !== source && !isMissingEnv(env) && dataSyncKinds(source, env).length);
+}
+function dataSyncSummary(env) {
+	const settings = env.data_sync || {};
+	if (!settings.enabled) return "Data sync is off";
+	const direction = [settings.send && "sends", settings.receive && "receives"].filter(Boolean).join(" and ") || "neither sends nor receives";
+	const kinds = ["content", "media"].filter((kind) => settings[kind]).join(" and ") || "nothing";
+	return `Data sync: ${direction} ${kinds}`;
+}
+
+const dataSyncDialog = $("#dlg-data-sync");
+const dataSyncForm = $("#form-data-sync");
+function updateDataSyncForm() {
+	const on = dataSyncForm.elements.enabled.checked;
+	$("#data-sync-options").classList.toggle("off", !on);
+	for (const name of ["send", "receive", "content", "media"]) dataSyncForm.elements[name].disabled = !on;
+}
+function openDataSyncDialog(site, env) {
+	const settings = env.data_sync || {};
+	dataSyncForm.dataset.site = site.name;
+	dataSyncForm.dataset.id = isTarget(env) ? env.target : "main";
+	$("#data-sync-site").textContent = `${environmentLabel(site, env)}: ${bindingLabel(env) || siteLabel(site)}`;
+	for (const name of ["enabled", "send", "receive", "content", "media"]) dataSyncForm.elements[name].checked = !!settings[name];
+	updateDataSyncForm();
+	dataSyncDialog.showModal();
+}
+dataSyncForm.elements.enabled.onchange = () => {
+	// Turning it on for the first time takes part with both
+	if (dataSyncForm.elements.enabled.checked && !dataSyncForm.elements.content.checked && !dataSyncForm.elements.media.checked) {
+		dataSyncForm.elements.content.checked = dataSyncForm.elements.media.checked = true;
+	}
+	updateDataSyncForm();
+};
+$("#data-sync-cancel").onclick = () => dataSyncDialog.close();
+dataSyncForm.onsubmit = (event) => {
+	event.preventDefault();
+	const elements = dataSyncForm.elements;
+	const settings = Object.fromEntries(["enabled", "send", "receive", "content", "media"].map((name) => [name, elements[name].checked]));
+	if (settings.enabled && !settings.content && !settings.media) {
+		toast("Choose content, media or both.", "error");
+		return;
+	}
+	const { site, id } = dataSyncForm.dataset;
+	run(async () => {
+		await api(`/api/sites/${encodeURIComponent(site)}/data-sync`, { json: { id, settings } });
+		dataSyncDialog.close();
+		await openTask({ kind: "data_sync_settings", site, id });
+	});
+};
+
 function syncDestinations(site, source) {
 	return sortedEnvironments(site.environments).filter((env) => env !== source && isTarget(env) && !isMissingEnv(env) && (env.scripts || []).includes("sync_prod.sh"));
 }
@@ -1763,20 +1826,28 @@ $("#targets-search").onkeydown = (event) => {
 
 const syncDialog = $("#dlg-sync");
 const syncForm = $("#form-sync");
-function openSyncDialog(site, source) {
+function openSyncDialog(site, source, data = false) {
 	syncForm.dataset.site = site.name;
 	syncForm.dataset.source = isTarget(source) ? source.target : "main";
+	syncForm.dataset.data = data ? "1" : "";
+	$("#sync-title").textContent = data ? "Sync data" : "Sync settings";
+	$("#sync-submit").textContent = data ? "Sync data" : "Sync";
+	$("#sync-hint-settings").hidden = data;
+	$("#sync-hint-data").hidden = !data;
 	$("#sync-source").textContent = `From ${environmentLabel(site, source)}: ${bindingLabel(source) || siteLabel(site)}`;
-	const destinations = syncDestinations(site, source);
-	const options = destinations.map((env) => el("option", { value: env.target, textContent: `${environmentLabel(site, env)}: ${bindingLabel(env) || env.host || env.target}` }));
-	if (destinations.length > 1) options.push(el("option", { value: "all", textContent: "All other environments" }));
+	const destinations = data ? dataSyncDestinations(site, source) : syncDestinations(site, source);
+	const options = destinations.map((env) => el("option", {
+		value: isTarget(env) ? env.target : "main",
+		textContent: `${environmentLabel(site, env)}: ${bindingLabel(env) || env.host || env.target}${data ? ` (${dataSyncKinds(source, env).join(" and ")})` : ""}`,
+	}));
+	if (!data && destinations.length > 1) options.push(el("option", { value: "all", textContent: "All other environments" }));
 	$("#sync-destination").replaceChildren(...options);
 	syncDialog.showModal();
 }
 $("#sync-cancel").onclick = () => syncDialog.close();
 syncForm.onsubmit = (event) => {
 	event.preventDefault();
-	const data = { kind: "sync_env", site: syncForm.dataset.site, source: syncForm.dataset.source, destination: syncForm.elements.destination.value };
+	const data = { kind: syncForm.dataset.data ? "data_sync" : "sync_env", site: syncForm.dataset.site, source: syncForm.dataset.source, destination: syncForm.elements.destination.value };
 	run(async () => {
 		await openTask(data);
 		syncDialog.close();
@@ -2642,7 +2713,10 @@ async function refreshSql() {
 				}
 			}
 			actions.prepend(el("button", { textContent: "Query", onclick: () => openSqlQuery(database) }));
-			$(database.id <= 4 ? "#sql-system-rows" : "#sql-databases").append(el("tr", {}, sqlCell("Name", { textContent: database.name }),
+			const toggle = el("button", { type: "button", className: "sql-tables-toggle", title: "Show tables", ariaExpanded: "false",
+				ariaLabel: `Show the tables of ${database.name}`, innerHTML: '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>' });
+			toggle.onclick = () => toggleSqlTables(toggle, database);
+			$(database.id <= 4 ? "#sql-system-rows" : "#sql-databases").append(el("tr", {}, sqlCell("Name", {}, el("div", { className: "sql-database-name" }, toggle, el("span", { textContent: database.name }))),
 				sqlCell("Size", { className: "num", textContent: formatSqlSize(database.size_mb) }), sqlCell("State", {
 					className: "sql-state-" + database.state.toLowerCase(),
 					textContent: database.state,
@@ -2834,7 +2908,39 @@ startViewForm.onsubmit = (event) => {
 
 // Scripts typed here run as the connection's login, against the chosen database
 const sqlQueryDialog = $("#dlg-sql-query");
-function openSqlQuery(database) {
+// Unfold a database into the list of its tables. A table opens the query dialog with its first rows.
+async function toggleSqlTables(toggle, database) {
+	const row = toggle.closest("tr");
+	const open = toggle.getAttribute("aria-expanded") === "true";
+	if (open) {
+		if (row.nextElementSibling?.classList.contains("sql-tables-row")) row.nextElementSibling.remove();
+		toggle.setAttribute("aria-expanded", "false");
+		return;
+	}
+	toggle.setAttribute("aria-expanded", "true");
+	const body = el("div", { className: "sql-tables muted", textContent: "Loading tables…" });
+	const detail = el("tr", { className: "sql-tables-row" }, el("td", { colSpan: 5 }, body));
+	row.after(detail);
+	try {
+		const data = await api(`/api/sql/${encodeURIComponent($("#sql-connection").value)}/tables?database=${encodeURIComponent(database.name)}`);
+		body.classList.remove("muted");
+		if (!data.tables.length) {
+			body.replaceChildren(el("p", { className: "muted", textContent: "No tables." }));
+			return;
+		}
+		const quote = (name) => "[" + name.replaceAll("]", "]]") + "]";
+		body.replaceChildren(el("div", { className: "sql-tables-count muted", textContent: `${data.tables.length} table${data.tables.length === 1 ? "" : "s"}` }),
+			el("ul", {}, ...data.tables.map((table) => el("li", {}, el("button", {
+				type: "button", title: "Show the first 100 rows",
+				onclick: () => openSqlQuery(database, `SELECT TOP 100 * FROM ${quote(table.schema)}.${quote(table.name)}`),
+			}, el("span", { className: "sql-table-name" }, ...(table.schema === "dbo" ? [] : [el("span", { className: "muted", textContent: table.schema + "." })]), table.name),
+				el("span", { className: "sql-table-meta muted", textContent: `${Number(table.rows).toLocaleString()} rows · ${formatSqlSize(table.size_mb)}` }))))));
+	} catch (error) {
+		body.replaceChildren(el("p", { className: "sql-tables-error", textContent: error.message || "Could not read the tables." }));
+	}
+}
+
+function openSqlQuery(database, script) {
 	// Another database starts empty, so a script is never run against the wrong one by mistake
 	const connection = $("#sql-connection").value;
 	if (sqlQueryDialog.dataset.database !== database.name || sqlQueryDialog.dataset.connection !== connection) {
@@ -2848,6 +2954,10 @@ function openSqlQuery(database) {
 	$("#sql-query-status").textContent = "";
 	if (!sqlQueryDialog.open) sqlQueryDialog.showModal();
 	$("#sql-query-text").focus();
+	if (script) {
+		$("#sql-query-text").value = script;
+		runSqlQuery();
+	}
 }
 const sqlNumber = /^-?\d+(\.\d+)?$/;
 const maxShownRows = 2000;

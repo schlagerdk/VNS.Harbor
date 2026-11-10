@@ -476,11 +476,36 @@
   <form method="dialog" id="form-sync">
     <header class="ns-head">
       <span class="ns-icon" aria-hidden="true">↔</span>
-      <div><h2 id="sync-title">Sync content</h2><p id="sync-source"></p></div>
+      <div><h2 id="sync-title">Sync settings</h2><p id="sync-source"></p></div>
     </header>
     <label>Sync to <select name="destination" id="sync-destination"></select></label>
-    <p class="hint">uSync, Views, css and scripts are mirrored. Media is not. Files that are missing in the source are deleted in the destination. A folder that is missing in the source is skipped.</p>
-    <menu><button type="button" id="sync-cancel" class="cancel-link">Cancel</button><button type="submit" class="primary">Sync</button></menu>
+    <p class="hint" id="sync-hint-settings">The uSync settings (document types, data types, templates, languages and the like), Views, css and scripts are mirrored. Content, media, dictionary and domains are never touched. A folder that is missing in the source is skipped.</p>
+    <p class="hint" id="sync-hint-data" hidden>Settings are first synced from the main site to the destination. Then content and media are merged into it: they are added and updated, never deleted. The destination restarts, and uSync imports the data at startup.</p>
+    <menu><button type="button" id="sync-cancel" class="cancel-link">Cancel</button><button type="submit" id="sync-submit" class="primary">Sync</button></menu>
+  </form>
+</dialog>
+
+<dialog id="dlg-data-sync" class="newsite" aria-labelledby="data-sync-title">
+  <form method="dialog" id="form-data-sync">
+    <header class="ns-head">
+      <span class="ns-icon" aria-hidden="true">⇄</span>
+      <div><h2 id="data-sync-title">Data sync</h2><p id="data-sync-site"></p></div>
+    </header>
+    <label class="copy-connection-toggle data-sync-main"><input name="enabled" type="checkbox" aria-controls="data-sync-options"><span><strong>Sync data</strong><small>Content and media can be synced between this site and others that have it on</small></span></label>
+    <div id="data-sync-options" class="data-sync-options">
+      <fieldset>
+        <legend>Direction</legend>
+        <label class="copy-connection-toggle"><input name="send" type="checkbox"><span>Can send<small>It may be the source</small></span></label>
+        <label class="copy-connection-toggle"><input name="receive" type="checkbox"><span>Can receive<small>It may be the destination</small></span></label>
+      </fieldset>
+      <fieldset>
+        <legend>Takes part with</legend>
+        <label class="copy-connection-toggle"><input name="content" type="checkbox"><span>Content<small>Includes dictionary</small></span></label>
+        <label class="copy-connection-toggle"><input name="media" type="checkbox"><span>Media<small>Includes wwwroot/media</small></span></label>
+      </fieldset>
+    </div>
+    <p class="hint">Saving sets uSync in this site's appsettings.json and restarts the site: the content and media handlers by what it takes part with, export on save when it can send, and import at startup when it can receive. Data syncs between two sites when the source can send, the destination can receive, and only what both take part with. Domains are never synced.</p>
+    <menu><button type="button" id="data-sync-cancel" class="cancel-link">Cancel</button><button type="submit" class="primary">Save and restart</button></menu>
   </form>
 </dialog>
 

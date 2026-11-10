@@ -66,6 +66,14 @@ class SqlQueryTests(unittest.TestCase):
         self.assertEqual(kwargs["env"]["SQLCMDPASSWORD"], "secret")
         self.assertEqual(kwargs["timeout"], 300)
 
+    def test_tables_are_read_from_the_chosen_database(self):
+        with patch.object(sql, "execute", return_value='vns_json\n--------\n[{"schema":"dbo","name":"umbracoNode","rows":3,"size_mb":0.1}]\n') as execute:
+            self.assertEqual(sql.tables({}, "Kunde DB"), [{"schema": "dbo", "name": "umbracoNode", "rows": 3, "size_mb": 0.1}])
+        self.assertEqual(execute.call_args.kwargs["database"], "Kunde DB")
+        self.assertIn("sys.tables", execute.call_args.args[1])
+        with self.assertRaises(ValueError):
+            sql.tables({}, "")
+
     def test_results_are_split_into_tables_and_messages(self):
         s = sql.COLUMN_SEPARATOR
         output = (f"id{s}name{s}note\n--{s}----{s}----\n1{s}a | b{s}NULL\n2{s}x{s}\n\n"

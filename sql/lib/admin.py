@@ -242,8 +242,9 @@ def parse_results(output, separator=COLUMN_SEPARATOR):
     return results, messages
 
 
-def query_json(settings, query, *, preamble=""):
-    output = execute(settings, preamble + "\nSELECT COALESCE((" + query + " FOR JSON PATH), N'[]') AS vns_json;", timeout=30)
+def query_json(settings, query, *, preamble="", database="master"):
+    output = execute(settings, preamble + "\nSELECT COALESCE((" + query + " FOR JSON PATH), N'[]') AS vns_json;", timeout=30,
+                     database=database)
     lines = output.splitlines()
     while lines and not lines[0].strip():
         lines.pop(0)
@@ -266,6 +267,19 @@ SELECT d.name, d.database_id AS id, d.state_desc AS state, d.recovery_model_desc
  CAST(COALESCE(SUM(CAST(f.size AS bigint)),0)*8.0/1024 AS decimal(18,1)) AS size_mb
 FROM sys.databases d LEFT JOIN sys.master_files f ON f.database_id=d.database_id
 GROUP BY d.name,d.database_id,d.state_desc,d.recovery_model_desc,d.is_in_standby ORDER BY d.name""")
+
+
+def tables(settings, database):
+    """The tables of one database with their row count and size, for unfolding a database in the admin."""
+    identifier(database)
+    return query_json(settings, """
+SELECT s.name AS [schema], t.name AS name,
+ COALESCE(SUM(CASE WHEN p.index_id IN (0,1) THEN p.rows END),0) AS [rows],
+ CAST(COALESCE(SUM(a.total_pages),0)*8.0/1024 AS decimal(18,1)) AS size_mb
+FROM sys.tables t JOIN sys.schemas s ON s.schema_id=t.schema_id
+LEFT JOIN sys.partitions p ON p.object_id=t.object_id
+LEFT JOIN sys.allocation_units a ON a.container_id=p.partition_id
+GROUP BY s.name,t.name ORDER BY s.name,t.name""", database=database)
 
 
 def backups(settings):

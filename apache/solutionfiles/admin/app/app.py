@@ -64,6 +64,9 @@ _keep_alive_spec = importlib.util.spec_from_file_location(
     "vns_keep_alive", os.path.join(APACHE_DIR, "lib", "keep_alive.py"))
 _keep_alive_module = importlib.util.module_from_spec(_keep_alive_spec)
 _keep_alive_spec.loader.exec_module(_keep_alive_module)
+_data_sync_spec = importlib.util.spec_from_file_location("vns_data_sync", os.path.join(APACHE_DIR, "lib", "data_sync.py"))
+_data_sync_module = importlib.util.module_from_spec(_data_sync_spec)
+_data_sync_spec.loader.exec_module(_data_sync_module)
 ADMIN_SITE = cfg.get("admin_site", "")
 SQL_HELPER = os.path.join(os.path.dirname(APACHE_DIR), "sql", "lib", "admin.py")
 _sql_spec = importlib.util.spec_from_file_location("vns_sql_admin", SQL_HELPER)
@@ -712,6 +715,14 @@ def site_info(name, states):
                 except (OSError, ValueError) as exc:
                     app.logger.warning("Could not read %s publish status for %s: %s", scope, name, exc)
 
+    data_sync = {}
+    if kind == "umbraco":
+        try:
+            data_sync = _data_sync_module.load(root)
+        except ValueError as exc:
+            app.logger.warning("Could not read data sync settings for %s: %s", name, exc)
+    for environment in environments:
+        environment["data_sync"] = _data_sync_module.clean(data_sync.get(environment.get("target", "main")))
     for environment in environments:
         environment["display_binding"] = display_dns_name(environment.get("binding", ""))
         environment["display_aliases"] = [display_dns_name(alias) for alias in environment.get("aliases", [])]
@@ -850,6 +861,19 @@ def api_sql_query(connection_id):
     except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
         # SQL errors are shown in the dialog, as they are what the person needs to fix the script
         return jsonify(error=str(exc)[-20000:]), 422
+
+
+@app.route("/api/sql/<connection_id>/tables")
+def api_sql_tables(connection_id):
+    try:
+        with SQL_LOCK:
+            settings = _sql_module.connection(SQL_CONNECTIONS, connection_id)
+        return jsonify(tables=_sql_module.tables(settings, request.args.get("database", "")))
+    except ValueError as exc:
+        return error(str(exc))
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        app.logger.error("SQL tables failed: %s", exc)
+        return error(str(exc), 502)
 
 
 @app.route("/api/sql/<connection_id>")
@@ -1256,7 +1280,7 @@ def terminal_scope(payload):
         return "prod" if payload.get("action") == "prod" else "main"
     if payload.get("scope") in ("all", "prod", "test", "main"):
         return "main" if payload["scope"] == "test" else payload["scope"]
-    if kind in ("remote_tool", "create_prod", "sync_env", "move_env", "register_env"):
+    if kind in ("remote_tool", "create_prod", "sync_env", "move_env", "register_env", "data_sync", "data_sync_settings"):
         return "prod"
     if kind == "script":
         script = payload.get("script", "")
@@ -1267,7 +1291,7 @@ def terminal_scope(payload):
 
 def terminal_auto_close(payload):
     kind = payload.get("kind")
-    if kind in ("shell", "create_site", "copy_site", "register_env", "create_prod", "sync_env", "move_env", "adopt_site", "release_site", "delete_site", "change_binding", "prod_action", "dotnet_package", "fix_permissions", "publish_both", "bulk", "update_package", "sql_action", "install_sql_tools"):
+    if kind in ("shell", "create_site", "copy_site", "register_env", "create_prod", "sync_env", "data_sync", "data_sync_settings", "move_env", "adopt_site", "release_site", "delete_site", "change_binding", "prod_action", "dotnet_package", "fix_permissions", "publish_both", "bulk", "update_package", "sql_action", "install_sql_tools"):
         return True
     if kind == "remote_tool":
         return payload.get("tool") == "shell"
@@ -1801,6 +1825,18 @@ def build_command(data):
     if kind == "release_site":
         site = site_arg(data)
         return "Move out: " + site, [bash, os.path.join(APACHE_DIR, "adopt_site.sh"), "--release", site, target_arg(site, data)], APACHE_DIR
+    if kind == "data_sync_settings":
+        site = site_arg(data)
+        site_id = data_sync_id(site, data.get("id"))
+        return "Data sync settings: " + site, [bash, os.path.join(APACHE_DIR, "data_sync.sh"), site, "settings", site_id], APACHE_DIR
+    if kind == "data_sync":
+        site = site_arg(data)
+        source, destination = data_sync_id(site, data.get("source")), data_sync_id(site, data.get("destination"))
+        try:
+            _data_sync_module.kinds(_data_sync_module.load(os.path.join(WEB_ROOT, site)), source, destination)
+        except ValueError as exc:
+            abort(400, str(exc))
+        return "Sync data: " + site, [bash, os.path.join(APACHE_DIR, "data_sync.sh"), site, "sync", source, destination], APACHE_DIR
     if kind == "sync_env":
         site = site_arg(data)
         source = data.get("source", "")
@@ -2120,6 +2156,29 @@ def ws_term(ws, sid):
 # ---------------------------------------------------------------- files API
 
 MAX_EDIT_BYTES = 2 * 1024 * 1024
+
+
+def data_sync_id(site, value):
+    """main, or one of the site's environments"""
+    if value == "main":
+        return value
+    return target_arg(site, {"target": value})
+
+
+@app.route("/api/sites/<site>/data-sync", methods=["POST"])
+def save_data_sync(site):
+    if site not in site_dirs():
+        abort(400, "Unknown site")
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict) or not isinstance(data.get("settings"), dict):
+        abort(400, "Expected data sync settings")
+    site_id = data_sync_id(site, data.get("id"))
+    try:
+        settings = _data_sync_module.save(os.path.join(WEB_ROOT, site), site_id, data["settings"])
+    except (OSError, ValueError) as exc:
+        app.logger.error("Could not save data sync settings for %s: %s", site, exc)
+        abort(400, str(exc))
+    return jsonify(settings=settings)
 
 
 @app.route("/api/sites/<site>/config/<kind>", methods=["GET", "POST"])
