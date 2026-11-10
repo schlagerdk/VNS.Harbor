@@ -2,29 +2,33 @@ import ast
 import logging
 import os
 import re
-import socket
-import ssl
 import tempfile
 import time
 import unittest
+import unittest.mock
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 APP = Path(__file__).resolve().parents[1] / "solutionfiles/admin/app/app.py"
 
 
-def load(fake_socket, fake_ssl, root):
+def load(answers, root):
+    """windows_probe from app.py, with each address answering as given"""
     nodes = [node for node in ast.parse(APP.read_text()).body
-             if isinstance(node, ast.FunctionDef) and node.name == "windows_https"]
-    ns = dict(WINDOWS_HTTPS={}, time=time, re=re, os=os, socket=fake_socket, ssl=fake_ssl, WEB_ROOT=root,
+             if isinstance(node, ast.FunctionDef) and node.name == "windows_probe"]
+    asked = []
+
+    def probe_url(url):
+        asked.append(url)
+        return answers[url.split(":")[0]]
+    ns = dict(WINDOWS_HTTPS={}, time=time, re=re, os=os, WEB_ROOT=root, probe_url=probe_url,
               target_folder=lambda site_root, target: os.path.join(site_root, "scripts", "targets", target),
               app=SimpleNamespace(logger=logging.getLogger(__name__)))
-    exec(compile(ast.Module(body=nodes, type_ignores=[]), "windows https", "exec"), ns)
-    return ns
+    exec(compile(ast.Module(body=nodes, type_ignores=[]), "windows probe", "exec"), ns)
+    return ns["windows_probe"], asked
 
 
-class WindowsHttpsTests(unittest.TestCase):
+class WindowsProbeTests(unittest.TestCase):
     def setUp(self):
         self.folder = tempfile.TemporaryDirectory()
         self.script = Path(self.folder.name, "site", "scripts", "targets", "prod", "publish_prod.sh")
@@ -34,35 +38,62 @@ class WindowsHttpsTests(unittest.TestCase):
     def tearDown(self):
         self.folder.cleanup()
 
-    def fake_socket(self, error=None):
-        fake = MagicMock()
-        if error:
-            fake.create_connection.side_effect = error
-        return fake
-
-    def test_a_site_that_answers_on_https_is_saved_as_https(self):
-        fake_ssl = MagicMock(SSLError=ssl.SSLError)
-        ns = load(self.fake_socket(), fake_ssl, self.folder.name)
-        self.assertTrue(ns["windows_https"]("site", "prod", "x.test", False))
+    def test_a_site_that_answers_on_https_is_active_and_saved_as_https(self):
+        probe, asked = load({"https": ("answered", "")}, self.folder.name)
+        result = probe("site", "prod", "x.test", False)
+        self.assertEqual((result["https"], result["state"]), (True, "active"))
+        self.assertEqual(asked, ["https://x.test/"])
         self.assertIn("PROD_HTTPS=y                   # n = http", self.script.read_text())
-        fake_ssl.create_default_context.return_value.wrap_socket.assert_called_once()
 
-    def test_a_refused_connection_or_bad_certificate_is_http(self):
-        self.script.write_text(self.script.read_text().replace("PROD_HTTPS=n", "PROD_HTTPS=y"))
-        for error in (ConnectionRefusedError(), ssl.SSLCertVerificationError()):
-            with self.subTest(error=type(error).__name__):
-                ns = load(self.fake_socket(error), ssl, self.folder.name)
-                self.assertFalse(ns["windows_https"]("site", "prod", "x.test", True))
-                self.assertIn("PROD_HTTPS=n", self.script.read_text())
+    def test_an_error_page_on_https_is_failed_but_still_https(self):
+        probe, _ = load({"https": ("http-error", "HTTP 502")}, self.folder.name)
+        self.assertEqual(probe("site", "prod", "x.test", True), {"https": True, "state": "failed", "error": "HTTP 502",
+                                                                  "checked": unittest.mock.ANY})
+
+    def test_without_https_the_site_is_asked_on_http(self):
+        for https, http, state in ((("refused", ""), ("answered", ""), "active"),
+                                   (("certificate", "expired"), ("refused", "Connection refused"), "failed")):
+            with self.subTest(https=https[0], http=http[0]):
                 self.script.write_text(self.script.read_text().replace("PROD_HTTPS=n", "PROD_HTTPS=y"))
-
-    def test_no_answer_keeps_what_is_saved(self):
-        for error in (socket.timeout(), socket.gaierror()):
-            with self.subTest(error=type(error).__name__):
-                ns = load(self.fake_socket(error), ssl, self.folder.name)
-                self.assertFalse(ns["windows_https"]("site", "prod", "x.test", False))
+                probe, asked = load({"https": https, "http": http}, self.folder.name)
+                result = probe("site", "prod", "x.test", True)
+                self.assertEqual((result["https"], result["state"]), (False, state))
+                self.assertEqual(asked, ["https://x.test/", "http://x.test/"])
                 self.assertIn("PROD_HTTPS=n", self.script.read_text())
 
+    def test_no_answer_keeps_what_is_saved_and_leaves_the_state_to_keep_alive(self):
+        probe, asked = load({"https": ("unreachable", "timed out")}, self.folder.name)
+        result = probe("site", "prod", "x.test", False)
+        self.assertEqual((result["https"], result["state"]), (False, ""))
+        self.assertEqual(asked, ["https://x.test/"])
+        self.assertIn("PROD_HTTPS=n", self.script.read_text())
 
-if __name__ == "__main__":
-    unittest.main()
+    def test_the_answer_is_kept_for_a_minute(self):
+        probe, asked = load({"https": ("answered", "")}, self.folder.name)
+        probe("site", "prod", "x.test", True)
+        probe("site", "prod", "x.test", True)
+        self.assertEqual(len(asked), 1)
+
+
+class WebConfigHttpsTests(unittest.TestCase):
+    def test_the_redirect_is_added_first_and_removed_again_keeping_the_rest(self):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("windows_prod", Path(__file__).resolve().parents[1] / "lib/windows_prod.py")
+        helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder, "web.config")
+            path.write_text(helper.web_config("Site", "Production", https=False, umbraco=True).replace(
+                "<handlers>", "<!-- kept --><handlers>"))
+            self.assertTrue(helper.set_https(str(path), True))
+            self.assertFalse(helper.set_https(str(path), True))
+            text = path.read_text()
+            self.assertLess(text.index("Rewrite HTTP to HTTPS"), text.index("Rewrite to Sitemap.xml"))
+            self.assertIn("<!-- kept -->", text)
+            self.assertTrue(helper.set_https(str(path), False))
+            self.assertNotIn("Rewrite HTTP to HTTPS", path.read_text())
+            self.assertIn("Rewrite to Robots.txt", path.read_text())
+            plain = Path(folder, "plain.config")
+            plain.write_text(helper.web_config("Site", "Production"))
+            self.assertTrue(helper.set_https(str(plain), True))
+            self.assertIn("<rewrite>", plain.read_text())

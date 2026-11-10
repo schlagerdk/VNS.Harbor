@@ -118,6 +118,19 @@ if ((!_firstPublish)); then
 		--exclude '/wwwroot/**' --exclude '/App_Data/**')
 fi
 
+# An existing web.config is kept, but its HTTPS redirect follows the site: added when it answers on HTTPS
+_updateWebConfig=0
+if ((_hasWebConfig)); then
+	_webConfigName=$(grep -ix 'web.config' <<<"${_listing}" | head -n 1)
+	rclone copyto "${_windowsTarget}/${_webConfigName}" "${_workDir}/web.config"
+	_webConfigHttps=y
+	[[ ${PROD_HTTPS} != n ]] || _webConfigHttps=n
+	# A web.config that is not plain XML is left as it is, with the reason
+	if [[ $(python3 "@APACHE_DIR@/lib/windows_prod.py" set-https "${_workDir}/web.config" "${_webConfigHttps}" || true) == changed ]]; then
+		_updateWebConfig=1
+	fi
+fi
+
 if ((!_hasWebConfig)); then
 	_webConfigHttps=y
 	[[ ${PROD_HTTPS} != n ]] || _webConfigHttps=n
@@ -128,6 +141,7 @@ fi
 
 if ((_dryRun)); then
 	((_hasWebConfig)) || echo "web.config would be created."
+	((!_updateWebConfig)) || echo "The HTTPS redirect in web.config would be $([[ ${_webConfigHttps} == y ]] && echo added || echo removed)."
 	rclone copy "${_publish}" "${_windowsTarget}" "${_copyOpts[@]}" --dry-run
 	echo "Dry run completed."
 	exit 0
@@ -138,7 +152,10 @@ windows_take_offline
 echo "Copy to ${PROD_WINDOWS_SHARE}"
 rclone copy "${_publish}" "${_windowsTarget}" "${_copyOpts[@]}"
 
-if ((_hasWebConfig)); then
+if ((_updateWebConfig)); then
+	echo "web.config: HTTPS redirect $([[ ${_webConfigHttps} == y ]] && echo added || echo removed)"
+	rclone copyto "${_workDir}/web.config" "${_windowsTarget}/${_webConfigName}"
+elif ((_hasWebConfig)); then
 	echo "web.config already exists on the server - not touched"
 else
 	echo "Create web.config"

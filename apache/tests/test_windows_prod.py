@@ -41,7 +41,7 @@ case "$1" in
 	copy) [[ ${FAKE_COPY_FAILS:-} != 1 ]] || exit 1 ;;
 	sync) [[ -z ${FAKE_SYNC_FAILS:-} ]] || exit 1 ;;
 	copyto)
-		[[ ${3##*/} != web.config ]] || cp "$2" "$FAKE_SERVER/web.config" ;;
+		if [[ ${2##*/} == web.config && $2 == :smb:* ]]; then cp "$FAKE_SERVER/web.config" "$3"; elif [[ ${3##*/} == web.config ]]; then cp "$2" "$FAKE_SERVER/web.config"; fi ;;
 esac
 exit 0
 """
@@ -257,7 +257,8 @@ class WindowsPublishTests(ScriptTestCase):
         result = self.publish()
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual((self.server / "web.config").read_text(), "handmade")
-        self.assertFalse(any(call.endswith("/web.config") for call in self.calls()))
+        self.assertIn("its HTTPS redirect is not changed", result.stderr)
+        self.assertFalse(any(call.startswith("copyto /") and call.endswith("/web.config") for call in self.calls()))
         copy = self.calls()[self.index("copy /")]
         for rule in ("/web.config", "appsettings*.json", "/umbraco/**", "/uSync/**", "/Views/**", "/wwwroot/**", "/App_Data/**"):
             self.assertIn("--exclude " + rule, copy)
@@ -1688,7 +1689,7 @@ class TargetListingTests(unittest.TestCase):
 
 
 class WindowsUpdaterTests(unittest.TestCase):
-    def test_script_updater_leaves_windows_scripts_alone(self):
+    def test_script_updater_gives_windows_scripts_the_template_keeping_their_settings(self):
         source = (APACHE / "update_admin_site.sh").read_text()
         updater = re.search(r"<<'PY'\n(.*?)\nPY\n", source, re.S).group(1)
         with tempfile.TemporaryDirectory() as directory:
@@ -1698,15 +1699,25 @@ class WindowsUpdaterTests(unittest.TestCase):
             scripts = root / "www/example.test/scripts"
             scripts.mkdir(parents=True)
             (scripts.parent / "App.csproj").write_text("<Project />\n")
-            text = render_template(WINDOWS_TEMPLATES / "publish_prod.sh", {"APACHE_DIR": "/vns/apache"})
-            (scripts / "publish_prod.sh").write_text(text)
+            template = root / "apache/solutionfiles/csharp/windows-prod-scripts/publish_prod.sh"
+            template.parent.mkdir(parents=True)
+            template.write_text((WINDOWS_TEMPLATES / "publish_prod.sh").read_text())
+            values = {"APACHE_DIR": str(root / "apache"), "PROD_WINDOWS_SHARE": "'//10.0.0.9/D$/web/x'", "PROD_SMB_USER": "'Admin'",
+                      "PROD_SMB_PASSWORD": "'pa$$'", "PROD_SMB_DOMAIN": "''", "PROD_FOLDER": "'x'", "PROD_BINDING": "'x.test'",
+                      "PROD_HTTPS": "y", "PROD_ENVIRONMENT": "Production", "PROJECT_NAME": "App", "PUBLISH_FOLDER": "/var/www/x/_publish"}
+            current = (WINDOWS_TEMPLATES / "publish_prod.sh").read_text()
+            for key, value in values.items():
+                current = current.replace("@" + key + "@", value)
+            (scripts / "publish_prod.sh").write_text(current)
             (scripts / "targets/staging").mkdir(parents=True)
-            (scripts / "targets/staging/publish_prod.sh").write_text(text)
+            old = current.replace("PROD_SMB_USER='Admin'", "PROD_SMB_USER='Other'").replace("set-https", "old-step")
+            (scripts / "targets/staging/publish_prod.sh").write_text(old)
             result = subprocess.run([sys.executable, "-c", updater, str(root / "www"), str(root / "apache")],
                                     capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual((scripts / "publish_prod.sh").read_text(), text)
-            self.assertEqual((scripts / "targets/staging/publish_prod.sh").read_text(), text)
+            self.assertEqual((scripts / "publish_prod.sh").read_text(), current, "A current script is left as it is")
+            self.assertEqual((scripts / "targets/staging/publish_prod.sh").read_text(),
+                             current.replace("PROD_SMB_USER='Admin'", "PROD_SMB_USER='Other'"), "The code is new, the settings kept")
 
     def test_script_updater_replaces_old_sync_scripts(self):
         source = (APACHE / "update_admin_site.sh").read_text()

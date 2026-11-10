@@ -145,6 +145,29 @@ def update_publish_script(path, production):
     (unchanged if text == original else planned).append((path, text))
 
 
+WINDOWS_SETTINGS = re.compile(r"(?ms)^# ---- Production settings.*?^# -{20,}$")
+
+
+def update_windows_script(path):
+    """A Windows target's script gets the current template, keeping its settings, project and publish folder"""
+    old = path.read_text()
+    template = (apache / "solutionfiles/csharp/windows-prod-scripts/publish_prod.sh").read_text()
+    settings = WINDOWS_SETTINGS.search(old)
+    project = re.search(r"(?m)^_projectName=.*$", old)
+    local = re.search(r"(?m)^_localPublish=.*$", old)
+    if not (settings and project and local and WINDOWS_SETTINGS.search(template)):
+        print(f"Skipped {path}: its settings could not be found, so it is left as it is")
+        return
+    text = template.replace("@APACHE_DIR@", str(apache))
+    text = WINDOWS_SETTINGS.sub(lambda _: settings.group(0), text, count=1)
+    text = re.sub(r"(?m)^_projectName=.*$", lambda _: project.group(0), text, count=1)
+    text = re.sub(r"(?m)^_localPublish=.*$", lambda _: local.group(0), text, count=1)
+    if re.search(r"@[A-Z_]+@", text):
+        print(f"Skipped {path}: the template has values that are not filled in")
+        return
+    (unchanged if text == old else planned).append((path, text))
+
+
 for site in sorted(root.iterdir()):
     if not site.is_dir() or not any(site.glob("*.csproj")):
         continue
@@ -162,6 +185,8 @@ for site in sorted(root.iterdir()):
     for path in [scripts / "publish_prod.sh", *sorted(scripts.glob("targets/*/publish_prod.sh"))]:
         if path.is_file() and not re.search(r"(?m)^PROD_TARGET=windows\b", path.read_text()):
             update_publish_script(path, True)
+        elif path.is_file() and not path.is_symlink():
+            update_windows_script(path)
 
 if not planned and not unchanged:
     print(f"No C# publish scripts found in {root}.")

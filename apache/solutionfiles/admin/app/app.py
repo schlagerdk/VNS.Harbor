@@ -24,6 +24,8 @@ import threading
 import time
 import tempfile
 import uuid
+import urllib.request
+import urllib.error
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -483,38 +485,64 @@ def keep_alive_states():
     return _keep_alive_module.environment_states(max_age=max(1800, interval * 180))
 
 
-def windows_https(site, target, binding, saved):
-    """Whether a Windows environment answers on HTTPS with a valid certificate. IIS has no SSH, so it is
-    asked over the network, at most once a minute. A clear answer is saved in its publish_prod.sh, so the
-    next publish sets the HTTPS redirect and the URL to match. No answer keeps what is saved."""
+def probe_url(url):
+    """Request a site's address the way a visitor does. Returns how it went: answered (also a redirect or a
+    login), http-error, refused, certificate or unreachable, and the error."""
+    request = urllib.request.Request(url, headers={"User-Agent": "VNS-Admin", "Cache-Control": "no-cache"})
+    opener = urllib.request.build_opener(_keep_alive_module.NoRedirect())
+    try:
+        with opener.open(request, timeout=5) as response:
+            response.read(1)
+        return "answered", ""
+    except urllib.error.HTTPError as exc:
+        exc.close()
+        if exc.code in (301, 302, 303, 307, 308, 401, 403):
+            return "answered", ""
+        return "http-error", f"HTTP {exc.code}"
+    except urllib.error.URLError as exc:
+        reason = exc.reason
+        if isinstance(reason, ssl.SSLError):
+            return "certificate", str(reason)
+        if isinstance(reason, ConnectionRefusedError):
+            return "refused", "Connection refused"
+        return "unreachable", str(reason)
+    except (OSError, ValueError) as exc:
+        return ("certificate" if isinstance(exc, ssl.SSLError) else "unreachable"), str(exc)
+
+
+def windows_probe(site, target, binding, saved):
+    """Whether a Windows environment runs, and on HTTPS. IIS has no SSH, so its address is requested like a
+    visitor would, at most once a minute: HTTPS with a valid certificate first, then HTTP. A clear answer
+    about HTTPS is saved in its publish_prod.sh, so the next publish sets the redirect and the URL to match.
+    No answer keeps what is saved, and leaves the state to keep-alive."""
     key = (site, target)
     cached = WINDOWS_HTTPS.get(key)
     if cached and time.time() - cached[0] < 60:
         return cached[1]
-    secure = saved
+    result = {"https": saved, "state": "", "error": ""}
     if re.fullmatch(r"[A-Za-z0-9.-]{1,253}", binding or ""):
-        try:
-            with socket.create_connection((binding, 443), timeout=3) as connection:
-                with ssl.create_default_context().wrap_socket(connection, server_hostname=binding):
-                    secure = True
-        except (ConnectionRefusedError, ssl.SSLError):
-            secure = False
-        except OSError:
-            pass
-    WINDOWS_HTTPS[key] = (time.time(), secure)
-    if secure != saved:
+        outcome, error = probe_url(f"https://{binding}/")
+        if outcome in ("answered", "http-error"):
+            result = {"https": True, "state": "active" if outcome == "answered" else "failed", "error": error}
+        elif outcome in ("refused", "certificate"):
+            plain, plain_error = probe_url(f"http://{binding}/")
+            result = {"https": False, "state": {"answered": "active", "unreachable": ""}.get(plain, "failed"),
+                      "error": plain_error}
+    result["checked"] = int(time.time())
+    WINDOWS_HTTPS[key] = (time.time(), result)
+    if result["https"] != saved:
         path = os.path.join(target_folder(os.path.join(WEB_ROOT, site), target), "publish_prod.sh")
         try:
             with open(path, encoding="utf-8") as stream:
                 text = stream.read()
-            updated = re.sub(r"^PROD_HTTPS=\S*", "PROD_HTTPS=" + ("y" if secure else "n"), text, count=1, flags=re.M)
+            updated = re.sub(r"^PROD_HTTPS=\S*", "PROD_HTTPS=" + ("y" if result["https"] else "n"), text, count=1, flags=re.M)
             if updated != text:
                 with open(path, "w", encoding="utf-8") as stream:
                     stream.write(updated)
-                app.logger.info("%s %s now answers on %s", site, target, "HTTPS" if secure else "HTTP")
+                app.logger.info("%s %s now answers on %s", site, target, "HTTPS" if result["https"] else "HTTP")
         except OSError as exc:
             app.logger.warning("Could not save HTTPS of %s %s: %s", site, target, exc)
-    return secure
+    return result
 
 
 def remote_status(site, target="prod"):
@@ -730,8 +758,11 @@ def site_info(name, states):
         local = prod["PROD_LOCAL_PATH"]
         if prod.get("PROD_TARGET") == "windows":
             share = prod["PROD_WINDOWS_SHARE"]
-            secure = windows_https(name, target, prod["PROD_BINDING"], prod["PROD_HTTPS"] != "n")
-            answer = keep_alive_states().get(f"{name}/{target}", {})
+            probe = windows_probe(name, target, prod["PROD_BINDING"], prod["PROD_HTTPS"] != "n")
+            secure = probe["https"]
+            # The admin's own request, or else what keep-alive saw last
+            answer = ({"state": probe["state"], "error": probe["error"], "checked": probe["checked"]} if probe["state"]
+                      else keep_alive_states().get(f"{name}/{target}", {}))
             environments.append({**details, "key": key, "label": "Production", "mode": "windows", "unit": "", "state": answer.get("state", ""),
                                  "state_error": answer.get("error", ""), "state_checked": answer.get("checked"), "binding": prod["PROD_BINDING"],
                                  "port": "", "path": "", "host": share[2:].split("/", 1)[0], "user": prod["PROD_SMB_USER"], "folder": share,
