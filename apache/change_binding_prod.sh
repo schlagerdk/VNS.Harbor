@@ -20,12 +20,12 @@ if [[ ${PROD_TARGET:-} == windows ]]; then
 	exit 1
 fi
 
-_oldBinding=${PROD_BINDING,,}
-validate_binding "${_oldBinding}"
+# An environment on HTTP may use names without a dot
+_httpOnly=0
+[[ ${PROD_HTTPS:-} != n ]] || _httpOnly=1
+_oldBinding=$(normalize_site_binding "${PROD_BINDING}")
 ask _newBinding "Enter new production binding" "${_oldBinding}"
-_newBinding=$(normalize_dns_name "${_newBinding}" binding)
-validate_binding "${_newBinding}"
-_newBinding=${_newBinding,,}
+_newBinding=$(normalize_site_binding "${_newBinding}")
 _remoteConf="/etc/apache2/sites-available/${PROD_FOLDER}.conf"
 _oldAliases=$(prod_exec "bash -c 'source /vns/apache/lib/common.sh; server_aliases_from_config ${_remoteConf} ${_oldBinding}'")
 echo "Current aliases: ${_oldAliases:-none}"

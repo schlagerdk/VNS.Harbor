@@ -63,21 +63,34 @@ validate_binding() {
 	done
 }
 
+# A binding or alias of a site. With _httpOnly=1, a site without a certificate, it may be a name without a dot,
+# like a server's own name on the local network: a certificate needs a public name with one.
+normalize_site_binding() {
+	local _name
+	if [[ ${_httpOnly:-0} == 1 && $1 != *.* ]]; then
+		_name=$(normalize_dns_name "$1" name) || return 1
+	else
+		if [[ $1 != *.* ]]; then
+			echo "'$1' has no dot, so it cannot be in a certificate. Only a site on HTTP can use a name without a dot." >&2
+			return 1
+		fi
+		_name=$(normalize_dns_name "$1" binding) || return 1
+		validate_binding "${_name}" || return 1
+	fi
+	printf '%s\n' "${_name}" | tr '[:upper:]' '[:lower:]'
+}
+
 normalize_server_aliases() {
 	local _primary=$1 _raw=${2//,/ } _alias _candidate _found _aliases=""
 	_normalizedAliases=""
 	_primary=$(printf '%s' "${_primary}" | tr '[:upper:]' '[:lower:]')
 	while IFS= read -r _alias; do
 		[[ -n ${_alias} ]] || continue
-		_alias=$(normalize_dns_name "${_alias}" binding) || {
+		_candidate=$(normalize_site_binding "${_alias}") || {
 			echo "Invalid alias '${_alias}'." >&2
 			return 1
 		}
-		_alias=$(printf '%s' "${_alias}" | tr '[:upper:]' '[:lower:]')
-		validate_binding "${_alias}" || {
-			echo "Invalid alias '${_alias}'. Enter fully qualified DNS names separated by commas." >&2
-			return 1
-		}
+		_alias=${_candidate}
 		[[ ${_alias} == "${_primary}" ]] && continue
 		_found=0
 		for _candidate in ${_aliases}; do [[ ${_candidate} == "${_alias}" ]] && _found=1; done
@@ -428,6 +441,11 @@ issue_certificate() {
 		--key-file "${_keyFile}" \
 		--fullchain-file "${_certificateFile}" \
 		--reloadcmd "systemctl reload apache2"
+}
+
+# A global ServerName, so Apache does not warn that it cannot determine the server's name
+ensure_global_servername() {
+	sudo bash "${_apacheDir}/set_servername.sh"
 }
 
 install_apache_config() {

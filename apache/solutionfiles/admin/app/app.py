@@ -1542,8 +1542,11 @@ def site_arg(data):
     return site
 
 
-def dns_name(value, label, fully_qualified=False):
+def dns_name(value, label, fully_qualified=False, short=False):
+    """A site folder name, a fully qualified DNS name, or with short also one without a dot"""
     try:
+        if short:
+            return _normalize_dns_name(value).lower()
         return _normalize_dns_name(value, fully_qualified=True) if fully_qualified else _normalize_site_name(value)
     except ValueError as error:
         abort(400, "Invalid " + label + ": " + str(error))
@@ -2111,7 +2114,8 @@ def build_command(data):
         return "Fix permissions: " + site, argv, APACHE_DIR
     if kind == "change_binding":
         site = site_arg(data)
-        binding = dns_name(data.get("binding", ""), "binding", fully_qualified=True)
+        # A name without a dot is allowed here: the script refuses it for a site with a certificate
+        binding = dns_name(data.get("binding", ""), "binding", short=True)
         argv = [bash, os.path.join(APACHE_DIR, "change_binding.sh"), site, binding]
         if "aliases" in data:
             aliases = data["aliases"]
@@ -2121,7 +2125,7 @@ def build_command(data):
             for alias in re.split(r"[\s,]+", aliases.strip()):
                 if not alias:
                     continue
-                alias = dns_name(alias, "alias", fully_qualified=True)
+                alias = dns_name(alias, "alias", short=True)
                 if alias != binding and alias not in alias_names:
                     alias_names.append(alias)
             if len(alias_names) > 99:

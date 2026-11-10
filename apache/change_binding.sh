@@ -26,10 +26,13 @@ if [[ -z ${_oldBinding} ]]; then
 fi
 _oldBinding=${_oldBinding,,}
 
+# A site without a certificate may use names without a dot
+_httpOnly=1
+if grep -Eq '^[[:space:]]*SSLEngine[[:space:]]+On([[:space:]]|$)' "${_configPath}"; then
+	_httpOnly=0
+fi
 ask _newBinding "Enter new site URL binding" "${_oldBinding}"
-_newBinding=$(normalize_dns_name "${_newBinding}" binding)
-validate_binding "${_newBinding}"
-_newBinding=${_newBinding,,}
+_newBinding=$(normalize_site_binding "${_newBinding}")
 _binding=${_newBinding}
 
 _oldAliases=$(server_aliases_from_config "${_configPath}" "${_oldBinding}")

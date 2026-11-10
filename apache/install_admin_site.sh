@@ -98,6 +98,7 @@ _docRoot="${_siteRoot}/wwwroot"
 allocate_ports
 sudo mkdir -p "${_siteRoot}/app/static/vendor" "${_docRoot}"
 sudo a2enmod proxy proxy_http proxy_wstunnel rewrite headers >/dev/null
+ensure_global_servername
 if [[ ${_createCertificate} == y ]]; then
 	sudo a2enmod ssl >/dev/null
 	issue_certificate

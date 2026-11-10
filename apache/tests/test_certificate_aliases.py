@@ -269,7 +269,7 @@ class CertificateAliasTests(unittest.TestCase):
     def test_alias_list_normalization_and_config_replacement(self):
         common = (APACHE / "lib/common.sh").read_text()
         functions = "\n".join(shell_function(common, name) for name in (
-            "normalize_dns_name", "validate_binding", "normalize_server_aliases", "replace_server_aliases"))
+            "normalize_dns_name", "validate_binding", "normalize_site_binding", "normalize_server_aliases", "replace_server_aliases"))
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / "site.conf"
             config.write_text(

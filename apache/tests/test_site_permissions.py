@@ -137,7 +137,11 @@ class SitePermissionsTests(unittest.TestCase):
                 "aliases": "www.æøå.dk, www.xn--5cab8c.dk æøå.dk", "scope": scope,
             })
             self.assertEqual(idn_argv[3:], ["xn--5cab8c.dk", "www.xn--5cab8c.dk", "--yes"])
-        for aliases in ("not-a-domain", "*.example.test", "https://example.test", "a" * 254 + ".test"):
+        # A name without a dot passes here: change_binding.sh refuses it for a site with a certificate
+        _, short_argv, _ = command({"kind": "change_binding", "site": "example.test", "binding": "example.test",
+                                    "aliases": "SQL-01", "scope": "test"})
+        self.assertEqual(short_argv[4:], ["sql-01", "--yes"])
+        for aliases in ("not_a_domain", "*.example.test", "https://example.test", "a" * 254 + ".test"):
             with self.subTest(aliases=aliases), self.assertRaises(BadRequest):
                 command({"kind": "change_binding", "site": "example.test",
                          "binding": "example.test", "aliases": aliases, "scope": "test"})

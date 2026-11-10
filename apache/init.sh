@@ -23,6 +23,7 @@ sudo mkdir -p /var/lib/vns-roots
 
 echo Enable apache modules
 sudo a2enmod ssl rewrite headers proxy proxy_http proxy_wstunnel
+sudo bash "$(pwd)/set_servername.sh"
 
 echo Install sshpass
 sudo apt install -y sshpass
