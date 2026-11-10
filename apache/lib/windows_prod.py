@@ -4,6 +4,7 @@ Usage:
   windows_prod.py web-config PROJECT ENVIRONMENT HTTPS UMBRACO  Print a new web.config (HTTPS, UMBRACO: y/n)
   windows_prod.py set-environment WEB_CONFIG ENVIRONMENT  Change the environment in an existing web.config
   windows_prod.py set-https WEB_CONFIG HTTPS              Add or remove the HTTPS redirect in an existing web.config
+  windows_prod.py describe WEB_CONFIG                     Print dll= and environment= of an existing site
   windows_prod.py prepare-appsettings FILE URL HTTPS      Remove ConnectionStrings and set the Umbraco URL (HTTPS: y/n)
   windows_prod.py set-url FILE URL HTTPS                  Set the Umbraco URL only
 """
@@ -79,6 +80,19 @@ def set_environment(path, environment):
     tree.write(path, encoding="utf-8", xml_declaration=True)
 
 
+def describe(path):
+    """The dll an existing IIS site runs and its environment, read from its web.config"""
+    module = ET.parse(path).getroot().find(".//aspNetCore")
+    if module is None:
+        raise ValueError("%s has no aspNetCore element" % path)
+    arguments = module.get("arguments") or ""
+    dll = next((part for part in arguments.replace('"', " ").split() if part.lower().endswith(".dll")), "")
+    dll = dll.replace("\\", "/").rsplit("/", 1)[-1][:-4] if dll else ""
+    environment = next((item.get("value", "") for item in module.iter("environmentVariable")
+                        if item.get("name") in ENVIRONMENT_VARIABLES), "")
+    return {"dll": dll, "environment": environment}
+
+
 HTTPS_RULE_NAME = "Rewrite HTTP to HTTPS"
 
 
@@ -137,6 +151,12 @@ def main(args):
             print("changed" if set_https(args[1], args[2] != "n") else "unchanged")
         except (ET.ParseError, ValueError, OSError) as exc:
             raise SystemExit("web.config could not be read (%s), so its HTTPS redirect is not changed" % exc)
+    elif len(args) == 2 and args[0] == "describe":
+        try:
+            for key, value in describe(args[1]).items():
+                print("%s=%s" % (key, value))
+        except (ET.ParseError, ValueError, OSError) as exc:
+            raise SystemExit("web.config could not be read: %s" % exc)
     elif len(args) == 4 and args[0] == "prepare-appsettings":
         prepare_appsettings(args[1], args[2], args[3])
     elif len(args) == 4 and args[0] == "set-url":

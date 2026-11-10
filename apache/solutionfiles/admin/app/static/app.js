@@ -1578,15 +1578,10 @@ siteForm.onsubmit = (event) => {
 const prodDialog = $("#dlg-prod");
 const prodForm = $("#form-prod");
 function syncProdForm() {
-	const target = prodForm.dataset.existing ? "existing" : prodForm.elements.target.value;
+	const target = prodForm.elements.target.value;
 	const local = target === "local";
 	const windows = target === "windows";
-	const existing = target === "existing";
-	$("#prod-target-row").hidden = existing;
-	$("#prod-existing-switch").hidden = Boolean(prodForm.dataset.moveTarget);
-	$("#prod-existing-text").textContent = existing ? "Creating something new instead?" : "Already running on a server?";
-	$("#prod-existing-toggle").textContent = existing ? "Add new environment" : "Add existing site";
-	const linuxRemote = target === "remote" || existing;
+	const linuxRemote = target === "remote";
 	$("#prod-local-options").hidden = !local;
 	$("#prod-remote-options").hidden = !linuxRemote;
 	$("#prod-windows-options").hidden = !windows;
@@ -1607,14 +1602,14 @@ function syncProdForm() {
 	const release = target === "release";
 	const same = target === "same";
 	const sameServerMove = moving && !copying && local && prodForm.dataset.moveMode === "local";
-	const noSettings = sameServerMove || release || existing;
-	$("#prod-folder-row").hidden = windows || moving && local || noSettings && !existing;
+	const noSettings = sameServerMove || release;
+	$("#prod-folder-row").hidden = windows || moving && local || noSettings;
 	$("#prod-binding-row").hidden = noSettings && !sameServerMove;
 	$("#prod-environment-row").hidden = noSettings;
 	$("#prod-protocol-row").hidden = noSettings;
 	$("#prod-protocol-hint").hidden = noSettings;
-	prodForm.folder.required = !windows && !(moving && local) && (!noSettings || existing);
-	prodForm.binding.required = !release && !existing;
+	prodForm.folder.required = !windows && !(moving && local) && !noSettings;
+	prodForm.binding.required = !release;
 	const fromWindows = prodForm.dataset.moveMode === "windows";
 	const hasSql = fromWindows || prodForm.dataset.moveSql === "1";
 	const copyOptions = copying && !release;
@@ -1630,17 +1625,16 @@ function syncProdForm() {
 		: fromWindows
 			? "Settings and content are copied from Windows while its site runs, and the project is built for the destination. A connection to the Windows server's own SQL Server is changed to its address."
 			: `${copying ? "The whole folder is copied" : "The site is stopped while the whole folder is copied"}, including its build, media, logs and a SQLite database, so it runs the same version. A connection to the source's own SQL Server is changed to its address, which must accept connections from the new server. With HTTPS, DNS must already point to the new server.`;
-	const destinationServer = same ? prodForm.dataset.moveHost : target === "remote" || existing ? prodForm.host.value.trim() || "…" : "";
+	const destinationServer = same ? prodForm.dataset.moveHost : target === "remote" ? prodForm.host.value.trim() || "…" : "";
 	const destinationPath = windows ? prodForm.smb_share.value.trim() || "…"
 		: local ? prodForm.local_path.value.trim() || "…"
 			: `${destinationServer}:/var/www/${prodForm.folder.value.trim() || "…"}`;
 	$("#prod-dest-path").hidden = !moving || release;
 	$("#prod-dest-path").textContent = `${copying ? "Copied" : "Migrated"} to ${destinationPath}`;
-	$("#prod-existing-hint").hidden = !existing;
 	$("#prod-move-options").hidden = !moving || sameServerMove || release;
 	prodForm.elements.delete_local.disabled = copying;
 	$("#prod-release-hint").hidden = !release;
-	$("#prod-submit").textContent = existing ? "Add existing site" : !moving ? "Add environment" : release ? "Move out" : copying ? "Copy" : "Migrate";
+	$("#prod-submit").textContent = !moving ? "Add environment" : release ? "Move out" : copying ? "Copy" : "Migrate";
 	$("#prod-local-hint").textContent = sameServerMove
 		? "The folder is moved, and the service and Apache config follow it. It must be a new folder directly under /var/www, which also becomes the site's name. The port is unchanged. A new binding with HTTPS gets a new certificate, so DNS must point here first."
 		: moving ? "It must be a new folder directly under /var/www, which also becomes the site's name."
@@ -1683,8 +1677,8 @@ function openCreateProdDialog(site, moveEnv, copying = false) {
 			: `Migrate ${bindingLabel(moveEnv) || moveEnv.unit || moveEnv.folder} to another folder or server. Everything goes with it.`
 		: "Configure where this site is published to, then publish and sync content automatically when available.";
 	prodForm.elements.target.querySelector("option[value=release]")?.remove();
-	delete prodForm.dataset.existing;
 	prodForm.elements.target.querySelector("option[value=same]")?.remove();
+
 	if (moveEnv?.mode === "remote") prodForm.elements.target.prepend(el("option", { value: "same", textContent: `Same server (${moveEnv.host})` }));
 	if (moveEnv?.separate && !copying) prodForm.elements.target.append(el("option", { value: "release", textContent: "Separate site (move out)" }));
 	const main = site.environments.find((env) => !isTarget(env));
@@ -1723,15 +1717,6 @@ function openCreateProdDialog(site, moveEnv, copying = false) {
 	prodForm.elements.target.focus();
 }
 prodForm.elements.target.onchange = syncProdForm;
-$("#prod-existing-toggle").onclick = () => {
-	if (prodForm.dataset.existing) {
-		delete prodForm.dataset.existing;
-	} else {
-		prodForm.dataset.existing = "1";
-		prodForm.elements.target.value = "remote";
-	}
-	syncProdForm();
-};
 // A local environment gets its own folder and site name, so the defaults follow the environment
 prodForm.elements.environment.onchange = () => {
 	const name = prodForm.elements.environment.value.toLowerCase();
@@ -1768,10 +1753,6 @@ prodForm.onsubmit = (event) => {
 	}
 	const data = Object.fromEntries(new FormData(prodForm));
 	data.kind = prodForm.dataset.moveTarget ? "move_env" : "create_prod";
-	if (prodForm.dataset.existing) {
-		data.kind = "register_env";
-		data.target = "remote";
-	}
 	if (prodForm.dataset.moveTarget) data.environment_id = prodForm.dataset.moveTarget;
 	if (prodForm.dataset.copy) {
 		data.copy = true;

@@ -390,7 +390,6 @@ body.login { display: grid; place-items: center; min-height: 100vh; min-height: 
 .site-layout.with-packages .package-panel { margin-top: 0; display: flex; flex-direction: column; contain: size; border-top: 3px solid var(--blue); }
 .site-layout.with-packages .package-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .targets-empty { min-height: 0; padding: 48px 20px; border: 1px dashed var(--line); border-radius: 12px; }
-.prod-existing-switch { margin-top: 14px; }
 body[data-view="sql"] .page-header #search { display: none; }
 dialog.newsite .hint { margin-top: 8px; line-height: 1.55; }
 dialog.newsite .hint + .hint { margin-top: 10px; }
@@ -400,7 +399,6 @@ dialog.newsite .copy-connection-toggle + .hint { margin-top: 12px; }
 .copy-server-fields legend { padding: 0 6px; color: var(--muted); font-size: 12px; }
 #prod-move-options, #prod-copy-options { margin-top: 12px; }
 .prod-dest-path { color: var(--text, inherit); }
-.prod-existing-switch .cancel-link { padding: 0; font-size: inherit; }
 .site-targets { margin-top: 32px; }
 .site-targets-head .actions.site-targets-right { margin-left: auto; }
 /* In the middle of the bar: the free space is shared with the buttons on the right */

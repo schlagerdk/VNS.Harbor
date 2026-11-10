@@ -134,13 +134,13 @@ console.log(JSON.stringify([
         self.assertIn("creates it again as a new installation", source)
         self.assertNotIn("publish this site to production", source)
 
-    def test_existing_site_is_a_link_and_not_a_target(self):
+    def test_add_environment_adopts_an_existing_site_by_itself(self):
         page = (APP / "templates/index.html").read_text()
-        self.assertNotIn('<option value="existing">', page)
-        self.assertIn('id="prod-existing-toggle"', page)
-        source = (APP / "static/app.js").read_text()
-        self.assertIn('const target = prodForm.dataset.existing ? "existing" : prodForm.elements.target.value;', source)
-        self.assertIn("if (prodForm.dataset.existing) {\n\t\tdata.kind = \"register_env\";", source)
+        self.assertNotIn('id="prod-existing-toggle"', page)
+        self.assertNotIn('value: "existing"', (APP / "static/app.js").read_text())
+        script = (APACHE / "solutionfiles/csharp/scripts/create_prod.sh").read_text()
+        self.assertIn('bash "@APACHE_DIR@/register_env.sh" "${_site}"', script)
+        self.assertIn('windows_prod.py" describe', script)
 
     def test_migrate_is_offered_on_local_and_remote_environments(self):
         source = (APP / "static/app.js").read_text()

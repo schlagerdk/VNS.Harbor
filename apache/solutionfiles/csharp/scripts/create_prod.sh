@@ -4,8 +4,8 @@
 #   publish.sh -> publish_local.sh, clear_logs.sh -> clear_logs_local.sh (the first time)
 #   creates scripts/targets/<environment>/ with publish_prod.sh, clear_logs_prod.sh and sync_prod.sh (Umbraco)
 # Publishes production, then syncs content when available. Production is always a Release build.
-# A remote or Windows destination that already holds files is only registered here: nothing is published or
-# synced, so its files are never touched. Publish it later when you want to update it.
+# A remote or Windows destination that already holds a site is adopted as it is: its settings are read from the
+# server, it must run the dll this site builds, and nothing is published, synced or changed there.
 # Run it again to add another environment.
 set -euo pipefail
 
@@ -209,13 +209,37 @@ if [[ ${_target} == windows ]]; then
 	_templates=("${_solutionFolder}/csharp/windows-prod-scripts")
 	[[ ${_kind} != umbraco ]] || _templates+=("${_solutionFolder}/csharp/umbraco/windows-prod-scripts")
 	# Stop before anything is changed if the share or the login is wrong
+	# The share's files, and the web.config of a site that is already there
+	_webConfig=$(mktemp)
 	_listing=$(
 		source "@APACHE_DIR@/lib/windows_prod.sh"
 		PROD_WINDOWS_SHARE=${_smbShare} PROD_SMB_USER=${_smbUser} PROD_SMB_PASSWORD=${_smbPassword} PROD_SMB_DOMAIN=${_smbDomain}
 		windows_smb_connect >&2 || exit 1
 		rclone lsf "${_windowsTarget}" --max-depth 1
-	) || exit 1
-	[[ -z ${_listing} ]] || _destinationHasFiles=y
+		_name=$(rclone lsf "${_windowsTarget}" --max-depth 1 --files-only | grep -ix 'web.config' | head -n 1 || true)
+		[[ -z ${_name} ]] || rclone copyto "${_windowsTarget}/${_name}" "${_webConfig}" >&2
+	) || { rm -f "${_webConfig}"; exit 1; }
+	# A site is there when it has a web.config or a dll; IIS's own start page alone is not a site
+	if [[ -s ${_webConfig} ]] || grep -qi '\.dll$' <<<"${_listing}"; then
+		_destinationHasFiles=y
+		if [[ ${VNS_PROD_NO_PUBLISH:-} != 1 ]]; then
+			[[ -s ${_webConfig} ]] || { rm -f "${_webConfig}"; echo "${_smbShare} holds a site without a web.config, so it cannot be adopted. Empty the folder, or choose another." >&2; exit 1; }
+			_described=$(python3 "@APACHE_DIR@/lib/windows_prod.py" describe "${_webConfig}") || { rm -f "${_webConfig}"; exit 1; }
+			_existingDll=$(sed -n 's/^dll=//p' <<<"${_described}")
+			_existingEnvironment=$(sed -n 's/^environment=//p' <<<"${_described}")
+			_assembly=$(sed -n 's:.*<AssemblyName>\(.*\)</AssemblyName>.*:\1:p' "${_siteRoot}/${_projectName}.csproj" 2>/dev/null | head -n 1)
+			_assembly=${_assembly:-${_projectName}}
+			if [[ ${_existingDll} != "${_assembly}" ]]; then
+				rm -f "${_webConfig}"
+				echo "${_smbShare} runs ${_existingDll:-an unknown}.dll, but ${_site} builds ${_assembly}.dll, so it is not this site. Nothing was changed." >&2
+				exit 1
+			fi
+			case "${_existingEnvironment}" in
+				Development | Test | Staging | Production) _prodEnvironment=${_existingEnvironment} ;;
+			esac
+		fi
+	fi
+	rm -f "${_webConfig}"
 elif [[ ${_target} == remote ]]; then
 	_listing=$(
 		source "@APACHE_DIR@/lib/prod.sh"
@@ -223,11 +247,19 @@ elif [[ ${_target} == remote ]]; then
 		prod_exec "find $(printf %q "/var/www/${_prodFolder}") -mindepth 1 -maxdepth 1 -print -quit" 2>/dev/null
 	) || true
 	[[ -z ${_listing} ]] || _destinationHasFiles=y
+	# A site on a Linux server is adopted with register_env.sh: it reads the binding, protocol and environment
+	# from the server, checks that the site runs the dll this site builds, and publishes nothing
+	if [[ ${_destinationHasFiles} == y && ${VNS_PROD_NO_PUBLISH:-} != 1 ]]; then
+		echo "/var/www/${_prodFolder} on ${_ip} already holds a site: it is adopted as it is, with its settings read from the server."
+		VNS_PROD_IP=${_ip} VNS_PROD_USER=${_user} VNS_PROD_PASSWORD=${_password} VNS_PROD_SSH_PORT=${_sshPort} \
+			VNS_PROD_FOLDER=${_prodFolder} bash "@APACHE_DIR@/register_env.sh" "${_site}" || exit 1
+		exit 0
+	fi
 fi
 if [[ ${_destinationHasFiles} == y && ${VNS_PROD_NO_PUBLISH:-} != 1 ]]; then
 	echo
-	echo "The destination already holds files. The environment is only set up here: nothing is published,"
-	echo "synced or changed on the server. Publish it later when you want to update it."
+	echo "${_smbShare} already holds this site. It is adopted as it is, with its environment (${_prodEnvironment}) read"
+	echo "from its web.config: nothing is published, synced or changed on the server. Publish it when you want to update it."
 fi
 
 # Single quotes, as %q writes non-ASCII names differently depending on the locale
@@ -269,7 +301,7 @@ if [[ ${VNS_PROD_NO_PUBLISH:-} == 1 ]]; then
 	exit 0
 fi
 if [[ ${_destinationHasFiles} == y ]]; then
-	echo "Environment ${_targetId} is set up for the site that is already on the server. Nothing was published."
+	echo "Environment ${_targetId} is the site that was already on the server. Nothing was published."
 	exit 0
 fi
 

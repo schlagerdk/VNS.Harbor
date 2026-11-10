@@ -553,9 +553,9 @@ class CreateProdTests(ScriptTestCase):
         for folder in ("uSync", "Views"):
             (self.site / "_publish" / folder).mkdir(parents=True)
 
-    def create(self, kind="umbraco", **env):
+    def create(self, kind="umbraco", apache=APACHE, **env):
         text = (APACHE / "solutionfiles/csharp/scripts/create_prod.sh").read_text()
-        values = {"APACHE_DIR": str(APACHE), "SITE": "example.test", "BINDING": "example.test", "PROJECT_NAME": "App",
+        values = {"APACHE_DIR": str(apache), "SITE": "example.test", "BINDING": "example.test", "PROJECT_NAME": "App",
                   "SITE_ROOT": str(self.site), "PUBLISH_FOLDER": "_publish", "ADMIN_MAIL": "admin@example.test", "CSHARP_KIND": kind}
         for key, value in values.items():
             text = text.replace("@" + key + "@", value)
@@ -638,20 +638,37 @@ class CreateProdTests(ScriptTestCase):
         self.assertIn("already uses that folder", result.stderr)
         self.assertFalse((self.scripts / "targets/production").exists())
 
-    def test_a_remote_folder_with_files_is_only_set_up(self):
+    def test_a_remote_folder_with_a_site_is_adopted(self):
         # A failing build proves nothing is published: it would stop the script
         executable(self.bin / "dotnet", "#!/bin/bash\nexit 1\n")
-        executable(self.bin / "ssh", '#!/bin/bash\n[[ "$*" == *find* ]] && echo /var/www/live.test/App.dll\nexit 0\n')
-        result = self.create(VNS_PROD_TARGET="remote", VNS_PROD_IP="server.test", VNS_PROD_USER="root", VNS_PROD_SSH_PORT="22",
-                             VNS_PROD_HTTPS="n")
+        executable(self.bin / "ssh", '#!/bin/bash\n[[ "$*" == *find* ]] && echo /var/www/prod.test/App.dll\nexit 0\n')
+        # register_env.sh reads the site from the server; here it only records how it was called
+        apache = self.root / "apache"
+        apache.mkdir()
+        (apache / "lib").symlink_to(APACHE / "lib")
+        executable(apache / "register_env.sh",
+                   '#!/bin/bash\necho "REGISTER $1 $VNS_PROD_IP $VNS_PROD_USER $VNS_PROD_SSH_PORT $VNS_PROD_FOLDER" >>"$FAKE_LOG"\n')
+        result = self.create(apache=apache, VNS_PROD_TARGET="remote", VNS_PROD_IP="server.test", VNS_PROD_USER="root",
+                             VNS_PROD_SSH_PORT="22", VNS_PROD_HTTPS="n")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("already holds files", result.stdout)
-        self.assertIn("Nothing was published", result.stdout)
-        self.assertTrue((self.scripts / "targets/staging/publish_prod.sh").is_file())
+        self.assertIn("already holds a site: it is adopted as it is", result.stdout)
+        self.assertIn("REGISTER example.test server.test root 22 prod.test", self.log.read_text())
+        self.assertFalse((self.scripts / "targets/staging").exists(), "register_env.sh sets up the environment itself")
+
+    def test_a_windows_share_with_another_site_is_refused(self):
+        self.server.mkdir(parents=True, exist_ok=True)
+        (self.server / "web.config").write_text(
+            '<configuration><location><system.webServer><aspNetCore processPath="dotnet" arguments=".\\Other.dll">'
+            '<environmentVariables><environmentVariable name="ASPNETCORE_ENVIRONMENT" value="Test" /></environmentVariables>'
+            '</aspNetCore></system.webServer></location></configuration>')
+        result = self.windows()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("runs Other.dll, but example.test builds App.dll", result.stderr)
+        self.assertFalse((self.scripts / "targets").exists())
 
     def test_linux_targets_save_the_protocol_and_use_the_linux_templates(self):
         executable(self.bin / "dotnet", "#!/bin/bash\nexit 1\n")
-        executable(self.bin / "ssh", "#!/bin/bash\necho x86_64\n")
+        executable(self.bin / "ssh", '#!/bin/bash\n[[ "$*" == *find* ]] || echo x86_64\n')
         self.create(VNS_PROD_TARGET="remote", VNS_PROD_IP="server.test", VNS_PROD_USER="root", VNS_PROD_SSH_PORT="22", VNS_PROD_HTTPS="n")
         self.assertEqual(self.setting("PROD_HTTPS"), "n")
         text = (self.scripts / "targets/staging/publish_prod.sh").read_text()
