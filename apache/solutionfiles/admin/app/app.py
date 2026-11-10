@@ -2054,14 +2054,13 @@ def build_command(data):
         certificate = data.get("certificate", "y")
         if certificate not in ("y", "n"):
             abort(400, "Invalid certificate option")
-        # * is the site that answers any name: only without a certificate, as is a name without a dot
+        # * is the site that answers any name. create_site.sh gives it this server's name, and refuses a
+        # certificate when that name has no dot. A name without a dot is only for a site without a certificate.
         binding = data.get("binding", "")
         if not isinstance(binding, str):
             abort(400, "Invalid binding")
         if binding in ("", "*"):
             binding = "*"
-            if certificate == "y":
-                abort(400, "A site that answers any name cannot have a certificate")
             if default_site_name():
                 abort(400, default_site_name() + " already answers any name. Only one site can.")
         else:

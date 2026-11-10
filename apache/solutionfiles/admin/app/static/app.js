@@ -1562,11 +1562,8 @@ siteForm.onsubmit = (event) => {
 			field.value = name ? match?.short_name || "umbraco" : "";
 		}
 		const data = Object.fromEntries(new FormData(siteForm));
-		// No binding: the site answers any name no other site has, which only works without a certificate
+		// No binding: the site answers any name no other site has, with this server's own name as its binding
 		data.binding = data.binding.trim() || "*";
-		siteForm.binding.setCustomValidity(data.binding === "*" && data.certificate === "y"
-			? "A site that answers any name cannot have a certificate. Choose HTTP only, or enter a binding." : "");
-		if (!siteForm.binding.reportValidity()) return;
 		if (data.type === "csharp" && data.template?.toLowerCase() === "umbraco" && !data.version?.trim()) {
 			data.version = defaultUmbracoVersion;
 		}

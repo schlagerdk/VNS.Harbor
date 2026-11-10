@@ -308,13 +308,13 @@ class CreateCommandTests(unittest.TestCase):
         self.assertEqual(self.command(site="æøå.dk", project="æøå.dk")[6], "xn--5cab8c.dk")
         self.assertEqual(self.command(site="æøå.dk", project="Example")[6], "Example")
 
-    def test_an_empty_binding_answers_any_name_only_without_a_certificate(self):
+    def test_an_empty_binding_answers_any_name(self):
         self.assertEqual(self.command(binding="")[7], "*")
         self.assertEqual(self.command(binding="*")[7], "*")
         self.assertEqual(self.command(binding="sql-01")[7], "sql-01")
-        for changes in ({"binding": "", "certificate": "y"}, {"binding": "sql-01", "certificate": "y"}):
-            with self.subTest(**changes), self.assertRaises(BadRequest):
-                self.command(**changes)
+        self.assertEqual(self.command(binding="", certificate="y")[7], "*", "create_site.sh checks the server's name")
+        with self.assertRaises(BadRequest):
+            self.command(binding="sql-01", certificate="y")
         self.ns["default_site_name"] = lambda: "other.test"
         with self.assertRaisesRegex(BadRequest, "already answers any name"):
             self.command(binding="")

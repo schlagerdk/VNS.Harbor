@@ -61,18 +61,15 @@ if [[ ${_type} == csharp ]]; then
 fi
 
 if [[ -z ${_binding} && ${_site} == *.* ]]; then
-	ask _binding "Enter site URL binding (* = answer any name, HTTP only)" "${_site}"
+	ask _binding "Enter site URL binding (* = answer any name)" "${_site}"
 else
-	ask _binding "Enter site URL binding (* = answer any name, HTTP only)"
+	ask _binding "Enter site URL binding (* = answer any name)"
 fi
-# * is the site that answers any name no other site has, like Apache's own default site. It has no
-# certificate, and keeps this server's own name as its binding.
+# * is the site that answers any name no other site has, like Apache's own default site. Its binding is this
+# server's own name, which can have a certificate when it is a public name with a dot. Other names still
+# reach it on HTTPS, but a browser warns, as they are not in the certificate.
 _defaultSite=n
 if [[ ${_binding} == "*" ]]; then
-	if [[ ${_createCertificate} != n ]]; then
-		echo "A site that answers any name cannot have a certificate. Answer n to the certificate question." >&2
-		exit 1
-	fi
 	_current=$(default_site)
 	if [[ -n ${_current} ]]; then
 		echo "${_current} already answers any name. Only one site can: delete it or give it a binding first." >&2
@@ -80,6 +77,10 @@ if [[ ${_binding} == "*" ]]; then
 	fi
 	_defaultSite=y
 	_binding=$(server_own_name)
+	if [[ ${_createCertificate} == y && ${_binding} != *.* ]]; then
+		echo "This server's name, ${_binding}, has no dot, so it cannot get a certificate. Answer n to the certificate question, or set a full name with hostnamectl." >&2
+		exit 1
+	fi
 fi
 # A site without a certificate may use a name without a dot
 _httpOnly=0
@@ -300,7 +301,7 @@ release_port_reservation
 _scheme=http
 [[ ${_createCertificate} == n ]] || _scheme=https
 echo "Site created: ${_scheme}://${_binding}/ (folder: ${_site})"
-[[ ${_defaultSite} != y ]] || echo "It also answers any name that no other site has, like http://<server-ip>/."
+[[ ${_defaultSite} != y ]] || echo "It also answers any name that no other site has, like ${_scheme}://<server-ip>/.$([[ ${_scheme} == https ]] && echo " Browsers warn for names that are not in its certificate.")"
 if [[ ${_type} == csharp ]]; then
 	echo "Run ${_siteRoot}/scripts/create_prod.sh when you want a production target for this site."
 fi
