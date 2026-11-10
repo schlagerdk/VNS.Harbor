@@ -227,6 +227,8 @@ const views = ["sites", "site", "sql"];
 
 function showView(name) {
 	currentView = name;
+	// The site search belongs to the sites: it is hidden on the SQL page
+	document.body.dataset.view = name;
 	for (const view of views) $("#view-" + view).hidden = view !== name;
 	if (name === "sites" && $("#dock").hidden && !$("#search").hidden) $("#search").focus({ preventScroll: true });
 }
@@ -455,6 +457,7 @@ const buttonStyles = {
 	"Migrate…": ["server", "purple"],
 	"Check outdated": ["download", "amber"], "Restart": ["restart", "amber"], "Restart Apache": ["restart", "amber"],
 	"Stop": ["stop", "red"], "Clear logs": ["eraser", "gray"], "Logs": ["file", "gray"],
+	"SQL Server": ["server", "purple"], "Web server": ["globe", "blue"], "Start page…": ["sliders", "purple"], "Site keep-alive": ["activity", "green"],
 	"Admin app log": ["file", "gray"], "Apache error logs": ["file", "teal"],
 	"Copy site": ["file", "blue"],
 	"Issue certificate": ["shield", "teal"], "Change environment": ["sliders", "purple"], "Change bindings": ["globe", "blue"],
@@ -1384,7 +1387,7 @@ $("#btn-check-updates").onclick = () => run(async () => {
 });
 document.addEventListener("keydown", (event) => {
 	const typing = ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName);
-	if (event.key === "/" && !typing && !$("#search").hidden) { event.preventDefault(); if (currentView !== "sites") go("sites"); $("#search").focus(); }
+	if (event.key === "/" && !typing && !$("#search").hidden && currentView !== "sql") { event.preventDefault(); if (currentView !== "sites") go("sites"); $("#search").focus(); }
 	if (event.key === "`" && event.ctrlKey) { event.preventDefault(); toggleDock(); }
 	if (event.key === "Escape") $("#user-menu").hidden = true;
 });
@@ -2784,15 +2787,45 @@ function decorateSql() {
 }
 
 $("#settings-sql").onclick = () => go("#sql");
-const showStartView = () => { $("#settings-start-view").textContent = `Start page: ${startView === "sql" ? "SQL Server" : "Sites"}`; };
-showStartView();
-$("#settings-start-view").onclick = () => run(async () => {
-	const next = startView === "sql" ? "sites" : "sql";
-	await api("/api/preferences", { method: "PUT", json: { start_view: next } });
-	startView = next;
-	showStartView();
-	toast(`The admin now opens on ${next === "sql" ? "SQL Server" : "Sites"}`, "ok");
-});
+// With SQL Server as the start page, it is the home: Settings links to the sites as Web server instead
+function applyStartView() {
+	const sql = startView === "sql";
+	$("#settings-sql").hidden = sql;
+	$("#settings-web").hidden = !sql;
+	$("#sql-back-bar").hidden = sql;
+	const brand = document.querySelector(".brand");
+	brand.href = sql ? "#sql" : "#sites";
+	brand.title = sql ? "SQL Server" : "All sites";
+}
+// The logo always opens the start page, also when it is already shown
+document.querySelector(".brand").onclick = (event) => {
+	event.preventDefault();
+	const hash = startView === "sql" ? "#sql" : "#sites";
+	if (location.hash === hash) run(route);
+	else go(hash);
+};
+applyStartView();
+$("#settings-web").onclick = () => go("#sites");
+const startViewDialog = $("#dlg-start-view");
+const startViewForm = $("#form-start-view");
+$("#settings-start-view").onclick = () => {
+	startViewForm.reset();
+	startViewForm.elements.start_view.value = startView;
+	startViewDialog.showModal();
+};
+$("#start-view-cancel").onclick = () => startViewDialog.close();
+startViewForm.onsubmit = (event) => {
+	event.preventDefault();
+	const next = startViewForm.elements.start_view.value;
+	run(async () => {
+		await api("/api/preferences", { method: "PUT", json: { start_view: next } });
+		startView = next;
+		applyStartView();
+		startViewDialog.close();
+		toast(`The admin now opens on ${next === "sql" ? "SQL Server" : "Web server"}`, "ok");
+		go(next === "sql" ? "#sql" : "#sites");
+	});
+};
 
 // Scripts typed here run as the connection's login, against the chosen database
 const sqlQueryDialog = $("#dlg-sql-query");

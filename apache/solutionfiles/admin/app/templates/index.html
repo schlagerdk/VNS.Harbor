@@ -40,8 +40,9 @@
         <div class="menu-group-title">Server</div>
         <button id="btn-server-shell" type="button">Server shell</button>
         <button id="btn-browse" type="button">Browse /</button>
+        <button id="settings-web" type="button" hidden>Web server</button>
         <button id="settings-sql" type="button">SQL Server</button>
-        <button id="settings-start-view" type="button"></button>
+        <button id="settings-start-view" type="button">Start page…</button>
       </div>
       <div class="menu-group" role="group" aria-label="Apache">
         <div class="menu-group-title">Apache</div>
@@ -68,7 +69,7 @@
 </header>
 <main>
   <section id="view-sql" hidden>
-    <div class="toolbar">
+    <div class="toolbar" id="sql-back-bar">
       <a class="link back" href="#sites"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>All sites</a>
     </div>
     <div id="sql-heading" class="detail-title sql-heading" hidden>
@@ -492,6 +493,21 @@
     <label>Package name <input name="package" required maxlength="128" pattern="[A-Za-z0-9][A-Za-z0-9._-]*" autocomplete="off" spellcheck="false" placeholder="Package.Name"></label>
     <label id="package-version-row">Version (optional) <input name="version" maxlength="128" pattern="[0-9][0-9A-Za-z.+-]*" autocomplete="off" spellcheck="false" placeholder="1.2.3"></label>
     <menu><button type="button" id="package-cancel" class="cancel-link">Cancel</button><button type="submit" id="package-submit" class="primary">Add package</button></menu>
+  </form>
+</dialog>
+
+<dialog id="dlg-start-view" class="newsite environment-dialog" aria-labelledby="start-view-title">
+  <form method="dialog" id="form-start-view">
+    <div class="ns-head">
+      <span class="ns-icon" data-header-icon="sliders" aria-hidden="true"></span>
+      <div><h2 id="start-view-title">Start page</h2><p>Where the admin opens after you log in.</p></div>
+    </div>
+    <fieldset class="environment-options">
+      <legend>Open the admin on</legend>
+      <label class="type-card environment-option"><input type="radio" name="start_view" value="sites" required><span class="tc-title">Web server</span><span class="tc-sub">The sites and their environments</span></label>
+      <label class="type-card environment-option"><input type="radio" name="start_view" value="sql"><span class="tc-title">SQL Server</span><span class="tc-sub">For a server that is mostly a SQL Server. The sites are under Web server in Settings</span></label>
+    </fieldset>
+    <menu><button type="button" id="start-view-cancel" class="cancel-link">Cancel</button><button type="submit" class="primary">Save</button></menu>
   </form>
 </dialog>
 

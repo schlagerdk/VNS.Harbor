@@ -208,6 +208,13 @@ console.log(JSON.stringify([first, firstNone, none.hidden]));
         self.assertIn('actions.prepend(el("button", { textContent: "Query", onclick: () => openSqlQuery(database) }));', source)
         page = (APP / "templates/index.html").read_text()
         self.assertIn('<meta name="start-view" content="{{ start_view }}">', page)
+        self.assertIn('id="dlg-start-view"', page)
+        self.assertIn('id="settings-web"', page)
+        self.assertIn('$("#sql-back-bar").hidden = sql;', source)
+        self.assertIn('const hash = startView === "sql" ? "#sql" : "#sites";', source)
+        self.assertIn('body[data-view="sql"] .page-header #search { display: none; }', (APP / "static/style.css").read_text())
+        for label in ("SQL Server", "Web server", "Start page…", "Site keep-alive"):
+            self.assertIn(f'"{label}": [', source)
         self.assertIn('id="dlg-sql-query"', page)
 
     def test_layout_and_wording(self):
