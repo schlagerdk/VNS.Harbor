@@ -28,14 +28,27 @@ class DataSyncTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "in common"):
             data_sync.kinds(config, "a", "c")
 
+    def test_by_default_only_the_main_site_sends_settings(self):
+        config = {"t2": {"settings_receive": False}, "t3": {"settings_send": True}}
+        data_sync.settings_allowed(config, "main", "t1")
+        data_sync.settings_allowed(config, "t3", "t1")
+        for source, destination, reason in (("t1", "t3", "t1 may not send settings"), ("main", "t2", "t2 may not receive settings"),
+                                            ("t3", "main", "does not receive settings")):
+            with self.subTest(source=source, destination=destination), self.assertRaisesRegex(ValueError, reason):
+                data_sync.settings_allowed(config, source, destination)
+        self.assertTrue(data_sync.clean({}, "main")["settings_send"])
+        self.assertFalse(data_sync.clean({}, "staging")["settings_send"])
+        self.assertTrue(data_sync.clean({}, "staging")["settings_receive"])
+
     def test_settings_are_saved_per_site_and_cleaned(self):
         with tempfile.TemporaryDirectory() as folder:
             (Path(folder) / "scripts").mkdir()
             data_sync.save(folder, "main", {"enabled": True, "send": "yes", "content": True, "unknown": True})
             data_sync.save(folder, "prod", ON)
             saved = data_sync.load(folder)
-            self.assertEqual(saved["main"], {"enabled": True, "send": False, "receive": False, "content": True, "media": False})
-            self.assertEqual(saved["prod"], ON)
+            self.assertEqual(saved["main"], {"enabled": True, "send": False, "receive": False, "content": True, "media": False,
+                                             "settings_send": True, "settings_receive": True})
+            self.assertEqual(saved["prod"], ON | {"settings_send": False, "settings_receive": True})
             with self.assertRaises(ValueError):
                 data_sync.save(folder, "../x", ON)
 

@@ -39,9 +39,10 @@ main_folder() {
 _workDir=$(mktemp -d)
 trap 'rm -rf "${_workDir}"' EXIT
 
-# Edit the appsettings.json of one site in place, by its saved settings
+# Edit the appsettings.json of one site in place, by its saved settings, and restart the site when it changed.
+# With force it is restarted anyway, so uSync imports what it just received.
 apply_settings() {
-	local _id=$1 _file=${_workDir}/appsettings.json
+	local _id=$1 _force=${2:-} _file=${_workDir}/appsettings.json _result
 	if [[ ${_id} == main ]]; then
 		# The project's copy too, as publishing the main site copies it to the folder the site runs from
 		local _files=() _path
@@ -49,8 +50,10 @@ apply_settings() {
 			[[ -f ${_path} ]] && [[ " ${_files[*]:-} " != *" ${_path} "* ]] && _files+=("${_path}")
 		done
 		((${#_files[@]})) || { echo "The main site has no appsettings.json." >&2; exit 1; }
-		python3 lib/data_sync.py appsettings "${_siteRoot}" main "${_files[@]}"
+		_result=$(python3 lib/data_sync.py appsettings "${_siteRoot}" main "${_files[@]}") || exit 1
+		echo "${_result}"
 		chown www-data:www-data "${_files[@]}" 2>/dev/null || true
+		[[ -n ${_force} || ${_result} == *Updated* ]] || { echo "Nothing changed, so ${_serviceName} is not restarted."; return; }
 		echo "Restart ${_serviceName}"
 		systemctl restart "${_serviceName}"
 		return
@@ -59,7 +62,9 @@ apply_settings() {
 	load_prod_settings
 	if [[ ${PROD_TARGET} == windows ]]; then
 		bash windows_file.sh "${_site}" read appsettings.json > "${_file}"
-		python3 lib/data_sync.py appsettings "${_siteRoot}" "${_id}" "${_file}"
+		_result=$(python3 lib/data_sync.py appsettings "${_siteRoot}" "${_id}" "${_file}") || exit 1
+		echo "${_result}"
+		[[ -n ${_force} || ${_result} == *Updated* ]] || { echo "Nothing changed, so the IIS app is not restarted."; return; }
 		bash windows_file.sh "${_site}" save appsettings.json < "${_file}"
 		# IIS restarts the app when web.config changes
 		source lib/windows_prod.sh
@@ -69,7 +74,9 @@ apply_settings() {
 	else
 		local _path=${_root}/appsettings.json _unit
 		prod_exec "cat $(printf %q "${_path}")" > "${_file}"
-		python3 lib/data_sync.py appsettings "${_siteRoot}" "${_id}" "${_file}"
+		_result=$(python3 lib/data_sync.py appsettings "${_siteRoot}" "${_id}" "${_file}") || exit 1
+		echo "${_result}"
+		[[ -n ${_force} || ${_result} == *Updated* ]] || { echo "Nothing changed, so the site is not restarted."; return; }
 		prod_exec "tee $(printf %q "${_path}") >/dev/null" < "${_file}"
 		prod_exec "chown www-data:www-data $(printf %q "${_path}")"
 		_unit=$(normalize_dns_name "${PROD_FOLDER}" unit)
@@ -82,7 +89,7 @@ case "${_action}" in
 	settings)
 		_id=${3:-}
 		valid_id "${_id}"
-		echo "== Data sync settings for ${_id} =="
+		echo "== Sync setup for ${_id} =="
 		apply_settings "${_id}"
 		echo "Done."
 		;;
@@ -109,10 +116,14 @@ case "${_action}" in
 			_kinds=$(python3 lib/data_sync.py kinds "${_siteRoot}" "${_from}" "${_id}") || exit 1
 			echo
 			echo "######## ${_id}: ${_kinds// / and } from ${_from}. Nothing is deleted on ${_id}."
-			if [[ ${_id} != main ]]; then
+			# Settings first, so the document types match, unless Sync setup says the destination does not take them
+			if [[ ${_id} != main ]] && _reason=$(python3 lib/data_sync.py settings "${_siteRoot}" main "${_id}" 2>&1); then
 				echo
 				echo "== Settings from the main site to ${_id} =="
 				bash sync_env.sh "${_site}" main "${_id}" ${_dryRun[@]+"${_dryRun[@]}"} || exit 1
+			elif [[ ${_id} != main ]]; then
+				echo
+				echo "Settings are not synced first: ${_reason}. Its document types must already match."
 			fi
 			echo
 			echo "== Data from ${_from} to ${_id} =="
@@ -125,7 +136,7 @@ case "${_action}" in
 			# so a destination edited by hand still imports.
 			echo
 			echo "== Import on ${_id} =="
-			apply_settings "${_id}" || exit 1
+			apply_settings "${_id}" force || exit 1
 			echo "uSync on ${_id} imports the data as it starts. Its log in the backoffice shows the result."
 		)
 		_failed=()

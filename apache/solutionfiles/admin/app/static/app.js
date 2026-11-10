@@ -458,7 +458,7 @@ const iconPaths = {
 // label (exact, or a prefix ending in "*") -> [icon, tone]
 const buttonStyles = {
 	"Shell": ["terminal", "blue"], "Server shell": ["terminal", "blue"], "New file": ["file", "blue"], "New folder": ["folder", "blue"], "Upload": ["upload", "blue"], "Browse /": ["folder", "blue"], "Files": ["folder", "blue"], "Manage": ["manage", "blue"],
-	"Publish": ["upload", "green"], "Publish all": ["upload", "green"], "Sync settings…": ["sync", "blue"], "Sync settings to all": ["sync", "blue"], "Start": ["play", "green"],
+	"Publish": ["upload", "green"], "Publish all": ["upload", "green"], "Sync settings…": ["sync", "blue"], "Start": ["play", "green"],
 	"Check for updates": ["download", "amber"],
 	"Add package": ["download", "green"], "Remove package": ["trash", "red"],
 	"Add": ["download", "green"], "Remove": ["trash", "red"], "Check": ["download", "amber"],
@@ -471,7 +471,7 @@ const buttonStyles = {
 	"SQL Server": ["server", "purple"], "Web server": ["globe", "blue"], "Start page…": ["sliders", "purple"], "Site keep-alive": ["activity", "green"],
 	"Admin app log": ["file", "gray"], "Apache error logs": ["file", "teal"],
 	"Copy site": ["file", "blue"],
-	"Issue certificate": ["shield", "teal"], "Change environment": ["sliders", "purple"], "Data sync setup…": ["sliders", "teal"], "Sync data…": ["sync", "green"], "Change bindings": ["globe", "blue"],
+	"Issue certificate": ["shield", "teal"], "Change environment": ["sliders", "purple"], "Sync setup…": ["sliders", "teal"], "Sync data…": ["sync", "green"], "Change bindings": ["globe", "blue"],
 	"Check service": ["activity", "teal"], "Test Apache config": ["activity", "teal"], "Admin site": ["manage", "gray"],
 	"Edit service": ["pencil", "amber"], "Edit config": ["pencil", "amber"], "Edit web.config": ["pencil", "amber"], "Edit appsettings.json": ["pencil", "amber"], "Delete*": ["trash", "red"],
 };
@@ -909,13 +909,6 @@ function renderSite(name) {
 			}
 		}
 	}
-	const syncTargets = site.environments.filter((env) => isTarget(env) && !isMissingEnv(env) && (env.scripts || []).includes("sync_prod.sh"));
-	if (syncTargets.length) {
-		targetsActions.append(el("button", { textContent: "Sync settings to all", title: "Sync settings from the main site to every environment", onclick: () => run(async () => {
-			const names = syncTargets.map((env) => `${env.environment || env.target}: ${bindingLabel(env) || env.host || ""}`).join("\n");
-			if (await ask({ title: "Sync settings to all?", message: `Sync settings from the main site to:\n${names}\n\nContent and media are not touched.`, input: false, ok: "Sync settings" })) await openTask({ kind: "sync_env", site: site.name, source: "main", destination: "all" });
-		}) }));
-	}
 	const danger = $("#site-danger");
 	danger.replaceChildren();
 	danger.hidden = site.admin || !hasProd(site);
@@ -1188,7 +1181,7 @@ function envPanel(site, env) {
 		if (dataSyncDestinations(site, env).length) {
 			sync.append(el("button", { textContent: "Sync data…", className: "small", title: "Merge content and media from this site into another", onclick: () => run(() => openSyncDialog(site, env, true)) }));
 		}
-		sync.append(el("button", { textContent: "Data sync setup…", className: "small desktop-only", title: dataSyncSummary(env), onclick: () => run(() => openDataSyncDialog(site, env)) }));
+		sync.append(el("button", { textContent: "Sync setup…", className: "small desktop-only", title: dataSyncSummary(env), onclick: () => run(() => openDataSyncDialog(site, env)) }));
 	}
 	if (!isTarget(env) && site.scripts.some((file) => !hasScriptButton(site, file))) quick.append(scriptSelect(site));
 	if (env.mode === "windows") {
@@ -1238,7 +1231,7 @@ function envPanel(site, env) {
 	// and logs, shell and files beside Stop and Restart. Only with something to their left, so a row of edit
 	// buttons alone (on Windows) stays at the left.
 	for (const row of [quick, sync, extraTools, actions]) {
-		const first = row && [...row.children].find((button) => /^(Clear logs|Data sync setup…|Edit .*|Logs|Shell|Files)$/.test(button.textContent));
+		const first = row && [...row.children].find((button) => /^(Clear logs|Sync setup…|Edit .*|Logs|Shell|Files)$/.test(button.textContent));
 		if (first && first !== row.firstElementChild) first.classList.add("push-right");
 	}
 	return panel;
@@ -1782,10 +1775,12 @@ function dataSyncDestinations(site, source) {
 }
 function dataSyncSummary(env) {
 	const settings = env.data_sync || {};
-	if (!settings.enabled) return "Data sync is off";
+	const settingsText = [settings.settings_send !== false && "sends", isTarget(env) && settings.settings_receive !== false && "receives"].filter(Boolean).join(" and ");
+	const prefix = `Settings: ${settingsText || "off"}. `;
+	if (!settings.enabled) return prefix + "Data sync is off";
 	const direction = [settings.send && "sends", settings.receive && "receives"].filter(Boolean).join(" and ") || "neither sends nor receives";
 	const kinds = ["content", "media"].filter((kind) => settings[kind]).join(" and ") || "nothing";
-	return `Data sync: ${direction} ${kinds}`;
+	return `${prefix}Data sync: ${direction} ${kinds}`;
 }
 
 const dataSyncDialog = $("#dlg-data-sync");
@@ -1801,6 +1796,9 @@ function openDataSyncDialog(site, env) {
 	dataSyncForm.dataset.id = isTarget(env) ? env.target : "main";
 	$("#data-sync-site").textContent = `${environmentLabel(site, env)}: ${bindingLabel(env) || siteLabel(site)}`;
 	for (const name of ["enabled", "send", "receive", "content", "media"]) dataSyncForm.elements[name].checked = !!settings[name];
+	// Settings sync is on unless it was turned off. The main site is where settings come from: it never receives them.
+	for (const name of ["settings_send", "settings_receive"]) dataSyncForm.elements[name].checked = settings[name] !== false;
+	$("#data-sync-settings-receive").hidden = !isTarget(env);
 	updateDataSyncForm();
 	dataSyncDialog.showModal();
 }
@@ -1815,7 +1813,7 @@ $("#data-sync-cancel").onclick = () => dataSyncDialog.close();
 dataSyncForm.onsubmit = (event) => {
 	event.preventDefault();
 	const elements = dataSyncForm.elements;
-	const settings = Object.fromEntries(["enabled", "send", "receive", "content", "media"].map((name) => [name, elements[name].checked]));
+	const settings = Object.fromEntries(["enabled", "send", "receive", "content", "media", "settings_send", "settings_receive"].map((name) => [name, elements[name].checked]));
 	if (settings.enabled && !settings.content && !settings.media) {
 		toast("Choose content, media or both.", "error");
 		return;
@@ -1828,8 +1826,11 @@ dataSyncForm.onsubmit = (event) => {
 	});
 };
 
+// Settings go from a site that may send them to environments that may receive them, as set in Sync setup
 function syncDestinations(site, source) {
-	return sortedEnvironments(site.environments).filter((env) => env !== source && isTarget(env) && !isMissingEnv(env) && (env.scripts || []).includes("sync_prod.sh"));
+	if (source.data_sync?.settings_send === false) return [];
+	return sortedEnvironments(site.environments).filter((env) => env !== source && isTarget(env) && !isMissingEnv(env)
+		&& (env.scripts || []).includes("sync_prod.sh") && env.data_sync?.settings_receive !== false);
 }
 const adoptDialog = $("#dlg-adopt");
 const adoptForm = $("#form-adopt");
@@ -1902,7 +1903,7 @@ function updateSyncSelection() {
 	const all = chosen === syncChoices().length;
 	$("#sync-select-all").textContent = all ? "Select none" : "Select all";
 	const verb = syncForm.dataset.data ? "Sync data" : "Sync";
-	$("#sync-submit").textContent = chosen > 1 ? `${verb} to ${chosen}` : verb;
+	$("#sync-submit").textContent = chosen > 1 ? `${verb} to ${chosen} sites` : verb;
 	$("#sync-submit").disabled = chosen === 0;
 }
 $("#sync-select-all").onclick = () => {

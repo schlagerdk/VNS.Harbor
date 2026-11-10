@@ -813,7 +813,8 @@ def site_info(name, states):
         except ValueError as exc:
             app.logger.warning("Could not read data sync settings for %s: %s", name, exc)
     for environment in environments:
-        environment["data_sync"] = _data_sync_module.clean(data_sync.get(environment.get("target", "main")))
+        site_id = environment.get("target", "main")
+        environment["data_sync"] = _data_sync_module.clean(data_sync.get(site_id), site_id)
     for environment in environments:
         environment["display_binding"] = display_dns_name(environment.get("binding", ""))
         environment["display_aliases"] = [display_dns_name(alias) for alias in environment.get("aliases", [])]
@@ -1957,7 +1958,7 @@ def build_command(data):
     if kind == "data_sync_settings":
         site = site_arg(data)
         site_id = data_sync_id(site, data.get("id"))
-        return "Data sync settings: " + site, [bash, os.path.join(APACHE_DIR, "data_sync.sh"), site, "settings", site_id], APACHE_DIR
+        return "Sync setup: " + site, [bash, os.path.join(APACHE_DIR, "data_sync.sh"), site, "settings", site_id], APACHE_DIR
     if kind == "data_sync":
         site = site_arg(data)
         source = data_sync_id(site, data.get("source"))
@@ -1981,6 +1982,12 @@ def build_command(data):
             destinations = destination_list(destination)
             if any(item not in targets or item == source for item in destinations):
                 abort(400, "Unknown destination environment")
+            config = _data_sync_module.load(os.path.join(WEB_ROOT, site))
+            for item in destinations:
+                try:
+                    _data_sync_module.settings_allowed(config, source, item)
+                except ValueError as exc:
+                    abort(400, str(exc) + ". Change it in Sync setup.")
             destination = ",".join(destinations)
         return "Sync: " + site, [bash, os.path.join(APACHE_DIR, "sync_env.sh"), site, source, destination], APACHE_DIR
     if kind == "unit_tool":

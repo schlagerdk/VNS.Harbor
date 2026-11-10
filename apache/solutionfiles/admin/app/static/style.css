@@ -704,3 +704,9 @@ dialog.newsite .sync-select-all:hover { background: transparent; text-decoration
 .sync-choice:has(input:checked)::after { content: "\2713"; position: absolute; top: 10px; right: 12px; color: var(--env-tone); font-weight: 700; }
 #files.files-windows th:nth-child(4), #files.files-windows td:nth-child(4), #files.files-windows th:nth-child(5), #files.files-windows td:nth-child(5) { display: none; }
 .meta .badge.any-name { margin-left: 8px; background: rgba(63, 185, 80, .15); color: var(--green); vertical-align: middle; }
+.data-sync-settings { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+#dlg-data-sync .data-sync-settings .copy-connection-toggle { margin-top: 0; }
+#dlg-data-sync .data-sync-settings .copy-connection-toggle[hidden] { display: none; }
+#dlg-data-sync .ns-section + .data-sync-main { margin-top: 0; }
+#dlg-data-sync .data-sync-settings + .ns-section { margin-top: 22px; }
+@media (max-width: 560px) { .data-sync-settings { grid-template-columns: 1fr; } }

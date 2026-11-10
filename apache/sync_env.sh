@@ -64,6 +64,24 @@ else
 fi
 ((${#_destinations[@]})) || { echo "No environment to sync to." >&2; exit 1; }
 
+# Who may send and receive settings is set in Sync setup. With all, a site that may not is skipped. A site
+# named on its own that may not stops the sync before anything changes.
+if [[ -z ${_data} ]]; then
+	_allowed=()
+	for _id in "${_destinations[@]}"; do
+		if _reason=$(python3 lib/data_sync.py settings "${_siteRoot}" "${_from}" "${_id}" 2>&1); then
+			_allowed+=("${_id}")
+		elif [[ ${_to} == all ]]; then
+			echo "${_id}: skipped, ${_reason}"
+		else
+			echo "${_reason}. Change it in Sync setup." >&2
+			exit 1
+		fi
+	done
+	((${#_allowed[@]})) || { echo "No environment may receive settings from ${_from}. Change it in Sync setup." >&2; exit 1; }
+	_destinations=("${_allowed[@]}")
+fi
+
 _source=""
 _workDir=""
 trap '[[ -z ${_workDir} ]] || rm -rf "${_workDir}"' EXIT

@@ -75,7 +75,8 @@ console.log(JSON.stringify(sortedEnvironments(input).map((env) => env.binding)))
     def test_site_actions_are_beside_the_environments_and_delete_is_at_the_bottom(self):
         source = (APP / "static/app.js").read_text()
         self.assertIn('targetsActions.append(el("button", { textContent: "Publish all"', source)
-        self.assertIn('targetsActions.append(el("button", { textContent: "Sync settings to all"', source)
+        # Sync settings… on the main site has Select all, so there is no separate Sync settings to all
+        self.assertNotIn('"Sync settings to all"', source)
         self.assertIn('danger.append(el("button", { textContent: "Delete everything"', source)
         self.assertIn('addManage("Delete site", () => deleteSite(site, isTarget(env) ? "prod" : "test", env), "danger");', source)
         page = (APP / "templates/index.html").read_text()
