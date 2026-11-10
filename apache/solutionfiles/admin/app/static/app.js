@@ -1534,8 +1534,11 @@ function syncSiteForm() {
 siteForm.addEventListener("change", (event) => { if (event.target.name === "type") syncSiteForm(); });
 siteForm.elements.template.oninput = syncTemplateVersion;
 siteForm.site.oninput = () => { if (!siteForm.binding.dataset.edited) siteForm.binding.value = siteForm.site.value; };
-siteForm.binding.oninput = () => { siteForm.binding.dataset.edited = "1"; siteForm.binding.setCustomValidity(""); };
-$("#btn-new-site").onclick = () => { siteForm.reset(); siteForm.elements.template.setCustomValidity(""); delete siteForm.binding.dataset.edited; syncSiteForm(); dialog.showModal(); siteForm.site.focus(); };
+siteForm.binding.oninput = () => { siteForm.binding.dataset.edited = "1"; };
+// The binding's message is about the certificate choice as well: any change clears it, or the browser keeps
+// refusing the form before it is checked again
+for (const type of ["input", "change"]) siteForm.addEventListener(type, () => siteForm.binding.setCustomValidity(""));
+$("#btn-new-site").onclick = () => { siteForm.reset(); siteForm.elements.template.setCustomValidity(""); siteForm.binding.setCustomValidity(""); delete siteForm.binding.dataset.edited; syncSiteForm(); dialog.showModal(); siteForm.site.focus(); };
 $("#btn-empty-new-site").onclick = () => $("#btn-new-site").click();
 $("#site-cancel").onclick = (e) => { e.preventDefault(); dialog.close(); };
 siteForm.onsubmit = (event) => {
