@@ -989,7 +989,10 @@ function renderSite(name) {
 				el("span", { className: "package-version package-latest", textContent: update.latest }),
 				el("button", { className: "small primary", textContent: "Update", title: `Update ${item.name} to ${update.latest}`,
 					onclick: () => run(() => updatePackages(site, update)) }));
-			packageList.append(el("div", { className: "package-row" + (update ? " has-update" : "") }, nameButton, versions));
+			// The whole row copies the name, except its own buttons
+			packageList.append(el("div", { className: "package-row" + (update ? " has-update" : ""), title: `Copy ${item.name}`, onclick: (event) => {
+				if (!event.target.closest("button")) nameButton.click();
+			} }, nameButton, versions));
 		}
 		if (!packageList.children.length && !(site.package_errors || []).length) {
 			packageList.append(el("p", { className: "muted", textContent: "No packages to display." }));
@@ -1194,7 +1197,7 @@ function envPanel(site, env) {
 			sync.insertBefore(dataButton, [...sync.children].find((button) => button.textContent === "Sync settings…") || null);
 		}
 		// Setup first, at the left: the syncs it allows stand at the right
-		sync.prepend(el("button", { textContent: "Sync setup…", className: "small desktop-only", title: dataSyncSummary(env), onclick: () => run(() => openDataSyncDialog(site, env)) }));
+		sync.prepend(el("button", { textContent: "Sync setup…", className: "small", title: dataSyncSummary(env), onclick: () => run(() => openDataSyncDialog(site, env)) }));
 	}
 	if (!isTarget(env) && site.scripts.some((file) => !hasScriptButton(site, file))) quick.append(scriptSelect(site));
 	if (env.mode === "windows") {
@@ -1682,11 +1685,13 @@ function openCreateProdDialog(site, moveEnv, copying = false) {
 			? `Copy ${bindingLabel(moveEnv) || moveEnv.unit || moveEnv.folder} to a new folder or server. It stays as it is, and the copy becomes a new environment here.`
 			: `Migrate ${bindingLabel(moveEnv) || moveEnv.unit || moveEnv.folder} to another folder or server. Everything goes with it.`
 		: "Configure where this site is published to, then publish and sync content automatically when available.";
-	prodForm.elements.target.querySelector("option[value=release]")?.remove();
-	prodForm.elements.target.querySelector("option[value=same]")?.remove();
-
-	if (moveEnv?.mode === "remote") prodForm.elements.target.prepend(el("option", { value: "same", textContent: `Same server (${moveEnv.host})` }));
-	if (moveEnv?.separate && !copying) prodForm.elements.target.append(el("option", { value: "release", textContent: "Separate site (move out)" }));
+	// Migrating adds the choices of staying on the same server or becoming a separate site again
+	const targets = $("#prod-target-row");
+	for (const value of ["release", "same"]) targets.querySelector(`input[value=${value}]`)?.closest("label").remove();
+	const targetCard = (value, title, sub) => el("label", { className: "type-card" },
+		el("input", { type: "radio", name: "target", value }), el("span", { className: "tc-title", textContent: title }), el("span", { className: "tc-sub", textContent: sub }));
+	if (moveEnv?.mode === "remote") targets.prepend(targetCard("same", "Same server", moveEnv.host || "Another folder there"));
+	if (moveEnv?.separate && !copying) targets.append(targetCard("release", "Separate site", "Move it out again"));
 	const main = site.environments.find((env) => !isTarget(env));
 	const binding = (main && bindingLabel(main)) || siteLabel(site);
 	prodForm.folder.value = siteLabel(site);
@@ -1720,9 +1725,10 @@ function openCreateProdDialog(site, moveEnv, copying = false) {
 	syncProdForm();
 	prodForm.dataset.site = site.name;
 	prodDialog.showModal();
-	prodForm.elements.target.focus();
+	// The dialog opens without a card in focus, so only the chosen one is marked
+	document.activeElement?.blur();
 }
-prodForm.elements.target.onchange = syncProdForm;
+$("#prod-target-row").addEventListener("change", syncProdForm);
 // A local environment gets its own folder and site name, so the defaults follow the environment
 prodForm.elements.environment.onchange = () => {
 	const name = prodForm.elements.environment.value.toLowerCase();

@@ -220,7 +220,8 @@ a.link:hover { text-decoration: underline; }
 .package-row { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px 20px; width: 100%; min-width: 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: transparent; text-align: left; white-space: normal; }
 .package-row:hover { background: var(--hover); }
 .package-copy { min-width: 0; padding: 0; border: 0; background: transparent; text-align: left; white-space: normal; }
-.package-copy:hover { background: transparent; color: var(--blue); }
+.package-row { cursor: pointer; }
+.package-copy:hover, .package-row:hover .package-copy { background: transparent; color: var(--blue); }
 .package-versions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .package-version.package-latest { color: var(--green); border-color: rgba(63, 185, 80, .4); background: rgba(63, 185, 80, .1); }
 .package-row.has-update { background: rgba(63, 185, 80, .04); }
@@ -380,7 +381,8 @@ body.login { display: grid; place-items: center; min-height: 100vh; min-height: 
 /* Same header as the NuGet panel beside it */
 .env-head { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 0 -20px 14px; padding: 16px 20px; border-bottom: 1px solid var(--line); border-radius: 9px 9px 0 0; background: linear-gradient(110deg, rgba(163, 113, 247, .08), transparent); }
 .env > .actions:last-child:not(.quick) { margin-top: auto; padding-top: 12px; }
-.env > .actions.quick:nth-last-child(2) { margin-bottom: 14px; }
+/* The last row of quick buttons keeps a gap above the Site row's line, also when the card is not taller than its content */
+.env > .actions.quick:has(+ .actions:not(.quick)) { margin-bottom: 14px; }
 .env-head, .package-head { min-height: 62px; }
 .env-head .publish-status { flex-basis: auto; }
 .env-head h3 { margin: 0 auto 0 0; min-width: 0; font-size: 18px; overflow-wrap: anywhere; }
@@ -750,3 +752,8 @@ button[data-tone="pink"] { --tone: #db61a2; }
 /* The environment's colour marks the card and its name; what is synced is shown in neutral chips */
 .sync-chip { background: rgba(255, 255, 255, .07); color: var(--muted); }
 .sync-choice:has(input:checked) { background: color-mix(in srgb, var(--env-tone) 6%, transparent); }
+
+/* Phones zoom in on a field with text below 16px when it gets the focus: fields are 16px there */
+@media (max-width: 700px) {
+	input, select, textarea { font-size: 16px !important; }
+}

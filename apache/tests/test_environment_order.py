@@ -61,7 +61,7 @@ console.log(JSON.stringify(sortedEnvironments(input).map((env) => env.binding)))
     def test_move_out_is_a_choice_in_the_move_dialog(self):
         source = (APP / "static/app.js").read_text()
         self.assertNotIn('add("Move out"', source)
-        self.assertIn('value: "release", textContent: "Separate site (move out)"', source)
+        self.assertIn('targetCard("release", "Separate site", "Move it out again")', source)
         self.assertIn('kind: "release_site"', source)
 
     def test_package_list_keeps_the_scroll_to_itself(self):
@@ -153,7 +153,7 @@ console.log(JSON.stringify([
         source = (APP / "static/app.js").read_text()
         self.assertIn('addManage("Copy site", () => openCreateProdDialog(site, env, true))', source)
         self.assertIn('addManage("Migrate…", () => openCreateProdDialog(site, env));', source)
-        self.assertIn('value: "same", textContent: `Same server (${moveEnv.host})`', source)
+        self.assertIn('targetCard("same", "Same server", moveEnv.host || "Another folder there")', source)
         self.assertIn("data.copy = true;", source)
         self.assertNotIn("copy_env", source)
         app = (APP / "app.py").read_text()
