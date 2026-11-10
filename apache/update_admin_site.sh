@@ -153,6 +153,11 @@ for site in sorted(root.iterdir()):
         path = scripts / name
         if path.is_file():
             update_publish_script(path, False)
+    # Older sync scripts mirror the whole uSync folder and can delete content: they are replaced by the safe one
+    for path in [scripts / "sync_prod.sh", *sorted(scripts.glob("targets/*/sync_prod.sh"))]:
+        if path.is_file() and not path.is_symlink():
+            sync_script = (apache / "solutionfiles/csharp/umbraco/prod-scripts/sync_prod.sh").read_text().replace("@APACHE_DIR@", str(apache))
+            (unchanged if path.read_text() == sync_script else planned).append((path, sync_script))
     # A Windows target publishes for win-x64 and has no SSH commands to patch
     for path in [scripts / "publish_prod.sh", *sorted(scripts.glob("targets/*/publish_prod.sh"))]:
         if path.is_file() and not re.search(r"(?m)^PROD_TARGET=windows\b", path.read_text()):

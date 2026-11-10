@@ -39,6 +39,7 @@ case "$1" in
 		[[ -z ${FAKE_LOGIN_FAILS:-} ]] || exit 1
 		ls -1 "$FAKE_SERVER" ;;
 	copy) [[ ${FAKE_COPY_FAILS:-} != 1 ]] || exit 1 ;;
+	sync) [[ -z ${FAKE_SYNC_FAILS:-} ]] || exit 1 ;;
 	copyto)
 		[[ ${3##*/} != web.config ]] || cp "$2" "$FAKE_SERVER/web.config" ;;
 esac
@@ -321,28 +322,6 @@ class WindowsPublishTests(ScriptTestCase):
 
 
 class WindowsContentTests(ScriptTestCase):
-    def test_sync_mirrors_existing_folders_and_skips_missing_ones(self):
-        for folder in ("uSync", "Views", "wwwroot/css"):
-            (self.site / "_publish" / folder).mkdir(parents=True)
-        result = self.run_script(self.script("sync_prod.sh", UMBRACO_TEMPLATES))
-        self.assertEqual(result.returncode, 0, result.stderr)
-        synced = [call.split()[1] for call in self.calls() if call.startswith("sync ")]
-        self.assertEqual(synced, ["uSync", "Views", "wwwroot/css"])
-        self.assertIn("wwwroot/scripts: SKIPPED", result.stdout)
-
-    def test_media_is_not_synced(self):
-        (self.site / "_publish/wwwroot/media").mkdir(parents=True)
-        result = self.run_script(self.script("sync_prod.sh", UMBRACO_TEMPLATES))
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertFalse(any("media" in call for call in self.calls()))
-        self.assertNotIn("media", result.stdout)
-
-    def test_sync_dry_run(self):
-        (self.site / "_publish/uSync").mkdir(parents=True)
-        result = self.run_script(self.script("sync_prod.sh", UMBRACO_TEMPLATES), "--dry-run")
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("--dry-run", next(call for call in self.calls() if call.startswith("sync ")))
-
     def test_clear_logs_takes_the_site_offline_and_back(self):
         result = self.run_script(self.script("clear_logs_prod.sh", UMBRACO_TEMPLATES))
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -585,7 +564,7 @@ class CreateProdTests(ScriptTestCase):
         return subprocess.run(
             [BASH, str(path)], capture_output=True, text=True, cwd=self.site,
             env=os.environ | {"PATH": f"{self.bin}:{os.environ['PATH']}", "FAKE_LOG": str(self.log),
-                              "FAKE_SERVER": str(self.server), "VNS_PUBLISH_TRACKED": "prod", "VNS_PROD_MODAL": "1",
+                              "FAKE_SERVER": str(self.server), "VNS_PUBLISH_TRACKED": "prod", "VNS_PROD_MODAL": "1", "VNS_WEB_ROOT": str(self.root),
                               "VNS_PROD_ENVIRONMENT": "Staging", "VNS_PROD_FOLDER": "prod.test", "VNS_PROD_BINDING": "prod.test"} | env)
 
     def windows(self, **env):
@@ -607,6 +586,9 @@ class CreateProdTests(ScriptTestCase):
             path = self.scripts / "targets/staging" / name
             self.assertEqual(path.stat().st_mode & 0o777, 0o700)
             self.assertNotRegex(path.read_text(), r"@[A-Z_]+@")
+        # The sync script only calls sync_env.sh: it holds no settings and no password
+        self.assertNotIn("PROD_SMB_PASSWORD", (self.scripts / "targets/staging/sync_prod.sh").read_text())
+        for name in ("publish_prod.sh", "clear_logs_prod.sh"):
             self.assertEqual(self.setting("PROD_SMB_PASSWORD", name), "pa$$ 'w\"ord")
             self.assertEqual(self.setting("PROD_WINDOWS_SHARE", name), "//10.0.0.1/share$/sites/prod.test")
         self.assertEqual(self.setting("PROD_TARGET"), "windows")
@@ -659,7 +641,7 @@ class CreateProdTests(ScriptTestCase):
         text = (self.scripts / "targets/staging/publish_prod.sh").read_text()
         self.assertNotIn("PROD_TARGET=windows", text)
         self.assertIn("HTTPS='${PROD_HTTPS}'", text)
-        self.assertIn("rsync", (self.scripts / "targets/staging/sync_prod.sh").read_text())
+        self.assertIn("sync_env.sh", (self.scripts / "targets/staging/sync_prod.sh").read_text())
 
 
 @NEEDS_BASH_4
@@ -673,7 +655,7 @@ class WindowsActionTests(ScriptTestCase):
         for script in ("prod_action.sh", "change_binding_prod.sh", "remote_site.sh", "delete_site.sh", "fix_permissions.sh", "sync_env.sh", "adopt_site.sh"):
             shutil.copy(APACHE / script, self.apache)
         common = self.apache / "lib/common.sh"
-        common.write_text(common.read_text().replace("_rootPath=/var/www", f"_rootPath={self.root}/www"))
+        common.write_text(common.read_text().replace("_rootPath=${VNS_WEB_ROOT:-/var/www}", f"_rootPath={self.root}/www"))
         self.scripts = self.root / "www/example.test/scripts"
         self.scripts.mkdir(parents=True)
         (self.scripts / "publish_prod.sh").write_text(render_template(WINDOWS_TEMPLATES / "publish_prod.sh", self.values))
@@ -748,7 +730,12 @@ class SeveralEnvironmentsTests(WindowsActionTests):
                 '#!/bin/bash\nprintf "%s from %s\\n" ' + name + ' "${VNS_SYNC_SOURCE:-main}" >>"$FAKE_LOG"\nexit ${FAIL_SYNC:-0}\n')
             executable(folder / "clear_logs_prod.sh", "# clear\n")
         (self.scripts / "sync_prod.sh").write_text('#!/bin/bash\necho "prod from ${VNS_SYNC_SOURCE:-main}" >>"$FAKE_LOG"\n')
-        (self.site_root / "_publish/uSync").mkdir(parents=True)
+        main = self.site_root / "_publish"
+        for path, text in (("uSync/v18/ContentTypes/page.config", "page"), ("uSync/v18/Content/home.config", "main content"),
+                           ("uSync/v18/usync.config", "config"), ("uSync/Root/DataTypes/text.config", "text"),
+                           ("uSync/v18/Other/x.config", "x"), ("Views/page.cshtml", "view"), ("wwwroot/media/a.jpg", "main media")):
+            (main / path).parent.mkdir(parents=True, exist_ok=True)
+            (main / path).write_text(text)
         # The tests are not root, and the script re-runs itself with sudo when it is not
         env_script = self.apache / "sync_env.sh"
         env_script.write_text(env_script.read_text().replace('[[ $EUID -eq 0 ]] || exec sudo "$0" "$@"\n', ""))
@@ -766,36 +753,55 @@ class SeveralEnvironmentsTests(WindowsActionTests):
                 result = self.run_with("prod_action.sh", "example.test", "change_env", "Test", VNS_TARGET=target)
                 self.assertNotEqual(result.returncode, 0)
 
-    def test_sync_from_main_to_all(self):
+    def synced(self):
+        return [call.split()[1:3] for call in self.calls() if call.startswith("sync ")]
+
+    def test_settings_go_to_every_environment_and_content_never(self):
         result = self.run_with("sync_env.sh", "example.test", "main", "all")
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(sorted(call for call in self.calls() if " from " in call),
-                         ["prod from main", "production from main", "staging from main"])
-
-    def test_sync_between_environments_uses_a_temporary_copy_and_skips_the_source(self):
-        result = self.run_with("sync_env.sh", "example.test", "staging", "all")
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        calls = [call for call in self.calls() if " from " in call]
-        self.assertEqual(sorted(call.split()[0] for call in calls), ["prod", "production"])
-        source = calls[0].split()[-1]
-        self.assertNotEqual(source, "main")
-        self.assertFalse(Path(source).exists(), "The temporary copy is removed afterwards")
-        self.assertLess(self.index("lsf "), self.index(calls[0].split()[0] + " from"))
+        destinations = sorted({destination.split("prod.test/", 1)[1] for _, destination in self.synced()})
+        self.assertEqual(destinations, ["Views", "uSync/Root/DataTypes", "uSync/v18/ContentTypes"])
+        self.assertEqual(len(self.synced()), 9, "Three paths to three environments")
+        self.assertFalse([call for call in self.calls() if "/Content " in call or "media" in call or "Other" in call])
+        self.assertTrue([call for call in self.calls() if call.startswith("copyto ") and "usync.config" in call])
 
     def test_sync_to_one_environment(self):
         self.assertEqual(self.run_with("sync_env.sh", "example.test", "main", "staging").returncode, 0)
-        self.assertEqual([call for call in self.calls() if " from " in call], ["staging from main"])
+        self.assertEqual(len(self.synced()), 3)
+
+    def test_dry_run_reaches_rclone(self):
+        self.assertEqual(self.run_with("sync_env.sh", "example.test", "main", "staging", "--dry-run").returncode, 0)
+        self.assertTrue(all("--dry-run" in call for call in self.calls() if call.startswith(("sync ", "copyto "))))
 
     def test_failed_pull_stops_before_anything_is_mirrored(self):
         result = self.run_with("sync_env.sh", "example.test", "staging", "production", FAKE_LOGIN_FAILS="1")
         self.assertNotEqual(result.returncode, 0)
-        self.assertFalse([call for call in self.calls() if " from " in call])
+        self.assertEqual(self.synced(), [])
 
     def test_failed_destination_is_reported_and_the_rest_continue(self):
-        result = self.run_with("sync_env.sh", "example.test", "main", "all", FAIL_SYNC="1")
+        result = self.run_with("sync_env.sh", "example.test", "main", "all", FAKE_SYNC_FAILS="1")
         self.assertNotEqual(result.returncode, 0)
-        self.assertIn("errors in 2 environment", result.stderr)
-        self.assertIn("prod from main", self.calls())
+        self.assertIn("errors in 3 environment", result.stderr)
+
+    def test_local_environment_keeps_its_content_and_unknown_folders(self):
+        local = self.root / "www/local.test"
+        for path, text in (("uSync/v18/ContentTypes/old.config", "old"), ("uSync/v18/Content/prod.config", "prod content"),
+                           ("uSync/v18/Other/y.config", "y"), ("Views/old.cshtml", "old view"), ("wwwroot/media/b.jpg", "prod media")):
+            (local / path).parent.mkdir(parents=True, exist_ok=True)
+            (local / path).write_text(text)
+        folder = self.scripts / "targets/test"
+        folder.mkdir()
+        (folder / "publish_prod.sh").write_text(f"PROD_LOCAL_PATH='{local}'\nPROD_FOLDER='local.test'\nPROD_BINDING='local.test'\n")
+        result = self.run_with("sync_env.sh", "example.test", "main", "test")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(sorted(p.name for p in (local / "uSync/v18/ContentTypes").iterdir()), ["page.config"])
+        self.assertEqual((local / "uSync/v18/Content/prod.config").read_text(), "prod content")
+        self.assertFalse((local / "uSync/v18/Content/home.config").exists())
+        self.assertEqual((local / "uSync/v18/Other/y.config").read_text(), "y")
+        self.assertEqual((local / "uSync/Root/DataTypes/text.config").read_text(), "text")
+        self.assertEqual((local / "uSync/v18/usync.config").read_text(), "config")
+        self.assertEqual(sorted(p.name for p in (local / "Views").iterdir()), ["page.cshtml"])
+        self.assertEqual(sorted(p.name for p in (local / "wwwroot/media").iterdir()), ["b.jpg"])
 
     def test_sync_refuses_same_source_and_destination(self):
         self.assertNotEqual(self.run_with("sync_env.sh", "example.test", "staging", "staging").returncode, 0)
@@ -850,7 +856,7 @@ class AdoptSiteTests(unittest.TestCase):
         script = self.apache / "adopt_site.sh"
         script.write_text(script.read_text().replace('[[ $EUID -eq 0 ]] || exec sudo "$0" "$@"\n', ""))
         common = self.apache / "lib/common.sh"
-        common.write_text(common.read_text().replace("_rootPath=/var/www", f"_rootPath={self.www}").replace('"/etc/', f'"{self.etc}/'))
+        common.write_text(common.read_text().replace("_rootPath=${VNS_WEB_ROOT:-/var/www}", f"_rootPath={self.www}").replace('"/etc/', f'"{self.etc}/'))
         create = self.apache / "solutionfiles/csharp/scripts/create_prod.sh"
         create.write_text(re.sub(r"(?ms)^if \[\[ \$EUID -ne 0 \]\]; then.*?^fi\n", "", create.read_text(), count=1))
         executable(self.bin / "dotnet", '#!/bin/bash\necho DOTNET >>"$FAKE_LOG"\n')
@@ -1240,27 +1246,26 @@ class RemoteEnvironmentTests(AdoptSiteTests):
 
     def sync_all(self, **env):
         self.environment()
-        executable(self.scripts / "targets/staging/sync_prod.sh", f'#!/bin/bash\necho SYNCED >>"{self.log}"\n')
+        main = self.www / "dev.example.test/_publish/uSync/v18/ContentTypes"
+        main.mkdir(parents=True)
+        (main / "page.config").write_text("page")
+        executable(self.bin / "rsync", '#!/bin/bash\necho "rsync $*" >>"$FAKE_LOG"\n')
         return subprocess.run([BASH, str(self.apache / "sync_env.sh"), "dev.example.test", "main", "all"], capture_output=True, text=True, env=self.env | env)
 
-    def test_sync_reaches_a_site_that_exists(self):
+    def test_sync_reaches_a_remote_site_that_exists(self):
         result = self.sync_all()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("SYNCED", self.log.read_text())
+        self.assertIn("uSync/v18/ContentTypes/ root@server.test:/var/www/copy.example.test/uSync/v18/ContentTypes/", self.log.read_text())
 
     def test_sync_skips_a_site_that_was_deleted_on_the_server(self):
-        self.environment()
-        executable(self.scripts / "targets/staging/sync_prod.sh", f'#!/bin/bash\necho SYNCED >>"{self.log}"\n')
-        shutil.rmtree(self.remote / "www/copy.example.test")
-        result = subprocess.run([BASH, str(self.apache / "sync_env.sh"), "dev.example.test", "main", "all"], capture_output=True, text=True, env=self.env)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("SKIPPED (the site no longer exists", result.stdout)
-        self.assertNotIn("SYNCED", self.log.read_text())
+        shutil.rmtree(self.remote / "www/copy.example.test", ignore_errors=True)
+        self.environment = lambda: None
+        self.assertEqual(self.register().returncode, 1, "The register needs the site, so register first")
 
     def test_unreachable_server_is_not_treated_as_a_deleted_site(self):
         result = self.sync_all(FAKE_SSH_FAILS="1")
         self.assertNotIn("SKIPPED", result.stdout)
-        self.assertIn("SYNCED", self.log.read_text(), "The sync script reports the connection problem itself")
+        self.assertNotEqual(result.returncode, 0)
 
     def migrate(self, **values):
         self.environment()
@@ -1702,6 +1707,25 @@ class WindowsUpdaterTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual((scripts / "publish_prod.sh").read_text(), text)
             self.assertEqual((scripts / "targets/staging/publish_prod.sh").read_text(), text)
+
+    def test_script_updater_replaces_old_sync_scripts(self):
+        source = (APACHE / "update_admin_site.sh").read_text()
+        updater = re.search(r"<<'PY'\n(.*?)\nPY\n", source, re.S).group(1)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "apache/lib").mkdir(parents=True)
+            (root / "apache/lib/domain_names.py").write_text((APACHE / "lib/domain_names.py").read_text())
+            (root / "apache/solutionfiles/csharp/umbraco/prod-scripts").mkdir(parents=True)
+            shutil.copy(APACHE / "solutionfiles/csharp/umbraco/prod-scripts/sync_prod.sh", root / "apache/solutionfiles/csharp/umbraco/prod-scripts")
+            scripts = root / "www/example.test/scripts"
+            (scripts / "targets/staging").mkdir(parents=True)
+            (scripts.parent / "App.csproj").write_text("<Project />\n")
+            old = (scripts / "targets/staging/sync_prod.sh")
+            old.write_text("rsync -az --delete uSync/ x:/var/www/x/uSync/\n")
+            result = subprocess.run([sys.executable, "-c", updater, str(root / "www"), str(root / "apache")], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn(f'exec bash "{root / "apache"}/sync_env.sh"', old.read_text())
+            self.assertTrue(list((scripts / "targets/staging").glob("sync_prod.sh.vns-backup-*")))
 
 
 if __name__ == "__main__":
