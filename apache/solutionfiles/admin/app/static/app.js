@@ -1703,7 +1703,7 @@ function openCreateProdDialog(site, moveEnv, copying = false) {
 	prodForm.dataset.remoteBinding = binding;
 	prodForm.dataset.localFolder = `production-${siteLabel(site)}`;
 	prodForm.dataset.localBinding = `production-${siteLabel(site)}`;
-	prodForm.elements.target.value = moveEnv?.separate && !copying ? "release" : moveEnv?.mode === "remote" ? "same" : copying ? "local" : "remote";
+	prodForm.elements.target.value = moveEnv?.separate && !copying ? "release" : moveEnv?.mode === "remote" ? "same" : "local";
 	prodForm.elements.https.value = main && main.scheme === "http" ? "n" : "y";
 	if (moveEnv) {
 		// A copy needs its own name and binding, a migration keeps them unless they are changed
@@ -1721,7 +1721,8 @@ function openCreateProdDialog(site, moveEnv, copying = false) {
 		const current = [...prodForm.elements.environment.options].find((option) => option.value === moveEnv.environment);
 		if (current) prodForm.elements.environment.value = current.value;
 	}
-	delete prodForm.dataset.target;
+	// The fields start with the remote defaults: a new environment on this server gets its own folder and binding
+	prodForm.dataset.target = moveEnv ? prodForm.elements.target.value : "remote";
 	syncProdForm();
 	prodForm.dataset.site = site.name;
 	prodDialog.showModal();
