@@ -909,6 +909,16 @@ function renderSite(name) {
 			}
 		}
 	}
+	// The main site's Sync settings… and Sync data…, beside Publish all: they open the same dialog
+	const mainEnv = site.environments.find((env) => !isTarget(env));
+	if (mainEnv && site.kind === "umbraco" && !site.admin) {
+		if (syncDestinations(site, mainEnv).length) {
+			targetsActions.append(el("button", { textContent: "Sync settings…", title: "Sync settings from the main site", onclick: () => run(() => openSyncDialog(site, mainEnv)) }));
+		}
+		if (dataSyncDestinations(site, mainEnv).length) {
+			targetsActions.append(el("button", { textContent: "Sync data…", title: "Merge content and media from the main site into others", onclick: () => run(() => openSyncDialog(site, mainEnv, true)) }));
+		}
+	}
 	const danger = $("#site-danger");
 	danger.replaceChildren();
 	danger.hidden = site.admin || !hasProd(site);
