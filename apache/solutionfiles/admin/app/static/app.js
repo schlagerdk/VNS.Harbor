@@ -1290,13 +1290,15 @@ async function changeBinding(site, scope, env) {
 	const label = scope === "prod" ? "production site" : "test site";
 	const bindings = await ask({
 		title: `Change ${label} bindings`,
+		placeholder: scope === "prod" ? "" : "Empty: answers any name",
 		message: `Set the primary domain and aliases for the ${label} of ${siteLabel(site)}. Aliases must resolve to the same server. HTTP-only sites remain HTTP-only; certificates are updated only for HTTPS sites. Only an HTTP-only site can use a name without a dot, such as the server's own name on the local network.`,
 		value: current,
 		extra: { label: "Aliases (one per line)", value: aliasLabels(env).join("\n"), placeholder: "www.example.com\napi.example.com" },
 		ok: "Change",
 	});
 	if (!bindings) return;
-	const binding = bindings.value.trim();
+	// An empty binding makes the site answer any name, with the server's own name as its binding
+	const binding = bindings.value.trim() || (scope === "prod" ? "" : "*");
 	const aliases = bindings.extra.trim();
 	const currentAliases = aliasLabels(env).join(" ").toLowerCase();
 	if (binding !== current || aliases.replace(/,/g, " ").trim().replace(/\s+/g, " ").toLowerCase() !== currentAliases) {

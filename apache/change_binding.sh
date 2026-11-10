@@ -1,5 +1,7 @@
 #!/bin/bash
-# Usage: change_binding.sh [folder] [new-domain]
+# Usage: change_binding.sh [folder] [new-domain] [aliases] [--yes]
+# The new domain * makes the site answer any name no other site has, with this server's own name as its binding.
+# A site without a ServerName gets one.
 set -euo pipefail
 cd "$(dirname "$0")"
 source lib/common.sh
@@ -20,18 +22,32 @@ if [[ ! -e /etc/apache2/sites-enabled/${_site}.conf ]]; then
 fi
 
 _oldBinding=$(awk '$1 == "ServerName" { print $2; exit }' "${_configPath}")
-if [[ -z ${_oldBinding} ]]; then
-	echo "Could not determine the current ServerName in ${_configPath}" >&2
-	exit 1
-fi
 _oldBinding=${_oldBinding,,}
+[[ -n ${_oldBinding} ]] || echo "The site has no binding yet (no ServerName in ${_configPath})."
 
 # A site without a certificate may use names without a dot
 _httpOnly=1
 if grep -Eq '^[[:space:]]*SSLEngine[[:space:]]+On([[:space:]]|$)' "${_configPath}"; then
 	_httpOnly=0
 fi
-ask _newBinding "Enter new site URL binding" "${_oldBinding}"
+ask _newBinding "Enter new site URL binding (* = answer any name)" "${_oldBinding}"
+# * answers any name no other site has. Its binding is this server's own name.
+_wasDefault=n
+[[ $(default_site) != "${_site}" ]] || _wasDefault=y
+_makeDefault=n
+if [[ ${_newBinding} == "*" ]]; then
+	_current=$(default_site)
+	if [[ -n ${_current} && ${_current} != "${_site}" ]]; then
+		echo "${_current} already answers any name. Only one site can: delete it or give it a binding first." >&2
+		exit 1
+	fi
+	_makeDefault=y
+	_newBinding=$(server_own_name)
+	if [[ ${_httpOnly} == 0 && ${_newBinding} != *.* ]]; then
+		echo "This server's name, ${_newBinding}, has no dot, so it cannot be in the site's certificate. Set a full name with hostnamectl." >&2
+		exit 1
+	fi
+fi
 _newBinding=$(normalize_site_binding "${_newBinding}")
 _binding=${_newBinding}
 
@@ -52,7 +68,7 @@ normalize_server_aliases "${_newBinding}" "${_aliasInput}"
 _newAliases=${_normalizedAliases}
 normalize_server_aliases "${_oldBinding}" "${_oldAliases}"
 _oldAliasesForCompare=${_normalizedAliases}
-if [[ ${_newBinding} == "${_oldBinding}" && ${_newAliases} == "${_oldAliasesForCompare}" ]]; then
+if [[ ${_newBinding} == "${_oldBinding}" && ${_newAliases} == "${_oldAliasesForCompare}" && ${_makeDefault} == "${_wasDefault}" ]]; then
 	echo "The binding and aliases are unchanged."
 	exit 0
 fi
@@ -122,7 +138,13 @@ _rollback() {
 	fi
 }
 
-if ! sudo env OLD_BINDING="${_oldBinding}" NEW_BINDING="${_newBinding}" perl -pi -e 'if (/^\s*(?:ServerName|Redirect)\b/) { $count += s/\Q$ENV{OLD_BINDING}\E/$ENV{NEW_BINDING}/gi } END { die "No binding directive updated\n" unless $count }' "${_configPath}"; then
+if [[ -z ${_oldBinding} ]]; then
+	# No ServerName yet: each virtual host gets one
+	if ! sudo env NEW_BINDING="${_newBinding}" perl -pi -e 'if (/^\s*<VirtualHost\b/) { $_ .= "  ServerName $ENV{NEW_BINDING}\n"; $count++ } END { die "No virtual host found\n" unless $count }' "${_configPath}"; then
+		_rollback
+		exit 1
+	fi
+elif [[ ${_newBinding} != "${_oldBinding}" ]] && ! sudo env OLD_BINDING="${_oldBinding}" NEW_BINDING="${_newBinding}" perl -pi -e 'if (/^\s*(?:ServerName|Redirect)\b/) { $count += s/\Q$ENV{OLD_BINDING}\E/$ENV{NEW_BINDING}/gi } END { die "No binding directive updated\n" unless $count }' "${_configPath}"; then
 	_rollback
 	exit 1
 fi
@@ -200,7 +222,17 @@ if [[ -f ${_backupDir}/appsettings.json ]] &&
 	fi
 fi
 
-if [[ ${_newBinding} != "${_oldBinding}" && ${_scheme} == https ]]; then
+# The site that answers any name has a second link to its config
+if [[ ${_makeDefault} == y && ${_wasDefault} == n ]]; then
+	make_default_site
+elif [[ ${_makeDefault} == n && ${_wasDefault} == y ]]; then
+	echo "${_site} no longer answers any name"
+	sudo rm -f "${_defaultSiteLink}"
+	sudo apache2ctl configtest
+	sudo systemctl reload apache2
+fi
+
+if [[ -n ${_oldBinding} && ${_newBinding} != "${_oldBinding}" && ${_scheme} == https ]]; then
 	_oldBindingInUse=0
 	for _domain in ${_newAliases}; do [[ ${_domain} == "${_oldBinding}" ]] && _oldBindingInUse=1; done
 	for _enabledConfig in /etc/apache2/sites-enabled/*.conf; do
@@ -223,3 +255,4 @@ if [[ ${_newBinding} != "${_oldBinding}" && ${_scheme} == https ]]; then
 fi
 
 echo "Bindings updated: ${_scheme}://${_newBinding}/ (aliases: ${_newAliases:-none}, folder: ${_site})"
+[[ ${_makeDefault} != y ]] || echo "It also answers any name that no other site has."

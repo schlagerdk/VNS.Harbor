@@ -2138,8 +2138,17 @@ def build_command(data):
         return "Fix permissions: " + site, argv, APACHE_DIR
     if kind == "change_binding":
         site = site_arg(data)
-        # A name without a dot is allowed here: the script refuses it for a site with a certificate
-        binding = dns_name(data.get("binding", ""), "binding", short=True)
+        # A name without a dot is allowed here: the script refuses it for a site with a certificate.
+        # An empty binding or * makes the site answer any name, which only a site on this server can.
+        binding = data.get("binding", "")
+        if not isinstance(binding, str):
+            abort(400, "Invalid binding")
+        if binding in ("", "*"):
+            if data.get("scope") == "prod":
+                abort(400, "An environment needs a binding")
+            binding = "*"
+        else:
+            binding = dns_name(binding, "binding", short=True)
         argv = [bash, os.path.join(APACHE_DIR, "change_binding.sh"), site, binding]
         if "aliases" in data:
             aliases = data["aliases"]

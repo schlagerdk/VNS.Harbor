@@ -141,6 +141,11 @@ class SitePermissionsTests(unittest.TestCase):
         _, short_argv, _ = command({"kind": "change_binding", "site": "example.test", "binding": "example.test",
                                     "aliases": "SQL-01", "scope": "test"})
         self.assertEqual(short_argv[4:], ["sql-01", "--yes"])
+        # An empty binding makes the site answer any name; an environment needs one
+        _, any_argv, _ = command({"kind": "change_binding", "site": "example.test", "binding": "", "aliases": "", "scope": "test"})
+        self.assertEqual(any_argv[3], "*")
+        with self.assertRaisesRegex(BadRequest, "needs a binding"):
+            command({"kind": "change_binding", "site": "example.test", "binding": "", "scope": "prod"})
         for aliases in ("not_a_domain", "*.example.test", "https://example.test", "a" * 254 + ".test"):
             with self.subTest(aliases=aliases), self.assertRaises(BadRequest):
                 command({"kind": "change_binding", "site": "example.test",

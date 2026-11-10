@@ -84,7 +84,7 @@ sudo() { echo "CALL:$*"; }
             source = (APACHE / ("change_binding_prod.sh" if remote else "change_binding.sh")).read_text()
             marker = "if [[ -f ${backup}/appsettings.json ]]" if remote else "if [[ -f ${_backupDir}/appsettings.json ]]"
             start = source.rindex(marker)
-            end_marker = "\n# 4." if remote else '\nif [[ ${_newBinding} != "${_oldBinding}" && ${_scheme} == https ]]'
+            end_marker = "\n# 4." if remote else "\n# The site that answers any name has a second link to its config"
             block = source[start:source.index(end_marker, start)]
             for state in ("absent", "unchanged", "changed"):
                 with self.subTest(remote=remote, state=state), tempfile.TemporaryDirectory() as directory:

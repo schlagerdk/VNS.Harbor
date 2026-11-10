@@ -352,7 +352,7 @@ class CertificateAliasTests(unittest.TestCase):
             self.assertIn("normalize_server_aliases", change)
             self.assertIn("replace_server_aliases", change)
         self.assertIn('if [[ ${NEW} != "${OLD}" ]]', change_remote)
-        self.assertIn('if [[ ${_newBinding} != "${_oldBinding}" && ${_scheme} == https ]]', change_local)
+        self.assertIn('if [[ -n ${_oldBinding} && ${_newBinding} != "${_oldBinding}" && ${_scheme} == https ]]', change_local)
         self.assertIn('set_certificate_domains "${_configPath}" "${_binding}"', legacy)
         self.assertIn('"${_certificateDomainArgs[@]}"', legacy)
 
