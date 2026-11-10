@@ -618,11 +618,15 @@ class CreateProdTests(ScriptTestCase):
 
     def test_several_environments_get_their_own_folders(self):
         self.assertEqual(self.windows().returncode, 0)
-        self.assertEqual(self.windows().returncode, 0)
+        self.assertTrue((self.site / ".vns-publish/target-staging.json").exists())
+        # The share now holds the published site: the next environments are only set up, never published over it
+        second = self.windows()
+        self.assertEqual(second.returncode, 0)
+        self.assertIn("Nothing was published", second.stdout)
         self.assertEqual(self.windows(VNS_PROD_ENVIRONMENT="Production").returncode, 0)
         self.assertEqual(sorted(path.name for path in (self.scripts / "targets").iterdir()),
                          ["production", "staging", "staging-2"])
-        self.assertTrue((self.site / ".vns-publish/target-staging-2.json").exists())
+        self.assertFalse((self.site / ".vns-publish/target-staging-2.json").exists())
         self.assertEqual((self.scripts / "publish_local.sh").read_text(), "# local publish\n")
 
     def test_two_local_environments_cannot_share_a_folder(self):
@@ -633,6 +637,17 @@ class CreateProdTests(ScriptTestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("already uses that folder", result.stderr)
         self.assertFalse((self.scripts / "targets/production").exists())
+
+    def test_a_remote_folder_with_files_is_only_set_up(self):
+        # A failing build proves nothing is published: it would stop the script
+        executable(self.bin / "dotnet", "#!/bin/bash\nexit 1\n")
+        executable(self.bin / "ssh", '#!/bin/bash\n[[ "$*" == *find* ]] && echo /var/www/live.test/App.dll\nexit 0\n')
+        result = self.create(VNS_PROD_TARGET="remote", VNS_PROD_IP="server.test", VNS_PROD_USER="root", VNS_PROD_SSH_PORT="22",
+                             VNS_PROD_HTTPS="n")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("already holds files", result.stdout)
+        self.assertIn("Nothing was published", result.stdout)
+        self.assertTrue((self.scripts / "targets/staging/publish_prod.sh").is_file())
 
     def test_linux_targets_save_the_protocol_and_use_the_linux_templates(self):
         executable(self.bin / "dotnet", "#!/bin/bash\nexit 1\n")

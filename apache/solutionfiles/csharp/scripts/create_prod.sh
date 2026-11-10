@@ -4,6 +4,8 @@
 #   publish.sh -> publish_local.sh, clear_logs.sh -> clear_logs_local.sh (the first time)
 #   creates scripts/targets/<environment>/ with publish_prod.sh, clear_logs_prod.sh and sync_prod.sh (Umbraco)
 # Publishes production, then syncs content when available. Production is always a Release build.
+# A remote or Windows destination that already holds files is only registered here: nothing is published or
+# synced, so its files are never touched. Publish it later when you want to update it.
 # Run it again to add another environment.
 set -euo pipefail
 
@@ -200,15 +202,32 @@ fi
 
 _templates=("${_solutionFolder}/csharp/prod-scripts")
 [[ ${_kind} != umbraco ]] || _templates+=("${_solutionFolder}/csharp/umbraco/prod-scripts")
+# Whether the destination already holds a site, for instance an environment that was removed here but kept on
+# its server. Then it is only registered: publishing would overwrite its files.
+_destinationHasFiles=n
 if [[ ${_target} == windows ]]; then
 	_templates=("${_solutionFolder}/csharp/windows-prod-scripts")
 	[[ ${_kind} != umbraco ]] || _templates+=("${_solutionFolder}/csharp/umbraco/windows-prod-scripts")
 	# Stop before anything is changed if the share or the login is wrong
-	(
+	_listing=$(
 		source "@APACHE_DIR@/lib/windows_prod.sh"
 		PROD_WINDOWS_SHARE=${_smbShare} PROD_SMB_USER=${_smbUser} PROD_SMB_PASSWORD=${_smbPassword} PROD_SMB_DOMAIN=${_smbDomain}
-		windows_smb_connect
-	)
+		windows_smb_connect >&2 || exit 1
+		rclone lsf "${_windowsTarget}" --max-depth 1
+	) || exit 1
+	[[ -z ${_listing} ]] || _destinationHasFiles=y
+elif [[ ${_target} == remote ]]; then
+	_listing=$(
+		source "@APACHE_DIR@/lib/prod.sh"
+		PROD_TARGET="" PROD_LOCAL_PATH="" PROD_IP=${_ip} PROD_USER=${_user} PROD_PASSWORD=${_password} PROD_SSH_PORT=${_sshPort}
+		prod_exec "find $(printf %q "/var/www/${_prodFolder}") -mindepth 1 -maxdepth 1 -print -quit" 2>/dev/null
+	) || true
+	[[ -z ${_listing} ]] || _destinationHasFiles=y
+fi
+if [[ ${_destinationHasFiles} == y && ${VNS_PROD_NO_PUBLISH:-} != 1 ]]; then
+	echo
+	echo "The destination already holds files. The environment is only set up here: nothing is published,"
+	echo "synced or changed on the server. Publish it later when you want to update it."
 fi
 
 # Single quotes, as %q writes non-ASCII names differently depending on the locale
@@ -247,6 +266,10 @@ ls -1 "${_targetFolder}" | sed 's/^/  /'
 
 # adopt_site.sh and move_env.sh do the rest themselves: nothing may be published yet
 if [[ ${VNS_PROD_NO_PUBLISH:-} == 1 ]]; then
+	exit 0
+fi
+if [[ ${_destinationHasFiles} == y ]]; then
+	echo "Environment ${_targetId} is set up for the site that is already on the server. Nothing was published."
 	exit 0
 fi
 
