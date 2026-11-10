@@ -1191,7 +1191,8 @@ function envPanel(site, env) {
 		if (dataSyncDestinations(site, env).length) {
 			sync.append(el("button", { textContent: "Sync data…", className: "small", title: "Merge content and media from this site into another", onclick: () => run(() => openSyncDialog(site, env, true)) }));
 		}
-		sync.append(el("button", { textContent: "Sync setup…", className: "small desktop-only", title: dataSyncSummary(env), onclick: () => run(() => openDataSyncDialog(site, env)) }));
+		// Setup first, at the left: the syncs it allows stand at the right
+		sync.prepend(el("button", { textContent: "Sync setup…", className: "small desktop-only", title: dataSyncSummary(env), onclick: () => run(() => openDataSyncDialog(site, env)) }));
 	}
 	if (!isTarget(env) && site.scripts.some((file) => !hasScriptButton(site, file))) quick.append(scriptSelect(site));
 	if (env.mode === "windows") {
@@ -1237,11 +1238,11 @@ function envPanel(site, env) {
 	if (extraTools) panel.append(extraTools);
 	if (actions.children.length) panel.append(actions);
 	if (manage.children.length) panel.append(manage);
-	// Tools that are rarely the point of the row stand to the right: clearing logs, editing files, data sync setup,
+	// Tools that are rarely the point of the row stand to the right: clearing logs, editing files, the syncs,
 	// and logs, shell and files beside Stop and Restart. Only with something to their left, so a row of edit
 	// buttons alone (on Windows) stays at the left.
 	for (const row of [quick, sync, extraTools, actions]) {
-		const first = row && [...row.children].find((button) => /^(Clear logs|Sync setup…|Edit .*|Logs|Shell|Files)$/.test(button.textContent));
+		const first = row && [...row.children].find((button) => /^(Clear logs|Sync settings…|Sync data…|Edit .*|Logs|Shell|Files)$/.test(button.textContent));
 		if (first && first !== row.firstElementChild) first.classList.add("push-right");
 	}
 	return panel;
