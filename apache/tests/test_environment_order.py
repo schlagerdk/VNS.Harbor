@@ -77,7 +77,7 @@ console.log(JSON.stringify(sortedEnvironments(input).map((env) => env.binding)))
         self.assertIn('targetsActions.append(el("button", { textContent: "Publish all"', source)
         self.assertIn('targetsActions.append(el("button", { textContent: "Sync settings to all"', source)
         self.assertIn('danger.append(el("button", { textContent: "Delete everything"', source)
-        self.assertIn('add("Delete site", () => deleteSite(site, isTarget(env) ? "prod" : "test", env), "danger");', source)
+        self.assertIn('addManage("Delete site", () => deleteSite(site, isTarget(env) ? "prod" : "test", env), "danger");', source)
         page = (APP / "templates/index.html").read_text()
         self.assertLess(page.index('id="site-targets"'), page.index('id="site-danger"'))
 
@@ -144,13 +144,13 @@ console.log(JSON.stringify([
 
     def test_migrate_is_offered_on_local_and_remote_environments(self):
         source = (APP / "static/app.js").read_text()
-        self.assertIn('env.mode === "remote" && !missing)) add("Migrate…"', source)
+        self.assertIn('env.mode === "remote" && !missing)) addManage("Migrate…"', source)
         self.assertNotIn('add("Move…"', source)
 
     def test_copy_and_migrate_share_one_dialog(self):
         source = (APP / "static/app.js").read_text()
-        self.assertIn('add("Copy site", () => openCreateProdDialog(site, env, true), "push-right")', source)
-        self.assertIn('add("Migrate…", () => openCreateProdDialog(site, env));', source)
+        self.assertIn('addManage("Copy site", () => openCreateProdDialog(site, env, true))', source)
+        self.assertIn('addManage("Migrate…", () => openCreateProdDialog(site, env));', source)
         self.assertIn('value: "same", textContent: `Same server (${moveEnv.host})`', source)
         self.assertIn("data.copy = true;", source)
         self.assertNotIn("copy_env", source)
@@ -194,7 +194,7 @@ console.log(JSON.stringify([first, firstNone, none.hidden]));
 
     def test_windows_environments_can_edit_their_settings_files(self):
         source = (APP / "static/app.js").read_text()
-        self.assertIn('[["Edit config", "web.config"], ["Edit appsettings.json", "appsettings.json"]]', source)
+        self.assertIn('[["Edit web.config", "web.config"], ["Edit appsettings.json", "appsettings.json"]]', source)
         app = (APP / "app.py").read_text()
         self.assertEqual(app.count('@app.route("/api/remote-fs/<site>/<action>"'), 1)
         self.assertLess(app.index("def windows_file("), app.index('@app.route("/api/remote-fs/<site>/<action>"'))

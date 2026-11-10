@@ -465,7 +465,7 @@ const buttonStyles = {
 	"Copy site": ["file", "blue"],
 	"Issue certificate": ["shield", "teal"], "Change environment": ["sliders", "purple"], "Data sync setup…": ["sliders", "teal"], "Sync data…": ["sync", "green"], "Change bindings": ["globe", "blue"],
 	"Check service": ["activity", "teal"], "Test Apache config": ["activity", "teal"], "Admin site": ["manage", "gray"],
-	"Edit service": ["pencil", "amber"], "Edit config": ["pencil", "amber"], "Edit appsettings.json": ["pencil", "amber"], "Delete*": ["trash", "red"],
+	"Edit service": ["pencil", "amber"], "Edit config": ["pencil", "amber"], "Edit web.config": ["pencil", "amber"], "Edit appsettings.json": ["pencil", "amber"], "Delete*": ["trash", "red"],
 };
 
 function svgIcon(name) {
@@ -614,8 +614,17 @@ const isRemoteEnv = (env) => env.mode === "remote" || env.mode === "windows";
 // The server answered, and the site's folder is gone. Without an answer, exists is not set.
 const isMissingEnv = (env) => env.mode === "remote" && env.exists === false;
 
+// Windows logo and Tux, drawn in their own colours beside the remote icon
+const osLogos = {
+	windows: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#4cc2ff" d="M3 5.4 10.4 4.4v7.1H3zM11.4 4.2 21 3v8.5h-9.6zM3 12.5h7.4v7.1L3 18.6zM11.4 12.5H21V21l-9.6-1.3z"/></svg>',
+	linux: '<svg viewBox="0 0 24 24" aria-hidden="true"><path fill="#2d333b" stroke="#c9d1d9" stroke-width="1" d="M12 2.5c-2.6 0-4 2.2-4 4.8 0 1.6-.6 2.7-1.6 4.2C5.2 13.3 4.5 15 4.8 17c.3 2.2 2.6 3.6 7.2 3.6s6.9-1.4 7.2-3.6c.3-2-.4-3.7-1.6-5.5-1-1.5-1.6-2.6-1.6-4.2 0-2.6-1.4-4.8-4-4.8z"/><ellipse cx="12" cy="15" rx="3.6" ry="4.6" fill="#f0f6fc"/><circle cx="10.6" cy="7.2" r="1" fill="#f0f6fc"/><circle cx="13.4" cy="7.2" r="1" fill="#f0f6fc"/><circle cx="10.7" cy="7.4" r=".45" fill="#0d1117"/><circle cx="13.3" cy="7.4" r=".45" fill="#0d1117"/><path fill="#f2b01e" d="M10.4 9.2c.5-.6 2.7-.6 3.2 0 .2.3-.8 1.4-1.6 1.4s-1.8-1.1-1.6-1.4zM5.2 19.2c.4-1.2 2.4-1.6 3.6-1 .9.5.9 1.9.2 2.6-.9.8-3.4.6-3.8-.3-.1-.4-.1-.9 0-1.3zM18.8 19.2c-.4-1.2-2.4-1.6-3.6-1-.9.5-.9 1.9-.2 2.6.9.8 3.4.6 3.8-.3.1-.4.1-.9 0-1.3z"/></svg>',
+};
 function remoteIcon(env) {
-	return el("span", { className: "remote-icon", title: "Remote server: " + env.host, ariaLabel: "Remote server: " + env.host }, svgIcon("server"));
+	const os = env.mode === "windows" ? "windows" : "linux";
+	const label = `Remote ${os === "windows" ? "Windows" : "Linux"} server: ${env.host}`;
+	const icon = el("span", { className: "remote-icon", title: label, ariaLabel: label }, svgIcon("server"));
+	icon.append(el("span", { className: "os-logo os-" + os, innerHTML: osLogos[os] }));
+	return icon;
 }
 
 function environmentLabel(site, env) {
@@ -1098,7 +1107,11 @@ function envPanel(site, env) {
 
 	const actions = el("div", { className: "actions" });
 	actions.dataset.group = "Site";
-	const add = (label, handler, className) => actions.append(el("button", { textContent: label, className: "small " + (className || ""), onclick: () => run(handler) }));
+	const add = (label, handler, className, row = actions) => row.append(el("button", { textContent: label, className: "small " + (className || ""), onclick: () => run(handler) }));
+	// Migrate, Copy and Delete change where the site lives, so they have their own row
+	const manage = el("div", { className: "actions" });
+	manage.dataset.group = "Manage";
+	const addManage = (label, handler, className) => add(label, handler, className, manage);
 	if ((env.unit || env.mode === "remote") && !missing) {
 		if (env.unit !== site.name || !site.admin) add(env.state === "active" ? "Stop" : "Start", () => serviceAction(site, env, env.state === "active" ? "stop" : "start"));
 		add("Restart", () => serviceAction(site, env, "restart"));
@@ -1163,7 +1176,7 @@ function envPanel(site, env) {
 	if (env.mode === "windows") {
 		// web.config is the IIS site's config, appsettings.json its application settings
 		const tools = actionRow("Config");
-		for (const [label, filename] of [["Edit config", "web.config"], ["Edit appsettings.json", "appsettings.json"]]) {
+		for (const [label, filename] of [["Edit web.config", "web.config"], ["Edit appsettings.json", "appsettings.json"]]) {
 			tools.append(el("button", { textContent: label, className: "small desktop-only", onclick: () => run(() => editFile(filename, remoteRef(site, env))) }));
 		}
 		extraTools = tools;
@@ -1185,12 +1198,12 @@ function envPanel(site, env) {
 		}
 		extraTools = tools;
 	}
-	if (isTarget(env) && (env.mode === "local" && env.exists !== false || env.mode === "remote" && !missing)) add("Migrate…", () => openCreateProdDialog(site, env));
-	if (isTarget(env) && (env.mode === "local" && env.exists !== false || env.mode === "windows" || env.mode === "remote" && !missing)) add("Copy site", () => openCreateProdDialog(site, env, true), "push-right");
-	if (hasProd(site) && !site.admin) add("Delete site", () => deleteSite(site, isTarget(env) ? "prod" : "test", env), "danger");
+	if (isTarget(env) && (env.mode === "local" && env.exists !== false || env.mode === "remote" && !missing)) addManage("Migrate…", () => openCreateProdDialog(site, env));
+	if (isTarget(env) && (env.mode === "local" && env.exists !== false || env.mode === "windows" || env.mode === "remote" && !missing)) addManage("Copy site", () => openCreateProdDialog(site, env, true));
+	if (hasProd(site) && !site.admin) addManage("Delete site", () => deleteSite(site, isTarget(env) ? "prod" : "test", env), "danger");
 	if (!hasProd(site) && !site.admin) {
-		if (!site.managed_by) add("Copy site", () => copySite(site), "push-right");
-		add("Delete site", () => deleteSite(site, "all"), "danger");
+		if (!site.managed_by) addManage("Copy site", () => copySite(site));
+		addManage("Delete site", () => deleteSite(site, "all"), "danger");
 	}
 
 	const panel = el("section", { className: "env " + (isTarget(env) ? "prod" : "") }, heading, meta);
@@ -1202,6 +1215,14 @@ function envPanel(site, env) {
 	if (settings.children.length) panel.append(settings);
 	if (extraTools) panel.append(extraTools);
 	if (actions.children.length) panel.append(actions);
+	if (manage.children.length) panel.append(manage);
+	// Tools that are rarely the point of the row stand to the right: clearing logs, editing files, data sync setup,
+	// and logs, shell and files beside Stop and Restart. Only with something to their left, so a row of edit
+	// buttons alone (on Windows) stays at the left.
+	for (const row of [quick, sync, extraTools, actions]) {
+		const first = row && [...row.children].find((button) => /^(Clear logs|Data sync setup…|Edit .*|Logs|Shell|Files)$/.test(button.textContent));
+		if (first && first !== row.firstElementChild) first.classList.add("push-right");
+	}
 	return panel;
 }
 

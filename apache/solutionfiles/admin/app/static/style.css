@@ -692,3 +692,11 @@ a.btn-link .ico { width: 13px; height: 13px; flex: none; }
 .sync-chip { padding: 1px 8px; border-radius: 999px; background: color-mix(in srgb, var(--env-tone) 16%, transparent); color: var(--env-tone); font-size: 11px; font-weight: 600; text-transform: capitalize; }
 @media (max-width: 440px) { .sync-choices { grid-template-columns: 1fr; } }
 dialog.newsite .sync-options ~ .hint, #dlg-data-sync .data-sync-options ~ .hint { margin-top: 18px; }
+/* With a Manage row, the Site row above it starts the bottom block of the card */
+.env > .actions:not(.quick):has(+ .actions:last-child:not(.quick)) { margin-top: auto; padding-top: 12px; }
+.env > .actions:not(.quick):has(+ .actions:last-child:not(.quick))[data-group]::before { top: 13px; }
+.env > .actions:not(.quick) + .actions:last-child:not(.quick) { margin-top: 14px; padding-top: 12px; }
+.remote-icon { gap: 5px; }
+.remote-icon .os-logo { display: inline-flex; }
+.remote-icon .os-logo svg { width: 16px; height: 16px; }
+.remote-icon .os-linux svg { width: 19px; height: 19px; margin: -2px 0; }

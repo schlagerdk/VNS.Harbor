@@ -1541,7 +1541,7 @@ class ManagedSiteTests(unittest.TestCase):
         self.assertLess(source.index(check), source.index("python3 lib/copy_site.py"))
         app = (APACHE / "solutionfiles/admin/app/app.py").read_text()
         self.assertIn("Make the copy from there", app)
-        self.assertIn('if (!site.managed_by) add("Copy site"', (APACHE / "solutionfiles/admin/app/static/app.js").read_text())
+        self.assertIn('if (!site.managed_by) addManage("Copy site"', (APACHE / "solutionfiles/admin/app/static/app.js").read_text())
 
     def test_status_writes_the_note_and_delete_removes_it(self):
         self.assertIn('Path("/var/lib/vns-managed", site)', (APACHE / "remote_site.sh").read_text())
