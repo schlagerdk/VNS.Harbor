@@ -219,6 +219,25 @@ console.log(JSON.stringify([first, firstNone, none.hidden]));
             self.assertIn(f'"{label}": [', source)
         self.assertIn('id="dlg-sql-query"', page)
 
+    def test_query_dialog_starts_empty_for_another_database(self):
+        source = (APP / "static/app.js").read_text()
+        code = source[source.index("function openSqlQuery("):source.index("async function runSqlQuery(")]
+        script = """
+const nodes = {};
+const $ = (selector) => nodes[selector] ||= {value: "", textContent: "", focus() {}, classList: {remove() {}}};
+nodes["#sql-connection"] = {value: "server-1"};
+const sqlQueryDialog = {dataset: {}, open: true, showModal() {}};
+""" + code + """
+openSqlQuery({name: "one"}); nodes["#sql-query-text"].value = "DELETE FROM x"; nodes["#sql-query-output"].textContent = "done";
+openSqlQuery({name: "one"}); const same = nodes["#sql-query-text"].value;
+openSqlQuery({name: "two"}); const other = [nodes["#sql-query-text"].value, nodes["#sql-query-output"].textContent];
+nodes["#sql-query-text"].value = "SELECT 1"; nodes["#sql-connection"].value = "server-2";
+openSqlQuery({name: "two"}); const server = nodes["#sql-query-text"].value;
+console.log(JSON.stringify([same, other, server]));
+"""
+        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True)
+        self.assertEqual(json.loads(result.stdout), ["DELETE FROM x", ["", ""], ""])
+
     def test_layout_and_wording(self):
         page = (APP / "templates/index.html").read_text()
         layout = re.search(r'<div id="site-layout".*?</div>\s*<section id="site-targets"', page, re.S).group(0)

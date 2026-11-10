@@ -2835,8 +2835,15 @@ startViewForm.onsubmit = (event) => {
 // Scripts typed here run as the connection's login, against the chosen database
 const sqlQueryDialog = $("#dlg-sql-query");
 function openSqlQuery(database) {
+	// Another database starts empty, so a script is never run against the wrong one by mistake
+	const connection = $("#sql-connection").value;
+	if (sqlQueryDialog.dataset.database !== database.name || sqlQueryDialog.dataset.connection !== connection) {
+		$("#sql-query-text").value = "";
+		$("#sql-query-output").textContent = "";
+		$("#sql-query-output").classList.remove("sql-query-error");
+	}
 	sqlQueryDialog.dataset.database = database.name;
-	sqlQueryDialog.dataset.connection = $("#sql-connection").value;
+	sqlQueryDialog.dataset.connection = connection;
 	$("#sql-query-title").textContent = `Query ${database.name}`;
 	$("#sql-query-status").textContent = "";
 	if (!sqlQueryDialog.open) sqlQueryDialog.showModal();
