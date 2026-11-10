@@ -1180,8 +1180,8 @@ function envPanel(site, env) {
 			await openTask(action ? { kind: "prod_action", site: site.name, action, scope: isTarget(env) ? "prod" : "test", ...targetFields(env) } : { kind: "script", site: site.name, script: file, ...targetFields(env) });
 		}) }));
 	}
-	// The main site's only destination already has its button at the top of the page
-	if (!missing && syncDestinations(site, env).length > (isTarget(env) ? 0 : 1)) {
+	// Every site with somewhere to sync to has the button, also the main site with a single environment
+	if (!missing && syncDestinations(site, env).length > 0) {
 		sync.append(el("button", { textContent: "Sync settings…", className: "small", title: "Sync uSync settings, Views, css and scripts from this site", onclick: () => run(() => openSyncDialog(site, env)) }));
 	}
 	if (site.kind === "umbraco" && !missing && !site.admin) {
