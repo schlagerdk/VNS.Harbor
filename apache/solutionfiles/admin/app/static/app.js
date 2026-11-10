@@ -2795,14 +2795,15 @@ function applyStartView() {
 	$("#sql-back-bar").hidden = sql;
 	const brand = document.querySelector(".brand");
 	brand.href = sql ? "#sql" : "#sites";
-	brand.title = sql ? "SQL Server" : "All sites";
+	brand.title = "Reload";
 }
-// The logo always opens the start page, also when it is already shown
+// The logo reloads the section you are in. Opened in a new tab, its address leads to the start page.
 document.querySelector(".brand").onclick = (event) => {
 	event.preventDefault();
-	const hash = startView === "sql" ? "#sql" : "#sites";
-	if (location.hash === hash) run(route);
-	else go(hash);
+	run(async () => {
+		if (currentView !== "sql") await loadSites();
+		await route();
+	});
 };
 applyStartView();
 $("#settings-web").onclick = () => go("#sites");
@@ -2812,6 +2813,7 @@ $("#settings-start-view").onclick = () => {
 	startViewForm.reset();
 	startViewForm.elements.start_view.value = startView;
 	startViewDialog.showModal();
+	startViewForm.querySelector("input[name=start_view]:checked")?.focus();
 };
 $("#start-view-cancel").onclick = () => startViewDialog.close();
 startViewForm.onsubmit = (event) => {

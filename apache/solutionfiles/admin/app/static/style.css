@@ -521,7 +521,7 @@ dialog .type-card { position: relative; display: flex; flex-direction: column; g
 .type-card .tc-title { color: var(--text); font-size: 14px; font-weight: 600; }
 .type-card .tc-sub { font-size: 12px; color: var(--muted); }
 .type-card:has(input:checked) { border-color: var(--blue); background: rgba(88,166,255,.12); box-shadow: 0 0 0 1px var(--blue) inset; }
-.type-card:has(input:focus-visible) { outline: 2px solid var(--blue); }
+/* No focus ring: the arrow keys move the choice, so the chosen card also shows where the keyboard is */
 .ns-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 14px; }
 dialog.newsite .hint { margin: 2px 0 0; font-size: 12px; }
 dialog.newsite .template-status { height: 16px; line-height: 16px; overflow-y: auto; }
