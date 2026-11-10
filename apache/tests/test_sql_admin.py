@@ -61,6 +61,7 @@ class SqlQueryTests(unittest.TestCase):
         args, kwargs = calls[0]
         self.assertEqual(args[args.index("-d") + 1], "Kunde DB")
         self.assertEqual(args[args.index("-s") + 1], sql.COLUMN_SEPARATOR)
+        self.assertIn("-k1", args)
         self.assertNotIn("secret", " ".join(args))
         self.assertEqual(kwargs["env"]["SQLCMDPASSWORD"], "secret")
         self.assertEqual(kwargs["timeout"], 300)
@@ -77,6 +78,14 @@ class SqlQueryTests(unittest.TestCase):
             {"columns": ["total"], "rows": [["2"]]},
             {"columns": ["empty", "set"], "rows": []}])
         self.assertEqual(messages, ["Done with the update"])
+
+    def test_values_with_line_breaks_stay_in_their_row(self):
+        s = sql.COLUMN_SEPARATOR
+        output = f"id{s}text{s}date\n--{s}----{s}----\n1{s}<h2>A</h2>\n\n  more{s}2001\n2{s}b{s}2002\n"
+        results, messages = sql.parse_results(output)
+        self.assertEqual(results, [{"columns": ["id", "text", "date"],
+                                    "rows": [["1", "<h2>A</h2>\n\n  more", "2001"], ["2", "b", "2002"]]}])
+        self.assertEqual(messages, [])
 
     def test_a_block_with_uneven_rows_is_shown_as_text(self):
         s = sql.COLUMN_SEPARATOR

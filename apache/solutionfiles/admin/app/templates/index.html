@@ -574,11 +574,10 @@
 </dialog>
 
 <dialog id="dlg-sql-query" class="wide sql-query-dialog" aria-labelledby="sql-query-title">
-  <h2 id="sql-query-title">Query</h2>
+  <div class="sql-query-head"><h2 id="sql-query-title">Query</h2><button type="button" id="sql-query-close" class="dialog-x" aria-label="Close" title="Close"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button></div>
   <textarea id="sql-query-text" spellcheck="false" placeholder="SELECT TOP 10 * FROM ..." aria-label="SQL script"></textarea>
-  <p class="hint">Runs as the connection's login against this database. Ctrl+Enter runs the script. There is no undo.</p>
+  <div class="sql-query-bar"><p class="hint">Runs as the connection's login against this database. Ctrl+Enter runs the script. There is no undo.</p><span id="sql-query-status" class="muted"></span><button type="button" id="sql-query-run" class="primary">Run</button></div>
   <div id="sql-query-output" class="sql-query-output" aria-live="polite"></div>
-  <menu><span id="sql-query-status" class="muted"></span><button type="button" id="sql-query-close">Close</button><button type="button" id="sql-query-run" class="primary">Run</button></menu>
 </dialog>
 
 <dialog id="dlg-logs" class="wide">

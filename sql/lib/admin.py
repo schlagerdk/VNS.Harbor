@@ -169,6 +169,8 @@ def execute(settings, query, table=False, timeout=3600, database="master", separ
         args = [tool, "-S", f'tcp:{settings["host"]},{settings["port"]}', "-U", settings["username"],
                 "-d", database, "-b", "-x", "-r", "0", "-l", "15", "-t", "0", "-w", "65535", "-f", "65001", "-i", filename]
         args += ["-W", "-s", separator] if table else ["-y", "0"]
+        if table and separator == COLUMN_SEPARATOR:
+            args.append("-k1")  # line breaks in values become spaces, so each row is one line
         if settings["trust_certificate"]:
             args.append("-C")
         result = subprocess.run(args, capture_output=True, text=True, encoding="utf-8",
@@ -196,20 +198,47 @@ def run_query(settings, database, query):
 
 def parse_results(output, separator=COLUMN_SEPARATOR):
     """Split sqlcmd output into result sets with columns and rows. Anything else, like PRINT, is a message.
-    A block is only a table when every row has as many columns as its header, so nothing is shown wrongly."""
-    results, messages = [], []
-    for block in re.split(r"\n[ \t]*\n", output.strip("\n")):
-        if not block.strip():
+    A value with line breaks spans several lines, so a row is collected until it has as many columns as the
+    header. A table that does not add up is shown as text, so nothing is shown in the wrong column."""
+    results, messages, text = [], [], []
+    lines = output.strip("\n").split("\n")
+    dashes = re.compile(r"-+(" + re.escape(separator) + r"-+)*")
+
+    def flush_text():
+        block = "\n".join(text).strip("\n")
+        if block.strip():
+            messages.append(block.replace(separator, " | "))
+        text.clear()
+
+    index = 0
+    while index < len(lines):
+        line = lines[index]
+        following = lines[index + 1] if index + 1 < len(lines) else ""
+        columns = line.split(separator)
+        if not (dashes.fullmatch(following.strip()) and following.count(separator) == len(columns) - 1):
+            if line.strip():
+                text.append(line)
+            else:
+                flush_text()
+            index += 1
             continue
-        lines = block.split("\n")
-        header = lines[0].split(separator)
-        if len(lines) >= 2 and re.fullmatch(r"-+(" + re.escape(separator) + r"-+)*", lines[1].strip()) \
-                and lines[1].count(separator) == len(header) - 1:
-            rows = [line.split(separator) for line in lines[2:]]
-            if all(len(row) == len(header) for row in rows):
-                results.append({"columns": header, "rows": rows})
-                continue
-        messages.append(block.replace(separator, " | "))
+        flush_text()
+        rows, pending, end = [], None, index + 2
+        while end < len(lines):
+            current = lines[end]
+            if pending is None and not current.strip():
+                break
+            pending = current if pending is None else pending + "\n" + current
+            end += 1
+            if pending.count(separator) >= len(columns) - 1:
+                rows.append(pending.split(separator))
+                pending = None
+        if pending is None and all(len(row) == len(columns) for row in rows):
+            results.append({"columns": columns, "rows": rows})
+        else:
+            messages.append("\n".join(lines[index:end]).replace(separator, " | "))
+        index = end
+    flush_text()
     return results, messages
 
 

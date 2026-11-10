@@ -25,7 +25,7 @@ body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.45 -ap
 button, select, input, textarea { font: inherit; color: inherit; background: var(--panel2); border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; transition: border-color .15s, background .15s; }
 /* Fields only get a slightly brighter edge when focused. Buttons keep a ring for the keyboard. */
 input:focus, select:focus, textarea:focus { outline: none; border-color: rgba(88, 166, 255, .55); }
-button:focus-visible { outline: 2px solid var(--blue); outline-offset: -1px; }
+button:focus-visible { outline: none; border-color: rgba(88, 166, 255, .55); }
 button { cursor: pointer; white-space: nowrap; }
 label:has(input[type="checkbox"]), input[type="checkbox"] { cursor: pointer; }
 button:hover { background: var(--hover); border-color: var(--muted); }
@@ -72,9 +72,9 @@ dialog.sql-query-dialog[open] { display: flex; flex-direction: column; }
 .sql-result { flex: none; display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--panel); }
 .sql-result-count { padding: 8px 12px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px; background: linear-gradient(110deg, rgba(163, 113, 247, .08), transparent); }
 .sql-result-scroll { overflow: auto; max-height: 52vh; }
-/* One result shrinks to the space there is and scrolls under its fixed header, without a second scroll bar */
-.sql-result:only-of-type { flex: 0 1 auto; }
-.sql-result:only-of-type .sql-result-scroll { max-height: none; min-height: 0; }
+/* One result fills the space there is and scrolls under its fixed header, without a second scroll bar */
+.sql-result:only-of-type { flex: 1 1 0; }
+.sql-result:only-of-type .sql-result-scroll { flex: 1 1 0; max-height: none; min-height: 0; }
 .sql-result-table { width: 100%; border-collapse: collapse; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 .sql-result-table th { position: sticky; top: 0; z-index: 1; padding: 7px 12px; background: var(--panel2, #1c2129); color: var(--muted); font-weight: 600; text-transform: none; letter-spacing: 0; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--line); }
 .sql-result-table td { max-width: 420px; padding: 6px 12px; border-bottom: 1px solid rgba(255, 255, 255, .05); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -85,8 +85,13 @@ dialog.sql-query-dialog[open] { display: flex; flex-direction: column; }
 .sql-result-message, .sql-query-output > pre { margin: 0; padding: 10px 12px; background: rgba(0, 0, 0, .25); border: 1px solid var(--line); border-radius: 8px; font-size: 12px; white-space: pre-wrap; }
 .sql-result-empty { margin: 0; }
 .sql-query-output.sql-query-error > pre { color: #f85149; }
-.sql-query-dialog menu { align-items: center; }
-.sql-query-dialog #sql-query-status { margin-right: auto; }
+.sql-query-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+.sql-query-head h2 { margin: 0; }
+.dialog-x { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; }
+.dialog-x:hover, .dialog-x:focus-visible { background: rgba(255, 255, 255, .08); color: var(--text, #e6edf3); }
+.sql-query-bar { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
+.sql-query-bar .hint { flex: 1; margin: 0; }
+.sql-query-bar #sql-query-status { font-size: 12px; white-space: nowrap; }
 .sql-backup-history summary { cursor: pointer; color: var(--muted); padding: 6px 0; }
 .sql-backup-history table { margin-top: 8px; }
 .error { color: var(--red); }
