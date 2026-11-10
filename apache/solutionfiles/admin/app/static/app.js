@@ -552,17 +552,20 @@ function renderSites() {
 function updateSiteActivity() {
 	for (const badge of document.querySelectorAll(".site-activity")) {
 		const tasks = Object.values(terminals).filter((task) => !task.exited && task.sites.includes(badge.dataset.site)
-			&& (!badge.dataset.scope || task.scope === "all" || task.scope === badge.dataset.scope));
+			&& (!badge.dataset.scope || task.scope === "all" || task.scope === badge.dataset.scope)
+			// An environment's card only shows the tasks that work on it
+			&& (!badge.dataset.target || !task.targets?.length || task.targets.includes(badge.dataset.target)));
 		badge.hidden = tasks.length === 0;
 		badge.title = tasks.map((task) => task.taskTitle).join("\n");
 	}
 }
 
-function siteActivity(site, scope = "") {
+function siteActivity(site, scope = "", target = "") {
 	const activity = el("span", { className: "site-activity", hidden: true, role: "status" },
 		el("span", { className: "activity-spinner", ariaHidden: "true" }), el("span", { textContent: "Working" }));
 	activity.dataset.site = site.name;
 	activity.dataset.scope = scope;
+	if (target) activity.dataset.target = target;
 	return activity;
 }
 
@@ -1067,7 +1070,7 @@ function envPanel(site, env) {
 	const dot = known ? env.state || "unknown" : "";
 	const answered = env.mode === "windows" && env.state ? `Keep-alive ${formatDate(env.state_checked * 1000)}: ${env.state === "active" ? "answered" : env.state_error || "no answer"}` : "";
 	const heading = el("div", { className: "env-head" },
-		siteActivity(site, isTarget(env) ? "prod" : "main"),
+		siteActivity(site, isTarget(env) ? "prod" : "main", isTarget(env) ? env.target || "prod" : ""),
 		el("span", { className: "dot " + dot, title: answered }),
 		el("span", { className: "badge " + (known ? "state-" + (env.state || "unknown") : ""), title: answered, textContent: known ? env.state || "unknown" : env.mode === "windows" ? "windows" : env.mode === "remote" ? "remote" : "static" }));
 	const environment = site.kind === "python" ? "Live" : env.environment;
@@ -2596,7 +2599,7 @@ function connectTerminal(t) {
 	};
 }
 
-function openTerminal(id, title, autoClose, sites = [], running = true, scope = "main") {
+function openTerminal(id, title, autoClose, sites = [], running = true, scope = "main", targets = []) {
 	if (terminals[id]) return activate(id);
 	const pane = el("div", { className: "pane", hidden: true });
 	const titleNode = el("span", { textContent: title });
@@ -2609,7 +2612,7 @@ function openTerminal(id, title, autoClose, sites = [], running = true, scope = 
 	const fit = new FitAddon.FitAddon();
 	term.loadAddon(fit);
 	term.open(pane);
-	const t = { id, term, fit, pane, tab, title: titleNode, taskTitle: title, sites, scope, exited: !running, ws: null, autoClose: !!autoClose, remove: null };
+	const t = { id, term, fit, pane, tab, title: titleNode, taskTitle: title, sites, scope, targets: targets || [], exited: !running, ws: null, autoClose: !!autoClose, remove: null };
 	terminals[id] = t;
 	updateSiteActivity();
 
@@ -2649,7 +2652,7 @@ function openTerminal(id, title, autoClose, sites = [], running = true, scope = 
 
 async function openTask(payload) {
 	const data = await api("/api/term", { json: payload });
-	openTerminal(data.id, data.title, data.auto_close, data.sites, data.running, data.scope);
+	openTerminal(data.id, data.title, data.auto_close, data.sites, data.running, data.scope, data.targets);
 	if (terminals[data.id]) {
 		showDock();
 		for (const dialog of document.querySelectorAll("dialog[open]")) {
@@ -2664,7 +2667,7 @@ async function openTask(payload) {
 
 async function restoreTerminals() {
 	const { sessions } = await api("/api/term");
-	for (const s of sessions) openTerminal(s.id, s.title, s.auto_close, s.sites, s.running, s.scope);
+	for (const s of sessions) openTerminal(s.id, s.title, s.auto_close, s.sites, s.running, s.scope, s.targets);
 	if (sessions.length) { for (const t of Object.values(terminals)) t.pane.hidden = true; activate(sessions[0].id); }
 }
 

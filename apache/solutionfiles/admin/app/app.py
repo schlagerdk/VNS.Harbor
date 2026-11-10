@@ -1361,6 +1361,26 @@ def terminal_activity_sites(payload):
     return [payload["site"]] if payload.get("site") else []
 
 
+def terminal_targets(payload):
+    """The environments a task works on, so only their cards show it. Empty is all of them."""
+    kind = payload.get("kind")
+    if kind in ("sync_env", "data_sync"):
+        destination = payload.get("destination")
+        items = destination if isinstance(destination, list) else str(destination or "").split(",")
+        if "all" in items:
+            return []
+        return [str(item) for item in [payload.get("source"), *items] if item and item != "main"]
+    if kind == "move_env":
+        return [str(payload.get("environment_id") or "prod")]
+    if kind in ("create_prod", "register_env"):
+        return ["(new)"]  # A new environment has no card yet
+    if kind == "data_sync_settings":
+        return [] if payload.get("id") == "main" else [str(payload.get("id") or "prod")]
+    if terminal_scope(payload) == "prod" and kind != "publish_both" and kind != "bulk":
+        return [str(payload.get("target") or "prod")]
+    return []
+
+
 def terminal_scope(payload):
     kind = payload.get("kind")
     if kind == "publish_both" and payload.get("environments_only"):
@@ -1407,11 +1427,12 @@ def terminal_output_problem(text):
 
 
 class TermSession:
-    def __init__(self, title, argv, cwd, extra_env=None, auto_close=False, update_root=None, sites=None, scope="main"):
+    def __init__(self, title, argv, cwd, extra_env=None, auto_close=False, update_root=None, sites=None, scope="main", targets=None):
         self.id = uuid.uuid4().hex[:12]
         self.title = title
         self.sites = sites or []
         self.scope = scope
+        self.targets = targets or []
         self.created = time.time()
         self.exit = None
         self.auto_close = auto_close
@@ -2148,7 +2169,7 @@ def build_command(data):
 def describe(s):
     return {"id": s.id, "title": s.title, "running": s.running, "exit": s.exit,
             "auto_close": s.auto_close, "output_problem": s.output_problem, "sites": s.sites,
-            "scope": s.scope}
+            "scope": s.scope, "targets": getattr(s, "targets", [])}
 
 
 @app.route("/api/term", methods=["GET", "POST"])
@@ -2189,7 +2210,7 @@ def api_term():
         try:
             update_root = os.path.join(WEB_ROOT, payload["site"]) if payload.get("kind") == "script" and payload.get("script") == "outdated.sh" and glob.glob(os.path.join(WEB_ROOT, payload["site"], "*.csproj")) else None
             sites = terminal_activity_sites(payload)
-            session_obj = TermSession(title, argv, cwd, extra_env, auto_close=terminal_auto_close(payload), update_root=update_root, sites=sites, scope=terminal_scope(payload))
+            session_obj = TermSession(title, argv, cwd, extra_env, auto_close=terminal_auto_close(payload), update_root=update_root, sites=sites, scope=terminal_scope(payload), targets=terminal_targets(payload))
         except Exception:
             if payload.get("kind") == "create_prod":
                 os.unlink(argv[1])

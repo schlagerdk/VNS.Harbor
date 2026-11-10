@@ -241,6 +241,22 @@ console.log(JSON.stringify([same, other, server]));
         result = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True)
         self.assertEqual(json.loads(result.stdout), ["DELETE FROM x", ["", ""], ""])
 
+    def test_only_the_environments_a_task_works_on_show_it(self):
+        import ast as _ast
+        nodes = [node for node in _ast.parse((APP / "app.py").read_text()).body
+                 if isinstance(node, _ast.FunctionDef) and node.name in ("terminal_targets", "terminal_scope")]
+        ns = {}
+        exec(compile(_ast.Module(body=nodes, type_ignores=[]), "targets", "exec"), ns)
+        targets = ns["terminal_targets"]
+        self.assertEqual(targets({"kind": "script", "script": "publish_prod.sh", "target": "staging"}), ["staging"])
+        self.assertEqual(targets({"kind": "script", "script": "publish_prod.sh"}), ["prod"])
+        self.assertEqual(targets({"kind": "sync_env", "source": "main", "destination": ["t2", "prod"]}), ["t2", "prod"])
+        self.assertEqual(targets({"kind": "sync_env", "source": "t1", "destination": "all"}), [])
+        self.assertEqual(targets({"kind": "publish_both", "environments_only": True}), [])
+        self.assertEqual(targets({"kind": "create_prod"}), ["(new)"])
+        source = (APP / "static/app.js").read_text()
+        self.assertIn("task.targets.includes(badge.dataset.target)", source)
+
     def test_layout_and_wording(self):
         page = (APP / "templates/index.html").read_text()
         layout = re.search(r'<div id="site-layout".*?</div>\s*<section id="site-targets"', page, re.S).group(0)
