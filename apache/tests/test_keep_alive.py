@@ -4,6 +4,7 @@ import io
 import os
 from pathlib import Path
 import tempfile
+import time
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -72,7 +73,7 @@ class KeepAliveTests(unittest.TestCase):
             (web / "old.test/scripts/publish_prod.sh").write_text("PROD_BINDING=old.test\n")
             self.assertEqual(sorted(helper.environment_urls(web)), [
                 ("dev.test/production", "https://live.test/"), ("dev.test/staging", "http://win.test/"),
-                ("old.test/scripts", "https://old.test/")])
+                ("old.test/prod", "https://old.test/")])
 
             class Opener:
                 def __init__(self):
@@ -88,8 +89,15 @@ class KeepAliveTests(unittest.TestCase):
                     return response
 
             opener = Opener()
-            self.assertFalse(helper.warm_environments(web, opener))
+            results = web / "state/environments.json"
+            self.assertFalse(helper.warm_environments(web, opener, results))
             self.assertEqual(len(opener.urls), 3, "One failure does not stop the others")
+            saved = helper.environment_states(results.parent)
+            self.assertEqual({name: value["state"] for name, value in saved.items()},
+                             {"dev.test/production": "active", "dev.test/staging": "failed", "old.test/prod": "active"})
+            self.assertEqual(saved["dev.test/staging"]["error"], "unreachable")
+            with patch.object(helper.time, "time", return_value=time.time() + 3600):
+                self.assertEqual(helper.environment_states(results.parent), {}, "An old answer is not shown")
 
     def test_interval_boundary_and_disable(self):
         config = self.root / "settings.json"

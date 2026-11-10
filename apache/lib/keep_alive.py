@@ -122,28 +122,57 @@ def environment_urls(web_root=Path("/var/www")):
             if settings.get("PROD_LOCAL_PATH") or not re.fullmatch(r"[A-Za-z0-9.-]{1,253}", binding):
                 continue
             scheme = "http" if settings.get("PROD_HTTPS") == "n" else "https"
-            urls.append((f"{site.name}/{script.parent.name}", f"{scheme}://{binding}/"))
+            # The environment's id: the older single environment in scripts/ is prod
+            target = "prod" if script.parent.name == "scripts" else script.parent.name
+            urls.append((f"{site.name}/{target}", f"{scheme}://{binding}/"))
     return urls
 
 
-def warm_environments(web_root=Path("/var/www"), opener=None):
-    """Request the public address of environments on other servers, Linux and Windows alike."""
+def warm_environments(web_root=Path("/var/www"), opener=None, results=None):
+    """Request the public address of environments on other servers, Linux and Windows alike.
+    How each one answered is saved in results, as site/id: {state, checked, error}, so the admin can show
+    whether an environment without SSH, on IIS, is running."""
     opener = opener or urllib.request.build_opener(NoRedirect())
     failures = []
+    answers = {}
     for name, url in environment_urls(web_root):
         request = urllib.request.Request(url, headers={"User-Agent": "VNS-KeepAlive", "Cache-Control": "no-cache"})
+        error = ""
         try:
             with opener.open(request, timeout=30) as response:
                 response.read(1)
         except urllib.error.HTTPError as exc:
             if exc.code not in (301, 302, 303, 307, 308, 401, 403):
-                print(f"Keep-alive failed for {name} ({url}): HTTP {exc.code}", file=sys.stderr)
-                failures.append(name)
+                error = f"HTTP {exc.code}"
             exc.close()
         except (OSError, urllib.error.URLError, ValueError) as exc:
-            print(f"Keep-alive failed for {name} ({url}): {exc}", file=sys.stderr)
+            error = str(getattr(exc, "reason", exc))
+        if error:
+            print(f"Keep-alive failed for {name} ({url}): {error}", file=sys.stderr)
             failures.append(name)
+        answers[name] = {"state": "failed" if error else "active", "checked": int(time.time()), "error": error}
+    if results is not None:
+        try:
+            results.parent.mkdir(parents=True, exist_ok=True)
+            descriptor, temporary = tempfile.mkstemp(dir=results.parent, prefix=".environments-")
+            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                json.dump(answers, stream, indent=2)
+            os.chmod(temporary, 0o644)
+            os.replace(temporary, results)
+        except OSError as exc:
+            print(f"Keep-alive could not save the environment states: {exc}", file=sys.stderr)
     return not failures
+
+
+def environment_states(state=STATE, max_age=1800):
+    """What keep-alive last saw of each environment on another server, while it is recent"""
+    try:
+        data = json.loads((state / "environments.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    now = time.time()
+    return {name: value for name, value in data.items() if isinstance(value, dict)
+            and isinstance(value.get("checked"), int) and 0 <= now - value["checked"] <= max_age}
 
 
 def run(config=CONFIG, state=STATE):
@@ -163,7 +192,7 @@ def run(config=CONFIG, state=STATE):
             return True
         previous.write_text(str(now), encoding="utf-8")
         local = warm_sites()
-        remote = warm_environments()
+        remote = warm_environments(results=state / "environments.json")
         return local and remote
 
 

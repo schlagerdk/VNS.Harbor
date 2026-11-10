@@ -365,6 +365,14 @@ const isTarget = (env) => env.key !== "main";
 const hasProd = (site) => site.environments.some(isTarget);
 const targetFields = (env) => (env && env.target && env.target !== "prod" ? { target: env.target } : {});
 const remoteRef = (site, env) => (env.target && env.target !== "prod" ? `${site.name}@${env.target}` : site.name);
+// What people recognise an environment by: its binding and the server it is on, not the internal site@id
+function remoteLabel(ref) {
+	const [name, target = "prod"] = ref.split("@");
+	const site = allSites.find((item) => item.name === name);
+	const env = site?.environments.find((item) => item.target === target);
+	if (!env) return ref;
+	return `${bindingLabel(env) || name} @ ${env.host || "?"}`;
+}
 
 // Environments are always listed as Development, Test, Staging, Production. Anything else comes last.
 const environmentOrder = ["development", "test", "staging", "production"];
@@ -1054,11 +1062,14 @@ function actionRow(group) {
 
 function envPanel(site, env) {
 	const missing = isMissingEnv(env);
-	const dot = env.unit ? env.state || "unknown" : "";
+	// IIS has no service to ask: keep-alive tells whether a Windows environment answered on its address
+	const known = env.unit || (env.mode === "windows" && env.state);
+	const dot = known ? env.state || "unknown" : "";
+	const answered = env.mode === "windows" && env.state ? `Keep-alive ${formatDate(env.state_checked * 1000)}: ${env.state === "active" ? "answered" : env.state_error || "no answer"}` : "";
 	const heading = el("div", { className: "env-head" },
 		siteActivity(site, isTarget(env) ? "prod" : "main"),
-		el("span", { className: "dot " + dot }),
-		el("span", { className: "badge " + (env.unit ? "state-" + (env.state || "unknown") : ""), textContent: env.unit ? env.state || "unknown" : env.mode === "windows" ? "windows" : env.mode === "remote" ? "remote" : "static" }));
+		el("span", { className: "dot " + dot, title: answered }),
+		el("span", { className: "badge " + (known ? "state-" + (env.state || "unknown") : ""), title: answered, textContent: known ? env.state || "unknown" : env.mode === "windows" ? "windows" : env.mode === "remote" ? "remote" : "static" }));
 	const environment = site.kind === "python" ? "Live" : env.environment;
 	if (environment) heading.append(el("span", { className: "badge env-" + environment.toLowerCase(), textContent: environment }));
 	heading.append(httpsLock(env.https));
@@ -2252,7 +2263,7 @@ async function openFiles(path, remoteSite = "", server = false) {
 	localFilesRoot = remoteSite || serverFiles ? "" : path.replace(/^\/var\/www\//, "").replace(/\/+$/, "");
 	$("#files-search").value = "";
 	await loadFiles(remoteSite || serverFiles ? path : "");
-	$("#files-title").textContent = remoteSite ? `${$("#files-title").dataset.windows ? "Windows" : "Remote"} files · ${remoteSite}` : serverFiles ? "Server files" : "Files";
+	$("#files-title").textContent = remoteSite ? `${$("#files-title").dataset.windows ? "Windows" : "Remote"} files · ${remoteLabel(remoteSite)}` : serverFiles ? "Server files" : "Files";
 	if (!filesDialog.open) filesDialog.showModal();
 	focusFilesPath();
 }

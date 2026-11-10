@@ -474,6 +474,15 @@ def sync_prod_binding(site, target, binding):
 WINDOWS_HTTPS = {}
 
 
+def keep_alive_states():
+    """How environments on other servers answered keep-alive, while the answer is recent: three runs, at least 30 minutes"""
+    try:
+        interval = _keep_alive_module.load()["interval_minutes"]
+    except (OSError, ValueError):
+        interval = 5
+    return _keep_alive_module.environment_states(max_age=max(1800, interval * 180))
+
+
 def windows_https(site, target, binding, saved):
     """Whether a Windows environment answers on HTTPS with a valid certificate. IIS has no SSH, so it is
     asked over the network, at most once a minute. A clear answer is saved in its publish_prod.sh, so the
@@ -722,7 +731,9 @@ def site_info(name, states):
         if prod.get("PROD_TARGET") == "windows":
             share = prod["PROD_WINDOWS_SHARE"]
             secure = windows_https(name, target, prod["PROD_BINDING"], prod["PROD_HTTPS"] != "n")
-            environments.append({**details, "key": key, "label": "Production", "mode": "windows", "unit": "", "state": "", "binding": prod["PROD_BINDING"],
+            answer = keep_alive_states().get(f"{name}/{target}", {})
+            environments.append({**details, "key": key, "label": "Production", "mode": "windows", "unit": "", "state": answer.get("state", ""),
+                                 "state_error": answer.get("error", ""), "state_checked": answer.get("checked"), "binding": prod["PROD_BINDING"],
                                  "port": "", "path": "", "host": share[2:].split("/", 1)[0], "user": prod["PROD_SMB_USER"], "folder": share,
                                  "environment": prod["PROD_ENVIRONMENT"] or "Unknown", "scheme": "https" if secure else "http", "https": secure})
         elif local:
