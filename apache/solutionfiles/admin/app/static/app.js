@@ -912,11 +912,11 @@ function renderSite(name) {
 	// The main site's Sync settings… and Sync data…, beside Publish all: they open the same dialog
 	const mainEnv = site.environments.find((env) => !isTarget(env));
 	if (mainEnv && site.kind === "umbraco" && !site.admin) {
-		if (syncDestinations(site, mainEnv).length) {
-			targetsActions.append(el("button", { textContent: "Sync settings…", title: "Sync settings from the main site", onclick: () => run(() => openSyncDialog(site, mainEnv)) }));
-		}
 		if (dataSyncDestinations(site, mainEnv).length) {
 			targetsActions.append(el("button", { textContent: "Sync data…", title: "Merge content and media from the main site into others", onclick: () => run(() => openSyncDialog(site, mainEnv, true)) }));
+		}
+		if (syncDestinations(site, mainEnv).length) {
+			targetsActions.append(el("button", { textContent: "Sync settings…", title: "Sync settings from the main site", onclick: () => run(() => openSyncDialog(site, mainEnv)) }));
 		}
 	}
 	const danger = $("#site-danger");
@@ -1189,7 +1189,9 @@ function envPanel(site, env) {
 	}
 	if (site.kind === "umbraco" && !missing && !site.admin) {
 		if (dataSyncDestinations(site, env).length) {
-			sync.append(el("button", { textContent: "Sync data…", className: "small", title: "Merge content and media from this site into another", onclick: () => run(() => openSyncDialog(site, env, true)) }));
+			// Sync data… always comes before Sync settings…
+			const dataButton = el("button", { textContent: "Sync data…", className: "small", title: "Merge content and media from this site into another", onclick: () => run(() => openSyncDialog(site, env, true)) });
+			sync.insertBefore(dataButton, [...sync.children].find((button) => button.textContent === "Sync settings…") || null);
 		}
 		// Setup first, at the left: the syncs it allows stand at the right
 		sync.prepend(el("button", { textContent: "Sync setup…", className: "small desktop-only", title: dataSyncSummary(env), onclick: () => run(() => openDataSyncDialog(site, env)) }));
