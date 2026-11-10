@@ -56,11 +56,47 @@ class KeepAliveTests(unittest.TestCase):
         self.assertIn("xn--5cab8c.test", [r.get_header("Host") for r in requests])
         self.assertTrue(all(r.get_header("X-forwarded-proto") == "https" for r in requests))
 
+    def test_environments_on_other_servers_are_requested_on_their_address(self):
+        import tempfile as _tempfile
+        with _tempfile.TemporaryDirectory() as directory:
+            web = Path(directory)
+            for site, target, text in (
+                    ("dev.test", "production", "PROD_BINDING='live.test'   # c\nPROD_HTTPS=y\n"),
+                    ("dev.test", "staging", "PROD_TARGET=windows\nPROD_BINDING='win.test'\nPROD_HTTPS=n\n"),
+                    ("dev.test", "local", "PROD_LOCAL_PATH='/var/www/x'\nPROD_BINDING='local.test'\n"),
+                    ("dev.test", "bad", "PROD_BINDING='$(rm -rf /)'\n")):
+                folder = web / site / "scripts/targets" / target
+                folder.mkdir(parents=True)
+                (folder / "publish_prod.sh").write_text(text)
+            (web / "old.test/scripts").mkdir(parents=True)
+            (web / "old.test/scripts/publish_prod.sh").write_text("PROD_BINDING=old.test\n")
+            self.assertEqual(sorted(helper.environment_urls(web)), [
+                ("dev.test/production", "https://live.test/"), ("dev.test/staging", "http://win.test/"),
+                ("old.test/scripts", "https://old.test/")])
+
+            class Opener:
+                def __init__(self):
+                    self.urls = []
+
+                def open(self, request, timeout):
+                    self.urls.append(request.full_url)
+                    if "win.test" in request.full_url:
+                        raise helper.urllib.error.URLError("unreachable")
+                    from unittest.mock import MagicMock
+                    response = MagicMock()
+                    response.__enter__.return_value = response
+                    return response
+
+            opener = Opener()
+            self.assertFalse(helper.warm_environments(web, opener))
+            self.assertEqual(len(opener.urls), 3, "One failure does not stop the others")
+
     def test_interval_boundary_and_disable(self):
         config = self.root / "settings.json"
         state = self.root / "state"
         helper.save({"enabled": True, "interval_minutes": 5}, config)
-        with patch.object(helper, "warm_sites", return_value=True) as warm, \
+        with patch.object(helper, "warm_environments", return_value=True), \
+                patch.object(helper, "warm_sites", return_value=True) as warm, \
                 patch.object(helper.time, "time", side_effect=[1000, 1299, 1300]):
             self.assertTrue(helper.run(config, state))
             self.assertTrue(helper.run(config, state))

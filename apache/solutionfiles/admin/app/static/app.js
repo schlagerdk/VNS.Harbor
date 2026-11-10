@@ -1,6 +1,8 @@
 "use strict";
 
 const csrf = document.querySelector("meta[name=csrf]").content;
+// The page the admin opens on after login: Sites, or SQL Server on a server that is mostly a SQL Server
+let startView = document.querySelector("meta[name=start-view]")?.content === "sql" ? "sql" : "sites";
 const $ = (selector) => document.querySelector(selector);
 
 let backgroundScrollPosition = null;
@@ -258,6 +260,10 @@ async function route() {
 		if (filesDialog.open) filesDialog.close();
 		showView("site");
 		renderSite(arg);
+	} else if (!view && startView === "sql") {
+		// The page opened after login, on a server where SQL Server is the main thing
+		history.replaceState(null, "", "#sql");
+		await route();
 	} else {
 		if (filesDialog.open) filesDialog.close();
 		showView("sites");
@@ -1132,6 +1138,14 @@ function envPanel(site, env) {
 		quick.append(el("button", { textContent: "Sync to…", className: "small", title: "Sync content from this environment", onclick: () => run(() => openSyncDialog(site, env)) }));
 	}
 	if (!isTarget(env) && site.scripts.some((file) => !hasScriptButton(site, file))) quick.append(scriptSelect(site));
+	if (env.mode === "windows") {
+		// web.config is the IIS site's config, appsettings.json its application settings
+		const tools = el("div", { className: "actions quick" });
+		for (const [label, filename] of [["Edit config", "web.config"], ["Edit appsettings.json", "appsettings.json"]]) {
+			tools.append(el("button", { textContent: label, className: "small desktop-only", onclick: () => run(() => editFile(filename, remoteRef(site, env))) }));
+		}
+		extraTools = tools;
+	}
 	if ((env.unit || env.mode === "remote" || env.apache) && !missing) {
 		const tools = el("div", { className: "actions quick" });
 		for (const [tool, label] of [["check_service", "Check service"], ["edit_service", "Edit service"], ["edit_conf", "Edit config"]]) {
@@ -2621,12 +2635,13 @@ async function refreshSql() {
 					actions.append(el("button", { textContent: label, onclick: () => run(() => sqlDatabaseAction(action, database)) }));
 				}
 			}
+			actions.prepend(el("button", { textContent: "Query", onclick: () => openSqlQuery(database) }));
 			$(database.id <= 4 ? "#sql-system-rows" : "#sql-databases").append(el("tr", {}, sqlCell("Name", { textContent: database.name }),
 				sqlCell("Size", { className: "num", textContent: formatSqlSize(database.size_mb) }), sqlCell("State", {
 					className: "sql-state-" + database.state.toLowerCase(),
 					textContent: database.state,
 				}),
-				sqlCell("Recovery", { textContent: database.recovery }), ...(database.id > 4 ? [sqlCell("Actions", {}, actions)] : [])));
+				sqlCell("Recovery", { textContent: database.recovery }), sqlCell("Actions", {}, actions)));
 		}
 		for (const [latest, ...older] of groupSqlBackups(data.backups)) {
 			$("#sql-backups").append(sqlBackupRow(latest));
@@ -2769,6 +2784,55 @@ function decorateSql() {
 }
 
 $("#settings-sql").onclick = () => go("#sql");
+const showStartView = () => { $("#settings-start-view").textContent = `Start page: ${startView === "sql" ? "SQL Server" : "Sites"}`; };
+showStartView();
+$("#settings-start-view").onclick = () => run(async () => {
+	const next = startView === "sql" ? "sites" : "sql";
+	await api("/api/preferences", { method: "PUT", json: { start_view: next } });
+	startView = next;
+	showStartView();
+	toast(`The admin now opens on ${next === "sql" ? "SQL Server" : "Sites"}`, "ok");
+});
+
+// Scripts typed here run as the connection's login, against the chosen database
+const sqlQueryDialog = $("#dlg-sql-query");
+function openSqlQuery(database) {
+	sqlQueryDialog.dataset.database = database.name;
+	sqlQueryDialog.dataset.connection = $("#sql-connection").value;
+	$("#sql-query-title").textContent = `Query ${database.name}`;
+	$("#sql-query-status").textContent = "";
+	if (!sqlQueryDialog.open) sqlQueryDialog.showModal();
+	$("#sql-query-text").focus();
+}
+async function runSqlQuery() {
+	const button = $("#sql-query-run");
+	if (button.disabled) return;
+	button.disabled = true;
+	$("#sql-query-status").textContent = "Running…";
+	try {
+		const response = await fetch(`/api/sql/${encodeURIComponent(sqlQueryDialog.dataset.connection)}/query`, {
+			method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
+			body: JSON.stringify({ database: sqlQueryDialog.dataset.database, query: $("#sql-query-text").value }),
+		});
+		const data = await response.json().catch(() => ({}));
+		const output = $("#sql-query-output");
+		output.classList.toggle("sql-query-error", !response.ok);
+		output.textContent = response.ok ? data.output || "(no rows)" : data.error || data.message || "The script failed.";
+		$("#sql-query-status").textContent = response.ok ? `Done in ${data.seconds} s` : "Failed";
+	} catch (error) {
+		$("#sql-query-status").textContent = error.message;
+	} finally {
+		button.disabled = false;
+	}
+}
+$("#sql-query-run").onclick = runSqlQuery;
+$("#sql-query-close").onclick = () => sqlQueryDialog.close();
+$("#sql-query-text").onkeydown = (event) => {
+	if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+		event.preventDefault();
+		runSqlQuery();
+	}
+};
 $("#sql-refresh").onclick = () => run(refreshSql);
 $("#sql-connection").onchange = () => run(refreshSql);
 $("#sql-create").onclick = () => run(async () => {

@@ -61,6 +61,11 @@ main { padding: 20px 24px; max-width: 1600px; margin: 0 auto; }
 #btn-empty-new-site, #btn-empty-add-environment { display: inline-flex; align-items: center; gap: 10px; padding: 13px 28px; font-size: 16px; border-radius: 10px; box-shadow: 0 4px 24px rgba(63, 185, 80, .2); }
 #btn-empty-new-site .ico, #btn-empty-add-environment .ico { width: 20px; height: 20px; }
 .hint { color: var(--muted); font-size: 12px; }
+.sql-query-dialog textarea { width: 100%; min-height: 180px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; resize: vertical; }
+.sql-query-dialog pre { max-height: 45vh; min-height: 80px; overflow: auto; margin: 12px 0 0; padding: 12px; background: rgba(0, 0, 0, .25); border: 1px solid var(--line); border-radius: 8px; font-size: 12px; white-space: pre; }
+.sql-query-dialog pre.sql-query-error { color: #f85149; white-space: pre-wrap; }
+.sql-query-dialog menu { align-items: center; }
+.sql-query-dialog #sql-query-status { margin-right: auto; }
 .sql-backup-history summary { cursor: pointer; color: var(--muted); padding: 6px 0; }
 .sql-backup-history table { margin-top: 8px; }
 .error { color: var(--red); }

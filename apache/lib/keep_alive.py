@@ -1,4 +1,4 @@
-"""Send periodic local HTTP requests to active dynamic sites."""
+"""Send periodic HTTP requests to active dynamic sites on this server, and to the sites' environments on other servers."""
 import argparse
 import fcntl
 import importlib.util
@@ -106,6 +106,46 @@ def warm_sites(web_root=Path("/var/www"), services=Path("/etc/systemd/system"),
     return not failures
 
 
+def environment_urls(web_root=Path("/var/www")):
+    """The public address of every environment on another server, from the sites' saved settings."""
+    urls = []
+    for site in sorted(web_root.iterdir()) if web_root.is_dir() else []:
+        if not site.is_dir() or site.is_symlink():
+            continue
+        for script in [site / "scripts/publish_prod.sh", *sorted(site.glob("scripts/targets/*/publish_prod.sh"))]:
+            try:
+                text = script.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            settings = {key: value.strip("'\"") for key, value in re.findall(r"(?m)^(PROD_[A-Z_]+)=(\S*)", text)}
+            binding = settings.get("PROD_BINDING", "")
+            if settings.get("PROD_LOCAL_PATH") or not re.fullmatch(r"[A-Za-z0-9.-]{1,253}", binding):
+                continue
+            scheme = "http" if settings.get("PROD_HTTPS") == "n" else "https"
+            urls.append((f"{site.name}/{script.parent.name}", f"{scheme}://{binding}/"))
+    return urls
+
+
+def warm_environments(web_root=Path("/var/www"), opener=None):
+    """Request the public address of environments on other servers, Linux and Windows alike."""
+    opener = opener or urllib.request.build_opener(NoRedirect())
+    failures = []
+    for name, url in environment_urls(web_root):
+        request = urllib.request.Request(url, headers={"User-Agent": "VNS-KeepAlive", "Cache-Control": "no-cache"})
+        try:
+            with opener.open(request, timeout=30) as response:
+                response.read(1)
+        except urllib.error.HTTPError as exc:
+            if exc.code not in (301, 302, 303, 307, 308, 401, 403):
+                print(f"Keep-alive failed for {name} ({url}): HTTP {exc.code}", file=sys.stderr)
+                failures.append(name)
+            exc.close()
+        except (OSError, urllib.error.URLError, ValueError) as exc:
+            print(f"Keep-alive failed for {name} ({url}): {exc}", file=sys.stderr)
+            failures.append(name)
+    return not failures
+
+
 def run(config=CONFIG, state=STATE):
     settings = load(config)
     if not settings["enabled"]:
@@ -122,7 +162,9 @@ def run(config=CONFIG, state=STATE):
         if 0 <= now - last < settings["interval_minutes"] * 60:
             return True
         previous.write_text(str(now), encoding="utf-8")
-        return warm_sites()
+        local = warm_sites()
+        remote = warm_environments()
+        return local and remote
 
 
 def install(config=CONFIG, cron=Path("/etc/cron.d/vns-keep-alive")):

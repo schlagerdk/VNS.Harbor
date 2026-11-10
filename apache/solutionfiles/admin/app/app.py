@@ -215,7 +215,20 @@ def logout():
 
 @app.route("/")
 def index():
-    return render_template("index.html", csrf=csrf_token(), admin_site=ADMIN_SITE, hostname=socket.gethostname(), user=session["user"])
+    return render_template("index.html", csrf=csrf_token(), admin_site=ADMIN_SITE, hostname=socket.gethostname(), user=session["user"],
+                           start_view=cfg.get("start_view", "sites"))
+
+
+@app.route("/api/preferences", methods=["PUT"])
+def api_preferences():
+    data = request.get_json(silent=True) or {}
+    start_view = data.get("start_view")
+    if start_view not in ("sites", "sql"):
+        return error("The start page must be sites or sql")
+    with CONFIG_LOCK:
+        cfg["start_view"] = start_view
+        save_config()
+    return jsonify(start_view=start_view)
 
 
 # ------------------------------------------------------------------ helpers
@@ -819,6 +832,22 @@ def api_sql_connections():
     except (OSError, ValueError) as exc:
         app.logger.error("SQL connection operation failed: %s", exc)
         return error(str(exc))
+
+
+@app.route("/api/sql/<connection_id>/query", methods=["POST"])
+def api_sql_query(connection_id):
+    data = request.get_json(silent=True) or {}
+    try:
+        with SQL_LOCK:
+            settings = _sql_module.connection(SQL_CONNECTIONS, connection_id)
+        started = time.time()
+        output = _sql_module.run_query(settings, data.get("database"), data.get("query"))
+        return jsonify(output=output, seconds=round(time.time() - started, 2))
+    except ValueError as exc:
+        return error(str(exc))
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        # SQL errors are shown in the dialog, as they are what the person needs to fix the script
+        return jsonify(error=str(exc)[-20000:]), 422
 
 
 @app.route("/api/sql/<connection_id>")
@@ -2138,11 +2167,40 @@ def managed_config(site, kind):
     return jsonify(response)
 
 
+WINDOWS_FILE_RE = re.compile(r"web\.config|appsettings(\.[A-Za-z0-9_-]+)?\.json")
+
+
+def windows_file(site, target, action, data):
+    """web.config and appsettings*.json of a Windows environment, read and saved over SMB."""
+    path = data.get("path", "")
+    if action not in ("read", "save") or not isinstance(path, str) or not WINDOWS_FILE_RE.fullmatch(path):
+        abort(400, "Only web.config and appsettings*.json can be edited on a Windows server")
+    content = data.get("content", "")
+    if action == "save" and not isinstance(content, str):
+        abort(400, "Expected the file content")
+    try:
+        result = subprocess.run(["/bin/bash", os.path.join(APACHE_DIR, "windows_file.sh"), site, action, path],
+                                input=content.encode("utf-8") if action == "save" else b"", capture_output=True, timeout=60,
+                                env={**os.environ, "VNS_TARGET": target})
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        app.logger.error("Windows file %s failed for %s: %s", action, site, exc)
+        abort(502, "Could not reach the Windows server")
+    if result.returncode:
+        abort(502, result.stderr.decode("utf-8", errors="replace").strip() or "The Windows server refused the request")
+    if action == "read":
+        return jsonify(path=path, content=result.stdout.decode("utf-8-sig", errors="replace"))
+    return jsonify(ok=True)
+
+
 @app.route("/api/remote-fs/<site>/<action>", methods=["GET", "POST"])
 def remote_fs(site, action):
     # The file manager addresses an environment as site@id
     site, _, target = site.partition("@")
     target = target or "prod"
+    if site in site_dirs() and TARGET_RE.match(target) and (parse_prod(os.path.join(WEB_ROOT, site), target) or {}).get("PROD_TARGET") == "windows":
+        if request.method == "GET":
+            return windows_file(site, target, action, {"path": request.args.get("path", "")})
+        return windows_file(site, target, action, request.get_json(silent=True) or {})
     remote_site(site, target)
     if action not in ("list", "read", "download", "save", "mkdir", "newfile", "rename", "delete", "upload"):
         abort(400, "Unknown file action")

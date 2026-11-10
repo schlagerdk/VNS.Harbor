@@ -7,6 +7,7 @@
 <meta name="csrf" content="{{ csrf }}">
 <meta name="admin-site" content="{{ admin_site }}">
 <meta name="server-hostname" content="{{ hostname }}">
+<meta name="start-view" content="{{ start_view }}">
 <title>{{ hostname }} · Server admin</title>
 <link rel="icon" href="/static/vns-logo.webp" type="image/webp">
 <link rel="stylesheet" href="/static/vendor/xterm.css">
@@ -40,6 +41,7 @@
         <button id="btn-server-shell" type="button">Server shell</button>
         <button id="btn-browse" type="button">Browse /</button>
         <button id="settings-sql" type="button">SQL Server</button>
+        <button id="settings-start-view" type="button"></button>
       </div>
       <div class="menu-group" role="group" aria-label="Apache">
         <div class="menu-group-title">Apache</div>
@@ -553,6 +555,14 @@
   </div>
   <div id="editor-box" hidden></div>
   <textarea id="editor-text" spellcheck="false"></textarea>
+</dialog>
+
+<dialog id="dlg-sql-query" class="wide sql-query-dialog" aria-labelledby="sql-query-title">
+  <h2 id="sql-query-title">Query</h2>
+  <textarea id="sql-query-text" spellcheck="false" placeholder="SELECT TOP 10 * FROM ..." aria-label="SQL script"></textarea>
+  <p class="hint">Runs as the connection's login against this database. Ctrl+Enter runs the script. There is no undo.</p>
+  <pre id="sql-query-output" aria-live="polite"></pre>
+  <menu><span id="sql-query-status" class="muted"></span><button type="button" id="sql-query-close">Close</button><button type="button" id="sql-query-run" class="primary">Run</button></menu>
 </dialog>
 
 <dialog id="dlg-logs" class="wide">

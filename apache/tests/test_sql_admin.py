@@ -46,6 +46,38 @@ class BackupAccessTests(unittest.TestCase):
         execute.assert_not_called()
 
 
+class SqlQueryTests(unittest.TestCase):
+    settings = {"host": "db.test", "port": 1433, "username": "sa", "password": "secret", "trust_certificate": True}
+
+    def test_script_runs_against_the_chosen_database_with_the_password_out_of_argv(self):
+        calls = []
+
+        def fake_run(args, **kwargs):
+            calls.append((args, kwargs))
+            return subprocess.CompletedProcess(args, 0, stdout="id|name\n1|x\n", stderr="")
+
+        with patch.object(sql, "sqlcmd_path", return_value="/opt/sqlcmd"), patch.object(sql.subprocess, "run", fake_run):
+            self.assertEqual(sql.run_query(self.settings, "Kunde DB", "SELECT 1"), "id|name\n1|x\n")
+        args, kwargs = calls[0]
+        self.assertEqual(args[args.index("-d") + 1], "Kunde DB")
+        self.assertNotIn("secret", " ".join(args))
+        self.assertEqual(kwargs["env"]["SQLCMDPASSWORD"], "secret")
+        self.assertEqual(kwargs["timeout"], 300)
+
+    def test_invalid_input_is_refused_before_sqlcmd_runs(self):
+        with patch.object(sql.subprocess, "run") as run:
+            for database, query in (("", "SELECT 1"), ("a\nb", "SELECT 1"), ("db", ""), ("db", "   "), ("db", "x" * (1024 * 1024 + 1))):
+                with self.subTest(database=database[:5], query=query[:5]), self.assertRaises(ValueError):
+                    sql.run_query(self.settings, database, query)
+            run.assert_not_called()
+
+    def test_errors_from_sql_server_are_raised_for_the_dialog(self):
+        failed = subprocess.CompletedProcess([], 1, stdout="", stderr="Msg 208, Invalid object name 'x'.")
+        with patch.object(sql, "sqlcmd_path", return_value="/opt/sqlcmd"), patch.object(sql.subprocess, "run", return_value=failed):
+            with self.assertRaisesRegex(RuntimeError, "Invalid object name"):
+                sql.run_query(self.settings, "db", "SELECT * FROM x")
+
+
 class SqlAdminTests(unittest.TestCase):
     def test_sqlcmd_detection_requires_executable_file_or_path_lookup(self):
         with patch.object(sql.Path, "is_file", return_value=True), \

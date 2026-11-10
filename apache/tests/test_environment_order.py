@@ -192,6 +192,24 @@ console.log(JSON.stringify([first, firstNone, none.hidden]));
         result = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True)
         self.assertEqual(json.loads(result.stdout), [[False, True, True], True, False])
 
+    def test_windows_environments_can_edit_their_settings_files(self):
+        source = (APP / "static/app.js").read_text()
+        self.assertIn('[["Edit config", "web.config"], ["Edit appsettings.json", "appsettings.json"]]', source)
+        app = (APP / "app.py").read_text()
+        self.assertEqual(app.count('@app.route("/api/remote-fs/<site>/<action>"'), 1)
+        self.assertLess(app.index("def windows_file("), app.index('@app.route("/api/remote-fs/<site>/<action>"'))
+        script = (APACHE / "windows_file.sh").read_text()
+        self.assertIn("^(web\\.config|appsettings(\\.[A-Za-z0-9_-]+)?\\.json)$", script)
+
+    def test_start_page_and_sql_query(self):
+        source = (APP / "static/app.js").read_text()
+        self.assertLess(source.index("let startView"), source.index("async function route()"))
+        self.assertIn('} else if (!view && startView === "sql") {', source)
+        self.assertIn('actions.prepend(el("button", { textContent: "Query", onclick: () => openSqlQuery(database) }));', source)
+        page = (APP / "templates/index.html").read_text()
+        self.assertIn('<meta name="start-view" content="{{ start_view }}">', page)
+        self.assertIn('id="dlg-sql-query"', page)
+
     def test_layout_and_wording(self):
         page = (APP / "templates/index.html").read_text()
         layout = re.search(r'<div id="site-layout".*?</div>\s*<section id="site-targets"', page, re.S).group(0)

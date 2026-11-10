@@ -154,7 +154,7 @@ def sqlcmd_path():
                  if path.is_file() and os.access(path, os.X_OK)), None) or shutil.which("sqlcmd")
 
 
-def execute(settings, query, table=False, timeout=3600):
+def execute(settings, query, table=False, timeout=3600, database="master"):
     tool = sqlcmd_path()
     if not tool:
         raise ValueError("sqlcmd is not installed on the admin server. Install the Microsoft SQL command-line tools.")
@@ -163,7 +163,7 @@ def execute(settings, query, table=False, timeout=3600):
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
             stream.write("SET NOCOUNT ON;\n" + query + "\n")
         args = [tool, "-S", f'tcp:{settings["host"]},{settings["port"]}', "-U", settings["username"],
-                "-d", "master", "-b", "-x", "-r", "0", "-l", "15", "-t", "0", "-w", "65535", "-f", "65001", "-i", filename]
+                "-d", database, "-b", "-x", "-r", "0", "-l", "15", "-t", "0", "-w", "65535", "-f", "65001", "-i", filename]
         args += ["-W", "-s", "|"] if table else ["-y", "0"]
         if settings["trust_certificate"]:
             args.append("-C")
@@ -176,6 +176,18 @@ def execute(settings, query, table=False, timeout=3600):
         return result.stdout
     finally:
         os.unlink(filename)
+
+
+def run_query(settings, database, query):
+    """A script typed in the admin, run against one database. Returns what sqlcmd prints."""
+    if not isinstance(database, str) or not database or len(database) > 128 or any(char in database for char in "\0\r\n"):
+        raise ValueError("Choose a database")
+    if not isinstance(query, str) or not query.strip() or len(query) > 1024 * 1024:
+        raise ValueError("Enter a script of at most 1 MB")
+    output = execute(settings, query, table=True, timeout=300, database=database)
+    if len(output) > 2 * 1024 * 1024:
+        output = output[:2 * 1024 * 1024] + "\n… output cut at 2 MB"
+    return output
 
 
 def query_json(settings, query, *, preamble=""):
