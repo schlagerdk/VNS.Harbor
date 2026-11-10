@@ -11,6 +11,7 @@ import importlib.util
 import json
 import os
 import socket
+import ssl
 import queue
 import re
 import secrets
@@ -470,6 +471,43 @@ def sync_prod_binding(site, target, binding):
         app.logger.warning("Could not save the binding of %s: %s", site, exc)
 
 
+WINDOWS_HTTPS = {}
+
+
+def windows_https(site, target, binding, saved):
+    """Whether a Windows environment answers on HTTPS with a valid certificate. IIS has no SSH, so it is
+    asked over the network, at most once a minute. A clear answer is saved in its publish_prod.sh, so the
+    next publish sets the HTTPS redirect and the URL to match. No answer keeps what is saved."""
+    key = (site, target)
+    cached = WINDOWS_HTTPS.get(key)
+    if cached and time.time() - cached[0] < 60:
+        return cached[1]
+    secure = saved
+    if re.fullmatch(r"[A-Za-z0-9.-]{1,253}", binding or ""):
+        try:
+            with socket.create_connection((binding, 443), timeout=3) as connection:
+                with ssl.create_default_context().wrap_socket(connection, server_hostname=binding):
+                    secure = True
+        except (ConnectionRefusedError, ssl.SSLError):
+            secure = False
+        except OSError:
+            pass
+    WINDOWS_HTTPS[key] = (time.time(), secure)
+    if secure != saved:
+        path = os.path.join(target_folder(os.path.join(WEB_ROOT, site), target), "publish_prod.sh")
+        try:
+            with open(path, encoding="utf-8") as stream:
+                text = stream.read()
+            updated = re.sub(r"^PROD_HTTPS=\S*", "PROD_HTTPS=" + ("y" if secure else "n"), text, count=1, flags=re.M)
+            if updated != text:
+                with open(path, "w", encoding="utf-8") as stream:
+                    stream.write(updated)
+                app.logger.info("%s %s now answers on %s", site, target, "HTTPS" if secure else "HTTP")
+        except OSError as exc:
+            app.logger.warning("Could not save HTTPS of %s %s: %s", site, target, exc)
+    return secure
+
+
 def remote_status(site, target="prod"):
     key = remote_key(site, target)
     cached = REMOTE_STATUS.get(key)
@@ -683,7 +721,7 @@ def site_info(name, states):
         local = prod["PROD_LOCAL_PATH"]
         if prod.get("PROD_TARGET") == "windows":
             share = prod["PROD_WINDOWS_SHARE"]
-            secure = prod["PROD_HTTPS"] != "n"
+            secure = windows_https(name, target, prod["PROD_BINDING"], prod["PROD_HTTPS"] != "n")
             environments.append({**details, "key": key, "label": "Production", "mode": "windows", "unit": "", "state": "", "binding": prod["PROD_BINDING"],
                                  "port": "", "path": "", "host": share[2:].split("/", 1)[0], "user": prod["PROD_SMB_USER"], "folder": share,
                                  "environment": prod["PROD_ENVIRONMENT"] or "Unknown", "scheme": "https" if secure else "http", "https": secure})
