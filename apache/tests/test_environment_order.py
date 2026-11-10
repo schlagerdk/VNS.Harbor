@@ -197,7 +197,10 @@ console.log(JSON.stringify([first, firstNone, none.hidden]));
         self.assertIn('[["Edit web.config", "web.config"], ["Edit appsettings.json", "appsettings.json"]]', source)
         app = (APP / "app.py").read_text()
         self.assertEqual(app.count('@app.route("/api/remote-fs/<site>/<action>"'), 1)
-        self.assertLess(app.index("def windows_file("), app.index('@app.route("/api/remote-fs/<site>/<action>"'))
+        self.assertLess(app.index("def windows_files("), app.index('@app.route("/api/remote-fs/<site>/<action>"'))
+        self.assertIn('response = windows_files(site, target, data)', app)
+        self.assertIn('add("Files", () => openFiles("", remoteRef(site, env)), "desktop-only");', source)
+        # data_sync.sh still reads and saves appsettings.json with the narrow helper
         script = (APACHE / "windows_file.sh").read_text()
         self.assertIn("^(web\\.config|appsettings(\\.[A-Za-z0-9_-]+)?\\.json)$", script)
 

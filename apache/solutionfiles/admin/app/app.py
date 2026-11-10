@@ -2293,29 +2293,24 @@ def managed_config(site, kind):
     return jsonify(response)
 
 
-WINDOWS_FILE_RE = re.compile(r"web\.config|appsettings(\.[A-Za-z0-9_-]+)?\.json")
-
-
-def windows_file(site, target, action, data):
-    """web.config and appsettings*.json of a Windows environment, read and saved over SMB."""
-    path = data.get("path", "")
-    if action not in ("read", "save") or not isinstance(path, str) or not WINDOWS_FILE_RE.fullmatch(path):
-        abort(400, "Only web.config and appsettings*.json can be edited on a Windows server")
-    content = data.get("content", "")
-    if action == "save" and not isinstance(content, str):
-        abort(400, "Expected the file content")
+def windows_files(site, target, data):
+    """A file operation on an environment on a Windows server, over SMB, answered like a remote Linux one"""
     try:
-        result = subprocess.run(["/bin/bash", os.path.join(APACHE_DIR, "windows_file.sh"), site, action, path],
-                                input=content.encode("utf-8") if action == "save" else b"", capture_output=True, timeout=60,
+        result = subprocess.run(["/bin/bash", os.path.join(APACHE_DIR, "windows_files.sh"), site],
+                                input=json.dumps(data).encode("utf-8"), capture_output=True, timeout=150,
                                 env={**os.environ, "VNS_TARGET": target})
     except (OSError, subprocess.TimeoutExpired) as exc:
-        app.logger.error("Windows file %s failed for %s: %s", action, site, exc)
+        app.logger.error("Windows file %s failed for %s: %s", data.get("action"), site, exc)
         abort(502, "Could not reach the Windows server")
-    if result.returncode:
-        abort(502, result.stderr.decode("utf-8", errors="replace").strip() or "The Windows server refused the request")
-    if action == "read":
-        return jsonify(path=path, content=result.stdout.decode("utf-8-sig", errors="replace"))
-    return jsonify(ok=True)
+    try:
+        response = json.loads(result.stdout)
+    except ValueError:
+        response = {"error": result.stderr.decode("utf-8", errors="replace").strip() or "Invalid response from the Windows server"}
+    if result.returncode or not isinstance(response, dict) or "error" in response:
+        message = response.get("error") if isinstance(response, dict) else None
+        app.logger.error("Windows file %s failed for %s: %s", data.get("action"), site, message)
+        abort(502, message or "The Windows server refused the request")
+    return response
 
 
 @app.route("/api/remote-fs/<site>/<action>", methods=["GET", "POST"])
@@ -2323,11 +2318,9 @@ def remote_fs(site, action):
     # The file manager addresses an environment as site@id
     site, _, target = site.partition("@")
     target = target or "prod"
-    if site in site_dirs() and TARGET_RE.match(target) and (parse_prod(os.path.join(WEB_ROOT, site), target) or {}).get("PROD_TARGET") == "windows":
-        if request.method == "GET":
-            return windows_file(site, target, action, {"path": request.args.get("path", "")})
-        return windows_file(site, target, action, request.get_json(silent=True) or {})
-    remote_site(site, target)
+    windows = site in site_dirs() and TARGET_RE.match(target) and (parse_prod(os.path.join(WEB_ROOT, site), target) or {}).get("PROD_TARGET") == "windows"
+    if not windows:
+        remote_site(site, target)
     if action not in ("list", "read", "download", "save", "mkdir", "newfile", "rename", "delete", "upload"):
         abort(400, "Unknown file action")
     if request.method == "GET":
@@ -2343,12 +2336,15 @@ def remote_fs(site, action):
     if not isinstance(data, dict):
         abort(400, "Expected a file operation object")
     data["action"] = action
-    result = remote_command(site, "files", timeout=120, target=target, input=json.dumps(data).encode("utf-8"))
-    try:
-        response = json.loads(result.stdout)
-    except ValueError:
-        app.logger.error("Invalid remote file response for %s", site)
-        abort(502, "Invalid remote file response")
+    if windows:
+        response = windows_files(site, target, data)
+    else:
+        result = remote_command(site, "files", timeout=120, target=target, input=json.dumps(data).encode("utf-8"))
+        try:
+            response = json.loads(result.stdout)
+        except ValueError:
+            app.logger.error("Invalid remote file response for %s", site)
+            abort(502, "Invalid remote file response")
     if action == "download":
         return send_file(io.BytesIO(base64.b64decode(response["content"])), as_attachment=True,
                          download_name=os.path.basename(data["path"]))

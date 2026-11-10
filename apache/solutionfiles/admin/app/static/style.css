@@ -704,3 +704,4 @@ dialog.newsite .data-sync-options ~ .hint { margin-top: 22px; }
 dialog.newsite .sync-select-all { margin-left: auto; padding: 0; border: 0; background: transparent; color: var(--blue); font-size: 12px; font-weight: 500; letter-spacing: 0; text-transform: none; cursor: pointer; }
 dialog.newsite .sync-select-all:hover { background: transparent; text-decoration: underline; }
 .sync-choice:has(input:checked)::after { content: "\2713"; position: absolute; top: 10px; right: 12px; color: var(--env-tone); font-weight: 700; }
+#files.files-windows th:nth-child(4), #files.files-windows td:nth-child(4), #files.files-windows th:nth-child(5), #files.files-windows td:nth-child(5) { display: none; }

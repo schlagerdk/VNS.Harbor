@@ -1119,6 +1119,9 @@ function envPanel(site, env) {
 	}
 	if (missing) {
 		// Only Publish and Delete site are offered: there is nothing on the server to work with
+	} else if (env.mode === "windows") {
+		// No shell on IIS, but its files can be browsed and edited over SMB
+		add("Files", () => openFiles("", remoteRef(site, env)), "desktop-only");
 	} else if (env.mode === "remote") {
 		add("Shell", () => openTask({ kind: "remote_tool", site: site.name, tool: "shell", ...targetFields(env) }), "desktop-only");
 		add("Files", () => openFiles("", remoteRef(site, env)), "desktop-only");
@@ -2188,6 +2191,9 @@ async function loadFiles(path, suffix = "") {
 	const data = await api(fsUrl("list") + "?path=" + encodeURIComponent(path));
 	if (generation !== filesLoadGeneration) return;
 	currentPath = data.path;
+	// Windows has no owner or rights to show
+	$("#files").classList.toggle("files-windows", !!data.windows);
+	$("#files-title").dataset.windows = data.windows ? "1" : "";
 	$("#files-search").value = filesPathPrefix() + (currentPath ? currentPath + "/" : "") + suffix;
 	listedFiles = data.items;
 	renderFiles();
@@ -2246,7 +2252,7 @@ async function openFiles(path, remoteSite = "", server = false) {
 	localFilesRoot = remoteSite || serverFiles ? "" : path.replace(/^\/var\/www\//, "").replace(/\/+$/, "");
 	$("#files-search").value = "";
 	await loadFiles(remoteSite || serverFiles ? path : "");
-	$("#files-title").textContent = remoteSite ? "Remote files · " + remoteSite : serverFiles ? "Server files" : "Files";
+	$("#files-title").textContent = remoteSite ? `${$("#files-title").dataset.windows ? "Windows" : "Remote"} files · ${remoteSite}` : serverFiles ? "Server files" : "Files";
 	if (!filesDialog.open) filesDialog.showModal();
 	focusFilesPath();
 }
