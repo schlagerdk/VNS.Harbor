@@ -437,6 +437,7 @@ install_apache_config() {
 			/<VirtualHost \*:443>/ { active=1; sub(":443", ":80") }
 			active && !/^[[:space:]]*SSL/ {
 				if (/^[[:space:]]*ProxyPass \/.well-known\/acme-challenge\/ !/) next
+				if (/Strict-Transport-Security/) next
 				gsub("X-Forwarded-Proto \"https\"", "X-Forwarded-Proto \"http\"")
 				gsub("-443-error.log", "-80-error.log")
 				print

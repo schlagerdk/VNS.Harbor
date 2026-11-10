@@ -2,8 +2,10 @@
 # Create the admin site: a web page to manage every site in /var/www.
 # It can create, delete and change the binding of sites (the scripts in /vns/apache), run each site's scripts,
 # open a shell in a site, and browse/edit/upload/download files.
-# Usage: install_admin_site.sh [folder] [binding] [username]
+# Usage: install_admin_site.sh [folder] [binding] [username] [https: y/n]
 # The site runs as root. Use a long password and, if you can, restrict it to your own IP addresses.
+# Without HTTPS the binding may be a name without a dot, like a server's own name on the local network,
+# and the login is sent unencrypted: use it only on a network you trust, restricted to your IP addresses.
 set -euo pipefail
 cd "$(dirname "$0")"
 if [[ ! -f /var/lib/vns/apache-initialized ]]; then
@@ -21,6 +23,7 @@ set -o errtrace
 _site=${1:-}
 _binding=${2:-}
 _adminUser=${3:-}
+_createCertificate=${4:-}
 
 ask _site "Enter admin site folder name"
 _site=$(normalize_dns_name "${_site}")
@@ -31,8 +34,23 @@ if [[ -z ${_binding} && ${_site} == *.* ]]; then
 else
 	ask _binding "Enter admin site URL binding"
 fi
-_binding=$(normalize_dns_name "${_binding}" binding)
-validate_binding "${_binding}"
+# A certificate needs a public name with a dot. A name without one can only be served on HTTP.
+if [[ ${_binding} != *.* && -z ${_createCertificate} ]]; then
+	echo "${_binding} has no dot, so it cannot get a certificate: the admin site will use HTTP."
+	_createCertificate=n
+fi
+ask _createCertificate "Use HTTPS with a Let's Encrypt certificate? (y/n)" y
+case "${_createCertificate,,}" in
+	y | yes) _createCertificate=y ;;
+	n | no) _createCertificate=n ;;
+	*) echo "Answer y or n." >&2; exit 1 ;;
+esac
+if [[ ${_createCertificate} == y ]]; then
+	_binding=$(normalize_dns_name "${_binding}" binding)
+	validate_binding "${_binding}"
+else
+	_binding=$(normalize_dns_name "${_binding}" name)
+fi
 _binding=${_binding,,}
 
 ask _adminUser "Admin username" admin
@@ -55,6 +73,9 @@ if ((${#_adminPassword} < 12)); then
 fi
 
 echo "The admin site gives root access to this server. Restricting it to your own IP addresses is strongly recommended."
+if [[ ${_createCertificate} == n ]]; then
+	echo "Without HTTPS the password and everything you do are sent unencrypted. Restrict it to addresses on a network you trust."
+fi
 read -r -p "Allowed IP addresses or CIDR ranges, separated by spaces (empty = everyone): " _allowedIps
 _accessRules="Require all granted"
 if [[ -n ${_allowedIps// /} ]]; then
@@ -76,8 +97,11 @@ fi
 _docRoot="${_siteRoot}/wwwroot"
 allocate_ports
 sudo mkdir -p "${_siteRoot}/app/static/vendor" "${_docRoot}"
-sudo a2enmod ssl proxy proxy_http proxy_wstunnel rewrite headers >/dev/null
-issue_certificate
+sudo a2enmod proxy proxy_http proxy_wstunnel rewrite headers >/dev/null
+if [[ ${_createCertificate} == y ]]; then
+	sudo a2enmod ssl >/dev/null
+	issue_certificate
+fi
 
 echo "Copy the admin app"
 sudo cp -R "${_solutionFolder}/admin/app/." "${_siteRoot}/app/"
@@ -90,7 +114,8 @@ sudo "${_siteRoot}/venv/bin/pip" install --quiet -r "${_siteRoot}/app/requiremen
 
 echo "Create login"
 sudo env VNS_ADMIN_PASSWORD="${_adminPassword}" "${_siteRoot}/venv/bin/python" "${_siteRoot}/app/manage.py" init \
-	--user "${_adminUser}" --admin-site "${_site}" --web-root "${_rootPath}" --apache-dir "${_apacheDir}"
+	--user "${_adminUser}" --admin-site "${_site}" --web-root "${_rootPath}" --apache-dir "${_apacheDir}" \
+	$([[ ${_createCertificate} == y ]] || echo --insecure-cookies)
 unset _adminPassword _repeat
 sudo chown -R root:root "${_siteRoot}/app" "${_siteRoot}/venv"
 sudo chmod 700 "${_siteRoot}/app"
@@ -103,5 +128,7 @@ install_apache_config "${_solutionFolder}/admin/apache.conf.tpl"
 install_service "${_solutionFolder}/admin/service.tpl"
 release_port_reservation
 
-echo "Admin site created: https://${_binding}/ (user: ${_adminUser}, folder: ${_site})"
+_scheme=http
+[[ ${_createCertificate} == n ]] || _scheme=https
+echo "Admin site created: ${_scheme}://${_binding}/ (user: ${_adminUser}, folder: ${_site})"
 echo "Change the password later with ${_siteRoot}/scripts/set_password.sh"

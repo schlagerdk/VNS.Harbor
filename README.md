@@ -234,7 +234,7 @@ Fetches the latest version from GitHub and synchronizes it to `/vns`. Local file
 
 ### Admin site
 
-`apache/install_admin_site.sh` creates a Flask website (served by gunicorn behind Apache with a certificate) for managing every site in `/var/www`. It asks for folder name, binding, username, password (min. 12 characters) and an optional IP/CIDR allowlist (empty = everyone).
+`apache/install_admin_site.sh` creates a Flask website (served by gunicorn behind Apache) for managing every site in `/var/www`. It asks for folder name, binding, whether to use HTTPS with a Let's Encrypt certificate, username, password (min. 12 characters) and an optional IP/CIDR allowlist (empty = everyone). Without HTTPS the binding may be a name without a dot, such as the server's own name on the local network, Apache serves the admin on port 80, and the login cookie is allowed over HTTP. The password is then sent unencrypted, so use it only on a network you trust and restrict it to your IP addresses. A binding without a dot always uses HTTP, as it cannot get a certificate.
 
 Run `apache/init.sh` successfully first. It records completion in `/var/lib/vns/apache-initialized` before offering admin installation. The standalone admin installer refuses to continue without this marker, before prompting or changing the server. Servers initialized before this check was introduced must rerun `apache/init.sh`.
 
