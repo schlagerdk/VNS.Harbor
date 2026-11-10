@@ -1898,8 +1898,9 @@ function openSyncDialog(site, source, data = false) {
 		el("span", { className: "tc-title", textContent: title }),
 		el("span", { className: "tc-sub", textContent: sub }),
 		...(chips.length ? [el("span", { className: "sync-chips" }, ...chips.map((chip) => el("span", { className: "sync-chip", textContent: chip })))] : []));
-	const cards = destinations.map((env) => card(isTarget(env) ? env.target : "main", environmentLabel(site, env),
-		bindingLabel(env) || env.host || env.target, environmentLabel(site, env).toLowerCase(), data ? dataSyncKinds(source, env) : []));
+	// The site's name first, its environment below in the environment's colour
+	const cards = destinations.map((env) => card(isTarget(env) ? env.target : "main", bindingLabel(env) || env.host || env.target,
+		environmentLabel(site, env), environmentLabel(site, env).toLowerCase(), data ? dataSyncKinds(source, env) : []));
 	$("#sync-destination").replaceChildren(...cards);
 	cards[0].querySelector("input").checked = true;
 	$("#sync-select-all").hidden = cards.length < 2;

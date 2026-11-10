@@ -710,3 +710,7 @@ dialog.newsite .sync-select-all:hover { background: transparent; text-decoration
 #dlg-data-sync .ns-section + .data-sync-main { margin-top: 0; }
 #dlg-data-sync .data-sync-settings + .ns-section { margin-top: 22px; }
 @media (max-width: 560px) { .data-sync-settings { grid-template-columns: 1fr; } }
+/* A destination card names the site, with its environment below in the environment's colour */
+.sync-choice .tc-title { color: var(--text); overflow-wrap: anywhere; }
+.sync-choice .tc-sub { color: var(--env-tone); font-weight: 600; font-size: 12px; }
+.sync-from-site { color: var(--text); font-weight: 600; }
