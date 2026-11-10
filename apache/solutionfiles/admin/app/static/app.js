@@ -450,7 +450,7 @@ const iconPaths = {
 // label (exact, or a prefix ending in "*") -> [icon, tone]
 const buttonStyles = {
 	"Shell": ["terminal", "blue"], "Server shell": ["terminal", "blue"], "New file": ["file", "blue"], "New folder": ["folder", "blue"], "Upload": ["upload", "blue"], "Browse /": ["folder", "blue"], "Files": ["folder", "blue"], "Manage": ["manage", "blue"],
-	"Publish": ["upload", "green"], "Publish all": ["upload", "green"], "Sync to*": ["sync", "blue"], "Sync to…": ["sync", "blue"], "Sync to all": ["sync", "blue"], "Start": ["play", "green"],
+	"Publish": ["upload", "green"], "Publish all": ["upload", "green"], "Sync settings…": ["sync", "blue"], "Sync settings to all": ["sync", "blue"], "Start": ["play", "green"],
 	"Check for updates": ["download", "amber"],
 	"Add package": ["download", "green"], "Remove package": ["trash", "red"],
 	"Add": ["download", "green"], "Remove": ["trash", "red"], "Check": ["download", "amber"],
@@ -463,7 +463,7 @@ const buttonStyles = {
 	"SQL Server": ["server", "purple"], "Web server": ["globe", "blue"], "Start page…": ["sliders", "purple"], "Site keep-alive": ["activity", "green"],
 	"Admin app log": ["file", "gray"], "Apache error logs": ["file", "teal"],
 	"Copy site": ["file", "blue"],
-	"Issue certificate": ["shield", "teal"], "Change environment": ["sliders", "purple"], "Data sync…": ["sliders", "teal"], "Sync data…": ["sync", "green"], "Change bindings": ["globe", "blue"],
+	"Issue certificate": ["shield", "teal"], "Change environment": ["sliders", "purple"], "Data sync setup…": ["sliders", "teal"], "Sync data…": ["sync", "green"], "Change bindings": ["globe", "blue"],
 	"Check service": ["activity", "teal"], "Test Apache config": ["activity", "teal"], "Admin site": ["manage", "gray"],
 	"Edit service": ["pencil", "amber"], "Edit config": ["pencil", "amber"], "Edit appsettings.json": ["pencil", "amber"], "Delete*": ["trash", "red"],
 };
@@ -485,7 +485,7 @@ for (const icon of document.querySelectorAll("[data-header-icon]")) {
 function decorate(root) {
 	for (const button of root.querySelectorAll("button:not([data-tone])")) {
 		const label = button.textContent.trim();
-		const style = buttonStyles[label] || (label.startsWith("Delete") ? buttonStyles["Delete*"] : label.startsWith("Sync to ") ? buttonStyles["Sync to*"] : null);
+		const style = buttonStyles[label] || (label.startsWith("Delete") ? buttonStyles["Delete*"] : null);
 		if (!style) continue;
 		button.dataset.tone = style[1];
 		button.prepend(svgIcon(style[0]));
@@ -891,9 +891,9 @@ function renderSite(name) {
 	}
 	const syncTargets = site.environments.filter((env) => isTarget(env) && !isMissingEnv(env) && (env.scripts || []).includes("sync_prod.sh"));
 	if (syncTargets.length) {
-		targetsActions.append(el("button", { textContent: "Sync to all", title: "Sync settings from the main site to every environment", onclick: () => run(async () => {
+		targetsActions.append(el("button", { textContent: "Sync settings to all", title: "Sync settings from the main site to every environment", onclick: () => run(async () => {
 			const names = syncTargets.map((env) => `${env.environment || env.target}: ${bindingLabel(env) || env.host || ""}`).join("\n");
-			if (await ask({ title: "Sync to all?", message: `Sync settings from the main site to:\n${names}\n\nContent and media are not touched.`, input: false, ok: "Sync to all" })) await openTask({ kind: "sync_env", site: site.name, source: "main", destination: "all" });
+			if (await ask({ title: "Sync settings to all?", message: `Sync settings from the main site to:\n${names}\n\nContent and media are not touched.`, input: false, ok: "Sync settings" })) await openTask({ kind: "sync_env", site: site.name, source: "main", destination: "all" });
 		}) }));
 	}
 	const danger = $("#site-danger");
@@ -1036,6 +1036,13 @@ function quickActions(env) {
 	];
 }
 
+// A row of an environment card's buttons, named by its group at the left
+function actionRow(group) {
+	const row = el("div", { className: "actions quick" });
+	row.dataset.group = group;
+	return row;
+}
+
 function envPanel(site, env) {
 	const missing = isMissingEnv(env);
 	const dot = env.unit ? env.state || "unknown" : "";
@@ -1090,6 +1097,7 @@ function envPanel(site, env) {
 	}
 
 	const actions = el("div", { className: "actions" });
+	actions.dataset.group = "Site";
 	const add = (label, handler, className) => actions.append(el("button", { textContent: label, className: "small " + (className || ""), onclick: () => run(handler) }));
 	if ((env.unit || env.mode === "remote") && !missing) {
 		if (env.unit !== site.name || !site.admin) add(env.state === "active" ? "Stop" : "Start", () => serviceAction(site, env, env.state === "active" ? "stop" : "start"));
@@ -1106,8 +1114,10 @@ function envPanel(site, env) {
 		add("Files", () => openFiles(env.path), "desktop-only");
 	}
 
-	const quick = el("div", { className: "actions quick" });
-	const settings = el("div", { className: "actions quick" });
+	// Each row is one kind of task, named at its left
+	const quick = actionRow("Deploy");
+	const sync = actionRow("Sync");
+	const settings = actionRow("Setup");
 	settings.setAttribute("role", "group");
 	settings.setAttribute("aria-label", "Environment settings");
 	if (!site.admin && env.mode !== "windows" && !missing) {
@@ -1141,25 +1151,25 @@ function envPanel(site, env) {
 	}
 	// The main site's only destination already has its button at the top of the page
 	if (!missing && syncDestinations(site, env).length > (isTarget(env) ? 0 : 1)) {
-		quick.append(el("button", { textContent: "Sync to…", className: "small", title: "Sync settings from this site", onclick: () => run(() => openSyncDialog(site, env)) }));
+		sync.append(el("button", { textContent: "Sync settings…", className: "small", title: "Sync uSync settings, Views, css and scripts from this site", onclick: () => run(() => openSyncDialog(site, env)) }));
 	}
 	if (site.kind === "umbraco" && !missing && !site.admin) {
 		if (dataSyncDestinations(site, env).length) {
-			quick.append(el("button", { textContent: "Sync data…", className: "small", title: "Merge content and media from this site into another", onclick: () => run(() => openSyncDialog(site, env, true)) }));
+			sync.append(el("button", { textContent: "Sync data…", className: "small", title: "Merge content and media from this site into another", onclick: () => run(() => openSyncDialog(site, env, true)) }));
 		}
-		settings.append(el("button", { textContent: "Data sync…", className: "small desktop-only", title: dataSyncSummary(env), onclick: () => run(() => openDataSyncDialog(site, env)) }));
+		sync.append(el("button", { textContent: "Data sync setup…", className: "small desktop-only", title: dataSyncSummary(env), onclick: () => run(() => openDataSyncDialog(site, env)) }));
 	}
 	if (!isTarget(env) && site.scripts.some((file) => !hasScriptButton(site, file))) quick.append(scriptSelect(site));
 	if (env.mode === "windows") {
 		// web.config is the IIS site's config, appsettings.json its application settings
-		const tools = el("div", { className: "actions quick" });
+		const tools = actionRow("Config");
 		for (const [label, filename] of [["Edit config", "web.config"], ["Edit appsettings.json", "appsettings.json"]]) {
 			tools.append(el("button", { textContent: label, className: "small desktop-only", onclick: () => run(() => editFile(filename, remoteRef(site, env))) }));
 		}
 		extraTools = tools;
 	}
 	if ((env.unit || env.mode === "remote" || env.apache) && !missing) {
-		const tools = el("div", { className: "actions quick" });
+		const tools = actionRow("Config");
 		for (const [tool, label] of [["check_service", "Check service"], ["edit_service", "Edit service"], ["edit_conf", "Edit config"]]) {
 			if (tool !== "edit_conf" && !env.unit && env.mode !== "remote") continue;
 			tools.append(el("button", { textContent: label, className: "small" + (tool === "check_service" ? "" : " desktop-only"), onclick: () => run(() => tool === "check_service"
@@ -1188,6 +1198,7 @@ function envPanel(site, env) {
 	else if (env.exists === false) panel.append(el("p", { className: "muted", textContent: "Nothing published here yet." }));
 	if (env.remote_error) panel.append(el("p", { className: "package-error", textContent: "Remote status unavailable: " + env.remote_error }));
 	if (quick.children.length) panel.append(quick);
+	if (sync.children.length) panel.append(sync);
 	if (settings.children.length) panel.append(settings);
 	if (extraTools) panel.append(extraTools);
 	if (actions.children.length) panel.append(actions);
@@ -1834,14 +1845,22 @@ function openSyncDialog(site, source, data = false) {
 	$("#sync-submit").textContent = data ? "Sync data" : "Sync";
 	$("#sync-hint-settings").hidden = data;
 	$("#sync-hint-data").hidden = !data;
-	$("#sync-source").textContent = `From ${environmentLabel(site, source)}: ${bindingLabel(source) || siteLabel(site)}`;
+	$("#sync-source").textContent = data ? "Content and media are merged into the destination" : "uSync settings, Views, css and scripts";
+	$("#sync-from-env").textContent = environmentLabel(site, source);
+	$("#sync-from-env").className = "sync-env-name env-" + environmentLabel(site, source).toLowerCase();
+	$("#sync-from-binding").textContent = bindingLabel(source) || siteLabel(site);
 	const destinations = data ? dataSyncDestinations(site, source) : syncDestinations(site, source);
-	const options = destinations.map((env) => el("option", {
-		value: isTarget(env) ? env.target : "main",
-		textContent: `${environmentLabel(site, env)}: ${bindingLabel(env) || env.host || env.target}${data ? ` (${dataSyncKinds(source, env).join(" and ")})` : ""}`,
-	}));
-	if (!data && destinations.length > 1) options.push(el("option", { value: "all", textContent: "All other environments" }));
-	$("#sync-destination").replaceChildren(...options);
+	// One card per destination, in the colour of its environment
+	const card = (value, title, sub, tone, chips = []) => el("label", { className: `type-card environment-option sync-choice env-${tone}` },
+		el("input", { type: "radio", name: "destination", value, required: true }),
+		el("span", { className: "tc-title", textContent: title }),
+		el("span", { className: "tc-sub", textContent: sub }),
+		...(chips.length ? [el("span", { className: "sync-chips" }, ...chips.map((chip) => el("span", { className: "sync-chip", textContent: chip })))] : []));
+	const cards = destinations.map((env) => card(isTarget(env) ? env.target : "main", environmentLabel(site, env),
+		bindingLabel(env) || env.host || env.target, environmentLabel(site, env).toLowerCase(), data ? dataSyncKinds(source, env) : []));
+	if (!data && destinations.length > 1) cards.push(card("all", "All other environments", `${destinations.length} environments, one at a time`, "all"));
+	$("#sync-destination").replaceChildren(...cards);
+	cards[0].querySelector("input").checked = true;
 	syncDialog.showModal();
 }
 $("#sync-cancel").onclick = () => syncDialog.close();
@@ -2716,12 +2735,17 @@ async function refreshSql() {
 			const toggle = el("button", { type: "button", className: "sql-tables-toggle", title: "Show tables", ariaExpanded: "false",
 				ariaLabel: `Show the tables of ${database.name}`, innerHTML: '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>' });
 			toggle.onclick = () => toggleSqlTables(toggle, database);
-			$(database.id <= 4 ? "#sql-system-rows" : "#sql-databases").append(el("tr", {}, sqlCell("Name", {}, el("div", { className: "sql-database-name" }, toggle, el("span", { textContent: database.name }))),
+			// The whole row unfolds the database, except its buttons
+			const row = el("tr", { className: "sql-database-row", onclick: (event) => {
+				if (!event.target.closest("button, a, input, select") && !getSelection().toString()) toggle.click();
+			} });
+			row.append(sqlCell("Name", {}, el("div", { className: "sql-database-name" }, toggle, el("span", { textContent: database.name }))),
 				sqlCell("Size", { className: "num", textContent: formatSqlSize(database.size_mb) }), sqlCell("State", {
 					className: "sql-state-" + database.state.toLowerCase(),
 					textContent: database.state,
 				}),
-				sqlCell("Recovery", { textContent: database.recovery }), sqlCell("Actions", {}, actions)));
+				sqlCell("Recovery", { textContent: database.recovery }), sqlCell("Actions", {}, actions));
+			$(database.id <= 4 ? "#sql-system-rows" : "#sql-databases").append(row);
 		}
 		for (const [latest, ...older] of groupSqlBackups(data.backups)) {
 			$("#sql-backups").append(sqlBackupRow(latest));
@@ -2867,7 +2891,6 @@ $("#settings-sql").onclick = () => go("#sql");
 // With SQL Server as the start page, it is the home: its page has no link back to the sites
 function applyStartView() {
 	const sql = startView === "sql";
-	$("#sql-back-bar").hidden = sql;
 	const brand = document.querySelector(".brand");
 	brand.href = sql ? "#sql" : "#sites";
 	brand.title = "Reload";

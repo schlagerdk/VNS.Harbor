@@ -662,3 +662,33 @@ a.btn-link .ico { width: 13px; height: 13px; flex: none; }
 .data-sync-options.off .copy-connection-toggle { cursor: default; }
 @media (max-width: 560px) { .data-sync-options { grid-template-columns: 1fr; gap: 0; } }
 #dlg-data-sync .data-sync-options + .hint { margin-top: 16px; }
+
+/* The rows of an environment card, each named by its group at the left; wrapped buttons line up under the first */
+.env .actions[data-group] { position: relative; padding-left: 72px; }
+.env .actions[data-group]::before { content: attr(data-group); position: absolute; left: 0; top: 7px; height: 26px; display: flex; align-items: center; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; opacity: .75; }
+.env > .actions:last-child:not(.quick)[data-group]::before { top: 13px; }
+@media (max-width: 700px) {
+	.env .actions[data-group] { padding-left: 0; }
+	.env .actions[data-group]::before { position: static; flex-basis: 100%; height: auto; }
+}
+#sql-databases-panel tr.sql-database-row { cursor: pointer; }
+#sql-databases-panel tr.sql-database-row:hover > td { background: rgba(255, 255, 255, .025); }
+#sql-databases-panel tr.sql-database-row .actions button { cursor: pointer; }
+
+/* Sync dialog: where from, and a card per destination */
+.sync-from { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 2px 0 18px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255, 255, 255, .02); font-size: 13px; }
+.sync-from-label { color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+.sync-env-name { --env-tone: var(--blue); color: var(--env-tone); font-weight: 600; }
+.sync-env-name.env-test { --env-tone: #d29922; }
+.sync-env-name.env-staging { --env-tone: var(--purple); }
+.sync-env-name.env-production { --env-tone: var(--red); }
+.sync-options { display: block; margin-bottom: 4px; }
+.sync-options legend { color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+.sync-choices { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.sync-choice { min-height: 68px; }
+.sync-choice .tc-sub { overflow-wrap: anywhere; }
+.sync-choice.env-all { --env-tone: var(--green); grid-column: 1 / -1; min-height: 0; }
+.sync-chips { display: flex; gap: 6px; margin-top: 6px; }
+.sync-chip { padding: 1px 8px; border-radius: 999px; background: color-mix(in srgb, var(--env-tone) 16%, transparent); color: var(--env-tone); font-size: 11px; font-weight: 600; text-transform: capitalize; }
+@media (max-width: 440px) { .sync-choices { grid-template-columns: 1fr; } }
+dialog.newsite .sync-options ~ .hint, #dlg-data-sync .data-sync-options ~ .hint { margin-top: 18px; }
