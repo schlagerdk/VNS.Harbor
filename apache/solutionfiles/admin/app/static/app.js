@@ -1811,6 +1811,8 @@ function openDataSyncDialog(site, env) {
 	$("#data-sync-settings-receive").hidden = !isTarget(env);
 	updateDataSyncForm();
 	dataSyncDialog.showModal();
+	// The dialog opens without a card in focus, so none of them looks chosen
+	document.activeElement?.blur();
 }
 dataSyncForm.elements.enabled.onchange = () => {
 	// Turning it on for the first time takes part with both

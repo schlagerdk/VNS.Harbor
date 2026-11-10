@@ -736,7 +736,8 @@ button[data-tone="pink"] { --tone: #db61a2; }
 .sync-option:has(input:checked) { border-color: var(--option-tone); background: color-mix(in srgb, var(--option-tone) 10%, transparent); box-shadow: 0 0 0 1px var(--option-tone) inset; }
 .sync-option:has(input:checked) .sync-option-icon { background: color-mix(in srgb, var(--option-tone) 22%, transparent); color: var(--option-tone); }
 .sync-option:has(input:checked)::after { content: "\2713"; position: absolute; top: 8px; right: 12px; color: var(--option-tone); font-weight: 700; }
-.sync-option:has(input:focus-visible) { border-color: var(--option-tone); }
+/* Focus shows on the title only, so a card that has the focus never looks chosen */
+.sync-option:has(input:focus-visible) .sync-option-title { text-decoration: underline; text-underline-offset: 3px; }
 .data-sync-options.off .sync-option { cursor: default; }
 .data-sync-options.off .sync-option:hover { border-color: var(--line); }
 #dlg-data-sync .data-sync-options { display: block; margin-top: 0; }
