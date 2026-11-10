@@ -224,7 +224,7 @@ console.log(JSON.stringify([first, firstNone, none.hidden]));
         code = source[source.index("function openSqlQuery("):source.index("async function runSqlQuery(")]
         script = """
 const nodes = {};
-const $ = (selector) => nodes[selector] ||= {value: "", textContent: "", focus() {}, classList: {remove() {}}};
+const $ = (selector) => nodes[selector] ||= {value: "", textContent: "", focus() {}, classList: {remove() {}}, replaceChildren() { this.textContent = ""; }};
 nodes["#sql-connection"] = {value: "server-1"};
 const sqlQueryDialog = {dataset: {}, open: true, showModal() {}};
 """ + code + """

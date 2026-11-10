@@ -842,7 +842,9 @@ def api_sql_query(connection_id):
             settings = _sql_module.connection(SQL_CONNECTIONS, connection_id)
         started = time.time()
         output = _sql_module.run_query(settings, data.get("database"), data.get("query"))
-        return jsonify(output=output, seconds=round(time.time() - started, 2))
+        results, messages = _sql_module.parse_results(output)
+        return jsonify(results=results, messages=messages, seconds=round(time.time() - started, 2),
+                       output=output.replace(_sql_module.COLUMN_SEPARATOR, " | "))
     except ValueError as exc:
         return error(str(exc))
     except (OSError, RuntimeError, subprocess.SubprocessError) as exc:

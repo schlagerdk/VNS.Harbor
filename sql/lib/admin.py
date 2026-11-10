@@ -154,7 +154,11 @@ def sqlcmd_path():
                  if path.is_file() and os.access(path, os.X_OK)), None) or shutil.which("sqlcmd")
 
 
-def execute(settings, query, table=False, timeout=3600, database="master"):
+# Between the columns of a query result: a control character that SQL text practically never holds, unlike |
+COLUMN_SEPARATOR = "\x1f"
+
+
+def execute(settings, query, table=False, timeout=3600, database="master", separator="|"):
     tool = sqlcmd_path()
     if not tool:
         raise ValueError("sqlcmd is not installed on the admin server. Install the Microsoft SQL command-line tools.")
@@ -164,7 +168,7 @@ def execute(settings, query, table=False, timeout=3600, database="master"):
             stream.write("SET NOCOUNT ON;\n" + query + "\n")
         args = [tool, "-S", f'tcp:{settings["host"]},{settings["port"]}', "-U", settings["username"],
                 "-d", database, "-b", "-x", "-r", "0", "-l", "15", "-t", "0", "-w", "65535", "-f", "65001", "-i", filename]
-        args += ["-W", "-s", "|"] if table else ["-y", "0"]
+        args += ["-W", "-s", separator] if table else ["-y", "0"]
         if settings["trust_certificate"]:
             args.append("-C")
         result = subprocess.run(args, capture_output=True, text=True, encoding="utf-8",
@@ -184,10 +188,29 @@ def run_query(settings, database, query):
         raise ValueError("Choose a database")
     if not isinstance(query, str) or not query.strip() or len(query) > 1024 * 1024:
         raise ValueError("Enter a script of at most 1 MB")
-    output = execute(settings, query, table=True, timeout=300, database=database)
+    output = execute(settings, query, table=True, timeout=300, database=database, separator=COLUMN_SEPARATOR)
     if len(output) > 2 * 1024 * 1024:
         output = output[:2 * 1024 * 1024] + "\n… output cut at 2 MB"
     return output
+
+
+def parse_results(output, separator=COLUMN_SEPARATOR):
+    """Split sqlcmd output into result sets with columns and rows. Anything else, like PRINT, is a message.
+    A block is only a table when every row has as many columns as its header, so nothing is shown wrongly."""
+    results, messages = [], []
+    for block in re.split(r"\n[ \t]*\n", output.strip("\n")):
+        if not block.strip():
+            continue
+        lines = block.split("\n")
+        header = lines[0].split(separator)
+        if len(lines) >= 2 and re.fullmatch(r"-+(" + re.escape(separator) + r"-+)*", lines[1].strip()) \
+                and lines[1].count(separator) == len(header) - 1:
+            rows = [line.split(separator) for line in lines[2:]]
+            if all(len(row) == len(header) for row in rows):
+                results.append({"columns": header, "rows": rows})
+                continue
+        messages.append(block.replace(separator, " | "))
+    return results, messages
 
 
 def query_json(settings, query, *, preamble=""):

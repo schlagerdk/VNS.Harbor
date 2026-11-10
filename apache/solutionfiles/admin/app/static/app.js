@@ -2839,7 +2839,7 @@ function openSqlQuery(database) {
 	const connection = $("#sql-connection").value;
 	if (sqlQueryDialog.dataset.database !== database.name || sqlQueryDialog.dataset.connection !== connection) {
 		$("#sql-query-text").value = "";
-		$("#sql-query-output").textContent = "";
+		$("#sql-query-output").replaceChildren();
 		$("#sql-query-output").classList.remove("sql-query-error");
 	}
 	sqlQueryDialog.dataset.database = database.name;
@@ -2849,6 +2849,31 @@ function openSqlQuery(database) {
 	if (!sqlQueryDialog.open) sqlQueryDialog.showModal();
 	$("#sql-query-text").focus();
 }
+const sqlNumber = /^-?\d+(\.\d+)?$/;
+const maxShownRows = 2000;
+// Each result set as a table, with messages such as PRINT as text in between
+function showSqlResults(output, data) {
+	const parts = [];
+	for (const result of data.results || []) {
+		const shown = result.rows.slice(0, maxShownRows);
+		const numeric = result.columns.map((_, index) => shown.length > 0 && shown.every((row) => row[index] === "NULL" || sqlNumber.test(row[index])));
+		const table = el("table", { className: "sql-result-table" },
+			el("thead", {}, el("tr", {}, ...result.columns.map((column, index) => el("th", { textContent: column || "(no name)", className: numeric[index] ? "num" : "" })))),
+			el("tbody", {}, ...shown.map((row) => el("tr", {}, ...row.map((value, index) => el("td", {
+				textContent: value, title: value.length > 60 ? value : "",
+				className: (value === "NULL" ? "sql-null " : "") + (numeric[index] ? "num" : ""),
+			}))))));
+		const count = result.rows.length === shown.length ? `${result.rows.length} row${result.rows.length === 1 ? "" : "s"}`
+			: `First ${shown.length} of ${result.rows.length} rows`;
+		parts.push(el("section", { className: "sql-result" }, el("div", { className: "sql-result-count", textContent: count }),
+			el("div", { className: "sql-result-scroll" }, table)));
+	}
+	for (const message of data.messages || []) parts.push(el("pre", { className: "sql-result-message", textContent: message }));
+	if (!parts.length) parts.push(el("p", { className: "muted sql-result-empty", textContent: "The script ran. It returned no rows." }));
+	output.replaceChildren(...parts);
+	output.scrollTop = 0;
+}
+
 async function runSqlQuery() {
 	const button = $("#sql-query-run");
 	if (button.disabled) return;
@@ -2862,8 +2887,11 @@ async function runSqlQuery() {
 		const data = await response.json().catch(() => ({}));
 		const output = $("#sql-query-output");
 		output.classList.toggle("sql-query-error", !response.ok);
-		output.textContent = response.ok ? data.output || "(no rows)" : data.error || data.message || "The script failed.";
-		$("#sql-query-status").textContent = response.ok ? `Done in ${data.seconds} s` : "Failed";
+		if (response.ok) showSqlResults(output, data);
+		else output.replaceChildren(el("pre", { textContent: data.error || data.message || "The script failed." }));
+		const rows = (data.results || []).reduce((sum, result) => sum + result.rows.length, 0);
+		$("#sql-query-status").textContent = response.ok
+			? `Done in ${data.seconds} s${data.results?.length ? ` · ${rows} row${rows === 1 ? "" : "s"}` : ""}` : "Failed";
 	} catch (error) {
 		$("#sql-query-status").textContent = error.message;
 	} finally {

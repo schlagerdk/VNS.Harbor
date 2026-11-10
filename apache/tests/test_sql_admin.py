@@ -60,9 +60,29 @@ class SqlQueryTests(unittest.TestCase):
             self.assertEqual(sql.run_query(self.settings, "Kunde DB", "SELECT 1"), "id|name\n1|x\n")
         args, kwargs = calls[0]
         self.assertEqual(args[args.index("-d") + 1], "Kunde DB")
+        self.assertEqual(args[args.index("-s") + 1], sql.COLUMN_SEPARATOR)
         self.assertNotIn("secret", " ".join(args))
         self.assertEqual(kwargs["env"]["SQLCMDPASSWORD"], "secret")
         self.assertEqual(kwargs["timeout"], 300)
+
+    def test_results_are_split_into_tables_and_messages(self):
+        s = sql.COLUMN_SEPARATOR
+        output = (f"id{s}name{s}note\n--{s}----{s}----\n1{s}a | b{s}NULL\n2{s}x{s}\n\n"
+                  "Done with the update\n\n"
+                  f"total\n-----\n2\n\n"
+                  f"empty{s}set\n-----{s}---\n")
+        results, messages = sql.parse_results(output)
+        self.assertEqual(results, [
+            {"columns": ["id", "name", "note"], "rows": [["1", "a | b", "NULL"], ["2", "x", ""]]},
+            {"columns": ["total"], "rows": [["2"]]},
+            {"columns": ["empty", "set"], "rows": []}])
+        self.assertEqual(messages, ["Done with the update"])
+
+    def test_a_block_with_uneven_rows_is_shown_as_text(self):
+        s = sql.COLUMN_SEPARATOR
+        results, messages = sql.parse_results(f"a{s}b\n-{s}-\n1{s}2{s}3\n")
+        self.assertEqual(results, [])
+        self.assertEqual(messages, ["a | b\n- | -\n1 | 2 | 3"])
 
     def test_invalid_input_is_refused_before_sqlcmd_runs(self):
         with patch.object(sql.subprocess, "run") as run:
