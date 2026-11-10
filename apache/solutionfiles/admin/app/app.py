@@ -186,6 +186,17 @@ def headers(response):
     return response
 
 
+@app.context_processor
+def asset_version():
+    """A version in the address of app.js and style.css that changes with them, so a browser never keeps an old copy"""
+    static = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+    try:
+        version = max(int(os.path.getmtime(os.path.join(static, name))) for name in ("app.js", "style.css"))
+    except OSError:
+        version = 0
+    return {"asset_version": version}
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     error = ""
