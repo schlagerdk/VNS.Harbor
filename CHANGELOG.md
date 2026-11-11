@@ -2,6 +2,12 @@
 
 All notable changes to VNS.Linux are listed here, newest first.
 
+## [1.0.2] - 2026-11-11
+
+### Features
+
+- Logs as a list, Multi action and keep-alive as cards, Web Server in the header
+
 ## [1.0.1] - 2026-11-11
 
 ### Features
