@@ -3421,7 +3421,8 @@ async function openSystemUpdateDialog() {
 		dialog.returnValue = "";
 		dialog.onclose = () => resolve(dialog.returnValue === "ok");
 		dialog.showModal();
-		document.activeElement?.blur();
+		// Update has the focus, so Enter or Space starts it
+		dialog.querySelector('button[type="submit"]').focus();
 	});
 	if (answer) await runSystemUpdate();
 }
