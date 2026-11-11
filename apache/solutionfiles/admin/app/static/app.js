@@ -782,8 +782,12 @@ function customScriptGroups(files) {
 		.sort((a, b) => (a.label === "Other") - (b.label === "Other") || a.label.localeCompare(b.label));
 }
 
+// Scripts in the dropdown: those without a button of their own, and not helpers, whose names start with _
+function customScripts(site) {
+	return site.scripts.filter((file) => !file.startsWith("_") && !hasScriptButton(site, file));
+}
 function scriptSelect(site, className) {
-	const files = site.scripts.filter((file) => !hasScriptButton(site, file));
+	const files = customScripts(site);
 	const groups = customScriptGroups(files);
 	const menu = el("div", { className: "script-menu " + (className || "") });
 	const trigger = el("button", {
@@ -1213,7 +1217,7 @@ function envPanel(site, env) {
 		// Setup first, at the left: the syncs it allows stand at the right
 		sync.prepend(el("button", { textContent: "Sync setup…", className: "small", title: dataSyncSummary(env), onclick: () => run(() => openDataSyncDialog(site, env)) }));
 	}
-	if (!isTarget(env) && site.scripts.some((file) => !hasScriptButton(site, file))) quick.append(scriptSelect(site));
+	if (!isTarget(env) && customScripts(site).length) quick.append(scriptSelect(site));
 	if (env.mode === "windows") {
 		// web.config is the IIS site's config, appsettings.json its application settings
 		const tools = actionRow("Config");
