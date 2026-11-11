@@ -1400,6 +1400,7 @@ def api_server_logs():
             if not ADMIN_SITE:
                 return error("The admin service is not configured.", 409)
             argv = ["journalctl", "-u", service_name(ADMIN_SITE), "-n", "300", "--no-pager", "-o", "short-iso"]
+            sources = [f"journalctl -u {service_name(ADMIN_SITE)}.service"]
         else:
             paths = ["/var/log/apache2/error.log"]
             if ADMIN_SITE:
@@ -1409,11 +1410,12 @@ def api_server_logs():
             if not paths:
                 return error("No Apache error logs were found.", 404)
             argv = ["tail", "-v", "-n", "300", "--", *paths]
+            sources = paths
         result = subprocess.run(argv, capture_output=True, text=True, timeout=20)
         if result.returncode:
             app.logger.error("Could not read %s logs: %s", source, result.stderr)
             return error("Could not read server logs. Check server permissions.", 502)
-        return jsonify(text=result.stdout)
+        return jsonify(text=result.stdout, sources=sources)
     except (OSError, subprocess.SubprocessError) as exc:
         app.logger.error("Could not read %s logs: %s", source, exc)
         return error("Could not read server logs.", 502)
@@ -1423,13 +1425,15 @@ def api_server_logs():
 def api_logs(name):
     if request.args.get("scope") == "prod":
         target = request.args.get("target") or "prod"
-        remote_site(name, target)
-        return jsonify(text=remote_command(name, "logs", target=target, text=True).stdout)
+        prod = remote_site(name, target)
+        return jsonify(text=remote_command(name, "logs", target=target, text=True).stdout,
+                       sources=[f"journalctl -u {service_name(prod.get('PROD_FOLDER') or name)}.service on {prod.get('PROD_IP') or target}"])
     unit = request.args.get("unit") or name
     if name not in site_dirs() or unit not in site_units(name):
         return error("Unknown site or service")
     result = subprocess.run(["journalctl", "-u", service_name(unit), "-n", "300", "--no-pager", "-o", "short-iso"], capture_output=True, text=True, timeout=20)
-    return jsonify(text=result.stdout or result.stderr)
+    # The service's log is in systemd's journal, not a file: the command that reads it is shown instead
+    return jsonify(text=result.stdout or result.stderr, sources=[f"journalctl -u {service_name(unit)}.service"])
 
 
 def remote_site(name, target="prod"):

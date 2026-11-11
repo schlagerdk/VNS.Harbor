@@ -1304,6 +1304,12 @@ function parseLog(text) {
 	const entries = [];
 	for (const line of String(text || "").split("\n")) {
 		if (!line.trim()) continue;
+		// tail marks where each file starts when it reads several
+		const file = line.match(/^==> (.+) <==$/);
+		if (file) {
+			entries.push({ file: file[1], level: "file", time: "", source: "", message: "" });
+			continue;
+		}
 		// A stack trace or a wrapped line belongs to the line above
 		if (entries.length && /^(\s+|at |--- )/.test(line)) {
 			entries[entries.length - 1].message += "\n" + line;
@@ -1335,22 +1341,26 @@ function parseLog(text) {
 }
 function renderLogs() {
 	const words = $("#logs-search").value.trim().toLowerCase();
-	const counts = { all: logEntries.length, error: 0, warn: 0 };
+	const counts = { all: logEntries.filter((entry) => !entry.file).length, error: 0, warn: 0 };
 	for (const entry of logEntries) if (entry.level in counts) counts[entry.level] += 1;
+	// Only the levels the log has: a level that is gone shows every line again
+	if (logLevel !== "all" && !counts[logLevel]) logLevel = "all";
 	for (const button of document.querySelectorAll(".logs-levels button")) {
+		button.hidden = button.dataset.level !== "all" && !counts[button.dataset.level];
 		button.classList.toggle("active", button.dataset.level === logLevel);
 		button.querySelector("span").textContent = counts[button.dataset.level] || "";
 	}
-	const shown = logEntries.filter((entry) => (logLevel === "all" || entry.level === logLevel)
-		&& (!words || `${entry.source} ${entry.message}`.toLowerCase().includes(words)));
+	const shown = logEntries.filter((entry) => entry.file || ((logLevel === "all" || entry.level === logLevel)
+		&& (!words || `${entry.source} ${entry.message}`.toLowerCase().includes(words))));
 	const list = $("#logs-text");
-	list.replaceChildren(...shown.map((entry) => el("div", { className: "log-row level-" + entry.level },
+	list.replaceChildren(...shown.map((entry) => entry.file ? el("div", { className: "log-file", textContent: entry.file }) : el("div", { className: "log-row level-" + entry.level },
 		el("span", { className: "log-time", textContent: entry.time }),
 		el("span", { className: "log-level", textContent: { error: "Error", warn: "Warning", info: "Info" }[entry.level] }),
 		el("span", { className: "log-source", textContent: entry.source, title: entry.source }),
 		el("span", { className: "log-message", textContent: entry.message }))));
 	if (!shown.length) list.append(el("p", { className: "muted logs-empty", textContent: logEntries.length ? "No lines match." : "No log lines." }));
-	$("#logs-count").textContent = `${shown.length} of ${logEntries.length} lines`;
+	const lineCount = logEntries.filter((entry) => !entry.file).length;
+	$("#logs-count").textContent = `${shown.filter((entry) => !entry.file).length} of ${lineCount} lines`;
 	list.scrollTop = list.scrollHeight;
 }
 $("#logs-search").oninput = renderLogs;
@@ -1373,6 +1383,9 @@ async function refreshLogs() {
 		throw error;
 	}
 	$("#logs-raw-text").textContent = data.text || "(no log lines)";
+	// Where the lines come from: the files, or the journal command for a service
+	$("#logs-source").textContent = (data.sources || []).join(" · ");
+	$("#logs-source").hidden = !(data.sources || []).length;
 	logEntries = parseLog(data.text);
 	renderLogs();
 }

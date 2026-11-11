@@ -855,3 +855,7 @@ dialog.logs-dialog[open] { display: flex; flex-direction: column; }
 }
 .multi-package-fields { margin-top: 10px; }
 #dlg-multi #multi-action-description:not(:empty) { margin-top: 12px; }
+.logs-levels:not(:has(button:not([hidden]):not([data-level="all"]))) { display: none; }
+.logs-dialog h2 + .logs-source { margin: -8px 0 12px; }
+.logs-source { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; overflow-wrap: anywhere; }
+.log-file { position: sticky; top: 0; z-index: 1; padding: 6px 12px; border-bottom: 1px solid var(--line); background: var(--panel2, #1c2129); color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; font-weight: 600; }

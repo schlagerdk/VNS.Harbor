@@ -3,3 +3,7 @@ misc
 
 # Local tools, such as make_release.sh, not part of the solution
 .local/
+
+# Python compile cache
+__pycache__/
+*.pyc
