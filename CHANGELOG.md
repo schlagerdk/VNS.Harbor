@@ -2,6 +2,16 @@
 
 All notable changes to VNS.Linux are listed here, newest first.
 
+## [1.1.5] - 2026-11-11
+
+### Fixes
+
+- The build user may add files of its own to a project folder, as Umbraco's build does, but not change root's
+
+### Other
+
+- Style: May create sites, May add SQL connections and Locked are rows with icons and switches, joined to their card
+
 ## [1.1.4] - 2026-11-11
 
 ### Fixes
