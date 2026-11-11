@@ -2,6 +2,12 @@
 
 All notable changes to VNS.Linux are listed here, newest first.
 
+## [1.1.10] - 2026-11-11
+
+### Fixes
+
+- The DNS card no longer flashes when New site opens: it appears only once a binding has been checked
+
 ## [1.1.9] - 2026-11-11
 
 ### Fixes
