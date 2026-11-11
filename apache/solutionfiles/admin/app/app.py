@@ -396,6 +396,14 @@ def api_dns():
     except (socket.gaierror, UnicodeError, OSError):
         found = []
     expected = (request.args.get("expect") or "").strip()
+    ours = own_addresses(expected)
+    # A CNAME is suggested only for this server, not for an address given for another
+    host = "" if expected else host_name_for(name, ours)
+    return jsonify(name=name, addresses=found, here=bool(found) and any(item in ours for item in found), host=host)
+
+
+def own_addresses(expected=""):
+    """The addresses that count as this server (or as the address the page names)"""
     ours = {expected} if expected else set(server_addresses()) | {cfg.get("public_address", "") or detected_public_address()} - {""}
     # A public address set as a host name counts by what it resolves to
     for item in list(ours):
@@ -404,7 +412,29 @@ def api_dns():
                 ours |= {info[4][0] for info in socket.getaddrinfo(item, None, proto=socket.IPPROTO_TCP)}
             except (socket.gaierror, UnicodeError, OSError):
                 pass
-    return jsonify(name=name, addresses=found, here=bool(found) and any(item in ours for item in found))
+    return ours
+
+
+def host_name_for(name, ours):
+    """This server's own DNS name, for a CNAME to it: its full host name, or its short host name under one
+    of the name's parent domains (test-01 and test.vns.dk give test-01.vns.dk). Only a name that resolves
+    to this server is offered, so another machine with that name is never suggested."""
+    short = socket.gethostname().split(".")[0].lower()
+    fqdn = socket.getfqdn().lower().rstrip(".")
+    candidates = [fqdn] if "." in fqdn and not fqdn.endswith(".arpa") and not fqdn.startswith("localhost") else []
+    labels = name.split(".")
+    if re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", short):
+        candidates += [short + "." + ".".join(labels[index:]) for index in range(1, len(labels) - 1)]
+    for candidate in dict.fromkeys(candidates):
+        if candidate == name:
+            continue
+        try:
+            resolved = {info[4][0] for info in socket.getaddrinfo(candidate, None, proto=socket.IPPROTO_TCP)}
+        except (socket.gaierror, UnicodeError, OSError):
+            continue
+        if resolved & ours:
+            return candidate
+    return ""
 
 
 # ------------------------------------------------------------------ helpers

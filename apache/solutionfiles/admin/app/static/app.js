@@ -179,6 +179,8 @@ function dnsCard(input, { expect = "", name: targetName = "" } = {}) {
 		try { answer = await api(`/api/dns?name=${encodeURIComponent(name)}${expect ? "&expect=" + encodeURIComponent(expect) : ""}`); }
 		catch (error) { status.className = "dns-status muted"; status.textContent = "Could not check"; return; }
 		if (asked !== name) return;
+		// A subdomain can follow the server's own name instead, so it moves with the server
+		if (answer.host && !targetName) records.append(record("CNAME", name, answer.host));
 		if (answer.here) { status.className = "dns-status ok"; status.textContent = "Points here"; }
 		else if (answer.addresses.length) { status.className = "dns-status warn"; status.textContent = `Points to ${answer.addresses[0]}`; status.title = answer.addresses.join(", "); }
 		else { status.className = "dns-status muted"; status.textContent = "No record yet"; }

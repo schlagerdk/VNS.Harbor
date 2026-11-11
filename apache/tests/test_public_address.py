@@ -78,3 +78,35 @@ class PublicAddressTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HostNameTests(unittest.TestCase):
+    def setUp(self):
+        self.ns = dict(re=re, socket=socket)
+        nodes = [node for node in ast.parse((APP / "app.py").read_text()).body
+                 if isinstance(node, ast.FunctionDef) and node.name == "host_name_for"]
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), "host name", "exec"), self.ns)
+        self.dns = {"test-01.vns.dk": "185.150.199.44", "test-01.example.com": "192.0.2.80"}
+
+    def host(self, name, hostname="test-01", fqdn="test-01"):
+        def lookup(candidate, *args, **kwargs):
+            if candidate not in self.dns:
+                raise socket.gaierror("unknown")
+            return [(None, None, None, None, (self.dns[candidate], 0))]
+        with patch.object(socket, "gethostname", return_value=hostname), \
+                patch.object(socket, "getfqdn", return_value=fqdn), patch.object(socket, "getaddrinfo", lookup):
+            return self.ns["host_name_for"](name, {"185.150.199.44"})
+
+    def test_short_host_name_under_the_bindings_domain(self):
+        self.assertEqual(self.host("test.vns.dk"), "test-01.vns.dk")
+        self.assertEqual(self.host("a.b.vns.dk"), "test-01.vns.dk")
+
+    def test_full_host_name_is_tried_first(self):
+        self.dns["web.vns.dk"] = "185.150.199.44"
+        self.assertEqual(self.host("shop.other.dk", fqdn="web.vns.dk"), "web.vns.dk")
+
+    def test_names_of_other_machines_unknown_names_and_the_name_itself_are_not_offered(self):
+        self.assertEqual(self.host("shop.example.com"), "")
+        self.assertEqual(self.host("vns.dk"), "")
+        self.assertEqual(self.host("test-01.vns.dk"), "")
+        self.assertEqual(self.host("test.vns.dk", fqdn="1.0.ip6.arpa", hostname="bad_name"), "")
