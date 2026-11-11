@@ -2,7 +2,8 @@
 # Updates /vns from https://github.com/schlagerdk/VNS.Linux
 # Usage: update.sh              (clones the repository to a temporary directory)
 #        update.sh <source-dir>  (uses an existing copy, used by init.sh)
-# VNS_UPDATE_REF=v1.2.0 installs that release; without it, the newest commit on main.
+# Without a source it installs the newest release. VNS_UPDATE_REF=v1.2.0 installs that release, and
+# VNS_UPDATE_REF=main the newest commit on main, which is also used before the first release.
 set -euo pipefail
 
 REPO_URL="https://github.com/schlagerdk/VNS.Linux.git"
@@ -17,6 +18,11 @@ main() {
         tmp="$(mktemp -d)"
         trap "rm -rf '$tmp'" EXIT
         local ref="${VNS_UPDATE_REF:-}"
+        if [ -z "$ref" ]; then
+            ref="$(git ls-remote --tags --refs "$REPO_URL" 'v*' | awk '{sub("refs/tags/", "", $2); print $2}' \
+                | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)"
+        fi
+        [ "$ref" != main ] || ref=""
         if [ -n "$ref" ]; then
             [[ $ref =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid release: $ref" >&2; return 1; }
             echo "Install release $ref"

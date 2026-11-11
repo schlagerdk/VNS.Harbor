@@ -122,7 +122,7 @@ cd VNS.Linux
 1. Sets the timezone to `Europe/Copenhagen` and enables NTP
 2. Updates all packages
 3. Installs `curl git net-tools nano unzip ca-certificates rsync`
-4. Copies the repository to `/vns` via `update.sh` and removes the cloned directory
+4. Copies the newest release to `/vns` via `update.sh` and removes the cloned directory. The clone holds every release, so the command above stays the same. `VNS_INSTALL_REF=main ./init.sh` installs the clone as it is (also used before the first release), and `VNS_INSTALL_REF=v1.2.0 ./init.sh` that release.
 
 ## Updating
 
@@ -132,7 +132,7 @@ cd VNS.Linux
 
 Fetches the latest version from GitHub and synchronizes it to `/vns`. Local files are not deleted. Apache site ports are assigned automatically to the first available port starting at 4000, and a port is reusable after its site is deleted.
 
-`VNS_UPDATE_REF=v1.2.0 /vns/update.sh` installs that release; without it, the newest commit on main.
+`/vns/update.sh` installs the newest release, like the admin's update, and the newest commit on main before the first release. `VNS_UPDATE_REF=v1.2.0` installs that release, and `VNS_UPDATE_REF=main` the newest commit on main.
 
 ### Versions and releases
 
