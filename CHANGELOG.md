@@ -2,6 +2,12 @@
 
 All notable changes to VNS.Linux are listed here, newest first.
 
+## [1.1.6] - 2026-11-11
+
+### Fixes
+
+- The update screen waits through the admin site's restart in Safari too, and an update that did not finish is shown in a card with Reload page
+
 ## [1.1.5] - 2026-11-11
 
 ### Fixes
