@@ -211,7 +211,7 @@
     <div class="toolbar">
       <div class="stats" id="stats"></div>
       <span class="spacer"></span>
-      <div class="layout-toggle" role="group" aria-label="Site layout">
+      <div id="site-layout-toggle" class="layout-toggle" role="group" aria-label="Site layout">
         <button id="layout-grid" type="button" title="Grid" aria-label="Grid" aria-pressed="true"></button>
         <button id="layout-list" type="button" title="List" aria-label="List" aria-pressed="false"></button>
       </div>
@@ -634,13 +634,17 @@
     </div>
     <label class="grant-flag user-disabled"><input name="disabled" type="checkbox"><span><strong>Locked</strong> <span class="muted">· cannot log in, and a session that is open ends at once</span></span></label>
     <div id="user-scope">
-      <div class="ns-section grant-section"><label class="grant-switch"><input name="web" type="checkbox"> Web Server</label></div>
+      <label class="grant-card"><span class="grant-card-icon" data-header-icon="globe" aria-hidden="true"></span>
+        <span class="grant-card-text"><strong>Web Server</strong><small>Sites and their environments</small></span>
+        <input name="web" type="checkbox" class="switch" aria-label="Web Server"></label>
       <div id="user-web" class="grant-area">
         <label class="grant-flag"><input name="create_sites" type="checkbox"> May create sites; a site they create is theirs, with everything</label>
         <p class="hint">Tick a site for all of it, also environments added later, or open it and choose environments. An environment alone shows only that, not the main site. The actions count for the chosen environments: a user publishes and syncs only to those.</p>
         <div id="user-sites" class="grant-list"></div>
       </div>
-      <div class="ns-section grant-section"><label class="grant-switch"><input name="sql" type="checkbox"> SQL Server</label></div>
+      <label class="grant-card"><span class="grant-card-icon sql" data-header-icon="server" aria-hidden="true"></span>
+        <span class="grant-card-text"><strong>SQL Server</strong><small>Connections and their databases</small></span>
+        <input name="sql" type="checkbox" class="switch" aria-label="SQL Server"></label>
       <div id="user-sql" class="grant-area">
         <label class="grant-flag"><input name="manage_connections" type="checkbox"> May add SQL connections; one they add is theirs to change. The others stay locked.</label>
         <div id="user-connections" class="grant-list"></div>

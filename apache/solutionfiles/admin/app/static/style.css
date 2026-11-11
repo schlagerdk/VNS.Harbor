@@ -1106,3 +1106,22 @@ dialog.newsite > form > .ns-head, dialog.newsite > .ns-head { position: sticky; 
 #dlg-prompt, #dlg-encoding { max-height: 86vh; max-height: 86dvh; overflow-y: auto; }
 /* Room between the text and the buttons, with a line as in the large dialogs */
 #dlg-prompt > form > menu, #dlg-prompt > menu, #dlg-encoding > form > menu { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
+.layout-toggle[hidden] { display: none; }
+/* Web Server and SQL Server in the user editor: a card each, with a switch */
+#dlg-user .grant-card { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: center; gap: 12px; margin: 16px 0 10px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel2); cursor: pointer; transition: border-color .15s, background .15s; }
+#dlg-user .grant-card:hover { border-color: rgba(88, 166, 255, .35); }
+#dlg-user .grant-card:has(.switch:checked) { border-color: rgba(88, 166, 255, .5); background: linear-gradient(135deg, rgba(88, 166, 255, .1), rgba(163, 113, 247, .07)), var(--panel2); }
+.grant-card-icon { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 10px; color: #b9d8ff; background: linear-gradient(135deg, rgba(88, 166, 255, .2), rgba(163, 113, 247, .2)); }
+.grant-card-icon.sql { color: #c9b6ff; }
+.grant-card-icon .ico { width: 19px; height: 19px; margin: 0; }
+.grant-card-text { display: grid; gap: 2px; min-width: 0; }
+.grant-card-text strong { font-size: 14px; }
+.grant-card-text small { color: var(--muted); font-size: 12px; }
+/* A switch from a checkbox */
+#dlg-user .switch { appearance: none; -webkit-appearance: none; position: relative; width: 42px; height: 24px; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 999px; background: rgba(255, 255, 255, .08); cursor: pointer; transition: background .2s, border-color .2s; }
+#dlg-user .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #c9d1d9; box-shadow: 0 1px 3px rgba(0, 0, 0, .4); transition: transform .2s, background .2s; }
+#dlg-user .switch:checked { border-color: var(--blue); background: var(--blue); }
+#dlg-user .switch:checked::after { transform: translateX(18px); background: #fff; }
+#dlg-user .switch:focus-visible { outline: 2px solid rgba(88, 166, 255, .6); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { #dlg-user .switch, #dlg-user .switch::after { transition: none; } }
+#dlg-user .grant-card-text strong { color: var(--text); font-weight: 600; }

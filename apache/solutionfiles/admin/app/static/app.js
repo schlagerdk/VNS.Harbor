@@ -697,6 +697,10 @@ function renderSites() {
 	const visible = overviewSites().filter(matches);
 	$("#no-sites").hidden = visible.length > 0;
 	$("#btn-new-site").hidden = visible.length === 0 || !currentUser.create_sites;
+	// Grid or list is a choice only when there are sites to show
+	$("#site-layout-toggle").hidden = visible.length === 0;
+	// The empty page's own New site, too: only for those who may create sites
+	$("#btn-empty-new-site").hidden = !currentUser.create_sites;
 	const firstSite = siteCount === 0;
 	$("#empty-sites-title").textContent = firstSite ? "Your first site starts here" : "Make room for your next idea";
 	$("#empty-sites-description").textContent = firstSite
