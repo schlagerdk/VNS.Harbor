@@ -2,6 +2,12 @@
 
 All notable changes to VNS.Linux are listed here, newest first.
 
+## [1.0.8] - 2026-11-11
+
+### Fixes
+
+- Scripts whose names start with _ are not shown in the custom scripts dropdown
+
 ## [1.0.7] - 2026-11-11
 
 ### Features
