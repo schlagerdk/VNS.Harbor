@@ -229,9 +229,11 @@ if [[ ${_target} == windows ]]; then
 			_existingEnvironment=$(sed -n 's/^environment=//p' <<<"${_described}")
 			_assembly=$(sed -n 's:.*<AssemblyName>\(.*\)</AssemblyName>.*:\1:p' "${_siteRoot}/${_projectName}.csproj" 2>/dev/null | head -n 1)
 			_assembly=${_assembly:-${_projectName}}
-			if [[ ${_existingDll} != "${_assembly}" ]]; then
-				rm -f "${_webConfig}"
+			if [[ ${_existingDll,,} != "${_assembly,,}" ]]; then
 				echo "${_smbShare} runs ${_existingDll:-an unknown}.dll, but ${_site} builds ${_assembly}.dll, so it is not this site. Nothing was changed." >&2
+				# What the web.config says, so a site that is not recognised can be seen
+				echo "Its web.config starts the site with: $(grep -io '<aspNetCore[^>]*>' "${_webConfig}" | head -n 1 || echo 'no aspNetCore element')" >&2
+				rm -f "${_webConfig}"
 				exit 1
 			fi
 			case "${_existingEnvironment}" in

@@ -87,6 +87,10 @@ def describe(path):
         raise ValueError("%s has no aspNetCore element" % path)
     arguments = module.get("arguments") or ""
     dll = next((part for part in arguments.replace('"', " ").split() if part.lower().endswith(".dll")), "")
+    # A site published with its own launcher runs <name>.exe from processPath, without a dll in the arguments
+    process = (module.get("processPath") or "").strip().strip('"')
+    if not dll and process.lower().endswith((".exe", ".dll")):
+        dll = process
     dll = dll.replace("\\", "/").rsplit("/", 1)[-1][:-4] if dll else ""
     environment = next((item.get("value", "") for item in module.iter("environmentVariable")
                         if item.get("name") in ENVIRONMENT_VARIABLES), "")
