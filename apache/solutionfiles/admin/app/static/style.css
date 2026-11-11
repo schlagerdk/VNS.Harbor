@@ -1100,3 +1100,9 @@ dialog.newsite > menu { margin: 16px 0 0; padding: 14px 24px 20px; }
 #dlg-users > menu { margin: 16px 0 0; }
 dialog.newsite > form > .ns-head, dialog.newsite > .ns-head { position: sticky; top: 0; z-index: 3;
 	background: linear-gradient(135deg, rgba(88,101,242,.35), rgba(139,92,246,.22)), var(--panel); }
+/* The small dialogs (confirmations, encoding) keep their buttons at the bottom too, when a long text makes them scroll.
+   The buttons stay where they are; a shadow in the dialog's colour covers what scrolls beneath them. */
+#dlg-prompt > form > menu, #dlg-prompt > menu, #dlg-encoding > form > menu { position: sticky; bottom: 0; z-index: 3; background: var(--panel); box-shadow: 0 22px 0 22px var(--panel); }
+#dlg-prompt, #dlg-encoding { max-height: 86vh; max-height: 86dvh; overflow-y: auto; }
+/* Room between the text and the buttons, with a line as in the large dialogs */
+#dlg-prompt > form > menu, #dlg-prompt > menu, #dlg-encoding > form > menu { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
