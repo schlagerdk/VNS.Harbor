@@ -2,6 +2,12 @@
 
 All notable changes to VNS.Linux are listed here, newest first.
 
+## [1.0.3] - 2026-11-11
+
+### Features
+
+- Clear logs and Select all in Multi action, and package fields side by side
+
 ## [1.0.2] - 2026-11-11
 
 ### Features
