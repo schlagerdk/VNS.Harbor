@@ -37,7 +37,8 @@ class SetupSiteTests(unittest.TestCase):
         script = (ROOT / "setup_site.sh").read_text()
         self.assertEqual(subprocess.run(["bash", "-n", str(ROOT / "setup_site.sh")]).returncode, 0)
         self.assertIn("[[ -f ${_file} && ! -e ${_siteRoot}/scripts/$(basename \"${_file}\") ]] || continue", script)
-        self.assertIn("is already set up: it has an Apache config or a service", script)
+        self.assertIn("is already set up: it has a service", script)
+        self.assertIn("has an Apache config but no service: the setup is finished", script)
         self.assertIn("already holds a build: it is used as it is", script)
 
     def test_the_admin_marks_folders_that_are_not_set_up(self):

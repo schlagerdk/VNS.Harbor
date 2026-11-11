@@ -834,8 +834,10 @@ def site_info(name, states):
         environment["display_binding"] = display_dns_name(environment.get("binding", ""))
         environment["display_aliases"] = [display_dns_name(alias) for alias in environment.get("aliases", [])]
     # A folder put in /var/www by hand: no Apache config and no service. Apache's own default site is not one.
-    not_set_up = (name != ADMIN_SITE and not os.path.exists(conf) and not service_text
-                  and not (name == "html" and os.path.exists(os.path.join(APACHE_SITES, "000-default.conf"))))
+    # A C# site with an Apache config but no service was only half set up (its build may have failed): Set up site finishes it.
+    not_set_up = name != ADMIN_SITE and not service_text and (
+        (not os.path.exists(conf) and not (name == "html" and os.path.exists(os.path.join(APACHE_SITES, "000-default.conf"))))
+        or kind in ("csharp", "umbraco"))
     return {
         "name": name,
         "display_name": display_dns_name(name),

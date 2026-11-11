@@ -34,6 +34,9 @@ sudo apt install -y sshpass
 echo "Install shared Apache TLS policy"
 sudo bash "$(pwd)/install_tls_policy.sh" --start-if-stopped
 
+echo "Install the page shown while a site's service does not answer"
+sudo bash "$(pwd)/install_offline_page.sh"
+
 if [[ ! -x /etc/acmesh/acme.sh ]]; then
 	echo Install acme.sh
 	_acmeTmp=$(mktemp -d)

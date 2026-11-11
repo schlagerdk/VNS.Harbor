@@ -25,8 +25,8 @@ ask _site "Enter folder name"
 validate_site_name "${_site}"
 set_site_vars
 [[ -d ${_siteRoot} && ! -L ${_siteRoot} ]] || { echo "${_siteRoot} is not a folder." >&2; exit 1; }
-if [[ -e ${_configPath} || -e ${_servicePath} ]]; then
-	echo "${_site} is already set up: it has an Apache config or a service." >&2
+if [[ -e ${_servicePath} ]]; then
+	echo "${_site} is already set up: it has a service." >&2
 	exit 1
 fi
 
@@ -66,6 +66,15 @@ else
 		exit 1
 	fi
 fi
+# A C# site with an Apache config but no service was only half set up, e.g. when its build failed: it is finished.
+# Its config is replaced. An HTML site has no service, so its config means it is set up.
+if [[ -e ${_configPath} ]]; then
+	if [[ ${_type} == html ]]; then
+		echo "${_site} is already set up: it has an Apache config." >&2
+		exit 1
+	fi
+	echo "${_site} has an Apache config but no service: the setup is finished and the config is replaced"
+fi
 case "${_type}" in
 	project) echo "Found: the ${_csharpKind/empty/C#} project ${_projectName}.csproj" ;;
 	build) echo "Found: the ${_csharpKind/empty/C#} build ${_projectName}.dll in ${_publishFolder/#./the folder}" ;;
@@ -99,7 +108,8 @@ _httpOnly=0
 [[ ${_createCertificate} != n ]] || _httpOnly=1
 _binding=$(normalize_site_binding "${_binding}")
 for _enabledConfig in /etc/apache2/sites-enabled/*.conf; do
-	[[ -e ${_enabledConfig} ]] || continue
+	# The site's own config, from a setup that was not finished, does not hold the binding against it
+	[[ -e ${_enabledConfig} && $(readlink -f "${_enabledConfig}") != "$(readlink -f "${_configPath}")" ]] || continue
 	if awk -v binding="${_binding}" '($1 == "ServerName" || $1 == "ServerAlias") { for (i = 2; i <= NF; i++) if (tolower($i) == tolower(binding)) found = 1 } END { exit !found }' "${_enabledConfig}"; then
 		echo "${_binding} is already used by ${_enabledConfig}" >&2
 		exit 1

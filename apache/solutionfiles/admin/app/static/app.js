@@ -267,6 +267,8 @@ async function route() {
 	} else if (view === "site" && arg) {
 		if (filesDialog.open) filesDialog.close();
 		showView("site");
+		// A site's page always opens at its top, wherever the list was scrolled to
+		window.scrollTo(0, 0);
 		renderSite(arg);
 	} else if (!view && startView === "sql") {
 		// The page opened after login, on a server where SQL Server is the main thing
@@ -620,7 +622,7 @@ function kindBadges(site) {
 		badges.append(badge);
 	}
 	if (site.admin) badges.append(el("span", { className: "badge admin", textContent: "this admin site" }));
-	if (site.not_set_up) badges.append(el("span", { className: "badge not-set-up", textContent: "Not set up", title: "A folder without a service or Apache config. Open it and choose Set up site." }));
+	if (site.not_set_up) badges.append(el("span", { className: "badge not-set-up", textContent: "Not set up", title: "A folder without a service, or a site whose setup was not finished. Open it and choose Set up site." }));
 	if (site.managed_by) badges.append(el("span", { className: "badge", textContent: "Managed from " + (site.managed_by.host || "another server"), title: `Environment of ${site.managed_by.site} on ${site.managed_by.host}. Publish and copy it from there.` }));
 	if (site.updates === "available") badges.append(el("span", { className: "badge updates-available", textContent: "Updates available", title: "NuGet updates were found. Install package updates, then publish the site." }));
 	if (site.updates === "error") badges.append(el("span", { className: "badge updates-error", textContent: "Update check failed", title: "Run Check for updates again. See server logs for details." }));
@@ -2005,7 +2007,9 @@ function openSetupSiteDialog(site) {
 	setupSiteForm.dataset.site = site.name;
 	const build = site.setup_kind.endsWith("build");
 	$("#setup-site-found").textContent = `${siteLabel(site)} holds ${setupKindText[site.setup_kind] || site.setup_kind}`;
-	setupSiteForm.binding.value = site.name.includes(".") ? siteLabel(site) : "";
+	// A site whose setup was not finished keeps the binding its Apache config has
+	const binding = site.environments?.[0]?.display_binding || site.environments?.[0]?.binding || "";
+	setupSiteForm.binding.value = binding || (site.name.includes(".") ? siteLabel(site) : "");
 	setupSiteForm.environment.value = build ? "Production" : "Test";
 	$("#setup-site-environment-row").hidden = site.setup_kind === "html";
 	$("#setup-site-hint").textContent = "Only the service, the Apache config, the certificate and missing scripts are created. Nothing in the folder is overwritten, but the folder the site runs from is owned by www-data, so the site can write there. With HTTPS, DNS for the binding must point to this server.";
@@ -2876,8 +2880,8 @@ async function restoreTerminals() {
 
 run(async () => {
 	syncSiteForm();
-	await loadSites();
-	await route();
+	// The views are hidden until the address picks one, so a site's page does not show the list first
+	try { await loadSites(); } finally { await route(); }
 	await restoreTerminals();
 	updateTerminalState();
 });

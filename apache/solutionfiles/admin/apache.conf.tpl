@@ -26,6 +26,8 @@
 
   ProxyPreserveHost On
   ProxyRequests Off
+  # The offline page (install_offline_page.sh) is Apache's own, never the service's
+  ProxyPass /vns-offline/ !
   ProxyPass /.well-known/acme-challenge/ !
   ProxyPass /ws/ ws://127.0.0.1:@PORT_HTTP@/ws/
   ProxyPassReverse /ws/ ws://127.0.0.1:@PORT_HTTP@/ws/
