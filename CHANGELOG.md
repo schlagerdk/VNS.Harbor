@@ -2,6 +2,12 @@
 
 All notable changes to VNS.Linux are listed here, newest first.
 
+## [1.0.17] - 2026-11-11
+
+### Features
+
+- Windows environments show their datasource, the site list lines up in columns, and the .NET version is plain text on the detail page
+
 ## [1.0.16] - 2026-11-11
 
 ### Features
