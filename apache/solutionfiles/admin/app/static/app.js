@@ -3259,12 +3259,21 @@ async function runSystemUpdate(existing = null) {
 	const overlay = $("#system-update-overlay");
 	$("#system-update-title").textContent = "Updating..";
 	$("#system-update-message").textContent = "Please wait. The page will reload automatically when the update completes.";
+	$("#system-update-step").hidden = true;
+	// From which version to which, also when the page was reloaded during the update
+	const showVersions = (state) => {
+		if (!state || (!state.from && !state.to)) return;
+		$("#system-update-title").textContent = state.to ? `Updating to ${state.to}` : "Updating to the latest";
+		$("#system-update-versions-line").textContent = `${state.from ? "v" + state.from : "Installed version"} → ${state.to || "the latest on main"}`;
+		$("#system-update-versions-line").hidden = false;
+	};
 	$("#system-update-output").hidden = true;
 	$("#system-update-close").hidden = true;
 	$(".update-spinner").hidden = false;
 	overlay.showModal();
 	try {
 		const job = existing || await api("/api/system-update/run", { json: {} });
+		showVersions(job);
 		const deadline = Date.now() + 35 * 60 * 1000;
 		while (Date.now() < deadline) {
 			await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -3280,6 +3289,11 @@ async function runSystemUpdate(existing = null) {
 			if (!response.ok) throw new Error("Could not check update status: HTTP " + response.status);
 			const state = await response.json();
 			if (state.id !== job.id) throw new Error("Update status changed unexpectedly. Reload the page to check it.");
+			showVersions(state);
+			if (state.step) {
+				$("#system-update-step").textContent = state.step;
+				$("#system-update-step").hidden = false;
+			}
 			if (state.status === "success") { location.reload(); return; }
 			if (state.status === "error") {
 				$("#system-update-output").textContent = state.output || "";
@@ -3312,12 +3326,12 @@ async function checkSystemUpdate(refresh = false) {
 	$("#settings-update-group").hidden = $("#settings-update").hidden;
 	$("#settings-update").replaceChildren(svgIcon("sync"), unknown ? "Initialize / update" : "Update");
 	const installedText = result.installed_version ? `v${result.installed_version}` : shortCommit(result.installed);
-	const latestText = result.mode === "release" ? `v${result.latest_version}` : shortCommit(result.latest);
+	const latestText = result.mode === "release" ? `v${result.latest_version}` : `main (${shortCommit(result.latest)})`;
 	$("#btn-settings").title = unknown ? "Installed version unknown. Use Initialize / update to install the latest version and record it."
 		: result.status === "error" ? result.error
 		: available ? `Update available · Installed: ${installedText} · New: ${latestText}` : "Settings";
 	$("#settings-version").textContent = result.installed_version ? `VNS v${result.installed_version}` : installedText ? `VNS ${installedText}` : "";
-	if (available) $("#settings-update").replaceChildren(svgIcon("sync"), `Update to ${latestText}`);
+	if (available) $("#settings-update").replaceChildren(svgIcon("sync"), result.mode === "release" ? `Update to ${latestText}` : "Update to the latest");
 	if (result.status === "error") throw new Error(result.error);
 }
 $("#btn-settings").onclick = (event) => {
@@ -3374,7 +3388,7 @@ async function openSystemUpdateDialog() {
 	const result = await api("/api/system-update?refresh=1");
 	const releases = result.mode === "release";
 	const from = result.installed_version ? `v${result.installed_version}` : result.installed ? shortCommit(result.installed) : "an unknown version";
-	const to = releases ? `v${result.latest_version}` : shortCommit(result.latest);
+	const to = releases ? `v${result.latest_version}` : `the latest on main (${shortCommit(result.latest)})`;
 	$("#system-update-versions").textContent = `Installed: ${from} → ${to}`;
 	const notes = $("#system-update-notes");
 	notes.replaceChildren();

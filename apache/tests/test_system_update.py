@@ -116,7 +116,8 @@ class SystemUpdateTests(unittest.TestCase):
         helper = ROOT / "apache/lib/system_update.py"
         self.ns.update(abort=abort, json=json, uuid=uuid, os=os, sys=__import__("sys"),
                        APACHE_DIR=str(ROOT / "apache"), time=time,
-                       build_command=Mock(return_value=("Update", [sys.executable, "-c", "pass"], "/")))
+                       build_command=Mock(return_value=("Update", [sys.executable, "-c", "pass"], "/")),
+                       update_target=lambda: "v1.1.0")
         self.ns["subprocess"] = subprocess
         nodes = [node for node in ast.parse((APP / "app.py").read_text()).body
                  if isinstance(node, ast.FunctionDef) and node.name == "api_run_system_update"]

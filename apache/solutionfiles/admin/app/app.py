@@ -1015,6 +1015,11 @@ def api_run_system_update():
         if request.method == "GET":
             if state["status"] == "error":
                 state["output"] = log.read_text(errors="replace")[-12000:] if log.exists() else ""
+            elif state["status"] == "running" and log.exists():
+                # The step it is on: the last line the update wrote, without terminal colours
+                lines = [re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", line).strip()
+                         for line in log.read_text(errors="replace")[-4000:].splitlines()]
+                state["step"] = next((line for line in reversed(lines) if line), "")[:160]
             return jsonify(state)
         if state["status"] == "running":
             abort(409, "A system update is already running")
@@ -1026,7 +1031,9 @@ def api_run_system_update():
         descriptor = os.open(log, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
         try:
             with os.fdopen(descriptor, "w") as stream:
-                state = {"id": job, "status": "running", "started": time.time()}
+                # The versions are kept with the job, so a page reloaded during the update still shows them
+                state = {"id": job, "status": "running", "started": time.time(),
+                         "from": installed_version(), "to": update_target()}
                 temporary = path.with_suffix(".tmp")
                 with open(temporary, "w", opener=lambda name, flags: os.open(name, flags, 0o600)) as status_stream:
                     json.dump(state, status_stream)

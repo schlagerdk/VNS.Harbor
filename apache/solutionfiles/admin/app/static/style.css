@@ -773,8 +773,12 @@ dialog.wide.system-update-dialog { width: min(720px, 92vw); }
 .release-notes li { margin: 3px 0; }
 .release-notes li.nested { margin-left: 16px; list-style: circle; }
 .release-notes p { margin: 6px 0; }
-dialog.newsite menu .system-update-changes { margin-right: auto; }
-.settings-version { padding: 6px 12px 2px; font-size: 11px; }
+.system-update-changes { display: inline-block; margin-top: 12px; color: var(--blue); font-size: 13px; text-decoration: none; }
+.system-update-changes:hover { text-decoration: underline; }
+.system-update-changes[hidden] { display: none; }
+.settings-version { margin-top: 6px; padding: 8px 12px 4px; border-top: 1px solid var(--line); font-size: 11px; text-align: center; }
 .settings-version:empty { display: none; }
-#dlg-system-update menu #system-update-cancel { margin-right: 0; }
 #dlg-system-update .system-update-notes + .hint { margin-top: 14px; }
+/* While VNS updates: from which version to which, and the step it is on */
+.system-update-versions-line { margin: 4px 0 10px; color: var(--purple); font-size: 15px; font-weight: 600; }
+.system-update-step { max-width: min(560px, 90vw); margin: 14px auto 0; padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
