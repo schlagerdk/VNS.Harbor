@@ -473,7 +473,7 @@ const buttonStyles = {
 	"Copy site": ["file", "blue"],
 	"Issue certificate": ["shield", "teal"], "Change environment": ["sliders", "purple"], "Sync setup…": ["sliders", "teal"], "Sync data…": ["sync", "pink"], "Change bindings": ["globe", "blue"],
 	"Check service": ["activity", "teal"], "Test Apache config": ["activity", "teal"], "Admin site": ["manage", "gray"],
-	"Edit service": ["pencil", "amber"], "Edit config": ["pencil", "amber"], "Edit web.config": ["pencil", "amber"], "Edit appsettings.json": ["pencil", "amber"], "Delete*": ["trash", "red"],
+	"Remove environment": ["server", "amber"], "Edit service": ["pencil", "amber"], "Edit config": ["pencil", "amber"], "Edit web.config": ["pencil", "amber"], "Edit appsettings.json": ["pencil", "amber"], "Delete*": ["trash", "red"],
 };
 
 function svgIcon(name) {
@@ -1227,7 +1227,9 @@ function envPanel(site, env) {
 	}
 	if (isTarget(env) && (env.mode === "local" && env.exists !== false || env.mode === "remote" && !missing)) addManage("Migrate…", () => openCreateProdDialog(site, env));
 	if (isTarget(env) && (env.mode === "local" && env.exists !== false || env.mode === "windows" || env.mode === "remote" && !missing)) addManage("Copy site", () => openCreateProdDialog(site, env, true));
-	if (hasProd(site) && !site.admin) addManage("Delete site", () => deleteSite(site, isTarget(env) ? "prod" : "test", env), "danger");
+	// An environment on Windows is only removed here: its IIS site and files stay on the server
+	if (hasProd(site) && !site.admin && env.mode === "windows") addManage("Remove environment", () => deleteSite(site, "prod", env), "push-right");
+	else if (hasProd(site) && !site.admin) addManage("Delete site", () => deleteSite(site, isTarget(env) ? "prod" : "test", env), "danger");
 	if (!hasProd(site) && !site.admin) {
 		if (!site.managed_by) addManage("Copy site", () => copySite(site));
 		addManage("Delete site", () => deleteSite(site, "all"), "danger");
@@ -1421,10 +1423,13 @@ async function deleteSite(site, scope, selected) {
 				? `This removes the ${prodEnvironment} target from this site. ${windowsKept} The ${mainEnvironment} site is kept.`
 			: `This deletes the ${prodEnvironment} site: its files, service, Apache config and logs. The ${mainEnvironment} site is kept.`,
 	}[scope];
-	const typed = await ask({
-		title: scope === "all" ? "Delete everything" : `Delete ${scope === "prod" ? prodEnvironment : mainEnvironment} site`, danger: true, ok: "Delete", match: target,
-		message: `${what}\nType "${target}" to confirm.`,
-	});
+	// Removing a Windows environment deletes nothing on the server, so it is a plain confirmation
+	const typed = scope === "prod" && windows
+		? await ask({ title: "Remove environment?", message: `${what}\nPublish, sync and the other tools for ${target} are removed here.`, input: false, ok: "Remove" })
+		: await ask({
+			title: scope === "all" ? "Delete everything" : `Delete ${scope === "prod" ? prodEnvironment : mainEnvironment} site`, danger: true, ok: "Delete", match: target,
+			message: `${what}\nType "${target}" to confirm.`,
+		});
 	if (typed === null) return;
 	let certificates = false;
 	const certificateMessage = remote && scope !== "test"
