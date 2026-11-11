@@ -3330,7 +3330,7 @@ async function checkSystemUpdate(refresh = false) {
 	$("#btn-settings").title = unknown ? "Installed version unknown. Use Initialize / update to install the latest version and record it."
 		: result.status === "error" ? result.error
 		: available ? `Update available · Installed: ${installedText} · New: ${latestText}` : "Settings";
-	$("#settings-version").textContent = result.installed_version ? `VNS v${result.installed_version}` : installedText ? `VNS ${installedText}` : "";
+	$("#settings-version").textContent = result.installed_version ? `v${result.installed_version}` : installedText || "";
 	if (available) $("#settings-update").replaceChildren(svgIcon("sync"), result.mode === "release" ? `Update to ${latestText}` : "Update to the latest");
 	if (result.status === "error") throw new Error(result.error);
 }
