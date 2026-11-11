@@ -169,7 +169,7 @@ else
 		else
 			echo "Build the project into ${_publishFolder}"
 			cd "${_siteRoot}"
-			sudo python3 "${_apacheDir}/lib/publish_status.py" run "${_siteRoot}" test dotnet publish "${_projects[0]}" -c "${_buildConfig}" -p:PublishDir="${_publishFolder}" -p:CustomAfterMicrosoftCommonTargets="${_apacheDir}/lib/publish.targets" --runtime "$(linux_runtime_identifier)" --self-contained false --nologo
+			sudo python3 "${_apacheDir}/lib/publish_status.py" run "${_siteRoot}" test python3 "${_apacheDir}/lib/build_as.py" -- dotnet publish "${_projects[0]}" -c "${_buildConfig}" -p:PublishDir="${_publishFolder}" -p:CustomAfterMicrosoftCommonTargets="${_apacheDir}/lib/publish.targets" --runtime "$(linux_runtime_identifier)" --self-contained false --nologo
 			cd "${_apacheDir}"
 		fi
 	fi

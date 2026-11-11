@@ -84,7 +84,7 @@ if grep -qix 'web.config' <<<"${_listing}"; then _hasWebConfig=1; fi
 
 # Built locally first, so the site stays up if the build fails.
 echo "Publish (Release, win-x64)"
-dotnet publish "${_projectName}.csproj" -c Release -p:PublishDir="${_publish}/" -p:EnvironmentName="${PROD_ENVIRONMENT}" -p:CustomAfterMicrosoftCommonTargets="@APACHE_DIR@/lib/publish.targets" --runtime win-x64 --self-contained false --nologo
+python3 "@APACHE_DIR@/lib/build_as.py" -- dotnet publish "${_projectName}.csproj" -c Release -p:PublishDir="${_publish}/" -p:EnvironmentName="${PROD_ENVIRONMENT}" -p:CustomAfterMicrosoftCommonTargets="@APACHE_DIR@/lib/publish.targets" --runtime win-x64 --self-contained false --nologo
 if [[ ! -f ${_publish}/${_projectName}.dll ]]; then
 	echo "Publish failed: ${_projectName}.dll not found in the output" >&2
 	exit 1

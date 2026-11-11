@@ -8,12 +8,13 @@
 <meta name="admin-site" content="{{ admin_site }}">
 <meta name="server-hostname" content="{{ hostname }}">
 <meta name="start-view" content="{{ start_view }}">
+<meta name="role" content="{{ role }}">
 <title>{{ hostname }} · Server admin</title>
 <link rel="icon" href="/static/vns-logo.webp" type="image/webp">
 <link rel="stylesheet" href="/static/vendor/xterm.css">
 <link rel="stylesheet" href="/static/style.css?v={{ asset_version }}">
 </head>
-<body>
+<body data-role="{{ role }}">
 <dialog id="system-update-overlay" aria-labelledby="system-update-title">
   <div class="update-spinner" aria-hidden="true"></div>
   <h2 id="system-update-title" role="status">Updating..</h2>
@@ -69,7 +70,9 @@
   <div class="user">
     <button id="btn-user" class="avatar" title="Account" aria-haspopup="true">{{ user[:1]|upper }}</button>
     <div id="user-menu" class="menu" hidden>
-      <div class="menu-head"><b id="menu-user">{{ user }}</b><span class="muted">Administrator</span></div>
+      <div class="menu-head"><b id="menu-user">{{ user }}</b><span class="muted">{{ "Administrator" if role == "admin" else "User" }}</span></div>
+      <button id="menu-users" type="button" class="admin-only">Users…</button>
+      <button id="menu-audit" type="button" class="admin-only">Activity log…</button>
       <button id="menu-preferences" type="button">Preferences…</button>
       <button id="menu-profile" type="button">Profile…</button>
       <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit" id="menu-logout">Log out</button></form>
@@ -279,7 +282,7 @@
       <section id="site-packages" class="panel package-panel" hidden></section>
     </div>
     <section id="site-targets" class="site-targets" hidden>
-      <div id="site-targets-head" class="site-targets-head"><div class="site-targets-title"><h3>Environments</h3><span id="site-targets-count" class="package-count"></span></div><div id="site-targets-add" class="actions"></div><input id="targets-search" class="targets-search" type="search" placeholder="Filter environments…" autocomplete="off" spellcheck="false" aria-label="Filter environments" hidden><div id="site-targets-actions" class="actions site-targets-right"></div><div class="layout-toggle" role="group" aria-label="Environment layout"><button id="env-layout-grid" type="button" title="Grid" aria-label="Grid" aria-pressed="true"></button><button id="env-layout-list" type="button" title="List" aria-label="List" aria-pressed="false"></button></div></div>
+      <div id="site-targets-head" class="site-targets-head"><div class="site-targets-title"><h3>Environments</h3><span id="site-targets-count" class="package-count"></span></div><div id="site-targets-add" class="actions"></div><div class="targets-search-box"><svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="targets-search" class="targets-search" type="search" placeholder="Filter environments…" autocomplete="off" spellcheck="false" aria-label="Filter environments" hidden><button type="button" id="targets-search-clear" class="search-clear" aria-label="Clear filter" title="Clear filter"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button></div><div id="site-targets-actions" class="actions site-targets-right"></div><div class="layout-toggle" role="group" aria-label="Environment layout"><button id="env-layout-grid" type="button" title="Grid" aria-label="Grid" aria-pressed="true"></button><button id="env-layout-list" type="button" title="List" aria-label="List" aria-pressed="false"></button></div></div>
       <div id="env-targets" class="envs env-targets"></div>
       <p id="targets-no-match" class="empty" hidden>No environment matches the filter.</p>
       <div id="targets-empty" class="sites-empty targets-empty" hidden>
@@ -604,6 +607,57 @@
   </form>
 </dialog>
 
+<dialog id="dlg-users" class="newsite users-dialog" aria-labelledby="users-title">
+  <div class="ns-head">
+    <span class="ns-icon" data-header-icon="user" aria-hidden="true"></span>
+    <div><h2 id="users-title">Users</h2><p>Who can log in here, and what each of them may do.</p></div>
+  </div>
+  <div class="users-toolbar"><span id="users-count" class="muted"></span><button type="button" id="users-add" class="primary">＋ Add user</button></div>
+  <div id="users-list" class="users-list"></div>
+  <menu><button type="button" id="users-close" class="primary">Close</button></menu>
+</dialog>
+
+<dialog id="dlg-user" class="newsite user-dialog" aria-labelledby="user-title">
+  <form id="form-user" autocomplete="off">
+    <div class="ns-head">
+      <span class="ns-icon" data-header-icon="user" aria-hidden="true"></span>
+      <div><h2 id="user-title">Add user</h2><p id="user-description">They log in with this name and password.</p></div>
+    </div>
+    <div class="ns-grid">
+      <label>Username <input name="username" required maxlength="64" autocomplete="off" spellcheck="false"></label>
+      <label>Password <input name="password" type="password" minlength="12" maxlength="128" autocomplete="new-password"></label>
+    </div>
+    <div class="ns-section">Role</div>
+    <div class="type-cards user-roles">
+      <label class="type-card"><input type="radio" name="role" value="user" checked><span class="tc-title">User</span><span class="tc-sub">Only what you choose below. Never a terminal or the server's files.</span></label>
+      <label class="type-card"><input type="radio" name="role" value="admin"><span class="tc-title">Administrator</span><span class="tc-sub">Everything, also users. Can do what you can.</span></label>
+    </div>
+    <label class="grant-flag user-disabled"><input name="disabled" type="checkbox"><span><strong>Locked</strong> <span class="muted">· cannot log in, and a session that is open ends at once</span></span></label>
+    <div id="user-scope">
+      <div class="ns-section grant-section"><label class="grant-switch"><input name="web" type="checkbox"> Web Server</label></div>
+      <div id="user-web" class="grant-area">
+        <label class="grant-flag"><input name="create_sites" type="checkbox"> May create sites; a site they create is theirs, with everything</label>
+        <p class="hint">Tick a site for all of it, also environments added later, or open it and choose environments. An environment alone shows only that, not the main site. The actions count for the chosen environments: a user publishes and syncs only to those.</p>
+        <div id="user-sites" class="grant-list"></div>
+      </div>
+      <div class="ns-section grant-section"><label class="grant-switch"><input name="sql" type="checkbox"> SQL Server</label></div>
+      <div id="user-sql" class="grant-area">
+        <label class="grant-flag"><input name="manage_connections" type="checkbox"> May add SQL connections; one they add is theirs to change. The others stay locked.</label>
+        <div id="user-connections" class="grant-list"></div>
+      </div>
+    </div>
+    <p id="user-error" class="error" role="alert"></p>
+    <menu><li class="cancel-action"><button type="button" id="user-cancel" class="cancel-link">Cancel</button></li><li><button type="button" id="user-delete" class="danger" hidden>Delete user</button></li><li><button type="submit" class="primary" id="user-save">Save</button></li></menu>
+  </form>
+</dialog>
+
+<dialog id="dlg-audit" class="wide logs-dialog" aria-labelledby="audit-title">
+  <h2 id="audit-title">Activity log</h2>
+  <div class="logs-toolbar"><input id="audit-search" type="search" placeholder="Filter…" autocomplete="off" spellcheck="false" aria-label="Filter"></div>
+  <div id="audit-list" class="logs-list audit-list"></div>
+  <menu><span id="audit-count" class="muted logs-count"></span><button type="button" id="audit-close" class="primary">Close</button></menu>
+</dialog>
+
 <dialog id="dlg-preferences" class="newsite environment-dialog" aria-labelledby="preferences-title">
   <form method="dialog" id="form-preferences">
     <div class="ns-head">
@@ -616,6 +670,7 @@
       <label class="type-card environment-option"><input type="radio" name="start_view" value="sites" required><span class="tc-title">Web Server</span><span class="tc-sub">The sites and their environments</span></label>
       <label class="type-card environment-option"><input type="radio" name="start_view" value="sql"><span class="tc-title">SQL Server</span><span class="tc-sub">For a server that is mostly a SQL Server</span></label>
     </fieldset>
+    <div class="admin-only-block">
     <div class="ns-section">Site keep-alive</div>
     <label class="sync-option keep-alive-option"><input name="keep_alive" type="checkbox">
       <span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></span>
@@ -631,6 +686,7 @@
       <label class="keep-alive-custom"><input name="keep_alive_interval" type="number" min="1" max="1440" step="1" required aria-label="Minutes"> min</label>
     </div>
     <p class="hint" id="preferences-keep-alive-hint">From 1 to 1440 minutes. It does not restart services or prevent Boot failed.</p>
+    </div>
     <menu><button type="button" id="preferences-cancel" class="cancel-link">Cancel</button><button type="submit" class="primary">Save</button></menu>
   </form>
 </dialog>

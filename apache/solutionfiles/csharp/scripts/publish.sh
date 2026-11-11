@@ -37,7 +37,7 @@ _stopped=1
 
 echo "Publish (${_configuration})"
 rm -rf "${_publishFolder}/runtimes"
-dotnet publish "${_projectName}.csproj" -c "${_configuration}" -p:PublishDir="${_publishFolder}" -p:CustomAfterMicrosoftCommonTargets="@APACHE_DIR@/lib/publish.targets" --runtime "$(linux_runtime_identifier)" --self-contained false --nologo
+python3 "@APACHE_DIR@/lib/build_as.py" -- dotnet publish "${_projectName}.csproj" -c "${_configuration}" -p:PublishDir="${_publishFolder}" -p:CustomAfterMicrosoftCommonTargets="@APACHE_DIR@/lib/publish.targets" --runtime "$(linux_runtime_identifier)" --self-contained false --nologo
 
 echo "Delete bin"
 rm -rf bin

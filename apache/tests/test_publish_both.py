@@ -119,6 +119,8 @@ const decorate = () => {};
 const updateSiteActivity = () => {};
 const envPanel = () => el("div");
 let envLayout = "grid";
+const pruneButtons = () => {};
+const envKeyOf = env => env.key === "main" ? "main" : env.target || "prod";
 const applyEnvLayout = () => {};
 const envListRow = () => {};
 const run = handler => handler();

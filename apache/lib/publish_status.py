@@ -1,6 +1,7 @@
 """Track .NET project configuration for publishes and package update checks."""
 import gzip
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -10,6 +11,14 @@ import sys
 import tempfile
 import urllib.parse
 import urllib.request
+
+
+def _build_as():
+    """lib/build_as.py, also when this file is loaded by the admin from another folder"""
+    spec = importlib.util.spec_from_file_location("vns_build_as", Path(__file__).with_name("build_as.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def fingerprint(root):
@@ -201,10 +210,11 @@ def check_updates(root, show_output=False):
     packages = {}
     try:
         for project in sorted(Path(root).glob("*.csproj")):
-            result = subprocess.run(
-                ["dotnet", "list", str(project), "package", "--outdated", "--format", "json", "--output-version", "1"],
-                cwd=root, env=os.environ | {"DOTNET_CLI_UI_LANGUAGE": "en-US", "VSLANG": "1033"},
-                capture_output=True, text=True, timeout=180, check=True)
+            # Listing restores the project, which can run its build steps: as the build user, never as root
+            argv, env = _build_as().command_for(
+                ["dotnet", "list", str(project), "package", "--outdated", "--format", "json", "--output-version", "1"], root)
+            result = subprocess.run(argv, cwd=root, env=(env or os.environ) | {"DOTNET_CLI_UI_LANGUAGE": "en-US", "VSLANG": "1033"},
+                                    capture_output=True, text=True, timeout=180, check=True)
             found = fit_to_frameworks(parse_updates(result.stdout), project_frameworks(result.stdout), show_output)
             for item in found:
                 key = item["name"].lower()
@@ -245,9 +255,15 @@ def upgrade_packages(root, name=None):
             raise ValueError("Package has no checked update: " + name)
     for item in packages:
         print(f'Update {item["name"]}: {item["current"]} -> {item["latest"]}', flush=True)
+        # As root only the version is written in the project file; the restore, which can run build steps, is the
+        # build user's
+        as_root = os.geteuid() == 0
         result = subprocess.run(
-            ["dotnet", "add", str(projects[0]), "package", item["name"], "--version", item["latest"]],
+            ["dotnet", "add", str(projects[0]), "package", item["name"], "--version", item["latest"], *(["--no-restore"] if as_root else [])],
             cwd=root)
+        if result.returncode == 0 and as_root:
+            argv, env = _build_as().command_for(["dotnet", "restore", str(projects[0])], root)
+            result = subprocess.run(argv, cwd=root, env=env)
         if result.returncode:
             return result.returncode if result.returncode > 0 else 128 - result.returncode
     check_updates(root, show_output=True)

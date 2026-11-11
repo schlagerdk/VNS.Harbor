@@ -27,6 +27,65 @@ new MutationObserver(syncModalScrollLock).observe(document.body, {
 });
 syncModalScrollLock();
 
+// Who is logged in and what they may do (/api/me). The server checks every request; the page only leaves out
+// what cannot be used. An administrator may do everything.
+let currentUser = { admin: document.querySelector("meta[name=role]")?.content !== "user", sites: {}, connections: {} };
+const envKeyOf = (env) => (env.key === "main" ? "main" : env.target || "prod");
+function canSee(siteName, envKey) {
+	if (currentUser.admin) return true;
+	const grant = currentUser.web && currentUser.sites[siteName];
+	if (!grant) return false;
+	return grant.envs.includes(envKey) || (grant.new_envs && envKey !== "main" && !(grant.known || []).includes(envKey));
+}
+function can(siteName, envKey, action) {
+	if (currentUser.admin) return true;
+	return canSee(siteName, envKey) && (currentUser.sites[siteName].actions || []).includes(action);
+}
+function canAnywhere(site, action) {
+	return currentUser.admin || (site.environments || []).some((env) => can(site.name, envKeyOf(env), action));
+}
+function canSql(connection, database, action) {
+	if (currentUser.admin) return true;
+	const grant = currentUser.sql && currentUser.connections[connection];
+	if (!grant) return false;
+	const databases = grant.databases || [];
+	const inScope = database == null || databases.includes("*") || databases.includes(database);
+	return inScope && (action === "view" || (grant.actions || []).includes(action));
+}
+// The permission a button on a site's page needs, by its label; "admin" is an administrator's alone
+const buttonPermission = {
+	"Publish": "publish", "Publish all": "publish", "Publish environments": "publish",
+	"Clear logs": "clear_logs", "Sync data…": "sync_data", "Sync settings…": "sync_settings", "Sync setup…": "sync_any",
+	"Fix permissions": "files", "Change bindings": "bindings", "Issue certificate": "bindings", "Change environment": "bindings",
+	"Check service": "admin", "Edit service": "admin", "Edit config": "admin", "Edit web.config": "files", "Edit appsettings.json": "appsettings",
+	"Stop": "service", "Start": "service", "Restart": "service", "Logs": "logs", "Shell": "admin", "Files": "files",
+	"Copy site": "copy_site", "Delete site": "delete", "Remove environment": "delete", "Delete everything": "delete_all",
+	"Migrate…": "admin", "Set up site…": "admin", "Move under main site": "admin", "Add environment": "create_env",
+	"Check": "packages", "Update all": "packages", "Update": "packages", "Add": "packages", "Remove": "packages", "Run custom script": "scripts",
+};
+function allowedButton(label, site, envKey) {
+	const need = buttonPermission[label];
+	if (!need || currentUser.admin) return true;
+	if (need === "admin") return false;
+	if (need === "sync_any") return can(site.name, envKey, "sync_data") || can(site.name, envKey, "sync_settings");
+	if (need === "copy_site") return currentUser.create_sites && can(site.name, envKey, "files");
+	if (need === "delete_all") return (site.environments || []).every((env) => can(site.name, envKeyOf(env), "delete"));
+	if (envKey) return can(site.name, envKey, need);
+	return canAnywhere(site, need);
+}
+// Leave out the buttons in a part of the page the user cannot use, and rows that are empty then
+function pruneButtons(root, site, envKey = null) {
+	if (currentUser.admin || !root) return;
+	for (const button of root.querySelectorAll("button")) {
+		const label = button.textContent.trim().replace(/^\s+/, "");
+		const own = button.closest("[data-env]")?.dataset.env || envKey;
+		if (!allowedButton(label, site, own)) button.remove();
+	}
+	for (const row of root.querySelectorAll(".actions, .script-menu")) {
+		if (!row.querySelector("button, a")) row.remove();
+	}
+}
+
 // Elements are always built with textContent, so file and site names can never inject HTML
 function el(tag, props, ...children) {
 	const node = document.createElement(tag);
@@ -590,7 +649,7 @@ function renderSites() {
 	box.replaceChildren();
 	const visible = overviewSites().filter(matches);
 	$("#no-sites").hidden = visible.length > 0;
-	$("#btn-new-site").hidden = visible.length === 0;
+	$("#btn-new-site").hidden = visible.length === 0 || !currentUser.create_sites;
 	const firstSite = siteCount === 0;
 	$("#empty-sites-title").textContent = firstSite ? "Your first site starts here" : "Make room for your next idea";
 	$("#empty-sites-description").textContent = firstSite
@@ -1108,6 +1167,9 @@ function renderSite(name) {
 	decorate(targetsActions);
 	decorate(targetsAdd);
 	decorate($("#site-danger"));
+	// Publish all and the packages are the main site's; the environments' buttons follow their own panel
+	for (const [part, envKey] of [[head, "main"], [envs, null], [targets, null], [targetsActions, null], [targetsAdd, null],
+		[$("#site-danger"), null], [packagesPanel, "main"]]) pruneButtons(part, site, envKey);
 	updateSiteActivity();
 	decorate(packagesPanel);
 	if (openMenuState) {
@@ -1333,6 +1395,7 @@ function envPanel(site, env) {
 	}
 
 	const panel = el("section", { className: "env " + (isTarget(env) ? "prod" : "") }, heading, meta);
+	panel.dataset.env = envKeyOf(env);
 	if (missing) panel.append(el("p", { className: "package-error", textContent: `The site no longer exists on ${env.host}. Publish creates it again. Delete site removes this environment here.` }));
 	else if (env.exists === false) panel.append(el("p", { className: "muted", textContent: "Nothing published here yet." }));
 	if (env.remote_error) panel.append(el("p", { className: "package-error", textContent: "Remote status unavailable: " + env.remote_error }));
@@ -2211,6 +2274,12 @@ function filterTargets() {
 	$("#targets-no-match").hidden = shown > 0 || !words.length;
 }
 $("#targets-search").oninput = filterTargets;
+$("#targets-search-clear").onclick = () => {
+	const field = $("#targets-search");
+	field.value = "";
+	filterTargets();
+	field.focus();
+};
 $("#targets-search").onkeydown = (event) => {
 	if (event.key === "Escape" && event.target.value) {
 		event.stopPropagation();
@@ -3543,7 +3612,8 @@ function openTerminal(id, title, autoClose, sites = [], running = true, scope = 
 	$("#tabs").append(tab);
 	$("#panes").append(pane);
 
-	const term = new Terminal({ cursorBlink: true, fontSize: 14, scrollback: 5000, fontFamily: "ui-monospace, Menlo, Consolas, monospace", theme: { background: "#000000" } });
+	// A user's tasks take no keys: the server ignores them as well, so Ctrl+C cannot leave a task for a shell
+	const term = new Terminal({ cursorBlink: currentUser.admin, disableStdin: !currentUser.admin, fontSize: 14, scrollback: 5000, fontFamily: "ui-monospace, Menlo, Consolas, monospace", theme: { background: "#000000" } });
 	const fit = new FitAddon.FitAddon();
 	term.loadAddon(fit);
 	term.open(pane);
@@ -3608,6 +3678,13 @@ async function restoreTerminals() {
 
 run(async () => {
 	syncSiteForm();
+	try { currentUser = await api("/api/me"); } catch (error) { /* the page goes on as before */ }
+	// Web Server and SQL Server: only what the user has
+	$("#switch-sites").hidden = !currentUser.web;
+	$("#switch-sql").hidden = !currentUser.sql;
+	$("#switch-sites").closest("nav").hidden = !(currentUser.web && currentUser.sql);
+	$("#btn-new-site").hidden = !currentUser.create_sites;
+	$("#sql-add-connection").hidden = !currentUser.manage_connections;
 	// The views are hidden until the address picks one, so a site's page does not show the list first
 	try { await loadSites(); } finally { await route(); }
 	await restoreTerminals();
@@ -3642,11 +3719,11 @@ function sqlCell(label, props, ...children) {
 function sqlBackupRow(backup, allowDelete = true) {
 	return el("tr", {}, sqlCell("Database", { textContent: backup.database_name }),
 		sqlCell("Finished", { textContent: formatDate(backup.finished) }), sqlCell("Size", { className: "num", textContent: formatSqlSize(backup.size_mb) }),
-		sqlCell("Server path", { textContent: backup.path }), sqlCell("Actions", {}, el("div", { className: "actions" }, el("button", {
+		sqlCell("Server path", { textContent: backup.path }), sqlCell("Actions", {}, el("div", { className: "actions" }, ...(!canSql(sqlSelected(), backup.database_name, "restore") ? [] : [el("button", {
 			textContent: "Restore", disabled: backup.media_count !== 1,
 			title: backup.error || (backup.media_count !== 1 ? "Striped or damaged backups are not supported" : "Restore this full backup"),
 			onclick: () => run(() => sqlRestore(backup)),
-		}), ...(allowDelete && sqlSnapshot.backup_file_access ? [el("button", {
+		})]), ...(allowDelete && sqlSnapshot.backup_file_access && canSql(sqlSelected(), backup.database_name, "backup") ? [el("button", {
 			textContent: "Delete", onclick: () => run(async () => {
 				if (!(await ask({ title: "Delete backup file?", message: `Delete the entire file ${backup.path}? All backup sets in this file will be removed. Type ${backup.database_name} to confirm.`, match: backup.database_name, danger: true, ok: "Delete" }))) return;
 				await openTask({ kind: "sql_action", action: "delete_backup", connection: sqlSelected(),
@@ -3707,7 +3784,10 @@ async function refreshSql() {
 		sqlSnapshot = data;
 		$("#sql-backups-panel").hidden = data.backups.length === 0;
 		const hasUserDatabases = data.databases.some((database) => database.id > 4);
-		$("#sql-backup-all").hidden = !hasUserDatabases;
+		$("#sql-backup-all").hidden = !hasUserDatabases || !canSql(id, "*", "backup");
+		$("#sql-create").hidden = !canSql(id, null, "create");
+		// A connection the user did not make is locked for them
+		$("#sql-edit-connection").hidden = Boolean(sqlConnections.find((item) => item.id === id)?.locked);
 		$("#sql-user-databases-table").hidden = !hasUserDatabases;
 		const fileErrors = data.backups.filter((backup) => backup.error);
 		$("#sql-status").textContent = `${data.databases.length} databases · ${data.backups.length} backups`;
@@ -3720,11 +3800,11 @@ async function refreshSql() {
 		for (const database of data.databases) {
 			const actions = el("div", { className: "actions" });
 			if (database.id > 4) {
-				for (const [label, action] of [["Backup", "backup"], ["Copy", "copy"], ["Delete", "drop"]]) {
-					actions.append(el("button", { textContent: label, onclick: () => run(() => sqlDatabaseAction(action, database)) }));
+				for (const [label, action, need] of [["Backup", "backup", "backup"], ["Copy", "copy", "copy"], ["Delete", "drop", "delete"]]) {
+					if (canSql(id, database.name, need)) actions.append(el("button", { textContent: label, onclick: () => run(() => sqlDatabaseAction(action, database)) }));
 				}
 			}
-			actions.prepend(el("button", { textContent: "Query", onclick: () => openSqlQuery(database) }));
+			if (canSql(id, database.name, "query")) actions.prepend(el("button", { textContent: "Query", onclick: () => openSqlQuery(database) }));
 			const toggle = el("button", { type: "button", className: "sql-tables-toggle", title: "Show tables", ariaExpanded: "false",
 				ariaLabel: `Show the tables of ${database.name}`, innerHTML: '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>' });
 			toggle.onclick = () => toggleSqlTables(toggle, database);
@@ -4357,3 +4437,209 @@ setInterval(() => { if (!document.hidden && !systemUpdating) run(checkSystemUpda
 document.addEventListener("visibilitychange", () => {
 	if (!document.hidden && !systemUpdating) run(() => checkSystemUpdate(true));
 });
+
+
+// ------------------------------------------------------------------ users
+// Administrators make users here: a role, and for a user the sites, environments and actions, and SQL Server.
+const usersDialog = $("#dlg-users");
+const userDialog = $("#dlg-user");
+const userForm = $("#form-user");
+let usersData = null;
+const defaultSiteActions = ["service", "logs", "publish", "sync_data", "sync_settings", "clear_logs"];
+const defaultSqlActions = ["query", "backup"];
+
+async function openUsers() {
+	usersData = await api("/api/users");
+	renderUsers();
+	if (!usersDialog.open) usersDialog.showModal();
+}
+function userSummary(user) {
+	if (user.role === "admin") return "Administrator · everything";
+	const parts = [];
+	if (user.web) parts.push(`${Object.keys(user.sites || {}).length} site${Object.keys(user.sites || {}).length === 1 ? "" : "s"}${user.create_sites ? " · creates sites" : ""}`);
+	if (user.sql) parts.push(`${Object.keys(user.connections || {}).length} SQL connection${Object.keys(user.connections || {}).length === 1 ? "" : "s"}`);
+	return parts.join(" · ") || "No access yet";
+}
+function renderUsers() {
+	const users = usersData.users;
+	$("#users-count").textContent = `${users.length} user${users.length === 1 ? "" : "s"}`;
+	$("#users-list").replaceChildren(...(users.length ? users.map((user) => el("button", { type: "button", className: "user-row" + (user.disabled ? " disabled" : ""),
+		onclick: () => openUserEditor(user) },
+		el("span", { className: "user-avatar", textContent: user.username.slice(0, 1).toUpperCase() }),
+		el("span", { className: "user-text" }, el("strong", { textContent: user.username }), el("small", { textContent: userSummary(user) })),
+		el("span", { className: "badge " + (user.role === "admin" ? "user-admin" : "user-user"), textContent: user.disabled ? "Locked" : user.role === "admin" ? "Administrator" : "User" }),
+		svgIcon("chevron"))) : [el("p", { className: "muted users-empty", textContent: "No other users yet. Add one to give someone their own login." })]));
+}
+
+// The site tree: a site's box gives all of it; opened, its environments one by one, and its actions
+function siteGrantRow(name, envKeys, grant) {
+	const site = allSites.find((item) => item.name === name);
+	const label = (key) => {
+		const env = site?.environments.find((item) => envKeyOf(item) === key);
+		return key === "main" ? `Main site${env ? " · " + (bindingLabel(env) || siteLabel(site)) : ""}` : (env && bindingLabel(env)) || key;
+	};
+	const chosen = new Set(grant?.envs || []);
+	const whole = el("input", { type: "checkbox", className: "grant-site-check" });
+	const body = el("div", { className: "grant-body", hidden: !grant });
+	const envBoxes = envKeys.map((key) => {
+		const box = el("input", { type: "checkbox", value: key, checked: chosen.has(key) });
+		box.dataset.env = key;
+		return [key, box, el("label", { className: "grant-chip" + (key === "main" ? " main" : "") }, box, el("span", { textContent: label(key) }))];
+	});
+	const newEnvs = el("input", { type: "checkbox", checked: grant ? Boolean(grant.new_envs) : true });
+	const actionBoxes = usersData.site_actions.map(([value, text]) => {
+		const box = el("input", { type: "checkbox", value, checked: (grant?.actions || defaultSiteActions).includes(value) });
+		return el("label", { className: "grant-chip action" }, box, el("span", { textContent: text }));
+	});
+	const sync = () => {
+		const count = envBoxes.filter(([, box]) => box.checked).length;
+		whole.checked = count === envBoxes.length;
+		whole.indeterminate = count > 0 && count < envBoxes.length;
+		row.classList.toggle("granted", count > 0);
+	};
+	whole.onchange = () => {
+		for (const [, box] of envBoxes) box.checked = whole.checked;
+		newEnvs.checked = whole.checked;
+		body.hidden = !whole.checked;
+		sync();
+	};
+	for (const [, box] of envBoxes) box.onchange = sync;
+	const toggle = el("button", { type: "button", className: "grant-toggle", title: "Environments and actions", ariaLabel: "Environments and actions" }, svgIcon("chevron"));
+	toggle.onclick = () => { body.hidden = !body.hidden; toggle.setAttribute("aria-expanded", String(!body.hidden)); };
+	body.append(
+		el("div", { className: "grant-label", textContent: "Environments" }),
+		el("div", { className: "grant-chips" }, ...envBoxes.map(([, , chip]) => chip)),
+		...(envKeys.length > 1 ? [el("label", { className: "grant-flag small" }, newEnvs, el("span", { textContent: "Also environments added later" }))] : []),
+		el("div", { className: "grant-label", textContent: "May" }),
+		el("div", { className: "grant-chips" }, ...actionBoxes));
+	const row = el("div", { className: "grant-site" },
+		el("div", { className: "grant-head" }, el("label", {}, whole, el("strong", { textContent: site ? siteLabel(site) : name })),
+			el("span", { className: "muted", textContent: envKeys.length > 1 ? `${envKeys.length - 1} environment${envKeys.length === 2 ? "" : "s"}` : "" }), toggle),
+		body);
+	row.dataset.site = name;
+	row.collect = () => {
+		const envs = envBoxes.filter(([, box]) => box.checked).map(([key]) => key);
+		if (!envs.length) return null;
+		return { envs, new_envs: newEnvs.checked && envs.length === envKeys.length, actions: actionBoxes.map((chip) => chip.querySelector("input")).filter((box) => box.checked).map((box) => box.value) };
+	};
+	sync();
+	return row;
+}
+
+function connectionGrantRow(connection, grant) {
+	const box = el("input", { type: "checkbox", checked: Boolean(grant) });
+	const databases = el("input", { value: (grant?.databases || ["*"]).join(", "), placeholder: "* for every database, or names separated by commas", spellcheck: false });
+	const actions = usersData.sql_actions.map(([value, text]) => el("label", { className: "grant-chip action" },
+		el("input", { type: "checkbox", value, checked: (grant?.actions || defaultSqlActions).includes(value) }), el("span", { textContent: text })));
+	const body = el("div", { className: "grant-body", hidden: !grant },
+		el("label", { className: "grant-databases" }, "Databases", databases),
+		el("div", { className: "grant-label", textContent: "May" }), el("div", { className: "grant-chips" }, ...actions));
+	box.onchange = () => { body.hidden = !box.checked; row.classList.toggle("granted", box.checked); };
+	const row = el("div", { className: "grant-site" + (grant ? " granted" : "") },
+		el("div", { className: "grant-head" }, el("label", {}, box, el("strong", { textContent: connection.name || connection.host })),
+			el("span", { className: "muted", textContent: connection.host + (connection.port ? ":" + connection.port : "") })), body);
+	row.collect = () => box.checked ? {
+		databases: databases.value.split(",").map((item) => item.trim()).filter(Boolean),
+		actions: actions.map((chip) => chip.querySelector("input")).filter((item) => item.checked).map((item) => item.value),
+		...(grant?.owned ? { owned: true } : {}),
+	} : null;
+	return row;
+}
+
+function openUserEditor(user = null) {
+	userForm.reset();
+	userForm.dataset.id = user?.id || "";
+	$("#user-title").textContent = user ? user.username : "Add user";
+	$("#user-description").textContent = user ? "Change what they may do. Saving ends their open sessions, so they log in to the new rules." : "They log in with this name and password.";
+	$("#user-error").textContent = "";
+	userForm.username.value = user?.username || "";
+	userForm.password.required = !user;
+	userForm.password.placeholder = user ? "Leave empty to keep it" : "At least 12 characters";
+	userForm.querySelector(`input[name=role][value=${user?.role || "user"}]`).checked = true;
+	userForm.disabled.checked = Boolean(user?.disabled);
+	userForm.web.checked = user ? Boolean(user.web) : true;
+	userForm.create_sites.checked = Boolean(user?.create_sites);
+	userForm.sql.checked = Boolean(user?.sql);
+	userForm.manage_connections.checked = Boolean(user?.manage_connections);
+	$("#user-sites").replaceChildren(...Object.entries(usersData.sites).sort(([a], [b]) => a.localeCompare(b))
+		.map(([name, envs]) => siteGrantRow(name, envs, user?.sites?.[name])));
+	$("#user-connections").replaceChildren(...(usersData.connections.length ? usersData.connections.map((connection) => connectionGrantRow(connection, user?.connections?.[connection.id]))
+		: [el("p", { className: "muted", textContent: "There are no SQL connections yet." })]));
+	$("#user-delete").hidden = !user;
+	showUserScope();
+	userDialog.showModal();
+	userForm.username.focus();
+}
+function showUserScope() {
+	const admin = userForm.role.value === "admin";
+	$("#user-scope").hidden = admin;
+	$("#user-web").hidden = !userForm.web.checked;
+	$("#user-sql").hidden = !userForm.sql.checked;
+}
+userForm.onchange = (event) => { if (["role", "web", "sql"].includes(event.target.name)) showUserScope(); };
+userForm.onsubmit = (event) => {
+	event.preventDefault();
+	run(async () => {
+		const id = userForm.dataset.id;
+		const sites = {};
+		for (const row of $("#user-sites").children) {
+			const grant = row.collect?.();
+			if (grant) sites[row.dataset.site] = grant;
+		}
+		const connections = {};
+		const rows = [...$("#user-connections").children].filter((row) => row.collect);
+		rows.forEach((row, index) => {
+			const grant = row.collect();
+			if (grant) connections[usersData.connections[index].id] = grant;
+		});
+		const body = { username: userForm.username.value.trim(), role: userForm.role.value, disabled: userForm.disabled.checked,
+			web: userForm.web.checked, create_sites: userForm.create_sites.checked, sql: userForm.sql.checked,
+			manage_connections: userForm.manage_connections.checked, sites, connections };
+		if (userForm.password.value) body.password = userForm.password.value;
+		try {
+			await api(id ? "/api/users/" + encodeURIComponent(id) : "/api/users", { method: id ? "PUT" : "POST", json: body });
+		} catch (error) {
+			$("#user-error").textContent = error.message;
+			return;
+		}
+		userDialog.close();
+		toast(id ? "User saved" : "User added", "ok");
+		await openUsers();
+	});
+};
+$("#user-cancel").onclick = () => userDialog.close();
+$("#user-delete").onclick = () => run(async () => {
+	const name = userForm.username.value;
+	if (!(await ask({ title: "Delete user?", message: `${name} can no longer log in. What they made stays. Type ${name} to confirm.`, match: name, danger: true, ok: "Delete" }))) return;
+	await api("/api/users/" + encodeURIComponent(userForm.dataset.id), { method: "DELETE" });
+	userDialog.close();
+	toast("User deleted", "ok");
+	await openUsers();
+});
+$("#users-add").onclick = () => openUserEditor();
+$("#users-close").onclick = () => usersDialog.close();
+$("#menu-users").onclick = () => { $("#user-menu").hidden = true; run(openUsers); };
+
+// ------------------------------------------------------------------ activity log
+const auditDialog = $("#dlg-audit");
+let auditEntries = [];
+function renderAudit() {
+	const words = $("#audit-search").value.trim().toLowerCase();
+	const shown = auditEntries.filter((entry) => !words || `${entry.user} ${entry.message} ${entry.ip}`.toLowerCase().includes(words));
+	$("#audit-list").replaceChildren(...(shown.length ? shown.map((entry) => el("div", { className: "log-row audit-row" },
+		el("span", { className: "log-time", textContent: formatDate(entry.time * 1000) }),
+		el("span", { className: "log-source", textContent: entry.user, title: entry.ip }),
+		el("span", { className: "log-message", textContent: entry.message }))) : [el("p", { className: "muted logs-empty", textContent: "Nothing yet." })]));
+	$("#audit-count").textContent = `${shown.length} of ${auditEntries.length}`;
+}
+$("#menu-audit").onclick = () => {
+	$("#user-menu").hidden = true;
+	run(async () => {
+		auditEntries = (await api("/api/audit")).entries;
+		$("#audit-search").value = "";
+		renderAudit();
+		auditDialog.showModal();
+	});
+};
+$("#audit-search").oninput = renderAudit;
+$("#audit-close").onclick = () => auditDialog.close();

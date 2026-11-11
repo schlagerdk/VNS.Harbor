@@ -161,6 +161,8 @@ class UpdatePublishScriptsTests(unittest.TestCase):
         helper = self.apache / "lib/dotnet.sh"
         helper.parent.mkdir(exist_ok=True)
         helper.write_text('linux_runtime_identifier() { echo linux-x64; }\n')
+        # The build runs through the build user's helper; not as root it runs the command as it is
+        (helper.parent / "build_as.py").write_text((Path(__file__).resolve().parents[1] / "lib/build_as.py").read_text())
         binary = self.apache / "bin"
         binary.mkdir()
         calls = self.apache / "calls"

@@ -32,6 +32,8 @@ production_runtime = (
 )
 planned = []
 unchanged = []
+# The publish line, also once it runs through the build user's helper
+PUBLISH_LINE = r"(?m)^([ \t]*)(?:python3 \S*build_as\.py\S* -- )?dotnet publish\b[^\n]*$"
 
 
 def upgrade_legacy_local(path, text):
@@ -104,12 +106,17 @@ def update_publish_script(path, production):
         raise RuntimeError(f"Refusing to modify symlink: {path}")
     original = path.read_text()
     text = original if production else upgrade_legacy_local(path, original)
-    publish_lines = list(re.finditer(r"(?m)^[ \t]*dotnet publish\b[^\n]*$", text))
+    publish_lines = list(re.finditer(PUBLISH_LINE, text))
     if len(publish_lines) != 1:
         raise RuntimeError(f"Expected one dotnet publish command in {path}")
 
     match = publish_lines[0]
     command = match.group()
+    # Every build runs as the unprivileged build user, never as root (lib/build_as.py). This rewrites the scripts of
+    # installations made before that; it can go when every installation has had this update.
+    if "build_as.py" not in command:
+        indent = re.match(r"[ \t]*", command).group()
+        command = indent + "python3 " + shlex.quote(str(apache / "lib/build_as.py")) + " -- " + command[len(indent):]
     if "--runtime" not in command:
         if "--self-contained false" not in command:
             raise RuntimeError(f"Unrecognized framework-dependent publish command in {path}")
@@ -132,7 +139,7 @@ def update_publish_script(path, production):
         if not re.search(r"""(?m)^source .*/lib/dotnet\.sh["']?$""", text):
             text = text[:remote_definition.start()] + production_source + text[remote_definition.start():]
     else:
-        publish = re.search(r"(?m)^([ \t]*)dotnet publish\b[^\n]*$", text)
+        publish = re.search(PUBLISH_LINE, text)
         prefix = publish.group(1)
         additions = ""
         if not re.search(r"""(?m)^source .*/lib/dotnet\.sh["']?$""", text):

@@ -208,7 +208,7 @@ create_csharp() {
 		fi
 		exclude_from_build "${_project}" "${_publishFolder}"
 		configure_project_dotnet "${_project}"
-		sudo python3 "${_apacheDir}/lib/publish_status.py" run "${_siteRoot}" test dotnet publish "${_project}" -c "${_buildConfig}" -p:PublishDir="${_publishFolder}" -p:CustomAfterMicrosoftCommonTargets="${_apacheDir}/lib/publish.targets" --runtime "$(linux_runtime_identifier)" --self-contained false --nologo
+		sudo python3 "${_apacheDir}/lib/publish_status.py" run "${_siteRoot}" test python3 "${_apacheDir}/lib/build_as.py" -- dotnet publish "${_project}" -c "${_buildConfig}" -p:PublishDir="${_publishFolder}" -p:CustomAfterMicrosoftCommonTargets="${_apacheDir}/lib/publish.targets" --runtime "$(linux_runtime_identifier)" --self-contained false --nologo
 		sudo rm -rf bin obj
 	fi
 	cd "${_apacheDir}"
@@ -268,7 +268,7 @@ create_umbraco_project() {
 	sudo rm -f appsettings-schema.json appsettings-schema.Umbraco.Cms.json umbraco-package-schema.json
 
 	echo "Publish site"
-	sudo python3 "${_apacheDir}/lib/publish_status.py" run "${_siteRoot}" test dotnet publish "${_project}" -c "${_buildConfig}" -p:PublishDir="${_publishFolder}" -p:CustomAfterMicrosoftCommonTargets="${_apacheDir}/lib/publish.targets" --runtime "$(linux_runtime_identifier)" --self-contained false --nologo
+	sudo python3 "${_apacheDir}/lib/publish_status.py" run "${_siteRoot}" test python3 "${_apacheDir}/lib/build_as.py" -- dotnet publish "${_project}" -c "${_buildConfig}" -p:PublishDir="${_publishFolder}" -p:CustomAfterMicrosoftCommonTargets="${_apacheDir}/lib/publish.targets" --runtime "$(linux_runtime_identifier)" --self-contained false --nologo
 
 	echo "Delete bin and schema files"
 	sudo rm -rf bin

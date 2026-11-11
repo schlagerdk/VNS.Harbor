@@ -32,7 +32,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import ptyprocess
-from flask import Flask, abort, jsonify, redirect, render_template, request, send_file, session
+from flask import Flask, abort, g, has_request_context, jsonify, redirect, render_template, request, send_file, session
 from flask_sock import Sock
 from werkzeug.exceptions import HTTPException
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -71,6 +71,9 @@ _data_sync_spec = importlib.util.spec_from_file_location("vns_data_sync", os.pat
 _data_sync_module = importlib.util.module_from_spec(_data_sync_spec)
 _data_sync_spec.loader.exec_module(_data_sync_module)
 ADMIN_SITE = cfg.get("admin_site", "")
+_access_spec = importlib.util.spec_from_file_location("vns_access", os.path.join(APACHE_DIR, "lib", "access.py"))
+access = importlib.util.module_from_spec(_access_spec)
+_access_spec.loader.exec_module(access)
 SQL_HELPER = os.path.join(os.path.dirname(APACHE_DIR), "sql", "lib", "admin.py")
 _sql_spec = importlib.util.spec_from_file_location("vns_sql_admin", SQL_HELPER)
 _sql_module = importlib.util.module_from_spec(_sql_spec)
@@ -106,6 +109,7 @@ def api_keep_alive():
     try:
         settings = _keep_alive_module.load()
         if request.method == "PUT":
+            require_admin()
             settings = _keep_alive_module.validate(request.get_json())
             _keep_alive_module.save(settings)
         return jsonify(**settings, installed=os.path.isfile("/etc/cron.d/vns-keep-alive"))
@@ -169,10 +173,43 @@ def protect():
     if request.path.startswith("/ws/") and urlparse(request.headers.get("Origin", "")).netloc != request.headers.get("Host", ""):
         return jsonify(error="Bad origin"), 403
     public = request.path == "/login" or request.path.startswith("/static/")
-    if not public and not session.get("user"):
+    g.user = session_user()
+    if not public and g.user is None:
+        session.clear()
         if request.path.startswith("/api/") or request.path.startswith("/ws/"):
             return jsonify(error="Not logged in"), 401
         return redirect("/login")
+
+
+def session_user():
+    """The user of this session, or None when it has none, or its user was removed, disabled or given a new
+    password since (each of those changes the user's version, which the session keeps)"""
+    user_id = session.get("uid")
+    if user_id is None and session.get("user") and session.get("user") == cfg.get("user"):
+        user_id = access.ROOT  # a session from before there were more users
+    user = access.find(cfg, user_id) if user_id else None
+    if user is None or user.get("id") != access.ROOT and session.get("version") != user.get("version", 1):
+        return None
+    return user
+
+
+def me():
+    return getattr(g, "user", None) or session_user()
+
+
+def is_admin():
+    return access.is_admin(me())
+
+
+def require_admin():
+    if not is_admin():
+        abort(403, "Only an administrator can do this.")
+
+
+def require_site(site, env, action):
+    """Stop the request unless the user may do action on this environment of the site"""
+    if not access.can(me(), site, env, action):
+        abort(403, "You do not have access to do this here.")
 
 
 @app.after_request
@@ -208,12 +245,17 @@ def login():
         if login_locked(ip):
             error = "Too many failed attempts. Try again later."
         else:
-            user_ok = hmac.compare_digest(request.form.get("username", ""), cfg["user"])
-            password_ok = check_password_hash(cfg["password_hash"], request.form.get("password", ""))
-            if user_ok and password_ok:
+            found = access.by_username(cfg, request.form.get("username", ""))
+            # The same work whether the name exists or not, so a wrong name cannot be told from a wrong password
+            password_hash = found[1] if found else cfg["password_hash"]
+            password_ok = check_password_hash(password_hash, request.form.get("password", "")) and found is not None
+            if password_ok:
+                user = access.find(cfg, found[0])
                 session.clear()
                 session.permanent = True
-                session["user"] = cfg["user"]
+                session["uid"] = found[0]
+                session["user"] = user["username"]
+                session["version"] = user.get("version", 1)
                 csrf_token()
                 with FAIL_LOCK:
                     FAILS.pop(ip, None)
@@ -232,8 +274,13 @@ def logout():
 
 @app.route("/")
 def index():
-    return render_template("index.html", csrf=csrf_token(), admin_site=ADMIN_SITE, hostname=socket.gethostname(), user=session["user"],
-                           start_view=cfg.get("start_view", "sites"))
+    user = me()
+    start = cfg.get("start_view", "sites") if user.get("id") == access.ROOT else user.get("start_view", cfg.get("start_view", "sites"))
+    # A user without the Web Server starts on SQL Server, and the other way round
+    if not access.is_admin(user):
+        start = "sql" if (start == "sql" and user.get("sql")) or not user.get("web") else "sites"
+    return render_template("index.html", csrf=csrf_token(), admin_site=ADMIN_SITE, hostname=socket.gethostname(), user=user["username"],
+                           start_view=start, role="admin" if access.is_admin(user) else "user")
 
 
 @app.route("/api/preferences", methods=["PUT"])
@@ -243,7 +290,11 @@ def api_preferences():
     if start_view not in ("sites", "sql"):
         return error("The start page must be sites or sql")
     with CONFIG_LOCK:
-        cfg["start_view"] = start_view
+        # Root's start page is the server's; every other user has their own
+        if me().get("id") == access.ROOT:
+            cfg["start_view"] = start_view
+        else:
+            me()["start_view"] = start_view
         save_config()
     return jsonify(start_view=start_view)
 
@@ -933,6 +984,19 @@ def fs_root():
 
 
 def fs_path(relative):
+    full = fs_full_path(relative)
+    if server_files():
+        require_admin()
+    elif not is_admin():
+        site, env = file_env(full)
+        action = (request.endpoint or "").replace("fs_", "")
+        if site is None:
+            abort(403, "You do not have access to this folder.")
+        file_access(site, env, action, os.path.relpath(full, file_env_root(site, env)))
+    return full
+
+
+def fs_full_path(relative):
     if server_files():
         path = os.path.join("/", (relative or "").lstrip("/"))
         if request.endpoint in ("fs_rename", "fs_delete") and os.path.basename(path) not in ("", ".", ".."):
@@ -945,6 +1009,54 @@ def fs_path(relative):
     if full != root and not full.startswith(root + os.sep):
         abort(400, "Path outside the site file root")
     return full
+
+
+def unit_env(site, unit):
+    """The environment a local service belongs to: the main site, or the local environment run by it"""
+    if unit == site:
+        return "main"
+    root = os.path.join(WEB_ROOT, site)
+    for target in target_ids(root):
+        if (parse_prod(root, target) or {}).get("PROD_FOLDER") == unit:
+            return target
+    return "main"
+
+
+def file_env_root(site, env):
+    if env == "main":
+        return os.path.join(WEB_ROOT, site)
+    return os.path.realpath((parse_prod(os.path.join(WEB_ROOT, site), env) or {}).get("PROD_LOCAL_PATH") or os.path.join(WEB_ROOT, site))
+
+
+def file_env(full):
+    """The site and environment a local path is in: the deepest folder that is a site's or a local environment's"""
+    best, found = "", (None, None)
+    for site in site_dirs():
+        root = os.path.join(WEB_ROOT, site)
+        candidates = [("main", root)] + [(target, os.path.realpath(path)) for target in target_ids(root)
+                                         if (path := (parse_prod(root, target) or {}).get("PROD_LOCAL_PATH"))]
+        for env, folder in candidates:
+            if (full == folder or full.startswith(folder + os.sep)) and len(folder) > len(best):
+                best, found = folder, (site, env)
+    return found
+
+
+def file_access(site, env, action, path):
+    """A user's file action on an environment: Files there, or appsettings*.json alone with Edit appsettings.
+    scripts/ is never theirs: what is there runs as root."""
+    if action in ("save", "upload", "delete", "rename", "mkdir", "newfile", "create"):
+        audit("Files %s on %s · %s: %s" % (action, site, env, path or "/"))
+    if is_admin():
+        return
+    path = (path or "").replace("\\", "/").strip("/")
+    if path.split("/")[0] in ("scripts", ".vns-publish") or ".." in path.split("/"):
+        abort(403, "You do not have access to this folder.")
+    if access.can(me(), site, env, "files"):
+        return
+    name = path.rsplit("/", 1)[-1].lower()
+    if action in ("read", "save") and re.fullmatch(r"appsettings(\.[a-z0-9_-]+)?\.json", name) and access.can(me(), site, env, "appsettings"):
+        return
+    abort(403, "You do not have access to these files.")
 
 
 def fs_relative(full):
@@ -973,6 +1085,17 @@ def api_sql_connections():
         tools_available = bool(_sql_module.sqlcmd_path())
         if request.method in ("POST", "PUT") and not tools_available:
             return error("Install SQL command-line tools on the admin server first.", 409)
+        user = me()
+        if not access.is_admin(user) and not user.get("sql"):
+            abort(403, "You do not have access to SQL Server.")
+        if request.method != "GET" and not (access.is_admin(user) or user.get("manage_connections")):
+            abort(403, "The SQL connections are locked for you.")
+        # A user sees the connections they were given, and marks which they may change
+        def listed():
+            items = _sql_module.public_connections(SQL_CONNECTIONS)
+            if not access.is_admin(user):
+                items = [item for item in items if item["id"] in (user.get("connections") or {})]
+            return [dict(item, locked=not owns_connection(item["id"])) for item in items]
         with SQL_LOCK:
             if request.method in ("POST", "PUT"):
                 data = request.get_json(silent=True)
@@ -981,17 +1104,29 @@ def api_sql_connections():
                 if request.method == "PUT":
                     if not isinstance(data.get("id"), str) or not data["id"]:
                         abort(400, "Select a SQL connection")
+                    if not owns_connection(data["id"]):
+                        abort(403, "This connection is locked for you.")
                     identifier = _sql_module.edit_connection(SQL_CONNECTIONS, data, data["id"])
+                    audit("Changed SQL connection " + str(data.get("name") or identifier))
                 else:
                     identifier = _sql_module.add_connection(SQL_CONNECTIONS, data)
-                return jsonify(connections=_sql_module.public_connections(SQL_CONNECTIONS), id=identifier,
-                               tools_available=tools_available)
+                    audit("Added SQL connection " + str(data.get("name") or identifier))
+                    # What a user makes is theirs: every database on it, and every action
+                    if not access.is_admin(user):
+                        with CONFIG_LOCK:
+                            user.setdefault("connections", {})[identifier] = {
+                                "databases": ["*"], "actions": sorted(access.SQL_ACTION_NAMES), "owned": True}
+                            save_config()
+                return jsonify(connections=listed(), id=identifier, tools_available=tools_available)
             elif request.method == "DELETE":
                 data = request.get_json(silent=True)
                 if not isinstance(data, dict):
                     abort(400, "Expected a connection object")
+                if not owns_connection(data.get("id")):
+                    abort(403, "This connection is locked for you.")
                 _sql_module.remove_connection(SQL_CONNECTIONS, data.get("id"))
-            return jsonify(connections=_sql_module.public_connections(SQL_CONNECTIONS), tools_available=tools_available)
+                audit("Removed SQL connection " + str(data.get("id")))
+            return jsonify(connections=listed(), tools_available=tools_available)
     except (OSError, ValueError) as exc:
         app.logger.error("SQL connection operation failed: %s", exc)
         return error(str(exc))
@@ -1000,6 +1135,7 @@ def api_sql_connections():
 @app.route("/api/sql/<connection_id>/query", methods=["POST"])
 def api_sql_query(connection_id):
     data = request.get_json(silent=True) or {}
+    require_sql(connection_id, data.get("database") or None, "query")
     try:
         with SQL_LOCK:
             settings = _sql_module.connection(SQL_CONNECTIONS, connection_id)
@@ -1017,6 +1153,7 @@ def api_sql_query(connection_id):
 
 @app.route("/api/sql/<connection_id>/tables")
 def api_sql_tables(connection_id):
+    require_sql(connection_id, request.args.get("database", ""), "view")
     try:
         with SQL_LOCK:
             settings = _sql_module.connection(SQL_CONNECTIONS, connection_id)
@@ -1033,7 +1170,14 @@ def api_sql_status(connection_id):
     try:
         with SQL_LOCK:
             settings = _sql_module.connection(SQL_CONNECTIONS, connection_id)
-        return jsonify(databases=_sql_module.databases(settings), backups=_sql_module.backups(settings),
+        require_sql(connection_id, None, "view")
+        databases = _sql_module.databases(settings)
+        backups = _sql_module.backups(settings)
+        # A user sees the databases they were given, and the backups of those
+        if not is_admin():
+            databases = [item for item in databases if access.can_sql(me(), connection_id, item.get("name"), "view")]
+            backups = [item for item in backups if access.can_sql(me(), connection_id, item.get("database_name") or item.get("database"), "view")]
+        return jsonify(databases=databases, backups=backups,
                        local_backup_access=_sql_module.local_backup_access(settings),
                        backup_file_access=_sql_module.backup_file_access(settings))
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
@@ -1047,6 +1191,7 @@ SYSTEM_UPDATE_CACHE = {}
 
 @app.route("/api/system-update/run", methods=["GET", "POST"])
 def api_run_system_update():
+    require_admin()
     path = Path(BASE) / "system-update.json"
     log = Path(BASE) / "system-update.log"
     with SYSTEM_UPDATE_LOCK:
@@ -1195,6 +1340,7 @@ def update_target():
 
 @app.route("/api/system-update")
 def api_system_update():
+    require_admin()
     with SYSTEM_UPDATE_LOCK:
         if request.args.get("refresh") != "1" and SYSTEM_UPDATE_CACHE and time.monotonic() - SYSTEM_UPDATE_CACHE["checked_at"] < 60:
             return jsonify(**SYSTEM_UPDATE_CACHE["result"])
@@ -1268,6 +1414,8 @@ def check_all_updates(names):
 
 @app.route("/api/package-updates", methods=["GET", "POST"])
 def api_package_updates():
+    if request.method == "POST":
+        require_admin()
     with UPDATE_CHECK_LOCK:
         if request.method == "POST" and not UPDATE_CHECK["running"]:
             names = [name for name in site_dirs() if name != ADMIN_SITE
@@ -1319,6 +1467,8 @@ def parse_dotnet_templates(output):
 
 @app.route("/api/dotnet/templates")
 def api_dotnet_templates():
+    if not (is_admin() or me().get("create_sites")):
+        abort(403, "You cannot create sites.")
     try:
         templates = installed_dotnet_templates()
         packages = installed_template_packages()
@@ -1401,6 +1551,21 @@ def api_sites():
     with UPDATE_CHECK_LOCK:
         update_check = dict(UPDATE_CHECK, pending=list(UPDATE_CHECK["pending"]),
                             results=dict(UPDATE_CHECK["results"]), errors=list(UPDATE_CHECK["errors"]))
+    user = me()
+    if not access.is_admin(user):
+        # A user sees the sites and environments they were given, and nothing of the rest
+        visible = []
+        for site in sites:
+            if site["name"] == ADMIN_SITE:
+                continue
+            environments = [env for env in site["environments"]
+                            if access.sees_env(user, site["name"], "main" if env.get("key") == "main" else env.get("target") or "prod")]
+            if environments:
+                visible.append({**site, "environments": environments, "adopt_into": [], "managed_by": site.get("managed_by")})
+        sites = visible
+        names = {site["name"] for site in sites}
+        update_check = dict(update_check, pending=[name for name in update_check["pending"] if name in names],
+                            results={name: value for name, value in update_check["results"].items() if name in names})
     return jsonify(sites=sites, defaults={"umbraco_version": default_umbraco_version()}, update_check=update_check)
 
 
@@ -1409,6 +1574,8 @@ def api_service(name):
     data = request.get_json(silent=True) or {}
     action = data.get("action")
     unit = data.get("unit") or name
+    require_site(name, (data.get("target") or "prod") if data.get("scope") == "prod" else unit_env(name, unit), "service")
+    audit("%s %s" % (str(action).capitalize(), unit if data.get("scope") != "prod" else name + " · " + (data.get("target") or "prod")))
     if data.get("scope") == "prod":
         target = data.get("target") or "prod"
         remote_site(name, target)
@@ -1439,6 +1606,7 @@ def apache_error_logs():
 
 @app.route("/api/server-logs/clear", methods=["POST"])
 def api_server_logs_clear():
+    require_admin()
     # Only a log the viewer shows can be cleared. It is emptied, not removed, so Apache keeps writing to it.
     path = (request.get_json(silent=True) or {}).get("path")
     if path not in apache_error_logs():
@@ -1453,6 +1621,7 @@ def api_server_logs_clear():
 
 @app.route("/api/server-logs")
 def api_server_logs():
+    require_admin()
     source = request.args.get("source", "admin")
     if source not in ("admin", "apache"):
         return error("Unknown log source")
@@ -1480,6 +1649,7 @@ def api_server_logs():
 
 @app.route("/api/sites/<name>/logs")
 def api_logs(name):
+    require_site(name, (request.args.get("target") or "prod") if request.args.get("scope") == "prod" else unit_env(name, request.args.get("unit") or name), "logs")
     if request.args.get("scope") == "prod":
         target = request.args.get("target") or "prod"
         prod = remote_site(name, target)
@@ -1518,34 +1688,202 @@ def save_config():
 
 @app.route("/api/profile", methods=["GET", "POST"])
 def api_profile():
+    user = me()
+    root = user.get("id") == access.ROOT
     if request.method == "GET":
-        return jsonify(user=cfg["user"])
+        return jsonify(user=user["username"])
     data = request.get_json(silent=True) or {}
     ip = client_ip()
     if login_locked(ip):
         return error("Too many failed attempts. Try again later.", 429)
-    if not check_password_hash(cfg["password_hash"], data.get("current_password", "")):
+    if not check_password_hash(cfg["password_hash"] if root else user.get("password_hash", ""), data.get("current_password", "")):
         record_failure(ip)
         time.sleep(1)
         return error("The current password is wrong.", 403)
-    user = (data.get("username") or "").strip() or cfg["user"]
+    name = (data.get("username") or "").strip() or user["username"]
     new_password = data.get("new_password") or ""
-    if not re.match(r"^[A-Za-z0-9._@-]{1,64}$", user):
+    if not access.USERNAME_RE.match(name):
         return error("Invalid username. Use letters, numbers and . _ @ - (max 64).")
     if new_password and len(new_password) < 12:
         return error("The new password must be at least 12 characters.")
-    if user == cfg["user"] and not new_password:
+    if name == user["username"] and not new_password:
         return error("Nothing to change.")
     with CONFIG_LOCK:
-        cfg["user"] = user
-        if new_password:
-            cfg["password_hash"] = generate_password_hash(new_password)
-            # A new secret key signs out every other session; this one is re-signed below
-            cfg["secret_key"] = secrets.token_hex(32)
-            app.secret_key = cfg["secret_key"]
+        if name != user["username"] and access.taken(cfg, name, None if root else user["id"]):
+            return error("That username is taken.")
+        if root:
+            cfg["user"] = name
+            if new_password:
+                cfg["password_hash"] = generate_password_hash(new_password)
+                # A new secret key signs out every other session; this one is re-signed below
+                cfg["secret_key"] = secrets.token_hex(32)
+                app.secret_key = cfg["secret_key"]
+        else:
+            user["username"] = name
+            if new_password:
+                user["password_hash"] = generate_password_hash(new_password)
+                # The user's other sessions end; this one goes on with the new version
+                user["version"] = user.get("version", 1) + 1
+                session["version"] = user["version"]
         save_config()
-    session["user"] = user
-    return jsonify(ok=True, user=user)
+    session["user"] = name
+    return jsonify(ok=True, user=name)
+
+
+# ------------------------------------------------------------------- users
+
+def site_environments():
+    """Every site and its environment keys ("main" and the environments' ids), for the users window"""
+    found = {}
+    for name in site_dirs():
+        # The admin site runs as root and manages everything: it is never given to a user
+        if name == ADMIN_SITE:
+            continue
+        root = os.path.join(WEB_ROOT, name)
+        found[name] = ["main", *target_ids(root)]
+    return found
+
+
+def sql_connections_public():
+    try:
+        with SQL_LOCK:
+            return _sql_module.public_connections(SQL_CONNECTIONS)
+    except (OSError, ValueError):
+        return []
+
+
+def sql_connection_ids():
+    return [item["id"] for item in sql_connections_public()]
+
+
+def owns_connection(identifier):
+    """Admins, and a user who made the connection, may change or remove it; for others it is locked"""
+    user = me()
+    return access.is_admin(user) or bool(((user.get("connections") or {}).get(identifier) or {}).get("owned"))
+
+
+def require_sql(identifier, database, action):
+    if not access.can_sql(me(), identifier, database, action):
+        abort(403, "You do not have access to this database." if database else "You do not have access to this connection.")
+
+
+# ------------------------------------------------------------------- audit log
+
+AUDIT_LOG = os.path.join(BASE, "audit.log")
+AUDIT_LOCK = threading.Lock()
+
+
+def audit(message):
+    """Who did what, and from where: a line per change, for administrators to read"""
+    user = me() or {}
+    entry = {"time": int(time.time()), "user": user.get("username", "?"), "ip": client_ip() if has_request_context() else "", "message": message}
+    try:
+        with AUDIT_LOCK:
+            fd = os.open(AUDIT_LOG, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+            with os.fdopen(fd, "a") as stream:
+                stream.write(json.dumps(entry) + "\n")
+    except OSError as exc:
+        app.logger.warning("Could not write the audit log: %s", exc)
+
+
+@app.route("/api/audit")
+def api_audit():
+    require_admin()
+    try:
+        with open(AUDIT_LOG) as stream:
+            lines = stream.readlines()[-1000:]
+    except FileNotFoundError:
+        lines = []
+    entries = []
+    for line in reversed(lines):
+        try:
+            entry = json.loads(line)
+        except ValueError:
+            continue
+        # Root's own lines are shown to root only: other administrators do not know it exists
+        if me()["id"] != access.ROOT and entry.get("user") == cfg.get("user"):
+            continue
+        entries.append(entry)
+    return jsonify(entries=entries)
+
+
+@app.route("/api/me")
+def api_me():
+    """Who is logged in and what they may do: the page shows only what can be used"""
+    user = me()
+    admin = access.is_admin(user)
+    return jsonify(id=user["id"], username=user["username"], admin=admin, root=user["id"] == access.ROOT,
+                   web=admin or bool(user.get("web")), sql=admin or bool(user.get("sql")),
+                   create_sites=admin or bool(user.get("create_sites")), manage_connections=admin or bool(user.get("manage_connections")),
+                   sites={} if admin else {site: {"envs": grant.get("envs", []), "new_envs": grant.get("new_envs", False),
+                                                  "known": grant.get("known", []), "actions": grant.get("actions", [])}
+                                           for site, grant in (user.get("sites") or {}).items()},
+                   connections={} if admin else user.get("connections", {}))
+
+
+@app.route("/api/users", methods=["GET", "POST"])
+def api_users():
+    require_admin()
+    if request.method == "GET":
+        sites = site_environments()
+        return jsonify(users=access.visible_users(cfg, me()), sites=sites, connections=sql_connections_public(),
+                       site_actions=access.SITE_ACTIONS, sql_actions=access.SQL_ACTIONS)
+    data = request.get_json(silent=True) or {}
+    password = data.get("password") or ""
+    if len(password) < 12:
+        return error("The password must be at least 12 characters.")
+    with CONFIG_LOCK:
+        try:
+            user = access.clean(data, sites=site_environments(), connections=sql_connection_ids())
+        except ValueError as exc:
+            return error(str(exc))
+        if access.taken(cfg, user["username"]):
+            return error("That username is taken.")
+        user["password_hash"] = generate_password_hash(password)
+        user["created_by"] = me()["id"]
+        cfg.setdefault("users", []).append(user)
+        save_config()
+    audit("Created user " + user["username"] + " (" + user["role"] + ")")
+    return jsonify(user=access.public(user))
+
+
+@app.route("/api/users/<user_id>", methods=["PUT", "DELETE"])
+def api_user(user_id):
+    require_admin()
+    with CONFIG_LOCK:
+        users = cfg.setdefault("users", [])
+        # Root is not among them: no one can change or remove it here, or learn that it exists
+        existing = next((user for user in users if user.get("id") == user_id), None)
+        if existing is None:
+            return error("Unknown user.", 404)
+        if user_id == me()["id"]:
+            return error("Change your own name and password under Profile. Another administrator can change your access.")
+        if request.method == "DELETE":
+            users.remove(existing)
+            save_config()
+            audit("Deleted user " + existing["username"])
+            return jsonify(ok=True)
+        data = request.get_json(silent=True) or {}
+        try:
+            user = access.clean(data, existing, sites=site_environments(), connections=sql_connection_ids())
+        except ValueError as exc:
+            return error(str(exc))
+        if access.taken(cfg, user["username"], user_id):
+            return error("That username is taken.")
+        password = data.get("password") or ""
+        if password:
+            if len(password) < 12:
+                return error("The password must be at least 12 characters.")
+            user["password_hash"] = generate_password_hash(password)
+        # A new password, a role, a lock or less access ends the user's sessions: they log in again to the new rules
+        user["version"] = existing.get("version", 1) + 1
+        for key in ("created_by", "start_view"):
+            if key in existing:
+                user[key] = existing[key]
+        users[users.index(existing)] = user
+        save_config()
+    audit("Changed user " + user["username"])
+    return jsonify(user=access.public(user))
 
 
 # ------------------------------------------------------------- terminal API
@@ -1640,8 +1978,14 @@ def terminal_output_problem(text):
 
 
 class TermSession:
-    def __init__(self, title, argv, cwd, extra_env=None, auto_close=False, update_root=None, sites=None, scope="main", targets=None):
+    def __init__(self, title, argv, cwd, extra_env=None, auto_close=False, update_root=None, sites=None, scope="main", targets=None,
+                 owner=None, locked=False, after=None):
         self.id = uuid.uuid4().hex[:12]
+        # Who started it; a locked task takes no keys (a user's), so Ctrl+C cannot leave it for a shell;
+        # after runs when it has ended, with its exit status (what a user created becomes theirs)
+        self.owner = owner
+        self.locked = locked
+        self.after = after
         self.title = title
         self.sites = sites or []
         self.scope = scope
@@ -1710,6 +2054,12 @@ class TermSession:
                 app.logger.exception("Could not save package update status for %s", self.update_root)
                 self.output_problem = True
         REMOTE_STATUS.clear()
+        if getattr(self, "after", None):
+            try:
+                with app.app_context():
+                    self.after(self.exit)
+            except Exception:
+                app.logger.exception("Could not finish %s", self.title)
         with self.lock:
             for q in list(self.subscribers):
                 q.put(None)
@@ -1719,7 +2069,7 @@ class TermSession:
         return self.exit is None
 
     def write(self, text):
-        if self.running:
+        if self.running and not getattr(self, "locked", False):
             os.write(self.proc.fd, text.encode("utf-8"))
 
     def resize(self, rows, cols):
@@ -2055,7 +2405,7 @@ def build_command(data):
                         found += 1
                 if action in ("clear_logs_prod", "clear_logs_all"):
                     root = os.path.join(WEB_ROOT, site)
-                    for target in publishable_targets(site, root):
+                    for target in allowed_targets(site, publishable_targets(site, root), "clear_logs"):
                         if not os.path.isfile(os.path.join(target_folder(root, target), "clear_logs_prod.sh")):
                             continue
                         _, argv, cwd = build_command({"kind": "script", "site": site, "script": "clear_logs_prod.sh", "target": target})
@@ -2083,15 +2433,18 @@ def build_command(data):
                 root = os.path.join(WEB_ROOT, site)
                 for target in targets:
                     build_command({"kind": "script", "site": site, "script": "publish_prod.sh", "target": target})
-                active = publishable_targets(site, root)
+                active = allowed_targets(site, publishable_targets(site, root), "publish")
                 if not active:
-                    tasks.append({"site": site, "skip": "Its environments no longer exist on their servers"})
+                    tasks.append({"site": site, "skip": "Its environments no longer exist on their servers, or you have no access to them"})
                     continue
                 tasks.append({"site": site, "cwd": root, "argv": [
                     sys.executable, os.path.join(APACHE_DIR, "lib", "publish_status.py"), "both", root,
                     *(os.path.realpath(os.path.join(target_folder(root, target), "publish_prod.sh")) for target in active)]})
                 continue
             else:
+                if action == "prod" and not allowed_targets(site, ["prod"], "publish"):
+                    tasks.append({"site": site, "skip": "You have no access to its environment"})
+                    continue
                 script = "publish_prod.sh" if action == "prod" else next(
                     (name for name in ("publish_local.sh", "publish.sh") if name in scripts), "")
                 payload = {"kind": "script", "site": site, "script": script}
@@ -2139,7 +2492,8 @@ def build_command(data):
             abort(400, "Unknown script")
         for target in targets:
             build_command({"kind": "script", "site": site, "script": "publish_prod.sh", "target": target})
-        active = publishable_targets(site, root)
+        # A user publishes to the environments they have access to; the others are left as they are
+        active = allowed_targets(site, publishable_targets(site, root), "publish")
         if not active and not main_too:
             abort(400, "No environment to publish to: they no longer exist on their servers")
         return ("Publish all: " if main_too else "Publish environments: ") + site, [
@@ -2176,13 +2530,16 @@ def build_command(data):
         if action == "add":
             if not isinstance(version, str) or len(version) > 128 or (version and not VERSION_RE.fullmatch(version)):
                 abort(400, "Invalid package version")
-            argv = ["dotnet", "add", "package", package]
-            if version:
-                argv.extend(["--version", version])
+            argv = ["dotnet", "add", "package", package, *(["--version", version] if version else [])]
             title = "Add NuGet package: " + package
         else:
             argv = ["dotnet", "remove", "package", package]
             title = "Remove NuGet package: " + package
+        # As root only the project file is changed; the restore, which can run build steps, runs as the build user
+        if os.geteuid() == 0:
+            restore = [sys.executable, os.path.join(APACHE_DIR, "lib", "build_as.py"), "--", "dotnet", "restore"]
+            change = argv + (["--no-restore"] if argv[1] == "add" else [])
+            argv = ["/bin/bash", "-c", " ".join(shlex.quote(item) for item in change) + " && " + " ".join(shlex.quote(item) for item in restore)]
         return title + " (" + site + ")", argv, os.path.dirname(projects[0])
     if kind == "create_prod":
         site = site_arg(data)
@@ -2477,6 +2834,150 @@ def build_command(data):
     abort(400, "Unknown task")
 
 
+def allowed_targets(site, targets, action):
+    """The environments of a site the logged-in user may do action on"""
+    return [target for target in targets if access.can(me(), site, target, action)]
+
+
+def sees_session(s):
+    """Administrators see every task; a user sees the ones they started"""
+    return is_admin() or getattr(s, "owner", None) == me()["id"]
+
+
+# Tasks that run as root by choice, or open a shell: only for administrators
+ADMIN_TASKS = {"install_sql_tools", "update_system", "remote_tool", "shell", "move_env", "adopt_site", "release_site",
+               "setup_site", "unit_tool", "apache", "register_env"}
+
+
+def env_of(site, data, scope_key="scope"):
+    """The environment a task is about: "main", or the environment named in it"""
+    return (data.get("target") or "prod") if data.get(scope_key) == "prod" else "main"
+
+
+def authorize_task(data):
+    """Stop a task the user may not start. Returns what to do when it has ended, when something the user creates
+    should become theirs."""
+    user = me()
+    if access.is_admin(user):
+        return None
+    uid = user["id"]
+    kind = data.get("kind")
+    site = data.get("site", "")
+    deny = lambda: abort(403, "You do not have access to do this.")
+    need = lambda env, action: access.can(user, site, env, action) or deny()
+    if kind in ADMIN_TASKS:
+        deny()
+    if kind == "sql_action":
+        identifier, action, database = data.get("connection"), data.get("action"), data.get("database")
+        mapped = {"create": "create", "backup": "backup", "backup_all": "backup", "copy": "copy", "restore": "restore",
+                  "drop": "delete", "delete_backup": "backup"}.get(action)
+        if not mapped:
+            deny()
+        if action == "create":
+            access.can_sql(user, identifier, None, "create") or deny()
+        elif action == "backup_all":
+            access.can_sql(user, identifier, "*", "backup") or deny()
+        else:
+            access.can_sql(user, identifier, database, mapped) or deny()
+        # A database the user makes, copies to or restores as is theirs
+        made = data.get("database") if action == "create" else data.get("target") if action in ("copy", "restore") else None
+        if made:
+            if action == "restore" and not access.can_sql(user, identifier, made, "view"):
+                # Restoring over a database the user cannot see would replace someone else's
+                databases = []
+                try:
+                    with SQL_LOCK:
+                        databases = [item.get("name") for item in _sql_module.databases(_sql_module.connection(SQL_CONNECTIONS, identifier))]
+                except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
+                    pass
+                if made in databases:
+                    deny()
+            return lambda status: status == 0 and grant(uid, lambda target: access.grant_database(target, identifier, made))
+        return None
+    if not (user.get("web")):
+        deny()
+    if kind == "script":
+        script = data.get("script", "")
+        env = (data.get("target") or "prod") if script.endswith("_prod.sh") or data.get("target") else "main"
+        action = ("publish" if script.startswith("publish") else "clear_logs" if script.startswith("clear_logs")
+                  else "sync_settings" if script == "sync_prod.sh" else "packages" if script == "outdated.sh" else "scripts")
+        need(env, action)
+    elif kind in ("dotnet_package", "update_package"):
+        need("main", "packages")
+    elif kind == "bulk":
+        action = data.get("action")
+        for name in data.get("sites") or []:
+            site = name
+            if action in ("check", "add", "remove", "outdated"):
+                need("main", "packages")
+            elif action in ("local", "clear_logs"):
+                need("main", "publish" if action == "local" else "clear_logs")
+            else:
+                # Environments are published or cleared where the user has access (build_command leaves the rest out)
+                verb = "publish" if action in ("prod", "both") else "clear_logs"
+                if action in ("both", "clear_logs_all"):
+                    need("main", verb)
+                any(access.can(user, name, env, verb) for env in ["main", *target_ids(os.path.join(WEB_ROOT, name))]) or deny()
+    elif kind == "publish_both":
+        if not data.get("environments_only"):
+            need("main", "publish")
+        any(access.can(user, site, env, "publish") for env in target_ids(os.path.join(WEB_ROOT, site))) or deny()
+    elif kind == "create_prod":
+        any(access.can(user, site, env, "create_env") for env in ["main", *target_ids(os.path.join(WEB_ROOT, site))]) or deny()
+        before = set(target_ids(os.path.join(WEB_ROOT, site)))
+        return lambda status: status == 0 and grant(uid, lambda target: [access.grant_environment(target, site, env)
+                                                                    for env in set(target_ids(os.path.join(WEB_ROOT, site))) - before])
+    elif kind in ("data_sync_settings",):
+        env = data.get("id") or "main"
+        need(env, "sync_data") if access.can(user, site, env, "sync_data") else need(env, "sync_settings")
+    elif kind == "data_sync":
+        need(data.get("source") or "main", "sync_data")
+        for env in str(data.get("destination", "")).split(","):
+            need(env.strip(), "sync_data")
+    elif kind == "sync_env":
+        need(data.get("source") or "main", "sync_settings")
+        if data.get("destination") == "all":
+            # "All" is every environment the user may sync to
+            data["destination"] = ",".join(env for env in target_ids(os.path.join(WEB_ROOT, site))
+                                           if env != data.get("source") and access.can(user, site, env, "sync_settings")) or deny()
+        else:
+            for env in str(data.get("destination", "")).split(","):
+                need(env.strip(), "sync_settings")
+    elif kind in ("create_site", "copy_site"):
+        user.get("create_sites") or deny()
+        if kind == "copy_site":
+            need("main", "files")
+        name = data.get("name") or data.get("folder") or data.get("new_site") or ""
+        before = set(site_dirs())
+        return lambda status: status == 0 and grant(uid, lambda target: [access.grant_site(target, made) for made in set(site_dirs()) - before])
+    elif kind == "fix_permissions":
+        need((data.get("target") or "prod") if data.get("scope") == "prod" else "main", "files")
+    elif kind == "change_binding":
+        need(env_of(site, data), "bindings")
+    elif kind == "prod_action":
+        need("main" if data.get("scope") == "test" else data.get("target") or "prod", "bindings")
+    elif kind == "delete_site":
+        scope = data.get("scope") or "all"
+        if scope == "all":
+            for env in ["main", *target_ids(os.path.join(WEB_ROOT, site))]:
+                need(env, "delete")
+        else:
+            need("main" if scope == "test" else data.get("target") or "prod", "delete")
+    else:
+        deny()
+    return None
+
+
+def grant(user_id, change):
+    """Give a user something they made, and save it. Runs when a task has ended, so the user is found by id."""
+    with CONFIG_LOCK:
+        user = access.find(cfg, user_id)
+        if user is None or access.is_admin(user):
+            return
+        if change(user):
+            save_config()
+
+
 def describe(s):
     return {"id": s.id, "title": s.title, "running": s.running, "exit": s.exit,
             "auto_close": s.auto_close, "output_problem": s.output_problem, "sites": s.sites,
@@ -2488,8 +2989,9 @@ def api_term():
     if request.method == "GET":
         prune_sessions()
         with SESSIONS_LOCK:
-            return jsonify(sessions=[describe(s) for s in SESSIONS.values()])
+            return jsonify(sessions=[describe(s) for s in SESSIONS.values() if sees_session(s)])
     payload = request.get_json(silent=True) or {}
+    after = authorize_task(payload)
     title, argv, cwd = build_command(payload)
     extra_env = production_setup_env(payload, payload.get("site", "")) if payload.get("kind") == "create_prod" else None
     if payload.get("kind") == "register_env":
@@ -2521,18 +3023,23 @@ def api_term():
         try:
             update_root = os.path.join(WEB_ROOT, payload["site"]) if payload.get("kind") == "script" and payload.get("script") == "outdated.sh" and glob.glob(os.path.join(WEB_ROOT, payload["site"], "*.csproj")) else None
             sites = terminal_activity_sites(payload)
-            session_obj = TermSession(title, argv, cwd, extra_env, auto_close=terminal_auto_close(payload), update_root=update_root, sites=sites, scope=terminal_scope(payload), targets=terminal_targets(payload))
+            session_obj = TermSession(title, argv, cwd, extra_env, auto_close=terminal_auto_close(payload), update_root=update_root, sites=sites, scope=terminal_scope(payload), targets=terminal_targets(payload),
+                                      owner=me()["id"], locked=not is_admin(), after=after)
         except Exception:
             if payload.get("kind") == "create_prod":
                 os.unlink(argv[1])
             raise
         SESSIONS[session_obj.id] = session_obj
+    audit("Started: " + title)
     return jsonify(describe(session_obj))
 
 
 @app.route("/api/term/<sid>/close", methods=["POST"])
 def api_term_close(sid):
     with SESSIONS_LOCK:
+        s = SESSIONS.get(sid)
+        if s is not None and not sees_session(s):
+            abort(404)
         s = SESSIONS.pop(sid, None)
     if s:
         s.kill()
@@ -2542,10 +3049,10 @@ def api_term_close(sid):
 @sock.route("/ws/term/<sid>")
 def ws_term(ws, sid):
     origin = request.headers.get("Origin", "")
-    if not session.get("user") or urlparse(origin).netloc != request.headers.get("Host", ""):
+    if session_user() is None or urlparse(origin).netloc != request.headers.get("Host", ""):
         return
     s = SESSIONS.get(sid)
-    if s is None:
+    if s is None or not sees_session(s):
         return
     decoder = codecs.getincrementaldecoder("utf-8")("replace")
     q = queue.Queue()
@@ -2612,6 +3119,8 @@ def save_data_sync(site):
     if not isinstance(data, dict) or not isinstance(data.get("settings"), dict):
         abort(400, "Expected data sync settings")
     site_id = data_sync_id(site, data.get("id"))
+    if not (access.can(me(), site, site_id, "sync_data") or access.can(me(), site, site_id, "sync_settings")):
+        abort(403, "You do not have access to do this.")
     try:
         settings = _data_sync_module.save(os.path.join(WEB_ROOT, site), site_id, data["settings"])
     except (OSError, ValueError) as exc:
@@ -2622,6 +3131,8 @@ def save_data_sync(site):
 
 @app.route("/api/sites/<site>/config/<kind>", methods=["GET", "POST"])
 def managed_config(site, kind):
+    # A service file or an Apache config can start programs as root: administrators only
+    require_admin()
     if site not in site_dirs() or kind not in ("service", "conf"):
         abort(400, "Unknown site or configuration type")
     data = (request.get_json(silent=True) or {}) if request.method == "POST" else {}
@@ -2692,6 +3203,9 @@ def remote_fs(site, action):
     # The file manager addresses an environment as site@id
     site, _, target = site.partition("@")
     target = target or "prod"
+    body = request.get_json(silent=True) if request.method != "GET" and action != "upload" else None
+    file_access(site, target, action, request.args.get("path") if request.method == "GET" else request.form.get("path") if action == "upload"
+                else body.get("path") if isinstance(body, dict) else "")
     windows = site in site_dirs() and TARGET_RE.match(target) and (parse_prod(os.path.join(WEB_ROOT, site), target) or {}).get("PROD_TARGET") == "windows"
     if not windows:
         remote_site(site, target)
