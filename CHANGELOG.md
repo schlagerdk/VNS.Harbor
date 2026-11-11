@@ -2,6 +2,12 @@
 
 All notable changes to VNS.Linux are listed here, newest first.
 
+## [1.1.4] - 2026-11-11
+
+### Fixes
+
+- New site and the grid/list toggle only show when they can be used, and Web Server and SQL Server are cards with switches in the user editor
+
 ## [1.1.3] - 2026-11-11
 
 ### Fixes
