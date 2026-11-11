@@ -404,15 +404,33 @@ function renderStats() {
 		if (n) chips.push([kind, kindLabel[kind], n]);
 	}
 	const usefulChips = chips.filter(([key, , n]) => key === "all" || (n > 0 && n < searched.length));
-	if (!usefulChips.some(([key]) => key === filter)) filter = "all";
+	// What is waiting to be done, shown whenever a site has it, even when every site has it
+	const pending = Object.entries(attentionFilters)
+		.map(([key, [label, test, title]]) => [key, label, count(test), title])
+		.filter(([, , n]) => n > 0);
+	if (![...usefulChips, ...pending].some(([key]) => key === filter)) filter = "all";
 	const box = $("#stats");
-	box.hidden = listedSites().length <= 1 || usefulChips.length <= 1;
+	box.hidden = listedSites().length <= 1 || (usefulChips.length <= 1 && !pending.length);
 	box.replaceChildren();
-	for (const [key, label, n] of usefulChips) {
-		box.append(el("div", { className: "chip" + (filter === key ? " active" : ""), onclick: () => { filter = key; renderSites(); } },
-			el("b", { textContent: n }), el("span", { textContent: label })));
+	const chip = ([key, label, n, title], className = "") => el("div", { className: "chip" + className + (filter === key ? " active" : ""), title: title || "", onclick: () => { filter = key; renderSites(); } },
+		el("b", { textContent: n }), el("span", { textContent: label }));
+	for (const item of usefulChips) box.append(chip(item));
+	if (pending.length) {
+		box.append(el("span", { className: "chip-divider", ariaHidden: "true" }));
+		for (const item of pending) box.append(chip(item, " attention"));
 	}
 }
+
+// Filters for sites that need something done
+const attentionFilters = {
+	pending: ["Publish pending", (s) => s.environments.some((env) => env.publish_status === "pending"),
+		"The project changed since an environment was last published"],
+	updates: ["Updates available", (s) => s.updates === "available", "NuGet package updates were found"],
+	"check-failed": ["Update check failed", (s) => s.updates === "error", "The last package update check failed"],
+	"not-set-up": ["Not set up", (s) => !!s.not_set_up, "A folder without a service, or a site whose setup was not finished"],
+	missing: ["Missing environment", (s) => s.environments.some(isMissingEnv), "An environment no longer exists on its server"],
+};
+
 
 function matchesQuery(site) {
 	const text = query.trim().toLowerCase();
@@ -426,6 +444,7 @@ function matches(site) {
 	if (filter === "stopped" && state !== "inactive") return false;
 	if (filter === "prod" && !hasProd(site)) return false;
 	if (kindLabel[filter] && site.kind !== filter) return false;
+	if (attentionFilters[filter] && !attentionFilters[filter][1](site)) return false;
 	return matchesQuery(site);
 }
 
@@ -708,7 +727,12 @@ function compactEnvironmentRow(site, env, environment) {
 	if (isRemoteEnv(env)) head.append(remoteIcon(env));
 	row.append(head);
 	if (isMissingEnv(env)) row.append(el("span", { className: "badge env-missing", textContent: "Not found on server", title: `The site no longer exists on ${env.host}.` }));
-	else if (env.publish_status === "pending") row.append(publishBadge(env));
+	else if (env.publish_status === "pending") {
+		// A card has little room: there it is an icon, with the words as its title. The list has room for them.
+		const badge = publishBadge(env);
+		if (siteLayout === "list") row.append(badge);
+		else head.append(el("span", { className: "publish-pending-icon", title: "Publish pending: " + badge.title, ariaLabel: "Publish pending" }, svgIcon("upload")));
+	}
 	if (address.url) {
 		const frontend = openLink(bindingLabel(env) || address.hostname, address.url, environment + ": " + address.title, true);
 		frontend.classList.add("frontend");

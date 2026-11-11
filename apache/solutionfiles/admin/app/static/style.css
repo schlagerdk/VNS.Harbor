@@ -353,7 +353,9 @@ body.login { display: grid; place-items: center; min-height: 100vh; min-height: 
 .menu-group:not([hidden]) ~ .menu-group:not([hidden]) { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); }
 .menu-group-title { padding: 5px 10px; color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
 #btn-dock .count { margin-left: 4px; background: #fff; color: #4b3a8c; font-weight: 700; }
-.toolbar .stats { margin: 0; }
+/* The filters take the room there is and wrap inside it, so the buttons stay together on the right */
+.toolbar .stats { margin: 0; flex: 1 1 auto; min-width: 0; }
+@media (min-width: 900px) { #view-sites > .toolbar { flex-wrap: nowrap; align-items: flex-start; } #view-sites > .toolbar > :not(.stats) { flex: none; } }
 .back { display: inline-flex; align-items: center; gap: 6px; text-decoration: none; font-weight: 500; }
 .back .ico { width: 18px; height: 18px; }
 
@@ -906,3 +908,14 @@ dialog.logs-dialog[open] { display: flex; flex-direction: column; }
 }
 .site.selectable { user-select: none; }
 .site.selectable:hover { border-color: var(--blue); }
+
+/* Sites with something waiting: after the other filters, in amber */
+.chip-divider { align-self: stretch; width: 1px; margin: 4px 4px; background: var(--line); }
+.chip.attention b { color: #d29922; }
+.chip.attention:hover, .chip.attention.active { border-color: #d29922; }
+.chip.attention.active { background: rgba(210, 153, 34, .14); box-shadow: 0 0 14px rgba(210, 153, 34, .2); }
+/* A link to an environment never shrinks away beside a status badge */
+.site-link-group.compact a.btn-link.frontend { min-width: 84px; }
+/* On a card, a pending publish is an icon: the row has no room for the words */
+.publish-pending-icon { display: inline-grid; place-items: center; flex: none; width: 22px; height: 22px; border-radius: 6px; color: #d29922; background: rgba(210, 153, 34, .14); }
+.publish-pending-icon .ico { width: 13px; height: 13px; margin: 0; }
