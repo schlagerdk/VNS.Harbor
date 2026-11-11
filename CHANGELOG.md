@@ -2,6 +2,12 @@
 
 All notable changes to VNS.Linux are listed here, newest first.
 
+## [1.0.23] - 2026-11-11
+
+### Fixes
+
+- Snippets ask for all their fields in one window, and an Apache rewrite is sent straight to the site's service so it works with nocanon
+
 ## [1.0.22] - 2026-11-11
 
 ### Features
