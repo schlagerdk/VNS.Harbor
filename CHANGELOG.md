@@ -2,6 +2,12 @@
 
 All notable changes to VNS.Linux are listed here, newest first.
 
+## [1.0.13] - 2026-11-11
+
+### Features
+
+- Package check offers only versions the project's .NET supports, and init installs .NET 11 beside 10 and 8
+
 ## [1.0.12] - 2026-11-11
 
 ### Fixes
