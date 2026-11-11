@@ -1145,3 +1145,61 @@ dialog.newsite > form > .ns-head, dialog.newsite > .ns-head { position: sticky; 
 #dlg-user .switch.small::after { width: 14px; height: 14px; }
 #dlg-user .switch.small:checked::after { transform: translateX(14px); }
 #dlg-user .switch.danger:checked { border-color: var(--red); background: var(--red); }
+/* The update screen: the progress in the middle, and when it did not finish, a card with what happened and what to do */
+.system-update-card { display: flex; flex-direction: column; align-items: center; width: min(560px, 92vw); }
+.update-failed-icon { display: none; place-items: center; width: 64px; height: 64px; border-radius: 18px; color: #ffa198; background: rgba(248, 81, 73, .14); box-shadow: 0 0 0 1px rgba(248, 81, 73, .3), 0 10px 30px rgba(248, 81, 73, .15); }
+.update-failed-icon svg { width: 32px; height: 32px; }
+#system-update-overlay.failed .system-update-card { padding: 32px 32px 26px; border: 1px solid var(--line); border-radius: 18px; background: linear-gradient(160deg, rgba(248, 81, 73, .06), transparent 45%), var(--panel); box-shadow: var(--shadow); }
+#system-update-overlay.failed .update-failed-icon { display: grid; }
+#system-update-overlay.failed h2 { margin: 18px 0 6px; font-size: 26px; }
+#system-update-overlay.failed .system-update-versions-line { margin: 0 0 6px; }
+#system-update-overlay.failed #system-update-message { margin: 0; color: var(--text); }
+#system-update-overlay.failed .system-update-step { margin-top: 14px; border: 0; padding: 0; font-size: 12px; }
+#system-update-overlay.failed .system-update-step::before { content: "At: "; color: var(--muted); }
+#system-update-output { width: 100%; max-height: 40vh; overflow: auto; margin: 16px 0 0; padding: 12px; border: 1px solid var(--line); border-radius: 10px; background: rgba(0, 0, 0, .3); text-align: left; font-size: 12px; }
+.system-update-actions { display: flex; justify-content: center; gap: 10px; margin-top: 22px; }
+.system-update-actions:not(:has(button:not([hidden]))) { display: none; }
+#system-update-overlay:focus, #system-update-overlay:focus-visible { outline: none; }
+/* DNS help under a binding: the record to make, and whether the name points here */
+.dns-card { display: grid; gap: 8px; margin: 10px 0 4px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: linear-gradient(135deg, rgba(88, 166, 255, .06), transparent 60%), var(--panel2); }
+.dns-card[hidden] { display: none; }
+.dns-head { display: flex; align-items: center; gap: 10px; }
+.dns-head strong { flex: 1; font-size: 13px; }
+.dns-icon { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 7px; color: #b9d8ff; background: rgba(88, 166, 255, .14); }
+.dns-icon .ico { width: 14px; height: 14px; margin: 0; }
+.dns-status { padding: 3px 10px; border-radius: 999px; font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+.dns-status.ok { color: var(--green); background: rgba(63, 185, 80, .14); }
+.dns-status.ok::before { content: "✓ "; }
+.dns-status.warn { color: #d29922; background: rgba(210, 153, 34, .14); }
+.dns-status.muted, .dns-status.checking { color: var(--muted); background: rgba(255, 255, 255, .05); }
+.dns-records { display: grid; gap: 6px; }
+.dns-record { display: grid; grid-template-columns: 58px minmax(0, auto) auto minmax(0, 1fr) 28px; align-items: center; gap: 8px; font-size: 12.5px; }
+.dns-type { justify-self: start; padding: 2px 7px; border-radius: 6px; color: var(--muted); background: rgba(255, 255, 255, .06); font: 600 11px ui-monospace, Menlo, monospace; }
+.dns-record code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12.5px; }
+.dns-arrow { color: var(--muted); }
+.dns-value { color: var(--text); }
+.dns-copy { display: grid; place-items: center; width: 28px; height: 26px; padding: 0; border: 1px solid var(--line); border-radius: 7px; background: transparent; color: var(--muted); cursor: pointer; }
+.dns-copy:hover { color: var(--text); border-color: rgba(88, 166, 255, .4); }
+.dns-copy.copied { color: var(--green); border-color: rgba(63, 185, 80, .5); }
+.dns-copy .ico { width: 13px; height: 13px; margin: 0; }
+.dns-note { margin: 0; color: var(--muted); font-size: 12px; }
+.dns-note.warn { color: #d29922; }
+.dns-card { margin-bottom: 16px; }
+/* Remove package: the project's packages to choose from */
+.package-pick { display: grid; gap: 10px; }
+.package-pick[hidden] { display: none; }
+.package-pick-list { display: grid; gap: 6px; max-height: min(420px, 55vh); overflow-y: auto; padding: 2px; }
+.package-pick-row { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; gap: 12px; width: 100%; padding: 9px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel2); text-align: left; cursor: pointer; transition: border-color .15s, background .15s; }
+.package-pick-row[hidden] { display: none; }
+.package-pick-row:hover { border-color: rgba(163, 113, 247, .4); }
+.package-pick-row[aria-checked="true"] { border-color: rgba(248, 81, 73, .55); background: linear-gradient(135deg, rgba(248, 81, 73, .1), transparent 70%), var(--panel2); }
+.package-pick-icon { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; color: #c9b6ff; background: rgba(163, 113, 247, .14); }
+.package-pick-icon .ico { width: 15px; height: 15px; margin: 0; }
+.package-pick-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.package-pick-version { padding: 3px 9px; border: 1px solid rgba(88, 166, 255, .35); border-radius: 7px; color: var(--blue); font: 600 12px ui-monospace, Menlo, monospace; }
+button.primary.danger-primary { border-color: var(--red); background: #da3633; }
+button.primary.danger-primary:disabled { opacity: .5; }
+/* A picked package carries a tick, so several picked read as a list to remove */
+.package-pick-row { grid-template-columns: 30px minmax(0, 1fr) auto 20px; }
+.package-pick-row::after { content: ""; width: 18px; height: 18px; border: 1.5px solid var(--line); border-radius: 5px; }
+.package-pick-row[aria-checked="true"]::after { border-color: var(--red); background: var(--red) url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M3.5 8.5l3 3 6-6.5' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/></svg>") center / 12px no-repeat; }

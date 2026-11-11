@@ -5,7 +5,13 @@
     Layout = null;
 
     // Check if test
-    var IsTest = Model.Root().Url(null, UrlMode.Absolute).Replace("http://", "").Replace("https://", "").StartsWith("test");
+    var IsNotProd = (Util.Env.EnvironmentName.ToLower() != "production");
+    var notProdBanner = "";
+    if (IsNotProd) {
+        var envName = Util.Env.EnvironmentName.ToUpper();
+        var accent = envName switch { "DEVELOPMENT" or "DEV" => "#6CA6F8", "TEST" => "#D6A54A", "STAGING" => "#A97CF2", _ => "#E5574D" };
+        notProdBanner = $"<div style='position:relative;z-index:99;width:100%;box-sizing:border-box;display:flex;align-items:center;justify-content:center;gap:10px;padding:7px 16px;background:linear-gradient(90deg,#0D1117,#161B22 50%,#0D1117);border-bottom:1px solid {accent};box-shadow:0 1px 0 {accent}33,0 4px 18px {accent}40;font-family:system-ui,-apple-system,Inter,Roboto,sans-serif'><span style='width:8px;height:8px;border-radius:50%;background:{accent};box-shadow:0 0 0 3px {accent}33,0 0 10px {accent}'></span><span style='padding:3px 12px;border-radius:999px;border:1px solid {accent}66;background:{accent}1A;color:{accent};font-size:12px;font-weight:600;letter-spacing:.18em;line-height:16px'>{envName}</span><span style='color:#8B949E;font-size:12px;line-height:16px'>Ikke produktionsmiljø</span></div>";
+    }
 
     // Check if ajax callback - This stops everything after callback result from loading!
     if(Util.Req("ajax") == "true"){ IgnoreBody(); return; }
@@ -18,7 +24,7 @@
 <html lang="da">
 	<head>
 		<meta charset="utf-8">
-		@if(IsTest) { <meta name="robots" content="noindex, nofollow"> }
+		@if(IsNotProd) { <meta name="robots" content="noindex, nofollow"> }
         <meta http-equiv="X-UA-Compatible" content="IE=edge">
 		<meta name="viewport" content="width=device-width, initial-scale=1">
 		@await Html.PartialAsync("MetaTags")
@@ -63,7 +69,7 @@
     	@if(cookiebot.Marketing){ @Html.Raw(Model.Value("scriptsMarketing", fallback: Fallback.ToAncestors)) }
 	</head>
 	<body>
-	    @if(IsTest){ <div style="width: 100%; z-index: 99; background-color: red; line-height: 30px; color: yellow; text-align: center; font-size: 20px; font-weight: bold;">TEST TEST TEST</div> }
+	    @Html.Raw(notProdBanner)
 		<header>
 			<nav></nav>
 		</header>
@@ -71,6 +77,6 @@
 			@RenderBody()
 		</main>
 		<footer></footer>
-		@if(IsTest){ <div style="width: 100%; z-index: 99; background-color: red; line-height: 30px; color: yellow; text-align: center; font-size: 20px; font-weight: bold;">TEST TEST TEST</div> }
+		@Html.Raw(notProdBanner)
 	</body>
 </html>

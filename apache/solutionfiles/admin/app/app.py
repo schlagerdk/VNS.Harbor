@@ -286,6 +286,17 @@ def index():
 @app.route("/api/preferences", methods=["PUT"])
 def api_preferences():
     data = request.get_json(silent=True) or {}
+    if "public_address" in data:
+        # The server's address as the internet sees it, for a server behind NAT: what DNS records point to
+        require_admin()
+        address = str(data.get("public_address") or "").strip()
+        if address and not (valid_ip(address) or re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9.-]{0,251}[A-Za-z0-9])?", address)):
+            return error("Enter an IP address or a host name, or leave it empty.")
+        with CONFIG_LOCK:
+            cfg["public_address"] = address
+            save_config()
+        if "start_view" not in data:
+            return jsonify(public_address=address)
     start_view = data.get("start_view")
     if start_view not in ("sites", "sql"):
         return error("The start page must be sites or sql")
@@ -297,6 +308,73 @@ def api_preferences():
             me()["start_view"] = start_view
         save_config()
     return jsonify(start_view=start_view)
+
+
+# ------------------------------------------------------------------ DNS
+
+def valid_ip(value):
+    import ipaddress
+    try:
+        ipaddress.ip_address(value)
+        return True
+    except ValueError:
+        return False
+
+
+def server_addresses():
+    """This server's own addresses: every global one its network has, the internal ones of a server behind NAT too"""
+    found = []
+    try:
+        result = subprocess.run(["ip", "-o", "addr", "show", "scope", "global"], capture_output=True, text=True, timeout=5)
+        for line in result.stdout.splitlines():
+            match = re.search(r"\binet6?\s+([0-9a-fA-F:.]+)/", line)
+            if match and match.group(1) not in found:
+                found.append(match.group(1))
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return found
+
+
+def is_private(address):
+    import ipaddress
+    try:
+        ip = ipaddress.ip_address(address)
+        return ip.is_private or ip.is_loopback or ip.is_link_local
+    except ValueError:
+        return False
+
+
+@app.route("/api/server-address")
+def api_server_address():
+    """Where a site's DNS should point: the public address when one is set, else the server's own"""
+    addresses = server_addresses()
+    public = cfg.get("public_address", "")
+    ipv4 = [item for item in addresses if ":" not in item]
+    best = public or next((item for item in ipv4 if not is_private(item)), "") or (ipv4[0] if ipv4 else "")
+    return jsonify(name=socket.getfqdn(), addresses=addresses, public=public, address=best,
+                   behind_nat=not public and bool(ipv4) and all(is_private(item) for item in ipv4))
+
+
+@app.route("/api/dns")
+def api_dns():
+    """What a name points to now, and whether that is this server (or the address the page names)"""
+    name = (request.args.get("name") or "").strip().rstrip(".").lower()
+    if not re.fullmatch(r"(?=.{1,253}$)[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9])?(?:\.[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9])?)*", name):
+        return error("Not a domain name")
+    try:
+        found = sorted({info[4][0] for info in socket.getaddrinfo(name, None, proto=socket.IPPROTO_TCP)})
+    except (socket.gaierror, UnicodeError, OSError):
+        found = []
+    expected = (request.args.get("expect") or "").strip()
+    ours = {expected} if expected else set(server_addresses()) | {cfg.get("public_address", "")} - {""}
+    # A public address set as a host name counts by what it resolves to
+    for item in list(ours):
+        if item and not valid_ip(item):
+            try:
+                ours |= {info[4][0] for info in socket.getaddrinfo(item, None, proto=socket.IPPROTO_TCP)}
+            except (socket.gaierror, UnicodeError, OSError):
+                pass
+    return jsonify(name=name, addresses=found, here=bool(found) and any(item in ours for item in found))
 
 
 # ------------------------------------------------------------------ helpers
@@ -2530,8 +2608,12 @@ def build_command(data):
             abort(400, "NuGet packages can only be managed for C# sites")
         action = data.get("action", "")
         package = data.get("package", "")
-        if action not in ("add", "remove") or not isinstance(package, str) or not PACKAGE_RE.fullmatch(package):
+        # Removing can take several at once: one task, one restore after them
+        packages = data.get("packages") if action == "remove" and isinstance(data.get("packages"), list) else [package]
+        if (action not in ("add", "remove") or not packages or len(packages) > 50
+                or any(not isinstance(item, str) or not PACKAGE_RE.fullmatch(item) for item in packages)):
             abort(400, "Invalid package action or name")
+        package = packages[0]
         projects = sorted(glob.glob(os.path.join(WEB_ROOT, site, "*.csproj")))
         if len(projects) != 1:
             abort(400, "Expected exactly one C# project in this site")
@@ -2543,12 +2625,14 @@ def build_command(data):
             title = "Add NuGet package: " + package
         else:
             argv = ["dotnet", "remove", "package", package]
-            title = "Remove NuGet package: " + package
+            title = "Remove NuGet package" + ("s: " + ", ".join(packages) if len(packages) > 1 else ": " + package)
         # As root only the project file is changed; the restore, which can run build steps, runs as the build user
         if os.geteuid() == 0:
             restore = [sys.executable, os.path.join(APACHE_DIR, "lib", "build_as.py"), "--", "dotnet", "restore"]
-            change = argv + (["--no-restore"] if argv[1] == "add" else [])
-            argv = ["/bin/bash", "-c", " ".join(shlex.quote(item) for item in change) + " && " + " ".join(shlex.quote(item) for item in restore)]
+            changes = [argv + ["--no-restore"]] if argv[1] == "add" else [["dotnet", "remove", "package", item] for item in packages]
+            argv = ["/bin/bash", "-c", " && ".join(" ".join(shlex.quote(item) for item in change) for change in [*changes, restore])]
+        elif len(packages) > 1:
+            argv = ["/bin/bash", "-c", " && ".join("dotnet remove package " + shlex.quote(item) for item in packages)]
         return title + " (" + site + ")", argv, os.path.dirname(projects[0])
     if kind == "create_prod":
         site = site_arg(data)

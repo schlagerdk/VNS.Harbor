@@ -122,6 +122,78 @@ async function refreshAccess() {
 setInterval(() => run(refreshAccess), 15000);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) run(refreshAccess); });
 
+// ------------------------------------------------------------------ DNS help
+// Under a binding: the record to make for it, with copy buttons, and whether the name points here already.
+// It points at this server (its public address when one is set), or at the address given, as a remote server's.
+let serverAddress = null;
+async function loadServerAddress() {
+	if (!serverAddress) serverAddress = await api("/api/server-address");
+	return serverAddress;
+}
+function dnsCard(input, { expect = "", name: targetName = "" } = {}) {
+	const status = el("span", { className: "dns-status" });
+	const records = el("div", { className: "dns-records" });
+	const note = el("p", { className: "dns-note" });
+	const card = el("div", { className: "dns-card" },
+		el("div", { className: "dns-head" }, el("span", { className: "dns-icon" }, svgIcon("globe")),
+			el("strong", { textContent: "DNS for this name" }), status),
+		records, note);
+	const copyButton = (text) => {
+		const button = el("button", { type: "button", className: "dns-copy", title: "Copy " + text, ariaLabel: "Copy " + text });
+		button.append(svgIcon("copy"));
+		button.onclick = () => run(async () => {
+			await copyText(text, card);
+			button.classList.add("copied");
+			setTimeout(() => button.classList.remove("copied"), 1200);
+		});
+		return button;
+	};
+	const record = (type, name, value) => el("div", { className: "dns-record" },
+		el("span", { className: "dns-type", textContent: type }), el("code", { textContent: name }),
+		el("span", { className: "dns-arrow", textContent: "→" }), el("code", { className: "dns-value", textContent: value }), copyButton(value));
+	let timer = null;
+	let asked = "";
+	const show = async () => {
+		const name = input.value.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+		card.hidden = !name;
+		if (!name) return;
+		const server = expect ? null : await loadServerAddress().catch(() => null);
+		const address = expect || server?.address || "";
+		const host = targetName || server?.name || "";
+		records.replaceChildren(record("A", name, address || "this server's address"),
+			...(host && host.includes(".") && host !== name ? [record("CNAME", name, host)] : []));
+		note.textContent = !expect && server?.behind_nat
+			? `This server has only an internal address (${address}). Set its public address under Preferences, so the record points to where the internet reaches it.`
+			: "Make one of these where the domain's DNS is kept. An HTTPS certificate is issued only when the name points here.";
+		note.classList.toggle("warn", Boolean(!expect && server?.behind_nat));
+		if (!name.includes(".")) {
+			status.className = "dns-status muted";
+			status.textContent = "A local name: no public DNS";
+			return;
+		}
+		asked = name;
+		status.className = "dns-status checking";
+		status.textContent = "Checking…";
+		let answer;
+		try { answer = await api(`/api/dns?name=${encodeURIComponent(name)}${expect ? "&expect=" + encodeURIComponent(expect) : ""}`); }
+		catch (error) { status.className = "dns-status muted"; status.textContent = "Could not check"; return; }
+		if (asked !== name) return;
+		if (answer.here) { status.className = "dns-status ok"; status.textContent = "Points here"; }
+		else if (answer.addresses.length) { status.className = "dns-status warn"; status.textContent = `Points to ${answer.addresses[0]}`; status.title = answer.addresses.join(", "); }
+		else { status.className = "dns-status muted"; status.textContent = "No record yet"; }
+	};
+	// Typed, or filled in by the dialog (the binding follows the folder name): checked shortly after it changes
+	let seen = null;
+	const watch = setInterval(() => {
+		if (!document.contains(card)) { clearInterval(watch); return; }
+		if (input.value === seen || !input.offsetParent) return;
+		seen = input.value;
+		clearTimeout(timer);
+		timer = setTimeout(() => run(show), 450);
+	}, 250);
+	return card;
+}
+
 // Elements are always built with textContent, so file and site names can never inject HTML
 function el(tag, props, ...children) {
 	const node = document.createElement(tag);
@@ -231,9 +303,10 @@ async function copyText(text, container) {
 let copyStatusTimer = null;
 
 // Replaces prompt()/confirm(). Resolves to the entered text (or true without an input), or null when cancelled.
-function ask({ title, message = "", value = "", placeholder = "", ok = "OK", danger = false, input = true, match = null, extra = null, checkbox = null, checkboxChecked = false, loginCheckbox = false }) {
+function ask({ title, message = "", value = "", placeholder = "", ok = "OK", danger = false, input = true, match = null, extra = null, checkbox = null, checkboxChecked = false, loginCheckbox = false, dns = null }) {
 	const dlg = $("#dlg-prompt");
 	const field = $("#prompt-input");
+	$("#prompt-dns").replaceChildren(...(dns && input ? [dnsCard(field, dns)] : []));
 	const extraRow = $("#prompt-extra-row");
 	const extraField = $("#prompt-extra");
 	const okButton = $("#prompt-ok");
@@ -558,6 +631,7 @@ function matches(site) {
 // Inline SVG (Lucide-style, 24x24 stroke icons); the CSP does not allow external images
 const iconPaths = {
 	grid: "M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z",
+	copy: "M9 9h11v11H9zM5 15H4V4h11v1",
 	users: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75",
 	rows: "M4 5h16v4H4zM4 15h16v4H4z",
 	lock: "M5 11h14v10H5zM8 11V7a4 4 0 0 1 8 0v4",
@@ -1704,6 +1778,8 @@ async function changeBinding(site, scope, env) {
 		message: `Set the primary domain and aliases for the ${label} of ${siteLabel(site)}. Aliases must resolve to the same server. HTTP-only sites remain HTTP-only; certificates are updated only for HTTPS sites. Only an HTTP-only site can use a name without a dot, such as the server's own name on the local network.`,
 		value: current,
 		extra: { label: "Aliases (one per line)", value: aliasLabels(env).join("\n"), placeholder: "www.example.com\napi.example.com" },
+		// DNS points at the server the site is on: a remote environment's own host
+		dns: env?.mode === "remote" ? { expect: env.host || "" } : env?.mode === "windows" ? { expect: env.host || "" } : {},
 		ok: "Change",
 	});
 	if (!bindings) return;
@@ -1969,6 +2045,8 @@ siteForm.addEventListener("click", (event) => {
 siteForm.elements.template.oninput = syncTemplateVersion;
 siteForm.site.oninput = () => { if (!siteForm.binding.dataset.edited) siteForm.binding.value = siteForm.site.value; };
 siteForm.binding.oninput = () => { siteForm.binding.dataset.edited = "1"; };
+$("#site-dns").replaceChildren(dnsCard(siteForm.binding));
+$("#setup-site-dns").replaceChildren(dnsCard($("#form-setup-site").binding));
 // The binding's message is about the certificate choice as well: any change clears it, or the browser keeps
 // refusing the form before it is checked again
 for (const type of ["input", "change"]) siteForm.addEventListener(type, () => siteForm.binding.setCustomValidity(""));
@@ -2534,9 +2612,48 @@ function openPackageDialog(site, action) {
 		? "Add a NuGet package to this site's project."
 		: "Remove a NuGet package from this site's project.";
 	$("#package-version-row").hidden = !adding;
-	$("#package-submit").textContent = adding ? "Add package" : "Remove package";
+	// Removing is choosing one of the project's packages; adding names a new one
+	const name = packageForm.elements.namedItem("package");
+	$("#package-name-row").hidden = !adding;
+	$("#package-pick").hidden = adding;
+	const submit = $("#package-submit");
+	submit.classList.toggle("danger-primary", !adding);
+	submit.textContent = adding ? "Add package" : "Remove package";
+	submit.disabled = !adding;
+	if (!adding) {
+		const packages = [...(site.packages || [])].sort((a, b) => a.name.localeCompare(b.name));
+		const list = $("#package-list");
+		packageForm.dataset.packages = "[]";
+		list.setAttribute("role", "group");
+		// One or more: a click picks a package or puts it back
+		const choose = (item, row) => {
+			row.setAttribute("aria-checked", String(row.getAttribute("aria-checked") !== "true"));
+			const chosen = [...list.querySelectorAll('.package-pick-row[aria-checked="true"]')].map((other) => other.dataset.package);
+			name.value = chosen[0] || "";
+			packageForm.dataset.packages = JSON.stringify(chosen);
+			submit.textContent = chosen.length > 1 ? `Remove ${chosen.length} packages` : chosen.length ? "Remove " + chosen[0] : "Remove package";
+			submit.disabled = !chosen.length;
+		};
+		list.replaceChildren(...(packages.length ? packages.map((item) => {
+			const row = el("button", { type: "button", className: "package-pick-row", role: "radio", ariaChecked: "false" },
+				el("span", { className: "package-pick-icon" }, svgIcon("package")),
+				el("span", { className: "package-pick-name", textContent: item.name }),
+				el("span", { className: "package-pick-version", textContent: item.version || "" }));
+			row.dataset.name = item.name.toLowerCase();
+			row.dataset.package = item.name;
+			row.setAttribute("role", "checkbox");
+			row.onclick = () => choose(item, row);
+			return row;
+		}) : [el("p", { className: "muted", textContent: "The project has no packages." })]));
+		$("#package-filter").value = "";
+		$("#package-filter").hidden = packages.length < 7;
+		$("#package-filter").oninput = () => {
+			const words = $("#package-filter").value.trim().toLowerCase();
+			for (const row of list.querySelectorAll(".package-pick-row")) row.hidden = Boolean(words) && !row.dataset.name.includes(words);
+		};
+	}
 	packageDialog.showModal();
-	packageForm.elements.namedItem("package").focus();
+	(adding ? name : $("#package-filter").hidden ? $("#package-list .package-pick-row") : $("#package-filter"))?.focus();
 }
 $("#package-cancel").onclick = () => packageDialog.close();
 packageForm.onsubmit = (event) => {
@@ -2545,6 +2662,7 @@ packageForm.onsubmit = (event) => {
 	data.kind = "dotnet_package";
 	data.site = packageForm.dataset.site;
 	data.action = packageForm.dataset.action;
+	if (data.action === "remove") data.packages = JSON.parse(packageForm.dataset.packages || "[]");
 	run(async () => {
 		await openTask(data);
 		packageDialog.close();
@@ -4074,6 +4192,13 @@ $("#menu-preferences").onclick = () => run(async () => {
 	$("#user-menu").hidden = true;
 	preferencesForm.reset();
 	preferencesForm.elements.start_view.value = startView;
+	if (currentUser.admin) {
+		serverAddress = null;
+		const server = await loadServerAddress().catch(() => null);
+		preferencesForm.elements.public_address.value = server?.public || "";
+		preferencesForm.elements.public_address.placeholder = server?.behind_nat
+			? `Behind NAT (${server.address}): the IP or name the internet reaches it on` : "Only behind NAT: the IP or name the internet reaches it on";
+	}
 	// The start page is a choice only with both Web Server and SQL Server
 	$("#preferences-start").hidden = !(currentUser.web && currentUser.sql);
 	const keepAlive = await api("/api/keep-alive");
@@ -4113,6 +4238,10 @@ preferencesForm.onsubmit = (event) => {
 	const next = preferencesForm.elements.start_view.value;
 	const interval = Number(preferencesForm.elements.keep_alive_interval.value) || 5;
 	run(async () => {
+		if (currentUser.admin && preferencesForm.elements.public_address.value.trim() !== (serverAddress?.public || "")) {
+			await api("/api/preferences", { method: "PUT", json: { public_address: preferencesForm.elements.public_address.value.trim() } });
+			serverAddress = null;
+		}
 		if (keepAliveInstalled && currentUser.admin) {
 			if (!Number.isInteger(interval) || interval < 1 || interval > 1440) throw new Error("The interval must be a whole number from 1 to 1440 minutes.");
 			await api("/api/keep-alive", { method: "PUT", json: { enabled: preferencesForm.elements.keep_alive.checked, interval_minutes: interval } });
@@ -4337,6 +4466,8 @@ async function runSystemUpdate(existing = null) {
 	};
 	$("#system-update-output").hidden = true;
 	$("#system-update-close").hidden = true;
+	$("#system-update-reload").hidden = true;
+	overlay.classList.remove("failed");
 	$(".update-spinner").hidden = false;
 	overlay.showModal();
 	try {
@@ -4349,13 +4480,17 @@ async function runSystemUpdate(existing = null) {
 			try {
 				response = await fetch("/api/system-update/run", { cache: "no-store", signal: AbortSignal.timeout(5000) });
 			} catch (error) {
-				if (!(error instanceof TypeError) && error.name !== "TimeoutError") throw error;
+				// The admin site restarts during the update: no answer for a while is expected. A timeout is a
+				// TimeoutError in Chrome and an AbortError ("Fetch is aborted") in Safari.
+				if (!(error instanceof TypeError) && !["TimeoutError", "AbortError"].includes(error.name)) throw error;
 				continue;
 			}
 			if (response.status === 401 || response.redirected) throw new Error("Your session expired. Reload the page and log in to check the update.");
 			if ([502, 503, 504].includes(response.status)) continue;
 			if (!response.ok) throw new Error("Could not check update status: HTTP " + response.status);
-			const state = await response.json();
+			// While it starts again an answer can be a page rather than the status: asked again a moment later
+			let state;
+			try { state = await response.json(); } catch (error) { continue; }
 			if (state.id !== job.id) throw new Error("Update status changed unexpectedly. Reload the page to check it.");
 			showVersions(state);
 			if (state.step) {
@@ -4374,7 +4509,9 @@ async function runSystemUpdate(existing = null) {
 		$("#system-update-title").textContent = "Update not completed";
 		$("#system-update-message").textContent = error.message;
 		$(".update-spinner").hidden = true;
+		$("#system-update-overlay").classList.add("failed");
 		$("#system-update-close").hidden = false;
+		$("#system-update-reload").hidden = false;
 		console.error(error);
 	} finally {
 		systemUpdating = false;
@@ -4382,6 +4519,7 @@ async function runSystemUpdate(existing = null) {
 }
 $("#system-update-overlay").addEventListener("cancel", (event) => event.preventDefault());
 $("#system-update-close").onclick = () => $("#system-update-overlay").close();
+$("#system-update-reload").onclick = () => location.reload();
 async function checkSystemUpdate(refresh = false) {
 	// Updates of the server are an administrator's: a user's page does not ask
 	if (!currentUser.admin) return;

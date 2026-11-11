@@ -16,13 +16,19 @@
 </head>
 <body data-role="{{ role }}">
 <dialog id="system-update-overlay" aria-labelledby="system-update-title">
-  <div class="update-spinner" aria-hidden="true"></div>
-  <h2 id="system-update-title" role="status">Updating..</h2>
-  <p id="system-update-versions-line" class="system-update-versions-line" hidden></p>
-  <p id="system-update-message">Please wait. The page will reload automatically when the update completes.</p>
-  <p id="system-update-step" class="system-update-step" hidden></p>
-  <pre id="system-update-output" hidden></pre>
-  <button id="system-update-close" type="button" hidden>Close</button>
+  <div class="system-update-card">
+    <div class="update-spinner" aria-hidden="true"></div>
+    <div class="update-failed-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8v5M12 16.5v.01"/><circle cx="12" cy="12" r="9.5"/></svg></div>
+    <h2 id="system-update-title" role="status">Updating..</h2>
+    <p id="system-update-versions-line" class="system-update-versions-line" hidden></p>
+    <p id="system-update-message">Please wait. The page will reload automatically when the update completes.</p>
+    <p id="system-update-step" class="system-update-step" hidden></p>
+    <pre id="system-update-output" hidden></pre>
+    <div class="system-update-actions">
+      <button id="system-update-close" type="button" hidden>Close</button>
+      <button id="system-update-reload" type="button" class="primary" hidden>Reload page</button>
+    </div>
+  </div>
 </dialog>
 <header class="page-header">
   <a class="brand" href="#sites" title="All sites">
@@ -342,6 +348,7 @@
       <div><h2 id="prompt-title"></h2><p id="prompt-message"></p></div>
     </header>
     <input id="prompt-input" autocomplete="off" spellcheck="false">
+    <div id="prompt-dns"></div>
     <label id="prompt-login-row" hidden><input id="prompt-login-checkbox" type="checkbox"><span>Also delete associated SQL logins used only by this database</span></label>
     <label id="prompt-checkbox-row" class="sql-trust-certificate" hidden><input id="prompt-checkbox" type="checkbox"><span id="prompt-checkbox-label"></span></label>
     <label id="prompt-extra-row" class="prompt-extra-row" hidden><span id="prompt-extra-label"></span><textarea id="prompt-extra" rows="4" autocomplete="off" spellcheck="false"></textarea></label>
@@ -419,6 +426,7 @@
       <label>Binding (domain) <input name="binding" placeholder="Empty: answers any name" autocomplete="off" spellcheck="false"></label>
       <label>HTTPS certificate <select name="certificate"><option value="y">Create certificate and enforce HTTPS</option><option value="n">HTTP only - issue certificate later</option></select></label>
     </div>
+    <div id="site-dns"></div>
     <div id="csharp-options">
       <div class="ns-section">C# options</div>
       <div class="ns-grid">
@@ -577,6 +585,7 @@
       <label>HTTPS certificate <select name="certificate"><option value="y">Create certificate and enforce HTTPS</option><option value="n">HTTP only - issue certificate later</option></select></label>
       <label id="setup-site-environment-row">Environment <select name="environment"><option>Development</option><option>Test</option><option>Staging</option><option>Production</option></select></label>
     </div>
+    <div id="setup-site-dns"></div>
     <p class="hint" id="setup-site-hint"></p>
     <menu><button type="button" id="setup-site-cancel" class="cancel-link">Cancel</button><button type="submit" class="primary">Set up site</button></menu>
   </form>
@@ -601,7 +610,11 @@
       <span class="ns-icon" data-header-icon="package" aria-hidden="true"></span>
       <div><h2 id="package-title">Add package</h2><p id="package-description">Add a NuGet package to this site's project.</p></div>
     </header>
-    <label>Package name <input name="package" required maxlength="128" pattern="[A-Za-z0-9][A-Za-z0-9._-]*" autocomplete="off" spellcheck="false" placeholder="Package.Name"></label>
+    <label id="package-name-row">Package name <input name="package" required maxlength="128" pattern="[A-Za-z0-9][A-Za-z0-9._-]*" autocomplete="off" spellcheck="false" placeholder="Package.Name"></label>
+    <div id="package-pick" class="package-pick" hidden>
+      <input id="package-filter" type="search" placeholder="Filter packages…" autocomplete="off" spellcheck="false" aria-label="Filter packages">
+      <div id="package-list" class="package-pick-list" role="radiogroup" aria-label="Installed packages"></div>
+    </div>
     <label id="package-version-row">Version (optional) <input name="version" maxlength="128" pattern="[0-9][0-9A-Za-z.+-]*" autocomplete="off" spellcheck="false" placeholder="1.2.3"></label>
     <menu><button type="button" id="package-cancel" class="cancel-link">Cancel</button><button type="submit" id="package-submit" class="primary">Add package</button></menu>
   </form>
@@ -683,6 +696,9 @@
     </fieldset>
     </div>
     <div class="admin-only-block">
+    <div class="ns-section">This server</div>
+    <label>Public address <input name="public_address" autocomplete="off" spellcheck="false" placeholder="Only behind NAT: the IP or name the internet reaches it on"></label>
+    <p class="hint">Where a site's DNS records point. Leave it empty when the server has a public address of its own.</p>
     <div class="ns-section">Site keep-alive</div>
     <label class="sync-option keep-alive-option"><input name="keep_alive" type="checkbox">
       <span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></span>
