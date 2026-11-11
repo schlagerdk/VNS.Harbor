@@ -208,8 +208,8 @@
       <div class="ns-section">Publish</div>
       <div id="multi-actions" class="type-cards multi-choices">
         <label class="type-card multi-choice"><input type="radio" name="action" value="local"><span class="tc-title">Main sites</span><span class="tc-sub">Build and restart each site here</span></label>
-        <label class="type-card multi-choice"><input type="radio" name="action" value="prod"><span class="tc-title">Environments</span><span class="tc-sub">Build and deploy each environment</span></label>
-        <label class="type-card multi-choice"><input type="radio" name="action" value="both"><span class="tc-title">Both</span><span class="tc-sub">The main site, then its environments</span></label>
+        <label class="type-card multi-choice"><input type="radio" name="action" value="prod"><span class="tc-title">All environments</span><span class="tc-sub">Build and deploy every environment</span></label>
+        <label class="type-card multi-choice"><input type="radio" name="action" value="both"><span class="tc-title">All</span><span class="tc-sub">The main site, then all its environments</span></label>
       </div>
       <div class="ns-section">Packages</div>
       <div class="type-cards multi-choices multi-choices-4">
@@ -219,9 +219,11 @@
         <label class="type-card multi-choice"><input type="radio" name="action" value="remove"><span class="tc-title">Remove</span><span class="tc-sub">A NuGet package</span></label>
       </div>
       <div id="multi-maintenance">
-        <div class="ns-section">Maintenance</div>
+        <div class="ns-section">Clear Umbraco logs</div>
         <div class="type-cards multi-choices">
-          <label class="type-card multi-choice"><input type="radio" name="action" value="clear_logs"><span class="tc-title">Clear logs</span><span class="tc-sub">Delete the Umbraco logs</span></label>
+          <label class="type-card multi-choice"><input type="radio" name="action" value="clear_logs"><span class="tc-title">Main sites</span><span class="tc-sub">The logs of each site here</span></label>
+          <label class="type-card multi-choice"><input type="radio" name="action" value="clear_logs_prod"><span class="tc-title">All environments</span><span class="tc-sub">The logs of every environment</span></label>
+          <label class="type-card multi-choice"><input type="radio" name="action" value="clear_logs_all"><span class="tc-title">All</span><span class="tc-sub">The main site and all its environments</span></label>
         </div>
       </div>
       <p id="multi-action-description" class="hint"></p>

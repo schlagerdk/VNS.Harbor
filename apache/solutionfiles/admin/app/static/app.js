@@ -2125,11 +2125,13 @@ function syncMultiAction() {
 		check: "Run dotnet list package --outdated for every selected project without changing packages.",
 		add: "Add a NuGet package to every selected project.",
 		remove: "Remove a NuGet package from every selected project.",
-		local: "Build and restart each selected site's local environment.",
-		prod: "Build and deploy each selected site's production environment.",
-		both: "Publish local, then production for each site. Sites run in parallel.",
+		local: "Build and restart each selected main site.",
+		prod: "Build and deploy every environment of each selected site, one at a time per site.",
+		both: "Publish each main site, then all its environments. Sites run in parallel.",
 		outdated: "Run dotnet outdated --upgrade for every selected project. Review changes and publish afterward.",
-		clear_logs: "Delete the Umbraco logs of each selected site. Sites that are not Umbraco are skipped.",
+		clear_logs: "Delete the Umbraco logs of each selected main site. Sites that are not Umbraco are skipped.",
+		clear_logs_prod: "Delete the Umbraco logs of every environment of the selected sites. Sites that are not Umbraco, or have no environments, are skipped.",
+		clear_logs_all: "Delete the Umbraco logs of each selected main site and all its environments. Sites that are not Umbraco are skipped.",
 	}[action] || "";
 	const packageAction = action === "add" || action === "remove";
 	$("#multi-package-fields").hidden = !packageAction;
@@ -2137,11 +2139,13 @@ function syncMultiAction() {
 	$("#multi-version-row").hidden = action !== "add";
 	multiForm.elements.namedItem("version").disabled = action !== "add";
 	const selected = listedSites().filter((site) => multiSites.has(site.name));
+	const clearing = action.startsWith("clear_logs");
 	const skipped = action === "prod" || action === "both"
 		? selected.filter((site) => !site.scripts.includes("publish_prod.sh"))
-		: action === "clear_logs" ? selected.filter((site) => site.kind !== "umbraco") : [];
+		: action === "clear_logs_prod" ? selected.filter((site) => site.kind !== "umbraco" || !site.environments.some(isTarget))
+		: clearing ? selected.filter((site) => site.kind !== "umbraco") : [];
 	$("#multi-skipped").textContent = skipped.length
-		? `Will be skipped (${action === "clear_logs" ? "not Umbraco" : "no production"}): ` + skipped.map(siteLabel).join(", ") : "";
+		? `Will be skipped (${clearing ? (action === "clear_logs_prod" ? "not Umbraco, or no environments" : "not Umbraco") : "no environments"}): ` + skipped.map(siteLabel).join(", ") : "";
 	$("#multi-submit").disabled = !action || submittingMulti || !selected.length || skipped.length === selected.length;
 }
 $("#btn-multi-all").onclick = () => {

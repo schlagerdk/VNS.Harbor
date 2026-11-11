@@ -1537,10 +1537,10 @@ def terminal_scope(payload):
     kind = payload.get("kind")
     if kind == "publish_both" and payload.get("environments_only"):
         return "prod"
-    if kind == "publish_both" or (kind == "bulk" and payload.get("action") == "both"):
+    if kind == "publish_both" or (kind == "bulk" and payload.get("action") in ("both", "clear_logs_all")):
         return "all"
     if kind == "bulk":
-        return "prod" if payload.get("action") == "prod" else "main"
+        return "prod" if payload.get("action") in ("prod", "clear_logs_prod") else "main"
     if payload.get("scope") in ("all", "prod", "test", "main"):
         return "main" if payload["scope"] == "test" else payload["scope"]
     if kind in ("remote_tool", "create_prod", "sync_env", "move_env", "register_env", "data_sync", "data_sync_settings"):
@@ -1963,7 +1963,8 @@ def build_command(data):
         if (not isinstance(sites, list) or not sites or len(sites) > 100
                 or any(not isinstance(site, str) for site in sites)
                 or len(set(sites)) != len(sites)
-                or action not in ("check", "add", "remove", "local", "prod", "both", "outdated", "clear_logs")):
+                or action not in ("check", "add", "remove", "local", "prod", "both", "outdated",
+                                  "clear_logs", "clear_logs_prod", "clear_logs_all")):
             abort(400, "Invalid multi action selection")
         tasks = []
         for name in sites:
@@ -1978,14 +1979,29 @@ def build_command(data):
             if action in ("prod", "both") and not targets:
                 tasks.append({"site": site, "skip": "No production publish script"})
                 continue
-            if action == "clear_logs":
-                # Umbraco's logs, with the site's own clear_logs script
-                script = next((name for name in ("clear_logs_local.sh", "clear_logs.sh") if name in scripts), "")
-                if info["kind"] != "umbraco" or not script:
-                    tasks.append({"site": site, "skip": "Not an Umbraco site with a clear_logs script"})
+            if action.startswith("clear_logs"):
+                # Umbraco's logs: of the main site, of every environment, or all of them, each with its own script.
+                # Every environment is a task of its own, named after it in the output.
+                if info["kind"] != "umbraco":
+                    tasks.append({"site": site, "skip": "Not an Umbraco site"})
                     continue
-                _, argv, cwd = build_command({"kind": "script", "site": site, "script": script})
-                tasks.append({"site": site, "argv": argv, "cwd": cwd})
+                found = 0
+                if action in ("clear_logs", "clear_logs_all"):
+                    script = next((name for name in ("clear_logs_local.sh", "clear_logs.sh") if name in scripts), "")
+                    if script:
+                        _, argv, cwd = build_command({"kind": "script", "site": site, "script": script})
+                        tasks.append({"site": site, "argv": argv, "cwd": cwd})
+                        found += 1
+                if action in ("clear_logs_prod", "clear_logs_all"):
+                    root = os.path.join(WEB_ROOT, site)
+                    for target in publishable_targets(site, root):
+                        if not os.path.isfile(os.path.join(target_folder(root, target), "clear_logs_prod.sh")):
+                            continue
+                        _, argv, cwd = build_command({"kind": "script", "site": site, "script": "clear_logs_prod.sh", "target": target})
+                        tasks.append({"site": f"{site} · {target}", "argv": argv, "cwd": cwd})
+                        found += 1
+                if not found:
+                    tasks.append({"site": site, "skip": "No logs to clear" if action == "clear_logs" else "No environment with a clear_logs script"})
                 continue
             if action in ("add", "remove"):
                 payload = {"kind": "dotnet_package", "site": site, "action": action,

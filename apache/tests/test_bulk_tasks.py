@@ -63,6 +63,23 @@ class BulkTests(unittest.TestCase):
             if action != "local":
                 self.assertIn("two: SKIPPED", result.stdout)
 
+    def test_clear_logs_of_main_sites_environments_or_all(self):
+        # one is an Umbraco site with an environment, two is not Umbraco
+        self.ns["site_info"] = lambda name, _: dict(self.info(name, _), kind="umbraco" if name == "one" else "csharp")
+        self.ns["remote_status"] = lambda site, target="prod": {"exists": True}
+        for script in ("clear_logs.sh", "clear_logs_prod.sh"):
+            (self.root / "one/scripts" / script).write_text("exit 0\n")
+        expected = {"clear_logs": ["one"], "clear_logs_prod": ["one · prod"], "clear_logs_all": ["one", "one · prod"]}
+        for action, names in expected.items():
+            with self.subTest(action=action):
+                _, argv, cwd = self.command(action=action)
+                tasks = json.loads(argv[-1])
+                self.assertEqual([task["site"] for task in tasks if not task.get("skip")], names)
+                self.assertEqual([task["site"] for task in tasks if task.get("skip")], ["two"])
+                result = subprocess.run(argv, cwd=cwd, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("two: SKIPPED: Not an Umbraco site", result.stdout)
+
     def test_package_commands_reuse_validation(self):
         for action in ("add", "remove"):
             _, argv, _ = self.command(action=action, package="Example.Package", version="1.2.3")
