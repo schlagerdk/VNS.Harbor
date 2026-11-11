@@ -86,6 +86,42 @@ function pruneButtons(root, site, envKey = null) {
 	}
 }
 
+// What the page shows of the user's access: the parts, and what they may make
+function applyAccess() {
+	$("#switch-sites").hidden = !currentUser.web;
+	$("#switch-sql").hidden = !currentUser.sql;
+	$("#switch-sites").closest("nav").hidden = !(currentUser.web && currentUser.sql);
+	$("#btn-new-site").hidden = !currentUser.create_sites;
+	$("#sql-add-connection").hidden = !currentUser.manage_connections;
+	// A user with only one of the two has nothing to choose in Preferences
+	$("#menu-preferences").hidden = !currentUser.admin && !(currentUser.web && currentUser.sql);
+}
+// An administrator can change a user's access while their page is open: it is read again now and then, and the page
+// follows at once, out of a part the user no longer has and with the buttons they now have
+let accessSnapshot = "";
+async function refreshAccess() {
+	if (currentUser.admin || document.hidden) return;
+	let latest;
+	try { latest = await api("/api/me"); } catch (error) { return; }
+	const snapshot = JSON.stringify(latest);
+	if (snapshot === accessSnapshot) return;
+	const first = !accessSnapshot;
+	accessSnapshot = snapshot;
+	currentUser = latest;
+	if (first) return;
+	applyAccess();
+	const onSql = location.hash.startsWith("#sql");
+	if ((onSql && !currentUser.sql) || (!onSql && !currentUser.web)) {
+		await route();
+	} else if (onSql) {
+		await loadSqlConnections();
+	} else {
+		await loadSites();
+	}
+}
+setInterval(() => run(refreshAccess), 15000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) run(refreshAccess); });
+
 // Elements are always built with textContent, so file and site names can never inject HTML
 function el(tag, props, ...children) {
 	const node = document.createElement(tag);
@@ -300,6 +336,14 @@ function showView(name) {
 
 // Hash routes: #sites, #site/<name>, #files/<path>
 async function route() {
+	// A user goes to the part they have: SQL Server without the Web Server, and the other way round
+	const wantsSql = location.hash.startsWith("#sql") || (!location.hash && startView === "sql");
+	// With neither, the sites view tells them who gives access
+	if (!currentUser.admin && wantsSql && !currentUser.sql) {
+		history.replaceState(null, "", "#sites");
+	} else if (!currentUser.admin && !wantsSql && !currentUser.web && currentUser.sql) {
+		history.replaceState(null, "", "#sql");
+	}
 	const hash = decodeURIComponent(location.hash.slice(1));
 	const slash = hash.indexOf("/");
 	const view = slash < 0 ? hash : hash.slice(0, slash);
@@ -408,7 +452,7 @@ function monitorUpdateCheck(state) {
 
 async function loadSites() {
 	// What the user may do can have changed since the page opened: it is fetched again with the sites
-	try { currentUser = await api("/api/me"); } catch (error) { /* the page goes on with what it had */ }
+	try { currentUser = await api("/api/me"); accessSnapshot = JSON.stringify(currentUser); applyAccess(); } catch (error) { /* the page goes on with what it had */ }
 	const data = await api("/api/sites");
 	allSites = data.sites;
 	sitesLoaded = true;
@@ -658,6 +702,11 @@ function renderSites() {
 	$("#empty-sites-description").textContent = firstSite
 		? "Create a home for your next idea. Set up your first site in just a few steps."
 		: "Try a different search or filter, or bring something new to life by creating a site.";
+	// A user without sites, and who cannot make one, is told who gives access
+	if (firstSite && !currentUser.create_sites) {
+		$("#empty-sites-title").textContent = "No sites for you yet";
+		$("#empty-sites-description").textContent = "An administrator gives you access to the sites you work on.";
+	}
 	for (const site of visible) box.append(siteCard(site));
 	updateSiteActivity();
 	renderCardUpdateChecks();
@@ -3696,14 +3745,7 @@ async function restoreTerminals() {
 run(async () => {
 	syncSiteForm();
 	try { currentUser = await api("/api/me"); } catch (error) { /* the page goes on as before */ }
-	// Web Server and SQL Server: only what the user has
-	$("#switch-sites").hidden = !currentUser.web;
-	$("#switch-sql").hidden = !currentUser.sql;
-	$("#switch-sites").closest("nav").hidden = !(currentUser.web && currentUser.sql);
-	$("#btn-new-site").hidden = !currentUser.create_sites;
-	$("#sql-add-connection").hidden = !currentUser.manage_connections;
-	// A user with only one of the two has nothing to choose in Preferences
-	$("#menu-preferences").hidden = !currentUser.admin && !(currentUser.web && currentUser.sql);
+	applyAccess();
 	// The views are hidden until the address picks one, so a site's page does not show the list first
 	try { await loadSites(); } finally { await route(); }
 	await restoreTerminals();
