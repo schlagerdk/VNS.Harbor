@@ -105,16 +105,17 @@ The admin overview offers **Multi action** and **Check for updates** only when a
 Run as a user with `sudo` privileges:
 
 ```bash
-apt install git && git clone https://github.com/schlagerdk/VNS.Linux.git
+sudo apt install git && git clone https://github.com/schlagerdk/VNS.Linux.git
 ```
 
-Derefter:
+Then:
 
 ```bash
 cd VNS.Linux
-./init.sh                  # base setup and deployment to /vns
-/vns/apache/init.sh        # Apache, acme.sh, .NET 10, Python
-/vns/install_nodejs.sh     # optional: Node.js via nvm
+./init.sh                       # base setup, and the newest release deployed to /vns
+/vns/apache/init.sh             # Apache, acme.sh, .NET 10, Python; offers to set up the admin site at the end
+/vns/install_nodejs.sh          # optional: Node.js via nvm
+sudo /vns/sql/install_server.sh # optional: SQL Server
 ```
 
 `init.sh` does the following:
