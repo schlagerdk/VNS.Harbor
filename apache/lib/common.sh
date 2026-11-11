@@ -576,7 +576,9 @@ install_service() {
 	render_to "$1" "${_servicePath}"
 	sudo systemctl daemon-reload
 	if grep -q '^ExecStart=.*/dotnet ' "${_servicePath}"; then
-		sudo python3 "${_apacheDir}/lib/sql_startup.py" "${_serviceName}"
+		# Only lets the site wait for a local SQL Server at boot: if it fails, the site is still set up
+		sudo python3 "${_apacheDir}/lib/sql_startup.py" "${_serviceName}" \
+			|| echo "Could not make ${_serviceName} wait for SQL Server at boot; it starts without waiting." >&2
 	fi
 	sudo systemctl enable "${_serviceName}"
 	sudo systemctl restart "${_serviceName}"

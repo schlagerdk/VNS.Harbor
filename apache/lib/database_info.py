@@ -9,6 +9,16 @@ def local_sql_server(server):
     return host in (".", "localhost", "127.0.0.1", "::1", "[::1]")
 
 
+def read_config_text(path):
+    """An appsettings file as text. Most are UTF-8; one saved by an old Windows editor is Windows-1252,
+    where æ, ø and å are single bytes that are not valid UTF-8. Such a file is read, not refused."""
+    data = Path(path).read_bytes()
+    try:
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return data.decode("cp1252", errors="replace")
+
+
 def configuration_json(text):
     # ASP.NET configuration permits comments and trailing commas outside strings.
     tokens = r'"(?:\\.|[^"\\])*"|//[^\r\n]*|/\*[\s\S]*?\*/'
@@ -75,7 +85,7 @@ def configuration_values(root, environment="", variables=None):
         paths.append(Path(root) / ("appsettings." + environment + ".json"))
     for path in paths:
         try:
-            text = path.read_text(encoding="utf-8-sig")
+            text = read_config_text(path)
         except FileNotFoundError:
             continue
         flatten(configuration_json(text))

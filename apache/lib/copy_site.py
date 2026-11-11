@@ -8,7 +8,7 @@ import shutil
 import sys
 
 from domain_names import normalize_dns_name, normalize_site_name, service_name
-from database_info import configuration_json, connection_type
+from database_info import configuration_json, connection_type, read_config_text
 
 
 def validate_database_name(name):
@@ -145,7 +145,7 @@ def repoint_local_sql(folder, server):
     for path in Path(folder).glob("appsettings*.json"):
         if path.is_symlink():
             continue
-        data = configuration_json(path.read_text(encoding="utf-8-sig"))
+        data = configuration_json(read_config_text(path))
         connections = data.get("ConnectionStrings", {})
         changed = False
         for key, value in connections.items():
@@ -171,7 +171,7 @@ def update_connections(folder, database="", connection=None):
     for path in Path(folder).rglob("appsettings*.json"):
         if path.is_symlink():
             continue
-        data = configuration_json(path.read_text(encoding="utf-8-sig"))
+        data = configuration_json(read_config_text(path))
         connections = data.get("ConnectionStrings", {})
         changed = False
         for key, value in connections.items():
@@ -246,7 +246,7 @@ def prepare(source_name, target_name, binding, port="", web_root=Path("/var/www"
         for path in source.rglob("appsettings*.json"):
             if path.is_symlink():
                 continue
-            data = configuration_json(path.read_text(encoding="utf-8-sig"))
+            data = configuration_json(read_config_text(path))
             connections = data.get("ConnectionStrings", {})
             for key, value in connections.items():
                 if isinstance(value, str) and not key.lower().endswith("_providername"):
