@@ -162,6 +162,18 @@
       <menu><button id="sql-connection-cancel" type="button" class="cancel-link">Cancel</button><button id="sql-remove-connection" type="button" class="danger" tabindex="-1" hidden>Remove connection</button><button type="submit" class="primary">Save connection</button></menu>
     </form>
   </dialog>
+  <dialog id="dlg-snippet" class="newsite">
+    <form id="form-snippet">
+      <header class="ns-head">
+        <span class="ns-icon" data-header-icon="sliders" aria-hidden="true"></span>
+        <div><h2 id="snippet-title"></h2><p id="snippet-description"></p></div>
+      </header>
+      <div id="snippet-fields" class="snippet-fields"></div>
+      <p class="hint">The rule is put in the file in the editor. Check it there, then save.</p>
+      <p id="snippet-error" class="error" role="alert"></p>
+      <menu><li class="cancel-action"><button id="snippet-cancel" type="button" class="cancel-link">Cancel</button></li><li><button type="submit" class="primary">Insert</button></li></menu>
+    </form>
+  </dialog>
   <dialog id="dlg-sql-restore" class="newsite">
     <form id="form-sql-restore">
       <header class="ns-head">
@@ -669,13 +681,14 @@
 </dialog>
 
 <dialog id="dlg-editor" class="wide editor">
-  <div class="toolbar">
-    <strong id="editor-path"></strong><span id="editor-dirty" class="dirty" hidden>● unsaved</span>
-    <span class="spacer"></span>
-    <span id="editor-status" class="muted"></span>
+  <div class="toolbar editor-toolbar">
+    <div class="editor-file">
+      <div class="editor-file-line"><strong id="editor-path"></strong><span id="editor-dirty" class="dirty" hidden>● unsaved</span></div>
+      <span id="editor-status" class="muted"></span>
+    </div>
     <select id="editor-snippets" class="editor-snippets" aria-label="Insert a snippet" hidden></select>
     <button id="editor-save" class="primary">Save (Ctrl+S)</button>
-    <button id="editor-close">Close</button>
+    <button type="button" id="editor-close" class="dialog-x" aria-label="Close" title="Close"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button>
   </div>
   <div id="editor-box" hidden></div>
   <textarea id="editor-text" spellcheck="false"></textarea>

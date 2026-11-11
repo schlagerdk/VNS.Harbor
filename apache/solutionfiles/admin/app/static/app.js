@@ -2676,61 +2676,61 @@ const snippetDomain = /^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9]
 const snippetPath = /^[A-Za-z0-9._~\-/]+$/;
 const snippetOrder = ["Ignore", "Allowed IPs", "AddTrailingSlash", "Remove www", "Rewrite to domain", "Rewrite HTTP to HTTPS"];
 
-async function askDomain() {
-	const value = await ask({ title: "Redirect to which domain?", message: "Every other name the site answers on is sent here, e.g. example.dk.", placeholder: "example.dk", ok: "Insert" });
-	if (value === null) return null;
-	const domain = value.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
-	if (!snippetDomain.test(domain)) throw new Error("Enter a domain name like example.dk.");
-	return domain;
-}
-async function askList(title, message, value, valid, error) {
-	const answer = await ask({ title, message, value, ok: "Next" });
-	if (answer === null) return null;
-	const items = answer.split(/[\s,]+/).map((item) => item.replace(/^\/+|\/+$/g, "")).filter(Boolean);
+// What a snippet asks for is read and checked here; a mistake is shown in its window, which stays open
+function listOf(value, valid, error) {
+	const items = String(value || "").split(/[\s,]+/).map((item) => item.replace(/^\/+|\/+$/g, "")).filter(Boolean);
 	if (!items.length || items.some((item) => !valid(item))) throw new Error(error);
 	return items;
 }
-const askPaths = (title, message, value) => askList(title, message + " Separate them with spaces or commas.", value,
-	(path) => snippetPath.test(path), "Enter paths like umbraco/api or app_plugins.");
-const askAddresses = (cidr) => askList("Allowed IP addresses", "Only these reach the protected paths. This server itself always does. Separate them with spaces or commas."
-	+ (cidr ? " Ranges like 10.0.0.0/24 are allowed." : ""), "", (address) => (cidr ? /^[0-9a-fA-F:.]+(\/\d{1,3})?$/ : /^[0-9a-fA-F:.]+$/).test(address) && /[.:]/.test(address),
+const pathsOf = (value) => listOf(value, (path) => snippetPath.test(path), "Enter paths like members/area or shop.");
+const addressesOf = (value, cidr) => listOf(value, (address) => (cidr ? /^[0-9a-fA-F:.]+(\/\d{1,3})?$/ : /^[0-9a-fA-F:.]+$/).test(address) && /[.:]/.test(address),
 	cidr ? "Enter IP addresses or ranges, like 192.0.2.10 or 10.0.0.0/24." : "Enter single IP addresses, like 192.0.2.10.");
-const ignoredPaths = () => askPaths("Paths to leave alone", "The rules after this one do not touch these paths.", "umbraco/api, umbraco/surface, umbraco/backoffice");
-const protectedPaths = () => askPaths("Paths to protect", "Only the allowed IP addresses reach these.", "umbraco, app_plugins, config");
-const pathPattern = (paths) => paths.map(regexEscape).join("|");
-// A rewrite: the address visitors use, and the path the site answers it from, e.g. sitemap.xml to SEO_SiteMap_xml
-async function askRewrite() {
-	const from = await ask({ title: "Rewrite from", message: "The address visitors ask for, without the domain.", placeholder: "sitemap.xml", ok: "Next" });
-	if (from === null) return null;
-	const to = await ask({ title: "Rewrite to", message: `The path the site answers /${from.trim().replace(/^\/+/, "")} from. Visitors keep seeing the address they asked for.`, placeholder: "SEO_SiteMap_xml", ok: "Insert" });
-	if (to === null) return null;
-	const clean = (value) => value.trim().replace(/^\/+/, "");
-	if (![from, to].map(clean).every((path) => path && snippetPath.test(path))) throw new Error("Enter paths like sitemap.xml or .well-known/file.txt.");
-	return { from: clean(from), to: clean(to) };
+function domainOf(value) {
+	const domain = String(value || "").trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+	if (!snippetDomain.test(domain)) throw new Error("Enter a domain name like example.dk.");
+	return domain;
 }
+function rewriteOf(values) {
+	const clean = (value) => String(value || "").trim().replace(/^\/+/, "");
+	const rewrite = { from: clean(values.from), to: clean(values.to) };
+	if (![rewrite.from, rewrite.to].every((path) => path && snippetPath.test(path))) throw new Error("Enter both paths, like old/page and new/page.");
+	return rewrite;
+}
+const pathPattern = (paths) => paths.map(regexEscape).join("|");
 
-// IIS: each rule, with where it goes when no rule of the list is there yet
+// The fields a snippet asks for, the same for IIS and Apache
+const snippetFields = {
+	ignore: { description: "The rules after this one leave these paths alone.", fields: [
+		{ name: "paths", label: "Paths to leave alone", value: "umbraco/api, umbraco/surface, umbraco/backoffice", hint: "Separate them with spaces or commas." }] },
+	ips: { description: "Only these addresses reach the protected paths. This server itself always does.", fields: [
+		{ name: "addresses", label: "Allowed IP addresses", placeholder: "192.0.2.10, 198.51.100.7", hint: "Separate them with spaces or commas." },
+		{ name: "paths", label: "Paths to protect", value: "umbraco, app_plugins, config" }] },
+	domain: { description: "Every other name the site answers on is sent to this one.", fields: [
+		{ name: "domain", label: "Domain", placeholder: "example.dk" }] },
+	rewrite: { description: "Visitors ask for the first path and get what the site has at the second. The address they see does not change.", fields: [
+		{ name: "from", label: "From", placeholder: "old/page" },
+		{ name: "to", label: "To", placeholder: "new/page" }] },
+};
+
+// IIS: each rule as web.config writes it
 const iisSnippets = {
-	ignore: { label: "Ignore", name: "Ignore", rule: async () => {
-		const paths = await ignoredPaths();
-		return paths && `<rule name="Ignore" stopProcessing="true" enabled="true">
-  <match url="^(?:${xmlEscape(pathPattern(paths))})/" />
+	ignore: { label: "Ignore", build: (v) => `<rule name="Ignore" stopProcessing="true" enabled="true">
+  <match url="^(?:${xmlEscape(pathPattern(pathsOf(v.paths)))})/" />
   <action type="None" />
-</rule>`;
-	} },
-	ips: { label: "Allowed IPs", name: "Allowed IPs", rule: async () => {
-		const addresses = await askAddresses(false);
-		const paths = addresses && await protectedPaths();
-		return paths && `<rule name="Allowed IPs" stopProcessing="true" enabled="true">
-  <match url="^(?:${xmlEscape(pathPattern(paths))})(?:/|$)" />
+</rule>` },
+	ips: { label: "Allowed IPs", build: (v) => {
+		const addresses = addressesOf(v.addresses, false);
+		const listed = xmlEscape(addresses.map(regexEscape).join("|"));
+		return `<rule name="Allowed IPs" stopProcessing="true" enabled="true">
+  <match url="^(?:${xmlEscape(pathPattern(pathsOf(v.paths)))})(?:/|$)" />
   <conditions>
-    <add input="{REMOTE_ADDR}" matchType="Pattern" pattern="^(?:::1|127\\.0\\.0\\.1|${xmlEscape(addresses.map(regexEscape).join("|"))})$" ignoreCase="true" negate="true" />
-    <add input="{HTTP_X_FORWARDED_FOR}" matchType="Pattern" pattern="(?:^|,\\s*)(?:${xmlEscape(addresses.map(regexEscape).join("|"))})$" ignoreCase="true" negate="true" />
+    <add input="{REMOTE_ADDR}" matchType="Pattern" pattern="^(?:::1|127\\.0\\.0\\.1|${listed})$" ignoreCase="true" negate="true" />
+    <add input="{HTTP_X_FORWARDED_FOR}" matchType="Pattern" pattern="(?:^|,\\s*)(?:${listed})$" ignoreCase="true" negate="true" />
   </conditions>
   <action type="AbortRequest" />
 </rule>`;
 	} },
-	slash: { label: "AddTrailingSlash", name: "AddTrailingSlash", rule: async () => `<rule name="AddTrailingSlash" stopProcessing="true" enabled="true">
+	slash: { label: "AddTrailingSlash", build: () => `<rule name="AddTrailingSlash" stopProcessing="true" enabled="true">
   <match url=".*" />
   <conditions logicalGrouping="MatchAll">
     <!-- Not for files, Umbraco's paths, or an address that has a slash already -->
@@ -2742,16 +2742,16 @@ const iisSnippets = {
   </conditions>
   <action type="Redirect" url="{R:0}/" redirectType="Permanent" />
 </rule>` },
-	www: { label: "Remove www", name: "Remove www", rule: async () => `<rule name="Remove www" stopProcessing="true" enabled="true">
+	www: { label: "Remove www", build: () => `<rule name="Remove www" stopProcessing="true" enabled="true">
   <match url="(.*)" ignoreCase="true" />
   <conditions logicalGrouping="MatchAll">
     <add input="{HTTP_HOST}" pattern="^www\\.(.+)$" />
   </conditions>
   <action type="Redirect" url="https://{C:1}/{R:0}" appendQueryString="true" redirectType="Permanent" />
 </rule>` },
-	domain: { label: "Rewrite to domain", name: "Rewrite to domain", rule: async () => {
-		const domain = await askDomain();
-		return domain && `<rule name="Rewrite to domain" stopProcessing="true" enabled="true">
+	domain: { label: "Rewrite to domain", build: (v) => {
+		const domain = domainOf(v.domain);
+		return `<rule name="Rewrite to domain" stopProcessing="true" enabled="true">
   <match url="(.*)" />
   <conditions>
     <add input="{HTTP_HOST}" pattern="^${xmlEscape(regexEscape(domain))}$" negate="true" />
@@ -2759,23 +2759,21 @@ const iisSnippets = {
   <action type="Redirect" url="https://${domain}/{R:0}" appendQueryString="true" redirectType="Permanent" />
 </rule>`;
 	} },
-	https: { label: "Rewrite HTTP to HTTPS", name: "Rewrite HTTP to HTTPS", rule: async () => `<rule name="Rewrite HTTP to HTTPS" stopProcessing="true" enabled="true">
+	https: { label: "Rewrite HTTP to HTTPS", build: () => `<rule name="Rewrite HTTP to HTTPS" stopProcessing="true" enabled="true">
   <match url="(.*)" />
   <conditions>
     <add input="{HTTPS}" pattern="^OFF$" />
   </conditions>
   <action type="Redirect" url="https://{HTTP_HOST}{REQUEST_URI}" appendQueryString="false" />
 </rule>` },
-	rewrite: { label: "Rewrite from → to", rule: async () => {
-		const rewrite = await askRewrite();
-		if (!rewrite) return null;
-		iisSnippets.rewrite.name = "Rewrite " + rewrite.from;
+	rewrite: { label: "Rewrite from → to", build: (v) => {
+		const rewrite = rewriteOf(v);
 		return `<rule name="Rewrite ${xmlEscape(rewrite.from)}" stopProcessing="true" enabled="true">
   <match url="^${xmlEscape(regexEscape(rewrite.from))}$" />
   <action type="Rewrite" url="${xmlEscape(rewrite.to)}" appendQueryString="true" />
 </rule>`;
 	} },
-	cookies: { label: "Add Secure to ALL cookies", name: "Add Secure to ALL cookies", outbound: true, rule: async () => `<rule name="Add Secure to ALL cookies" preCondition="NeedsSecureFlag">
+	cookies: { label: "Add Secure to ALL cookies", outbound: true, build: () => `<rule name="Add Secure to ALL cookies" preCondition="NeedsSecureFlag">
   <match serverVariable="RESPONSE_Set-Cookie" pattern="(.*)" />
   <action type="Rewrite" value="{R:1}; secure" />
 </rule>`, preCondition: `<preCondition name="NeedsSecureFlag">
@@ -2784,41 +2782,76 @@ const iisSnippets = {
 };
 
 // Apache: the same rules for the HTTPS site. HTTP to HTTPS is not one: every site's HTTP part already sends there.
+// The first line of each is its name, as a comment, so it is found again.
 const apacheSnippets = {
-	ignore: { label: "Ignore", name: "Ignore", text: async () => {
-		const paths = await ignoredPaths();
-		return paths && `RewriteRule ^/(?:${pathPattern(paths)})/ - [L]`;
+	ignore: { label: "Ignore", build: (v) => `# Ignore
+RewriteRule ^/(?:${pathPattern(pathsOf(v.paths))})/ - [L]` },
+	ips: { label: "Allowed IPs", build: (v) => {
+		const addresses = addressesOf(v.addresses, true);
+		// An expression, as mod_rewrite cannot match ranges; anyone else gets 403
+		return `# Allowed IPs
+RewriteCond expr "! -R '127.0.0.0/8' && ! -R '::1'${addresses.map((address) => ` && ! -R '${address}'`).join("")}"
+RewriteRule ^/(?:${pathPattern(pathsOf(v.paths))})(?:/|$) - [F,NC,L]`;
 	} },
-	ips: { label: "Allowed IPs", name: "Allowed IPs", text: async () => {
-		const addresses = await askAddresses(true);
-		const paths = addresses && await protectedPaths();
-		if (!paths) return null;
-		// mod_rewrite cannot match ranges, so the addresses are checked with Require; anyone else gets 403
-		return `RewriteCond expr "! -R '127.0.0.0/8' && ! -R '::1'${addresses.map((address) => ` && ! -R '${address}'`).join("")}"
-RewriteRule ^/(?:${pathPattern(paths)})(?:/|$) - [F,NC,L]`;
-	} },
-	slash: { label: "AddTrailingSlash", name: "AddTrailingSlash", text: async () => `RewriteCond %{REQUEST_METHOD} ^(GET|HEAD)$
+	slash: { label: "AddTrailingSlash", build: () => `# AddTrailingSlash
+RewriteCond %{REQUEST_METHOD} ^(GET|HEAD)$
 RewriteCond %{REQUEST_URI} !\\.[a-zA-Z0-9]{2,10}$
 RewriteCond %{REQUEST_URI} !^/umbraco [NC]
 RewriteCond %{REQUEST_URI} !^/media [NC]
 RewriteCond %{REQUEST_URI} !/$
 RewriteRule ^(.*)$ $1/ [R=301,L]` },
-	www: { label: "Remove www", name: "Remove www", text: async () => `RewriteCond %{HTTP_HOST} ^www\\.(.+)$ [NC]
+	www: { label: "Remove www", build: () => `# Remove www
+RewriteCond %{HTTP_HOST} ^www\\.(.+)$ [NC]
 RewriteRule ^ https://%1%{REQUEST_URI} [R=301,L]` },
-	domain: { label: "Rewrite to domain", name: "Rewrite to domain", text: async () => {
-		const domain = await askDomain();
-		return domain && `RewriteCond %{HTTP_HOST} !^${regexEscape(domain)}$ [NC]
+	domain: { label: "Rewrite to domain", build: (v) => {
+		const domain = domainOf(v.domain);
+		return `# Rewrite to domain
+RewriteCond %{HTTP_HOST} !^${regexEscape(domain)}$ [NC]
 RewriteRule ^ https://${domain}%{REQUEST_URI} [R=301,L]`;
 	} },
-	// PT hands the new path on to the rest of the config, so it is sent to the site's service like any other
-	rewrite: { label: "Rewrite from → to", text: async () => {
-		const rewrite = await askRewrite();
-		if (!rewrite) return null;
-		apacheSnippets.rewrite.name = "Rewrite " + rewrite.from;
-		return `RewriteRule ^/${regexEscape(rewrite.from)}$ /${rewrite.to} [PT,L]`;
+	// Sent straight to the site's service with P: ProxyPass ... nocanon passes on the address as the visitor wrote it,
+	// so a rewrite that only changes the path inside Apache (PT) never reaches the service
+	rewrite: { label: "Rewrite from → to", build: (v, config) => {
+		const port = /^[ \t]*ProxyPass\s+\/\s+http:\/\/127\.0\.0\.1:(\d+)\//m.exec(config);
+		if (!port) throw new Error("This config has no ProxyPass / to the site's service, so a rewrite cannot be sent there.");
+		const rewrite = rewriteOf(v);
+		return `# Rewrite ${rewrite.from}
+RewriteRule ^/${regexEscape(rewrite.from)}$ http://127.0.0.1:${port[1]}/${rewrite.to} [P,L]`;
 	} },
-	cookies: { label: "Add Secure to ALL cookies", name: "Add Secure to ALL cookies", place: "end", text: async () => `Header always edit Set-Cookie "(?i)^((?!.*;\\s*secure).*)$" "$1; Secure"` },
+	cookies: { label: "Add Secure to ALL cookies", place: "end", build: () => `# Add Secure to ALL cookies
+Header always edit Set-Cookie "(?i)^((?!.*;\\s*secure).*)$" "$1; Secure"` },
 };
+
+// The window a snippet opens: all its fields at once. It answers with the snippet's text, or null when cancelled.
+function askSnippet(key, snippet, config) {
+	const spec = snippetFields[key] || { description: "", fields: [] };
+	const dialog = $("#dlg-snippet");
+	const form = $("#form-snippet");
+	const error = $("#snippet-error");
+	$("#snippet-title").textContent = snippet.label;
+	$("#snippet-description").textContent = spec.description || "Inserted as it is. Check it in the file before you save.";
+	$("#snippet-fields").replaceChildren(...spec.fields.map((field) => el("label", {},
+		field.label,
+		el("input", { name: field.name, value: field.value || "", placeholder: field.placeholder || "", autocomplete: "off", spellcheck: false }),
+		...(field.hint ? [el("small", { className: "hint", textContent: field.hint })] : []))));
+	error.textContent = "";
+	return new Promise((resolve) => {
+		let result = null;
+		form.onsubmit = (event) => {
+			event.preventDefault();
+			try {
+				result = snippet.build(Object.fromEntries(new FormData(form)), config);
+				dialog.close();
+			} catch (problem) {
+				error.textContent = problem.message;
+			}
+		};
+		$("#snippet-cancel").onclick = () => dialog.close();
+		dialog.onclose = () => resolve(result);
+		dialog.showModal();
+		form.querySelector("input")?.focus();
+	});
+}
 
 // The indentation of the line that holds position, and a block indented to it
 const lineIndent = (text, position) => (text.slice(text.lastIndexOf("\n", position - 1) + 1).match(/^[ \t]*/) || [""])[0];
@@ -2934,7 +2967,7 @@ function insertApacheSnippet(text, name, snippet, place) {
 	// Ignore and Allowed IPs first among the rewrite rules, the redirects after those already there
 	if (mine <= 1) {
 		const at = start + engine.index + engine[0].length;
-		return text.slice(0, at) + "\n\n" + block + text.slice(at);
+		return text.slice(0, at) + "\n\n" + block + "\n" + text.slice(at);
 	}
 	const at = proxy ? start + proxy.index : end;
 	return text.slice(0, at) + block + "\n\n" + text.slice(at);
@@ -2960,6 +2993,8 @@ function snippetKind() {
 }
 
 function refreshSnippetMenu() {
+	// The whole path on hover, when it is too long for the toolbar
+	$("#editor-path").title = $("#editor-path").textContent;
 	const kind = snippetKind();
 	const select = $("#editor-snippets");
 	select.hidden = !kind;
@@ -2977,14 +3012,13 @@ $("#editor-snippets").onchange = () => run(async () => {
 	const kind = snippetKind();
 	if (!key || !kind) return;
 	const snippet = (kind === "iis" ? iisSnippets : apacheSnippets)[key];
+	const text = await askSnippet(key, snippet, editorValue());
+	if (!text) return;
 	if (kind === "iis") {
-		const rule = await snippet.rule();
-		if (!rule) return;
-		editorReplaceAll(insertIisRule(editorValue(), /name="([^"]+)"/.exec(rule)[1].replace(/&quot;/g, '"').replace(/&amp;/g, "&"), rule, snippet));
+		editorReplaceAll(insertIisRule(editorValue(), /name="([^"]+)"/.exec(text)[1].replace(/&quot;/g, '"').replace(/&amp;/g, "&"), text, snippet));
 	} else {
-		const text = await snippet.text(editorValue());
-		if (!text) return;
-		editorReplaceAll(insertApacheSnippet(editorValue(), snippet.name, text, snippet.place));
+		const [first, ...rest] = text.split("\n");
+		editorReplaceAll(insertApacheSnippet(editorValue(), first.slice(2), rest.join("\n"), snippet.place));
 	}
 	toast(`${snippet.label} inserted. Check it, then save.`, "ok");
 });

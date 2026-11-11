@@ -937,3 +937,17 @@ dialog.logs-dialog[open] { display: flex; flex-direction: column; }
 .env-row-toggle[aria-expanded="true"] .ico { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) { .env-row-toggle .ico { transition: none; } }
 .editor-snippets { flex: none; width: auto; max-width: 240px; height: 34px; padding: 0 30px 0 12px; border-radius: 8px; cursor: pointer; }
+/* The editor's toolbar on one line: the file and what happened to it on the left, the actions on the right */
+dialog.editor .editor-toolbar { flex-wrap: nowrap; align-items: center; gap: 10px; }
+.editor-file { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.editor-file-line { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+.editor-file-line strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.editor-file-line .dirty { flex: none; }
+#editor-status { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+#editor-status:empty { display: none; }
+dialog.editor .editor-toolbar > button, dialog.editor .editor-toolbar > select { flex: none; }
+@media (max-width: 700px) { dialog.editor .editor-toolbar { flex-wrap: wrap; } .editor-file { flex-basis: 100%; } }
+#dlg-snippet { width: min(520px, 92vw); }
+.snippet-fields { display: grid; gap: 12px; }
+.snippet-fields label { display: grid; gap: 6px; }
+.snippet-fields .hint { margin: 0; }
