@@ -26,7 +26,7 @@
   ProxyRequests Off
   RequestHeader set X-Forwarded-Proto "https"
 
-  # The offline page (install_offline_page.sh) is Apache's own, never the service's
+  # The offline page (install_apache_conf.sh) is Apache's own, never the service's
   ProxyPass /vns-offline/ !
   ProxyPass / http://127.0.0.1:@PORT_HTTP@/ nocanon
   ProxyPassReverse / http://127.0.0.1:@PORT_HTTP@/

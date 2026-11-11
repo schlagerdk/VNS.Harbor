@@ -686,7 +686,10 @@
       <div class="editor-file-line"><strong id="editor-path"></strong><span id="editor-dirty" class="dirty" hidden>● unsaved</span></div>
       <span id="editor-status" class="muted"></span>
     </div>
-    <select id="editor-snippets" class="editor-snippets" aria-label="Insert a snippet" hidden></select>
+    <div id="editor-snippets" class="snippet-menu" hidden>
+      <button type="button" id="editor-snippets-trigger" class="snippet-trigger" aria-haspopup="menu" aria-expanded="false">Snippets</button>
+      <div id="editor-snippets-panel" class="snippet-panel" role="menu" aria-label="Snippets" hidden></div>
+    </div>
     <button id="editor-save" class="primary">Save (Ctrl+S)</button>
     <button type="button" id="editor-close" class="dialog-x" aria-label="Close" title="Close"><svg viewBox="0 0 16 16" width="16" height="16" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg></button>
   </div>

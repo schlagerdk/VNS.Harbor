@@ -3,7 +3,8 @@
 Usage:
   windows_prod.py web-config PROJECT ENVIRONMENT HTTPS UMBRACO  Print a new web.config (HTTPS, UMBRACO: y/n)
   windows_prod.py set-environment WEB_CONFIG ENVIRONMENT  Change the environment in an existing web.config
-  windows_prod.py set-https WEB_CONFIG HTTPS              Add or remove the HTTPS redirect in an existing web.config
+  windows_prod.py set-https WEB_CONFIG HTTPS              Add or remove the HTTPS redirect in an existing web.config,
+                                                          and remove the X-Powered-By header, as every site does
   windows_prod.py describe WEB_CONFIG                     Print dll= and environment= of an existing site
   windows_prod.py prepare-appsettings FILE URL HTTPS      Remove ConnectionStrings and set the Umbraco URL (HTTPS: y/n)
   windows_prod.py set-url FILE URL HTTPS                  Set the Umbraco URL only
@@ -27,6 +28,11 @@ WEB_CONFIG = """<?xml version="1.0" encoding="utf-8"?>
 {variables}
         </environmentVariables>
       </aspNetCore>
+      <httpProtocol>
+        <customHeaders>
+          <remove name="X-Powered-By" />
+        </customHeaders>
+      </httpProtocol>
 {rewrite}    </system.webServer>
   </location>
 </configuration>
@@ -100,19 +106,40 @@ def describe(path):
 HTTPS_RULE_NAME = "Rewrite HTTP to HTTPS"
 
 
+def hide_powered_by(server):
+    """Every site leaves out IIS's X-Powered-By header: it only tells others what the server runs.
+    Returns whether the web.config had to be changed for it."""
+    protocol = server.find("httpProtocol")
+    headers = protocol.find("customHeaders") if protocol is not None else None
+    if headers is not None and any(item.tag == "remove" and (item.get("name") or "").lower() == "x-powered-by" for item in headers):
+        return False
+    if protocol is None:
+        protocol = ET.SubElement(server, "httpProtocol")
+    if headers is None:
+        headers = ET.SubElement(protocol, "customHeaders")
+    headers.insert(0, ET.Element("remove", name="X-Powered-By"))
+    return True
+
+
 def set_https(path, https):
     """Add the HTTPS redirect to an existing web.config, first among its rules, or remove it for a site on HTTP.
     Only the rule made here, found by its name, is added or removed: the rest of the file is kept.
+    It also takes out the X-Powered-By header if the web.config does not already.
     Returns whether the file changed."""
     tree = ET.parse(path, ET.XMLParser(target=ET.TreeBuilder(insert_comments=True)))
     server = tree.getroot().find(".//system.webServer")
     if server is None:
         raise ValueError("%s has no system.webServer element" % path)
+    hidden = hide_powered_by(server)
     rewrite = server.find("rewrite")
     rules = rewrite.find("rules") if rewrite is not None else None
     existing = [rule for rule in (rules.findall("rule") if rules is not None else []) if rule.get("name") == HTTPS_RULE_NAME]
     if https and existing or not https and not existing:
-        return False
+        if hidden:
+            if hasattr(ET, "indent"):
+                ET.indent(tree, space="  ")
+            tree.write(path, encoding="utf-8", xml_declaration=True)
+        return hidden
     if https:
         if rewrite is None:
             rewrite = ET.SubElement(server, "rewrite")

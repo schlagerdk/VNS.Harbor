@@ -2704,13 +2704,22 @@ const snippetFields = {
 		{ name: "paths", label: "Paths to leave alone", value: "umbraco/api, umbraco/surface, umbraco/backoffice", hint: "Separate them with spaces or commas." }] },
 	ips: { description: "Only these addresses reach the protected paths. This server itself always does.", fields: [
 		{ name: "addresses", label: "Allowed IP addresses", placeholder: "192.0.2.10, 198.51.100.7", hint: "Separate them with spaces or commas." },
-		{ name: "paths", label: "Paths to protect", value: "umbraco, app_plugins, config" }] },
+		{ name: "paths", label: "Paths to protect", value: "umbraco, app_plugins, config" },
+		{ name: "response", label: "Others get", options: [["forbidden", "403 Forbidden"], ["notfound", "404 Not found, as if the path was not there"], ["redirect", "A redirect to another address"], ["abort", "The connection closed, without an answer", "iis"]] },
+		{ name: "target", label: "Redirect to", value: "/", showIf: ["response", "redirect"], hint: "A path on the site, like /, or a whole address." }] },
 	domain: { description: "Every other name the site answers on is sent to this one.", fields: [
 		{ name: "domain", label: "Domain", placeholder: "example.dk" }] },
 	rewrite: { description: "Visitors ask for the first path and get what the site has at the second. The address they see does not change.", fields: [
 		{ name: "from", label: "From", placeholder: "old/page" },
 		{ name: "to", label: "To", placeholder: "new/page" }] },
 };
+
+// Where a redirect for Allowed IPs may go: a path on the site, or an http(s) address
+function redirectTargetOf(value) {
+	const target = String(value || "").trim() || "/";
+	if (!/^(\/[^\s"'<>]*|https?:\/\/[^\s"'<>]+)$/.test(target)) throw new Error("Redirect to a path like / or an address like https://example.dk/.");
+	return target;
+}
 
 // IIS: each rule as web.config writes it
 const iisSnippets = {
@@ -2721,13 +2730,17 @@ const iisSnippets = {
 	ips: { label: "Allowed IPs", build: (v) => {
 		const addresses = addressesOf(v.addresses, false);
 		const listed = xmlEscape(addresses.map(regexEscape).join("|"));
-		return `<rule name="Allowed IPs" stopProcessing="true" enabled="true">
+		return `<rule name="${xmlEscape(v.name || "Allowed IPs")}" stopProcessing="true" enabled="true">
   <match url="^(?:${xmlEscape(pathPattern(pathsOf(v.paths)))})(?:/|$)" />
   <conditions>
     <add input="{REMOTE_ADDR}" matchType="Pattern" pattern="^(?:::1|127\\.0\\.0\\.1|${listed})$" ignoreCase="true" negate="true" />
     <add input="{HTTP_X_FORWARDED_FOR}" matchType="Pattern" pattern="(?:^|,\\s*)(?:${listed})$" ignoreCase="true" negate="true" />
   </conditions>
-  <action type="AbortRequest" />
+  ${{
+		forbidden: '<action type="CustomResponse" statusCode="403" statusReason="Forbidden" statusDescription="Access denied" />',
+		notfound: '<action type="CustomResponse" statusCode="404" statusReason="Not Found" statusDescription="Not found" />',
+		redirect: `<action type="Redirect" url="${xmlEscape(redirectTargetOf(v.target))}" redirectType="Found" />`,
+	}[v.response] || '<action type="AbortRequest" />'}
 </rule>`;
 	} },
 	slash: { label: "AddTrailingSlash", build: () => `<rule name="AddTrailingSlash" stopProcessing="true" enabled="true">
@@ -2773,6 +2786,20 @@ const iisSnippets = {
   <action type="Rewrite" url="${xmlEscape(rewrite.to)}" appendQueryString="true" />
 </rule>`;
 	} },
+	// Not a rewrite rule: a section of its own in <system.webServer>
+	compression: { label: "Compression", section: "httpCompression", build: () => `<httpCompression directory="%SystemDrive%\\inetpub\\temp\\IIS Temporary Compressed Files">
+  <scheme name="gzip" dll="%Windir%\\system32\\inetsrv\\gzip.dll" />
+  <dynamicTypes>
+    <add mimeType="text/*" enabled="true" />
+    <add mimeType="application/javascript" enabled="true" />
+    <add mimeType="application/json" enabled="true" />
+  </dynamicTypes>
+  <staticTypes>
+    <add mimeType="text/*" enabled="true" />
+    <add mimeType="application/javascript" enabled="true" />
+    <add mimeType="application/json" enabled="true" />
+  </staticTypes>
+</httpCompression>` },
 	cookies: { label: "Add Secure to ALL cookies", outbound: true, build: () => `<rule name="Add Secure to ALL cookies" preCondition="NeedsSecureFlag">
   <match serverVariable="RESPONSE_Set-Cookie" pattern="(.*)" />
   <action type="Rewrite" value="{R:1}; secure" />
@@ -2788,10 +2815,14 @@ const apacheSnippets = {
 RewriteRule ^/(?:${pathPattern(pathsOf(v.paths))})/ - [L]` },
 	ips: { label: "Allowed IPs", build: (v) => {
 		const addresses = addressesOf(v.addresses, true);
-		// An expression, as mod_rewrite cannot match ranges; anyone else gets 403
-		return `# Allowed IPs
-RewriteCond expr "! -R '127.0.0.0/8' && ! -R '::1'${addresses.map((address) => ` && ! -R '${address}'`).join("")}"
-RewriteRule ^/(?:${pathPattern(pathsOf(v.paths))})(?:/|$) - [F,NC,L]`;
+		// An expression, as mod_rewrite cannot match ranges; anyone else gets 403. The addresses are joined with ||
+		// under one !: in Apache's expressions ! covers everything after it, so "! a && ! b" does not mean "neither".
+		return `# ${v.name || "Allowed IPs"}
+RewriteCond expr "!(${["127.0.0.0/8", "::1", ...addresses].map((address) => `-R '${address}'`).join(" || ")})"
+RewriteRule ^/(?:${pathPattern(pathsOf(v.paths))})(?:/|$) ${{
+		notfound: "- [R=404,NC,L]",
+		redirect: `${redirectTargetOf(v.target)} [R=302,NC,L]`,
+	}[v.response] || "- [F,NC,L]"}`;
 	} },
 	slash: { label: "AddTrailingSlash", build: () => `# AddTrailingSlash
 RewriteCond %{REQUEST_METHOD} ^(GET|HEAD)$
@@ -2818,6 +2849,11 @@ RewriteRule ^ https://${domain}%{REQUEST_URI} [R=301,L]`;
 		return `# Rewrite ${rewrite.from}
 RewriteRule ^/${regexEscape(rewrite.from)}$ http://127.0.0.1:${port[1]}/${rewrite.to} [P,L]`;
 	} },
+	// Ubuntu's Apache compresses HTML, CSS and JavaScript already; this adds JSON, SVG and the rest of text for the site
+	compression: { label: "Compression", place: "end", build: () => `# Compression
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html text/plain text/css text/xml text/javascript application/javascript application/json application/xml image/svg+xml
+</IfModule>` },
 	cookies: { label: "Add Secure to ALL cookies", place: "end", build: () => `# Add Secure to ALL cookies
 Header always edit Set-Cookie "(?i)^((?!.*;\\s*secure).*)$" "$1; Secure"` },
 };
@@ -2830,17 +2866,36 @@ function askSnippet(key, snippet, config) {
 	const error = $("#snippet-error");
 	$("#snippet-title").textContent = snippet.label;
 	$("#snippet-description").textContent = spec.description || "Inserted as it is. Check it in the file before you save.";
-	$("#snippet-fields").replaceChildren(...spec.fields.map((field) => el("label", {},
-		field.label,
-		el("input", { name: field.name, value: field.value || "", placeholder: field.placeholder || "", autocomplete: "off", spellcheck: false }),
-		...(field.hint ? [el("small", { className: "hint", textContent: field.hint })] : []))));
+	const kind = snippetKind();
+	const rows = spec.fields.map((field) => {
+		const input = field.options
+			? el("select", { name: field.name }, ...field.options.filter((option) => !option[2] || option[2] === kind)
+				.map(([value, text]) => el("option", { value, textContent: text })))
+			: el("input", { name: field.name, value: field.value || "", placeholder: field.placeholder || "", autocomplete: "off", spellcheck: false });
+		const row = el("label", {}, field.label, input, ...(field.hint ? [el("small", { className: "hint", textContent: field.hint })] : []));
+		row.dataset.field = field.name;
+		return [field, row];
+	});
+	$("#snippet-fields").replaceChildren(...rows.map(([, row]) => row));
+	// A field that belongs to one choice, like the address of a redirect, is only there when it is chosen
+	const showFields = () => {
+		for (const [field, row] of rows) {
+			if (!field.showIf) continue;
+			const chosen = form.elements[field.showIf[0]]?.value === field.showIf[1];
+			row.hidden = !chosen;
+			row.querySelector("input, select").disabled = !chosen;
+		}
+	};
+	form.onchange = showFields;
+	showFields();
 	error.textContent = "";
 	return new Promise((resolve) => {
 		let result = null;
 		form.onsubmit = (event) => {
 			event.preventDefault();
 			try {
-				result = snippet.build(Object.fromEntries(new FormData(form)), config);
+				const values = Object.fromEntries(new FormData(form));
+				result = { text: snippet.build(values, config), values };
 				dialog.close();
 			} catch (problem) {
 				error.textContent = problem.message;
@@ -2857,7 +2912,7 @@ function askSnippet(key, snippet, config) {
 const lineIndent = (text, position) => (text.slice(text.lastIndexOf("\n", position - 1) + 1).match(/^[ \t]*/) || [""])[0];
 const indentBlock = (block, indent) => block.split("\n").map((line) => (line ? indent + line : line)).join("\n");
 const lineStart = (text, position) => text.lastIndexOf("\n", position - 1) + 1;
-const rank = (name) => snippetOrder.indexOf(name);
+const rank = (name) => snippetOrder.findIndex((entry) => name === entry || name.startsWith(entry + " "));
 
 function insertIisRule(text, name, rule, snippet) {
 	if (new RegExp(`<rule\\s+name="${regexEscape(xmlEscape(name))}"`).test(text)) throw new Error(`web.config already has the rule "${name}".`);
@@ -2898,7 +2953,8 @@ function insertIisRule(text, name, rule, snippet) {
 		const start = lineStart(text, later.at);
 		return text.slice(0, start) + indentBlock(rule, lineIndent(text, later.at)) + "\n" + text.slice(start);
 	}
-	const earlier = mine < 0 ? [] : existing.filter((item) => rank(item.name) >= 0 && rank(item.name) < mine);
+	// Rules of the same kind (Allowed IPs 2 after Allowed IPs) come before a new one too
+	const earlier = mine < 0 ? [] : existing.filter((item) => rank(item.name) >= 0 && rank(item.name) <= mine);
 	if (earlier.length) {
 		const last = earlier[earlier.length - 1];
 		const after = text.indexOf("</rule>", last.at) + "</rule>".length;
@@ -2909,6 +2965,15 @@ function insertIisRule(text, name, rule, snippet) {
 	if (mine >= 0 && mine <= 1) return text.slice(0, open) + "\n" + indentBlock(rule, indent) + text.slice(open);
 	const start = lineStart(text, close);
 	return text.slice(0, start) + indentBlock(rule, indent) + "\n" + text.slice(start);
+}
+
+// A section of <system.webServer> of its own, like <httpCompression>, at its end; only one of each
+function insertIisSection(text, tag, block) {
+	if (new RegExp(`<${tag}\\b`).test(text)) throw new Error(`web.config already has <${tag}>.`);
+	const close = text.indexOf("</system.webServer>");
+	if (close < 0) throw new Error("This web.config has no <system.webServer> section to put it in.");
+	const start = lineStart(text, close);
+	return text.slice(0, start) + indentBlock(block, lineIndent(text, close) + "  ") + "\n" + text.slice(start);
 }
 
 // A new <rewrite> section, at the end of the site's <system.webServer>
@@ -2952,7 +3017,7 @@ function insertApacheSnippet(text, name, snippet, place) {
 	}
 	const later = markers.find((item) => rank(item.name) > mine);
 	if (later) return text.slice(0, later.at) + block + "\n\n" + text.slice(later.at);
-	const earlier = markers.filter((item) => rank(item.name) < mine);
+	const earlier = markers.filter((item) => rank(item.name) <= mine);
 	if (earlier.length) {
 		const last = earlier[earlier.length - 1];
 		const blank = text.indexOf("\n\n", last.at);
@@ -2992,36 +3057,136 @@ function snippetKind() {
 	return "";
 }
 
+const snippetLooks = {
+	ignore: ["eraser", "Leave chosen paths alone"],
+	ips: ["shield", "Only listed addresses reach chosen paths"],
+	slash: ["chevron", "Add / to addresses without one"],
+	www: ["globe", "Send www.domain to domain"],
+	domain: ["external", "Send every other name to one domain"],
+	https: ["lock", "Send HTTP to HTTPS"],
+	rewrite: ["sync", "Answer one path from another"],
+	compression: ["package", "Compress text, JavaScript and JSON"],
+	cookies: ["key", "Mark every cookie Secure"],
+};
+function closeSnippetMenu() {
+	$("#editor-snippets-panel").hidden = true;
+	$("#editor-snippets-trigger").setAttribute("aria-expanded", "false");
+}
 function refreshSnippetMenu() {
 	// The whole path on hover, when it is too long for the toolbar
 	$("#editor-path").title = $("#editor-path").textContent;
 	const kind = snippetKind();
-	const select = $("#editor-snippets");
-	select.hidden = !kind;
+	const menu = $("#editor-snippets");
+	menu.hidden = !kind;
+	closeSnippetMenu();
 	if (!kind) return;
 	const snippets = kind === "iis" ? iisSnippets : apacheSnippets;
-	select.replaceChildren(el("option", { value: "", textContent: "Insert snippet…" }),
-		...Object.entries(snippets).map(([key, snippet]) => el("option", { value: key, textContent: snippet.label })));
-	select.value = "";
+	$("#editor-snippets-panel").replaceChildren(
+		el("div", { className: "snippet-panel-head" }, el("span", { textContent: kind === "iis" ? "IIS · WEB.CONFIG" : "APACHE · SITE CONFIG" }), el("strong", { textContent: "Insert a rule" })),
+		...Object.entries(snippets).map(([key, snippet]) => {
+			const [icon, line] = snippetLooks[key] || ["file", ""];
+			return el("button", { type: "button", className: "snippet-item", role: "menuitem", onclick: () => { closeSnippetMenu(); run(() => insertSnippet(key)); } },
+				el("span", { className: "snippet-item-icon" }, svgIcon(icon)),
+				el("span", { className: "snippet-item-text" }, el("strong", { textContent: snippet.label }), el("small", { textContent: line })));
+		}));
 }
 
-$("#editor-snippets").onchange = () => run(async () => {
-	const select = $("#editor-snippets");
-	const key = select.value;
-	select.value = "";
+// Allowed IPs rules already in the file: their name, paths and addresses, and where each one is
+const unescapeRegex = (text) => text.replace(/\\(.)/g, "$1");
+const sameSet = (a, b) => a.size === b.size && [...a].every((item) => b.has(item));
+const lowerSet = (items) => new Set(items.map((item) => item.toLowerCase()));
+function allowedIpRules(kind, text) {
+	const found = [];
+	if (kind === "iis") {
+		for (const match of text.matchAll(/<rule\s+name="(Allowed IPs[^"]*)"[\s\S]*?<\/rule>/g)) {
+			const paths = /<match\s+url="\^\(\?:([^)]*)\)/.exec(match[0]);
+			const addresses = /input="\{REMOTE_ADDR\}"[^>]*pattern="\^\(\?:([^)]*)\)\$"/.exec(match[0]);
+			if (!paths || !addresses) continue;
+			found.push({ name: match[1], start: match.index, end: match.index + match[0].length,
+				paths: lowerSet(paths[1].split("|").map(unescapeRegex)),
+				addresses: lowerSet(addresses[1].split("|").map(unescapeRegex).filter((item) => item !== "::1" && item !== "127.0.0.1")) });
+		}
+	} else {
+		for (const match of text.matchAll(/^[ \t]*# (Allowed IPs[^\n]*)\n((?:[ \t]*\S[^\n]*\n?)*)/gm)) {
+			const paths = /RewriteRule \^\/\(\?:([^)]*)\)/.exec(match[2]);
+			if (!paths) continue;
+			found.push({ name: match[1].trim(), start: match.index, end: match.index + match[0].replace(/\n$/, "").length,
+				paths: lowerSet(paths[1].split("|").map(unescapeRegex)),
+				addresses: lowerSet([...match[2].matchAll(/-R '([^']+)'/g)].map((item) => item[1]).filter((item) => item !== "127.0.0.0/8" && item !== "::1")) });
+		}
+	}
+	return found;
+}
+
+// Allowed IPs for paths that already have a rule changes that rule's addresses; other paths get a rule of their own
+function placeAllowedIps(kind, text, snippet, values) {
+	const rules = allowedIpRules(kind, text);
+	const paths = lowerSet(pathsOf(values.paths));
+	const addresses = lowerSet(addressesOf(values.addresses, kind === "apache"));
+	const same = rules.find((rule) => sameSet(rule.paths, paths));
+	if (same) {
+		// Written again when anything about it changes: the addresses, what others get, or a rule in an older form
+		const rule = snippet.build({ ...values, name: same.name });
+		const flat = (value) => value.replace(/\s+/g, " ").trim();
+		if (flat(text.slice(kind === "iis" ? same.start : lineStart(text, same.start), same.end)) === flat(rule)) {
+			return { text, message: `${same.name} already does exactly this. Nothing was changed.` };
+		}
+		const indent = lineIndent(text, same.start);
+		const replaced = kind === "iis" ? indentBlock(rule, indent).trimStart() : indentBlock(rule, indent).trimStart();
+		const start = kind === "iis" ? same.start : lineStart(text, same.start) + indent.length;
+		return { text: text.slice(0, start) + replaced + text.slice(same.end),
+			message: sameSet(same.addresses, addresses) ? `${same.name} is updated.` : `${same.name} now allows the new addresses.` };
+	}
+	const taken = new Set(rules.map((rule) => rule.name));
+	let name = "Allowed IPs";
+	for (let number = 2; taken.has(name); number += 1) name = "Allowed IPs " + number;
+	const rule = snippet.build({ ...values, name });
+	if (kind === "iis") return { text: insertIisRule(text, name, rule, snippet), message: `${name} inserted. Check it, then save.` };
+	const [, ...rest] = rule.split("\n");
+	return { text: insertApacheSnippet(text, name, rest.join("\n"), snippet.place), message: `${name} inserted. Check it, then save.` };
+}
+
+$("#editor-snippets-trigger").prepend(svgIcon("sliders"));
+$("#editor-snippets-trigger").onclick = (event) => {
+	event.stopPropagation();
+	const panel = $("#editor-snippets-panel");
+	panel.hidden = !panel.hidden;
+	$("#editor-snippets-trigger").setAttribute("aria-expanded", String(!panel.hidden));
+	if (!panel.hidden) panel.querySelector("button")?.focus();
+};
+editorDialog.addEventListener("click", (event) => { if (!event.target.closest("#editor-snippets")) closeSnippetMenu(); });
+// Escape closes the menu first, not the editor
+$("#editor-snippets").addEventListener("keydown", (event) => {
+	if (event.key === "Escape" && !$("#editor-snippets-panel").hidden) {
+		event.preventDefault();
+		event.stopPropagation();
+		closeSnippetMenu();
+		$("#editor-snippets-trigger").focus();
+	}
+});
+async function insertSnippet(key) {
 	const kind = snippetKind();
 	if (!key || !kind) return;
 	const snippet = (kind === "iis" ? iisSnippets : apacheSnippets)[key];
-	const text = await askSnippet(key, snippet, editorValue());
-	if (!text) return;
-	if (kind === "iis") {
+	const answer = await askSnippet(key, snippet, editorValue());
+	if (!answer) return;
+	if (key === "ips") {
+		const placed = placeAllowedIps(kind, editorValue(), snippet, answer.values);
+		if (placed.text !== editorValue()) editorReplaceAll(placed.text);
+		toast(placed.message, "ok");
+		return;
+	}
+	const text = answer.text;
+	if (kind === "iis" && snippet.section) {
+		editorReplaceAll(insertIisSection(editorValue(), snippet.section, text));
+	} else if (kind === "iis") {
 		editorReplaceAll(insertIisRule(editorValue(), /name="([^"]+)"/.exec(text)[1].replace(/&quot;/g, '"').replace(/&amp;/g, "&"), text, snippet));
 	} else {
 		const [first, ...rest] = text.split("\n");
 		editorReplaceAll(insertApacheSnippet(editorValue(), first.slice(2), rest.join("\n"), snippet.place));
 	}
 	toast(`${snippet.label} inserted. Check it, then save.`, "ok");
-});
+}
 
 
 async function editFile(path, remoteSite = null) {
