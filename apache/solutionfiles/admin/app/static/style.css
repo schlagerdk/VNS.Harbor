@@ -919,3 +919,20 @@ dialog.logs-dialog[open] { display: flex; flex-direction: column; }
 /* On a card, a pending publish is an icon: the row has no room for the words */
 .publish-pending-icon { display: inline-grid; place-items: center; flex: none; width: 22px; height: 22px; border-radius: 6px; color: #d29922; background: rgba(210, 153, 34, .14); }
 .publish-pending-icon .ico { width: 13px; height: 13px; margin: 0; }
+
+/* Environments as a list: a row per environment with its most used buttons; the chevron unfolds the whole card */
+.site-targets-head .layout-toggle { flex: none; }
+.env-targets.list { display: flex; flex-direction: column; gap: 8px; }
+.env-targets.list > .env-listed { padding-bottom: 0; }
+.env-targets.list > .env-listed > .env-head { margin-bottom: 0; border-bottom: 0; border-radius: 9px; cursor: pointer; min-height: 0; padding: 10px 14px 10px 20px; }
+.env-targets.list > .env-listed > .env-head h3 { font-size: 16px; }
+.env-targets.list > .env-listed:not(.unfolded) > :not(.env-head) { display: none; }
+.env-targets.list > .env-listed.unfolded { padding-bottom: 18px; }
+.env-targets.list > .env-listed.unfolded > .env-head { margin-bottom: 14px; border-bottom: 1px solid var(--line); border-radius: 9px 9px 0 0; }
+.env-row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.env-row-actions button { white-space: nowrap; }
+.env-row-toggle { display: grid; place-items: center; width: 30px; height: 30px; padding: 0; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--muted); }
+.env-row-toggle:hover { color: var(--text); background: var(--hover); }
+.env-row-toggle .ico { width: 16px; height: 16px; margin: 0; transition: transform .15s; }
+.env-row-toggle[aria-expanded="true"] .ico { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .env-row-toggle .ico { transition: none; } }

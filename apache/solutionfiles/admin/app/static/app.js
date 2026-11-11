@@ -460,6 +460,7 @@ const iconPaths = {
 	folder: "M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z",
 	back: "M19 12H5M12 19l-7-7 7-7",
 	upload: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12",
+	chevron: "M9 6l6 6-6 6",
 	download: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3",
 	user: "M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z",
 	logout: "M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9",
@@ -1031,6 +1032,7 @@ function renderSite(name) {
 		// What the filter matches: binding, aliases, environment, folder, server
 		panel.dataset.search = [env.binding, bindingLabel(env), ...(env.aliases || []), ...aliasLabels(env), env.environment,
 			env.folder, env.unit, env.path, env.host, env.target].filter(Boolean).join(" ").toLowerCase();
+		if (envLayout === "list") envListRow(panel, site.name + "/" + (env.target || "prod"));
 		targets.append(panel);
 	}
 	const canAddEnvironment = site.has_project && !site.admin && (site.kind === "csharp" || site.kind === "umbraco");
@@ -1041,6 +1043,7 @@ function renderSite(name) {
 	$("#btn-empty-add-environment").onclick = () => run(() => openCreateProdDialog(site));
 	$("#site-targets-head").hidden = noEnvironments;
 	$("#site-targets-count").textContent = String(targets.childElementCount);
+	applyEnvLayout();
 	// The filter is kept for the same site when the page is drawn again, and cleared for another site
 	const search = $("#targets-search");
 	if (search.dataset.site !== site.name) {
@@ -1356,6 +1359,52 @@ async function serviceAction(site, env, action) {
 	toast(`${unit}: ${action} done`, "ok");
 	await loadSites();
 }
+
+// The environments as cards (the default) or as a list: a row per environment with its most used buttons,
+// which unfolds to the whole card. The choice is remembered in this browser, the unfolded rows while the page is open.
+let envLayout = "grid";
+try { if (localStorage.getItem("vns-env-layout") === "list") envLayout = "list"; } catch (error) {}
+const unfoldedEnvs = new Set();
+const envRowButtons = ["Publish", "Clear logs", "Sync data…", "Sync settings…"];
+function envListRow(panel, key) {
+	const head = panel.querySelector(".env-head");
+	const buttons = [...panel.querySelectorAll("button")];
+	const shortcuts = el("div", { className: "env-row-actions" });
+	// Each one clicks the card's own button, so it asks and does exactly the same
+	for (const label of envRowButtons) {
+		const original = buttons.find((button) => button.textContent.trim() === label);
+		if (original) shortcuts.append(el("button", { type: "button", className: "small", textContent: label, title: original.title,
+			onclick: (event) => { event.stopPropagation(); original.click(); } }));
+	}
+	const toggle = el("button", { type: "button", className: "env-row-toggle", title: "All buttons and details", ariaLabel: "Show all" }, svgIcon("chevron"));
+	const unfold = (open) => {
+		panel.classList.toggle("unfolded", open);
+		toggle.setAttribute("aria-expanded", String(open));
+		if (open) unfoldedEnvs.add(key); else unfoldedEnvs.delete(key);
+	};
+	toggle.onclick = (event) => { event.stopPropagation(); unfold(!panel.classList.contains("unfolded")); };
+	// The whole row unfolds it, except its links and buttons
+	head.onclick = (event) => { if (!event.target.closest("a, button, input, label")) unfold(!panel.classList.contains("unfolded")); };
+	head.append(shortcuts, toggle);
+	panel.classList.add("env-listed");
+	unfold(unfoldedEnvs.has(key));
+}
+function applyEnvLayout() {
+	$("#env-targets").classList.toggle("list", envLayout === "list");
+	$("#env-layout-grid").setAttribute("aria-pressed", String(envLayout === "grid"));
+	$("#env-layout-list").setAttribute("aria-pressed", String(envLayout === "list"));
+}
+$("#env-layout-grid").append(svgIcon("grid"));
+$("#env-layout-list").append(svgIcon("rows"));
+for (const layout of ["grid", "list"]) {
+	$("#env-layout-" + layout).onclick = () => {
+		envLayout = layout;
+		try { localStorage.setItem("vns-env-layout", layout); } catch (error) {}
+		const name = currentView === "site" ? decodeURIComponent(location.hash.slice(6)) : "";
+		if (name) renderSite(name);
+	};
+}
+applyEnvLayout();
 
 const logsDialog = $("#dlg-logs");
 // Another log starts with every line shown, as a list
