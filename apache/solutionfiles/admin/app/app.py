@@ -1786,9 +1786,17 @@ def audit(message):
         app.logger.warning("Could not write the audit log: %s", exc)
 
 
-@app.route("/api/audit")
+@app.route("/api/audit", methods=["GET", "DELETE"])
 def api_audit():
     require_admin()
+    if request.method == "DELETE":
+        # Root alone: an administrator cannot remove the lines about what they did
+        if me()["id"] != access.ROOT:
+            abort(403, "Only the server's own administrator can clear the activity log.")
+        with AUDIT_LOCK:
+            fd = os.open(AUDIT_LOG, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            os.close(fd)
+        audit("Cleared the activity log")
     try:
         with open(AUDIT_LOG) as stream:
             lines = stream.readlines()[-1000:]

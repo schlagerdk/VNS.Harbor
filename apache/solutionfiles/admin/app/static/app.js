@@ -512,6 +512,7 @@ function matches(site) {
 // Inline SVG (Lucide-style, 24x24 stroke icons); the CSP does not allow external images
 const iconPaths = {
 	grid: "M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z",
+	users: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75",
 	rows: "M4 5h16v4H4zM4 15h16v4H4z",
 	lock: "M5 11h14v10H5zM8 11V7a4 4 0 0 1 8 0v4",
 	unlock: "M5 11h14v10H5zM8 11V7a4 4 0 0 1 7.5-2",
@@ -786,6 +787,15 @@ function compactEnvironmentRow(site, env, environment) {
 		el("span", { className: "badge env-" + environment.toLowerCase(), textContent: environment }));
 	if (isRemoteEnv(env)) head.append(remoteIcon(env));
 	row.append(head);
+	// The list has room for each environment's state, as its card on the site page shows it
+	if (siteLayout === "list") {
+		const known = env.unit || (env.mode === "windows" && env.state) || (env.mode === "remote" && env.state && env.state !== "unknown");
+		const state = known ? env.state || "unknown" : "";
+		const words = { active: "Active", inactive: "Stopped", failed: "Failed", activating: "Starting", deactivating: "Stopping", unknown: "Unknown" };
+		row.append(el("span", { className: "env-state", title: env.state_error || "" },
+			el("span", { className: "dot " + state }),
+			el("span", { className: "badge " + (state ? "state-" + state : ""), textContent: state ? words[state] || state : env.mode === "remote" ? "Remote" : "Static" })));
+	}
 	if (isMissingEnv(env)) row.append(el("span", { className: "badge env-missing", textContent: "Not found on server", title: `The site no longer exists on ${env.host}.` }));
 	else if (env.publish_status === "pending") {
 		// A card has little room: there it is an icon, with the words as its title. The list has room for them.
@@ -1094,7 +1104,7 @@ function renderSite(name) {
 		if (envLayout === "list") envListRow(panel, site.name + "/" + (env.target || "prod"), site, env);
 		targets.append(panel);
 	}
-	const canAddEnvironment = site.has_project && !site.admin && (site.kind === "csharp" || site.kind === "umbraco");
+	const canAddEnvironment = site.has_project && !site.admin && (site.kind === "csharp" || site.kind === "umbraco") && canAnywhere(site, "create_env");
 	const noEnvironments = !targets.childElementCount;
 	if (canAddEnvironment && !noEnvironments) {
 		targetsAdd.append(el("button", { textContent: "Add environment", onclick: () => run(() => openCreateProdDialog(site)) }));
@@ -1824,7 +1834,11 @@ const profileForm = $("#form-profile");
 $("#menu-profile").onclick = () => {
 	$("#user-menu").hidden = true;
 	profileForm.reset();
-	profileForm.username.value = $("#menu-user").textContent;
+	const name = $("#menu-user").textContent;
+	profileForm.username.value = name;
+	$("#profile-avatar").textContent = name.slice(0, 1).toUpperCase();
+	$("#profile-name").textContent = name;
+	$("#profile-role").textContent = currentUser.admin ? "Administrator" : "User";
 	profileDialog.showModal();
 	profileForm.current_password.focus();
 };
@@ -1889,7 +1903,8 @@ function syncSiteForm() {
 	siteForm.version.disabled = !csharp;
 	siteForm.elements.template.disabled = !csharp;
 	syncTemplateVersion();
-	if (csharp) run(loadDotnetTemplates);
+	// The templates are for those who may create sites; the dialog loads them when it opens
+	if (csharp && currentUser.create_sites) run(loadDotnetTemplates);
 }
 siteForm.addEventListener("change", (event) => { if (event.target.name === "type") syncSiteForm(); });
 // Choosing a kind with the mouse moves on to the folder name. Arrow keys between the kinds keep the focus there.
@@ -3685,6 +3700,8 @@ run(async () => {
 	$("#switch-sites").closest("nav").hidden = !(currentUser.web && currentUser.sql);
 	$("#btn-new-site").hidden = !currentUser.create_sites;
 	$("#sql-add-connection").hidden = !currentUser.manage_connections;
+	// A user with only one of the two has nothing to choose in Preferences
+	$("#menu-preferences").hidden = !currentUser.admin && !(currentUser.web && currentUser.sql);
 	// The views are hidden until the address picks one, so a site's page does not show the list first
 	try { await loadSites(); } finally { await route(); }
 	await restoreTerminals();
@@ -4009,6 +4026,8 @@ $("#menu-preferences").onclick = () => run(async () => {
 	$("#user-menu").hidden = true;
 	preferencesForm.reset();
 	preferencesForm.elements.start_view.value = startView;
+	// The start page is a choice only with both Web Server and SQL Server
+	$("#preferences-start").hidden = !(currentUser.web && currentUser.sql);
 	const keepAlive = await api("/api/keep-alive");
 	keepAliveInstalled = keepAlive.installed;
 	preferencesForm.elements.keep_alive.checked = keepAlive.enabled;
@@ -4046,7 +4065,7 @@ preferencesForm.onsubmit = (event) => {
 	const next = preferencesForm.elements.start_view.value;
 	const interval = Number(preferencesForm.elements.keep_alive_interval.value) || 5;
 	run(async () => {
-		if (keepAliveInstalled) {
+		if (keepAliveInstalled && currentUser.admin) {
 			if (!Number.isInteger(interval) || interval < 1 || interval > 1440) throw new Error("The interval must be a whole number from 1 to 1440 minutes.");
 			await api("/api/keep-alive", { method: "PUT", json: { enabled: preferencesForm.elements.keep_alive.checked, interval_minutes: interval } });
 		}
@@ -4316,6 +4335,8 @@ async function runSystemUpdate(existing = null) {
 $("#system-update-overlay").addEventListener("cancel", (event) => event.preventDefault());
 $("#system-update-close").onclick = () => $("#system-update-overlay").close();
 async function checkSystemUpdate(refresh = false) {
+	// Updates of the server are an administrator's: a user's page does not ask
+	if (!currentUser.admin) return;
 	const result = await api("/api/system-update" + (refresh ? "?refresh=1" : ""));
 	const badge = $("#system-update-badge");
 	const available = result.status === "available";
@@ -4422,7 +4443,7 @@ decorate($("#settings-menu"));
 // Restarting Apache takes every site down for a moment: it stands last, in red
 $("#settings-restart-apache").dataset.tone = "red";
 // The account menu: every item with its icon
-for (const [id, icon, tone] of [["menu-preferences", "sliders", "purple"], ["menu-profile", "user", "blue"], ["menu-logout", "logout", "red"]]) {
+for (const [id, icon, tone] of [["menu-users", "users", "green"], ["menu-audit", "clock", "amber"], ["menu-preferences", "sliders", "purple"], ["menu-profile", "user", "blue"], ["menu-logout", "logout", "red"]]) {
 	$("#" + id).dataset.tone = tone;
 	$("#" + id).prepend(svgIcon(icon));
 }
@@ -4430,6 +4451,7 @@ decorate($("#view-sites .toolbar"));
 decorate($("#view-files"));
 run(() => checkSystemUpdate(true));
 run(async () => {
+	if (!currentUser.admin) return;
 	const state = await api("/api/system-update/run");
 	if (state.status === "running") await runSystemUpdate(state);
 });
@@ -4528,21 +4550,57 @@ function siteGrantRow(name, envKeys, grant) {
 
 function connectionGrantRow(connection, grant) {
 	const box = el("input", { type: "checkbox", checked: Boolean(grant) });
-	const databases = el("input", { value: (grant?.databases || ["*"]).join(", "), placeholder: "* for every database, or names separated by commas", spellcheck: false });
+	const chosen = new Set(grant?.databases || ["*"]);
+	// Every database, also those made later; or the databases the connection has, one by one
+	const everything = el("input", { type: "checkbox", checked: chosen.has("*") });
+	const list = el("div", { className: "grant-chips grant-database-list" });
 	const actions = usersData.sql_actions.map(([value, text]) => el("label", { className: "grant-chip action" },
 		el("input", { type: "checkbox", value, checked: (grant?.actions || defaultSqlActions).includes(value) }), el("span", { textContent: text })));
+	let loaded = false;
+	const showList = () => { list.hidden = everything.checked; };
+	const load = async () => {
+		if (loaded) return;
+		loaded = true;
+		list.replaceChildren(el("span", { className: "muted", textContent: "Loading the databases…" }));
+		try {
+			const data = await api("/api/sql/" + encodeURIComponent(connection.id));
+			const names = data.databases.filter((database) => database.id > 4).map((database) => database.name);
+			// A database named in the grant that is gone is still shown, so it can be taken away
+			for (const name of chosen) if (name !== "*" && !names.includes(name)) names.push(name);
+			list.replaceChildren(...(names.length ? names.sort((a, b) => a.localeCompare(b)).map((name) => el("label", { className: "grant-chip" },
+				el("input", { type: "checkbox", value: name, checked: chosen.has(name) }), el("span", { textContent: name })))
+				: [el("span", { className: "muted", textContent: "The connection has no databases yet." })]));
+		} catch (error) {
+			loaded = false;
+			list.replaceChildren(el("span", { className: "error", textContent: "The databases could not be read: " + error.message }));
+		}
+	};
+	everything.onchange = showList;
 	const body = el("div", { className: "grant-body", hidden: !grant },
-		el("label", { className: "grant-databases" }, "Databases", databases),
+		el("div", { className: "grant-label", textContent: "Databases" }),
+		el("label", { className: "grant-flag small" }, everything, el("span", { textContent: "Every database, also those made later" })),
+		list,
 		el("div", { className: "grant-label", textContent: "May" }), el("div", { className: "grant-chips" }, ...actions));
-	box.onchange = () => { body.hidden = !box.checked; row.classList.toggle("granted", box.checked); };
+	box.onchange = () => {
+		body.hidden = !box.checked;
+		row.classList.toggle("granted", box.checked);
+		if (box.checked) load();
+	};
 	const row = el("div", { className: "grant-site" + (grant ? " granted" : "") },
 		el("div", { className: "grant-head" }, el("label", {}, box, el("strong", { textContent: connection.name || connection.host })),
 			el("span", { className: "muted", textContent: connection.host + (connection.port ? ":" + connection.port : "") })), body);
-	row.collect = () => box.checked ? {
-		databases: databases.value.split(",").map((item) => item.trim()).filter(Boolean),
-		actions: actions.map((chip) => chip.querySelector("input")).filter((item) => item.checked).map((item) => item.value),
-		...(grant?.owned ? { owned: true } : {}),
-	} : null;
+	showList();
+	if (grant) load();
+	row.collect = () => {
+		if (!box.checked) return null;
+		const databases = everything.checked ? ["*"]
+			: [...list.querySelectorAll("input:checked")].map((item) => item.value);
+		// Names chosen before the list had come are kept as they were
+		const kept = loaded ? databases : [...chosen].filter((name) => name !== "*");
+		return { databases: everything.checked ? ["*"] : kept,
+			actions: actions.map((chip) => chip.querySelector("input")).filter((item) => item.checked).map((item) => item.value),
+			...(grant?.owned ? { owned: true } : {}) };
+	};
 	return row;
 }
 
@@ -4636,6 +4694,7 @@ $("#menu-audit").onclick = () => {
 	$("#user-menu").hidden = true;
 	run(async () => {
 		auditEntries = (await api("/api/audit")).entries;
+		$("#audit-clear").hidden = !currentUser.root;
 		$("#audit-search").value = "";
 		renderAudit();
 		auditDialog.showModal();
@@ -4643,3 +4702,12 @@ $("#menu-audit").onclick = () => {
 };
 $("#audit-search").oninput = renderAudit;
 $("#audit-close").onclick = () => auditDialog.close();
+$("#audit-clear").dataset.tone = "red";
+$("#audit-clear").prepend(svgIcon("eraser"));
+// Only root clears the log: what another administrator did stays to be seen. The clearing is the first line after.
+$("#audit-clear").onclick = () => run(async () => {
+	if (!(await ask({ title: "Clear the activity log?", message: "Every line is deleted. That it was cleared, by whom and when, is written as the first line of the new log.", input: false, ok: "Clear", danger: true }))) return;
+	auditEntries = (await api("/api/audit", { method: "DELETE" })).entries;
+	renderAudit();
+	toast("Activity log cleared", "ok");
+});

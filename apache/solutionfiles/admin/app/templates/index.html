@@ -655,7 +655,7 @@
   <h2 id="audit-title">Activity log</h2>
   <div class="logs-toolbar"><input id="audit-search" type="search" placeholder="Filter…" autocomplete="off" spellcheck="false" aria-label="Filter"></div>
   <div id="audit-list" class="logs-list audit-list"></div>
-  <menu><span id="audit-count" class="muted logs-count"></span><button type="button" id="audit-close" class="primary">Close</button></menu>
+  <menu><span id="audit-count" class="muted logs-count"></span><button type="button" id="audit-clear" hidden>Clear log</button><button type="button" id="audit-close" class="primary">Close</button></menu>
 </dialog>
 
 <dialog id="dlg-preferences" class="newsite environment-dialog" aria-labelledby="preferences-title">
@@ -664,12 +664,14 @@
       <span class="ns-icon" data-header-icon="sliders" aria-hidden="true"></span>
       <div><h2 id="preferences-title">Preferences</h2><p>For this admin site.</p></div>
     </div>
+    <div id="preferences-start">
     <div class="ns-section">Start page</div>
     <fieldset class="environment-options">
       <legend class="visually-hidden">Where the admin opens after you log in</legend>
       <label class="type-card environment-option"><input type="radio" name="start_view" value="sites" required><span class="tc-title">Web Server</span><span class="tc-sub">The sites and their environments</span></label>
       <label class="type-card environment-option"><input type="radio" name="start_view" value="sql"><span class="tc-title">SQL Server</span><span class="tc-sub">For a server that is mostly a SQL Server</span></label>
     </fieldset>
+    </div>
     <div class="admin-only-block">
     <div class="ns-section">Site keep-alive</div>
     <label class="sync-option keep-alive-option"><input name="keep_alive" type="checkbox">
@@ -713,15 +715,25 @@
 <dialog id="dlg-profile" class="newsite">
   <form method="dialog" id="form-profile">
     <header class="ns-head">
-      <span class="ns-icon" data-header-icon="pencil" aria-hidden="true"></span>
-      <div><h2>Profile</h2><p>Update your username and password.</p></div>
+      <span class="ns-icon" data-header-icon="user" aria-hidden="true"></span>
+      <div><h2>Profile</h2><p>Your name and password for this admin site.</p></div>
     </header>
-    <label>Username <input name="username" autocomplete="username" required></label>
-    <label>New password <input name="new_password" type="password" autocomplete="new-password" placeholder="leave empty to keep"></label>
-    <label>Repeat new password <input name="repeat" type="password" autocomplete="new-password"></label>
-    <label>Current password (required) <input name="current_password" type="password" autocomplete="current-password" required></label>
-    <p class="hint">Passwords need at least 12 characters. Changing the password signs out all other sessions.</p>
-    <menu><button type="button" id="profile-cancel" class="cancel-link">Cancel</button><button type="submit" value="ok" class="primary">Save</button></menu>
+    <div class="profile-card">
+      <span class="user-avatar profile-avatar" id="profile-avatar"></span>
+      <span class="user-text"><strong id="profile-name"></strong><small id="profile-role"></small></span>
+    </div>
+    <div class="ns-section">Account</div>
+    <label>Username <input name="username" autocomplete="username" required spellcheck="false"></label>
+    <div class="ns-section">New password <span class="ns-section-note">optional</span></div>
+    <div class="ns-grid">
+      <label>New password <input name="new_password" type="password" autocomplete="new-password" minlength="12" placeholder="Leave empty to keep it"></label>
+      <label>Repeat <input name="repeat" type="password" autocomplete="new-password" placeholder="The same again"></label>
+    </div>
+    <p class="hint">At least 12 characters. A new password signs you out everywhere else.</p>
+    <div class="profile-confirm">
+      <label>Current password <input name="current_password" type="password" autocomplete="current-password" required placeholder="Needed to save any change"></label>
+    </div>
+    <menu><li class="cancel-action"><button type="button" id="profile-cancel" class="cancel-link">Cancel</button></li><li><button type="submit" value="ok" class="primary">Save</button></li></menu>
   </form>
 </dialog>
 

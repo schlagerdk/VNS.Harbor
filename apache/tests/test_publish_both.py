@@ -120,6 +120,7 @@ const updateSiteActivity = () => {};
 const envPanel = () => el("div");
 let envLayout = "grid";
 const pruneButtons = () => {};
+const canAnywhere = () => true;
 const envKeyOf = env => env.key === "main" ? "main" : env.target || "prod";
 const applyEnvLayout = () => {};
 const envListRow = () => {};

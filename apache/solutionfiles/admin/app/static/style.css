@@ -902,10 +902,12 @@ dialog.logs-dialog[open] { display: flex; flex-direction: column; }
 /* The name above its badges in every row, so the rows look alike however long the name is */
 .cards.list > .site .site-identity { gap: 6px; }
 /* Each environment line in columns: environment, its status, its links. The columns line up down the list. */
-.cards.list .site-link-group.compact { display: grid; grid-template-columns: 170px minmax(0, 1fr) auto; align-items: center; gap: 12px; }
+.cards.list .site-link-group.compact { display: grid; grid-template-columns: 170px 110px minmax(0, 1fr) auto; align-items: center; gap: 12px; }
 .cards.list .site-link-group.compact > .site-environment-head { grid-column: 1; }
-.cards.list .site-link-group.compact > .badge, .cards.list .site-link-group.compact > .publish-status { grid-column: 2; justify-self: start; }
-.cards.list .site-link-group.compact > .site-environment-links, .cards.list .site-link-group.compact > .muted { grid-column: 3; justify-self: end; }
+.cards.list .site-link-group.compact > .env-state { grid-column: 2; display: inline-flex; align-items: center; gap: 8px; }
+.cards.list .site-link-group.compact > .env-state .badge { font-size: 10px; }
+.cards.list .site-link-group.compact > .badge, .cards.list .site-link-group.compact > .publish-status { grid-column: 3; justify-self: start; }
+.cards.list .site-link-group.compact > .site-environment-links, .cards.list .site-link-group.compact > .muted { grid-column: 4; justify-self: end; }
 .cards.list > .site .site-head > .dot { order: -1; margin: 0 2px 0 0; }
 .cards.list > .site .site-links { flex: 1; min-width: 0; margin: 0; }
 .cards.list > .site .multi-select { flex: none; }
@@ -1076,8 +1078,26 @@ body[data-role="user"] #settings-menu, body[data-role="user"] #btn-multi, body[d
 /* The users list has the dialog's own margins */
 #dlg-users > .users-toolbar, #dlg-users > .users-list, #dlg-users > menu { margin-left: 24px; margin-right: 24px; }
 #dlg-users > .users-toolbar { margin-top: 18px; }
-#dlg-users > menu { margin-bottom: 20px; }
+
 #dlg-user .user-disabled { margin: 8px 0 6px; }
 #dlg-user .grant-section { margin-top: 18px; margin-bottom: 8px; }
 /* A header directly in the dialog (no form with side padding around it, as in Users) keeps within the edges */
 dialog.newsite > .ns-head { margin: 0 0 4px; }
+/* Profile: who you are at the top, then the name, a new password, and the current one to save */
+.profile-card { display: flex; align-items: center; gap: 14px; margin: 4px 0 6px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: linear-gradient(135deg, rgba(88, 166, 255, .08), rgba(163, 113, 247, .06)), var(--panel2); }
+.profile-avatar { width: 44px; height: 44px; font-size: 18px; }
+.profile-card .user-text strong { font-size: 15px; }
+.ns-section-note { margin-left: 6px; color: var(--muted); font-weight: 500; letter-spacing: 0; text-transform: none; }
+.profile-confirm { margin-top: 14px; padding: 12px 14px; border: 1px solid rgba(210, 153, 34, .35); border-radius: 10px; background: rgba(210, 153, 34, .06); }
+.profile-confirm label { margin: 0; }
+.grant-database-list { max-height: 180px; overflow-y: auto; padding: 2px; }
+.grant-database-list[hidden] { display: none; }
+/* Every dialog keeps its buttons at the bottom and, with a header, that at the top: only what is between scrolls.
+   The footer reaches the dialog's edges, on its own background, so nothing shows through it. */
+dialog > menu, dialog > form > menu { position: sticky; bottom: 0; z-index: 3; background: var(--panel); }
+dialog:not(.newsite) > menu, dialog:not(.newsite) > form > menu { margin: 14px -22px -22px; padding: 12px 22px 22px; }
+dialog.newsite > form > menu { margin: 16px -24px -20px; padding: 14px 24px 20px; }
+dialog.newsite > menu { margin: 16px 0 0; padding: 14px 24px 20px; }
+#dlg-users > menu { margin: 16px 0 0; }
+dialog.newsite > form > .ns-head, dialog.newsite > .ns-head { position: sticky; top: 0; z-index: 3;
+	background: linear-gradient(135deg, rgba(88,101,242,.35), rgba(139,92,246,.22)), var(--panel); }
