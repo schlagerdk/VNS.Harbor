@@ -2,6 +2,16 @@
 
 All notable changes to VNS.Linux are listed here, newest first.
 
+## [1.1.9] - 2026-11-11
+
+### Fixes
+
+- An admin update keeps the server's activity log, and the log from development runs is no longer in the repository
+
+### Other
+
+- Style: A name that already points here shows only a larger Points here, without DNS records
+
 ## [1.1.8] - 2026-11-11
 
 ### Features
