@@ -2,6 +2,12 @@
 
 All notable changes to VNS.Linux are listed here, newest first.
 
+## [1.1.11] - 2026-11-11
+
+### Features
+
+- New site offers HTTPS only when the binding points here, and the server refuses a certificate for a name that does not
+
 ## [1.1.10] - 2026-11-11
 
 ### Fixes
