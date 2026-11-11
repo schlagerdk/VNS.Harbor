@@ -223,7 +223,7 @@ console.log(JSON.stringify([first, firstNone, none.hidden]));
         self.assertNotIn("sql-back-bar", page)
         self.assertIn('const active = button.dataset.view === (name === "sql" ? "sql" : "sites");', source)
         self.assertIn('if (currentView === "site") go("#sites");', source)
-        self.assertIn('body[data-view="sql"] .page-header #search { display: none; }', (APP / "static/style.css").read_text())
+        self.assertIn('body[data-view="sql"] .page-header .search-box { display: none; }', (APP / "static/style.css").read_text())
         for label in ("SQL Server", "Preferences…", "Files (/)", "Test config", "Error logs"):
             self.assertIn(f'"{label}": [', source)
         self.assertIn('id="dlg-sql-query"', page)
