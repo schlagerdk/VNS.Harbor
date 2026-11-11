@@ -754,7 +754,8 @@ function siteCard(site) {
 	const actions = el("div", { className: "site-links" });
 	const allEnvironments = sortedEnvironments(site.environments);
 	const compact = allEnvironments.length > 1 || siteLayout === "list";
-	const expanded = expandedCards.has(site.name);
+	// The list shows every environment: a row has the room, and there is nothing to unfold
+	const expanded = expandedCards.has(site.name) || siteLayout === "list";
 	const listed = compact && !expanded ? allEnvironments.slice(0, maxCardEnvironments) : allEnvironments;
 	for (const env of listed) {
 		const production = isTarget(env);
@@ -794,7 +795,7 @@ function siteCard(site) {
 	if (allEnvironments.length > listed.length) {
 		actions.append(el("button", { type: "button", className: "site-link-more", textContent: `+${allEnvironments.length - listed.length} more`,
 			ariaExpanded: "false", onclick: (event) => { event.stopPropagation(); expandedCards.add(site.name); renderSites(); } }));
-	} else if (expanded && allEnvironments.length > maxCardEnvironments) {
+	} else if (expanded && siteLayout !== "list" && allEnvironments.length > maxCardEnvironments) {
 		actions.append(el("button", { type: "button", className: "site-link-more", textContent: "Show fewer",
 			ariaExpanded: "true", onclick: (event) => { event.stopPropagation(); expandedCards.delete(site.name); renderSites(); } }));
 	}
