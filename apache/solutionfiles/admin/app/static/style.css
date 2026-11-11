@@ -187,7 +187,7 @@ a.link:hover { text-decoration: underline; }
 #sql-databases-panel .sql-state-emergency { color: var(--orange); }
 #form-sql-connection input[type=checkbox] { width: auto; }
 #dlg-sql-connection { min-width: 0; }
-#dlg-sql-restore-login { width: min(520px, 92vw); min-width: 0; max-height: 90vh; overflow-y: auto; }
+#dlg-sql-restore { width: min(520px, 92vw); min-width: 0; max-height: 90vh; overflow-y: auto; }
 #prompt-checkbox-row, #prompt-login-row { flex-direction: row; align-items: flex-start; gap: 12px; margin: 16px 0 0; padding: 14px 16px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel2); color: var(--text); font-size: 14px; line-height: 1.5; cursor: pointer; }
 #prompt-checkbox, #prompt-login-checkbox { flex: none; width: 18px; height: 18px; margin: 2px 0 0; padding: 0; accent-color: var(--blue); }
 #prompt-checkbox-label { min-width: 0; overflow-wrap: anywhere; }
@@ -552,9 +552,9 @@ dialog.newsite input:not([type=radio]):not([type=checkbox]), dialog.newsite sele
 dialog.newsite .copy-connection-toggle input[type=checkbox] { width: auto; height: auto; padding: 0; flex-shrink: 0; }
 dialog.newsite .copy-connection-toggle { flex-direction: row; align-items: center; gap: 9px; margin: 16px 0 0; padding: 12px; background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; color: var(--text); cursor: pointer; }
 #dlg-copy-site .copy-dns-hint { margin-top: 0; }
-#copy-sql-fields, #sql-database-login { margin: 12px 0 0; padding: 12px; border: 1px solid var(--line); border-radius: 8px; }
-#copy-sql-fields .hint, #sql-database-login .hint { margin-bottom: 12px; }
-#copy-sql-fields label, #sql-database-login label { min-width: 0; }
+#copy-sql-fields, #sql-database-login, #sql-restore-login, #sql-restore-overwrite { margin: 12px 0 0; padding: 12px; border: 1px solid var(--line); border-radius: 8px; }
+#copy-sql-fields .hint, #sql-database-login .hint, #sql-restore-login .hint, #sql-restore-overwrite .hint { margin-bottom: 12px; }
+#copy-sql-fields label, #sql-database-login label, #sql-restore-login label, #sql-restore-overwrite label { min-width: 0; }
 dialog.newsite select { appearance: none; -webkit-appearance: none; padding-right: 34px; cursor: pointer; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b949e' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; }
 dialog.newsite select option { background: var(--panel2); color: var(--text); }
 .actions > button.push-right { margin-left: auto; }
@@ -863,3 +863,6 @@ dialog.logs-dialog[open] { display: flex; flex-direction: column; }
 .log-file-clear { margin-left: auto; padding: 2px 10px; font-family: inherit; font-size: 12px; font-weight: 500; }
 .log-file-clear:hover { border-color: var(--red, #f85149); color: var(--red, #f85149); }
 #preferences-keep-alive-hint { margin-top: 14px; }
+#sql-restore-overwrite { border-color: color-mix(in srgb, var(--red) 45%, var(--line)); }
+#sql-restore-overwrite legend { color: var(--red); }
+#sql-restore-submit.primary.danger { background: #da3633; border-color: var(--red); color: #fff; }

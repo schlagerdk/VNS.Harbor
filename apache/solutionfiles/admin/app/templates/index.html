@@ -162,18 +162,29 @@
       <menu><button id="sql-connection-cancel" type="button" class="cancel-link">Cancel</button><button id="sql-remove-connection" type="button" class="danger" tabindex="-1" hidden>Remove connection</button><button type="submit" class="primary">Save connection</button></menu>
     </form>
   </dialog>
-  <dialog id="dlg-sql-restore-login" class="newsite">
-    <form id="form-sql-restore-login">
+  <dialog id="dlg-sql-restore" class="newsite">
+    <form id="form-sql-restore">
       <header class="ns-head">
-        <span class="ns-icon" data-header-icon="lock" aria-hidden="true"></span>
-        <div><h2>SQL login for new database</h2><p>Set credentials for the restored database.</p></div>
+        <span class="ns-icon" data-header-icon="sync" aria-hidden="true"></span>
+        <div><h2>Restore database</h2><p id="sql-restore-description"></p></div>
       </header>
-      <p class="hint">Create a new SQL login and map its database user to db_owner. An existing login cannot be reused. Password policy and expiration are disabled, matching the restore script.</p>
-      <label>SQL username <input name="login" required maxlength="128" autocomplete="off"></label>
-      <label>Password <input name="password" type="password" required minlength="8" maxlength="128" autocomplete="new-password"></label>
-      <label>Repeat password <input name="confirmation" type="password" required minlength="8" maxlength="128" autocomplete="new-password"></label>
-      <p id="sql-restore-login-error" class="error" role="alert"></p>
-      <menu><button id="sql-restore-login-cancel" type="button" class="cancel-link">Cancel</button><button id="sql-login-submit" type="submit" class="primary">Restore and create login</button></menu>
+      <label>Restore as<input name="database" required maxlength="128" autocomplete="off"></label>
+      <fieldset id="sql-restore-login">
+        <legend>New SQL login</legend>
+        <p class="hint">Creates a new login with db_owner access. Existing logins cannot be reused. Password policy and expiration are disabled.</p>
+        <label>Username<input name="login" required maxlength="128" autocomplete="off"></label>
+        <div class="ns-grid">
+          <label>Password<input name="password" type="password" required minlength="8" maxlength="128" autocomplete="new-password"></label>
+          <label>Repeat password<input name="confirmation" type="password" required minlength="8" maxlength="128" autocomplete="new-password"></label>
+        </div>
+      </fieldset>
+      <fieldset id="sql-restore-overwrite" class="sql-restore-overwrite" hidden disabled>
+        <legend>Overwrite existing database</legend>
+        <p class="hint" id="sql-restore-overwrite-text"></p>
+        <label>Type the database name to confirm<input name="match" required maxlength="128" autocomplete="off"></label>
+      </fieldset>
+      <p id="sql-restore-error" class="error" role="alert"></p>
+      <menu><li class="cancel-action"><button id="sql-restore-cancel" type="button" class="cancel-link">Cancel</button></li><li><button id="sql-restore-submit" type="submit" class="primary">Restore</button></li></menu>
     </form>
   </dialog>
   <section id="view-sites">

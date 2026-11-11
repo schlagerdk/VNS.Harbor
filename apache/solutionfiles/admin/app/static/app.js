@@ -3046,46 +3046,67 @@ async function sqlDatabaseAction(action, database) {
 	await openTask(payload);
 }
 
+// One dialog asks everything: the name to restore as, and a new login for a new database,
+// or, when the name is an existing database, the confirmation that it is overwritten
 async function sqlRestore(backup) {
 	const connection = sqlSelected();
-	const target = await ask({ title: "Restore database", message: `Restore ${backup.database_name} from ${backup.path}. SQL Server must still be able to read this file. Logins are not created automatically.`, value: backup.database_name, ok: "Continue" });
-	if (!target) return;
-	const name = target.trim();
-	const existing = sqlSnapshot.databases.some((item) => item.name.toLowerCase() === name.toLowerCase());
-	let confirmation = "";
-	let login = {};
-	if (existing) {
-		confirmation = await ask({ title: "Overwrite existing database?", message: `All data in ${name} will be replaced and active sessions disconnected. Take a backup first. Type ${name} to confirm.`, match: name, danger: true, ok: "Overwrite and restore" });
-		if (!confirmation) return;
-	} else {
-		login = await askRestoreLogin(name);
-		if (!login) return;
-	}
-	await openTask({ kind: "sql_action", connection, action: "restore", database: backup.database_name,
-		target: name, backup_id: backup.id, overwrite: existing, confirmation, ...login });
+	const values = await askSqlRestore(backup);
+	if (!values) return;
+	await openTask({ kind: "sql_action", connection, action: "restore", database: backup.database_name, backup_id: backup.id, ...values });
 }
 
-function askRestoreLogin(database, action = "Restore") {
-	const dialog = $("#dlg-sql-restore-login");
-	const form = $("#form-sql-restore-login");
+function askSqlRestore(backup) {
+	const dialog = $("#dlg-sql-restore");
+	const form = $("#form-sql-restore");
+	const error = $("#sql-restore-error");
 	form.reset();
-	$("#sql-login-submit").textContent = action + " and create login";
-	form.elements.login.value = database;
-	$("#sql-restore-login-error").textContent = "";
+	error.textContent = "";
+	$("#sql-restore-description").textContent = `From ${backup.path}. SQL Server must still be able to read this file.`;
+	form.elements.database.value = backup.database_name;
+	let loginEdited = false;
+	const existing = () => {
+		const name = form.elements.database.value.trim().toLowerCase();
+		return sqlSnapshot.databases.find((item) => item.name.toLowerCase() === name);
+	};
+	const update = () => {
+		const match = existing();
+		$("#sql-restore-login").hidden = $("#sql-restore-login").disabled = !!match;
+		$("#sql-restore-overwrite").hidden = $("#sql-restore-overwrite").disabled = !match;
+		if (match) $("#sql-restore-overwrite-text").textContent = `All data in ${match.name} is replaced and its sessions are disconnected. Its logins are kept. Take a backup first.`;
+		const submit = $("#sql-restore-submit");
+		submit.textContent = match ? "Overwrite and restore" : "Restore and create login";
+		submit.classList.toggle("danger", !!match);
+		if (!loginEdited) form.elements.login.value = form.elements.database.value.trim();
+	};
+	form.elements.database.oninput = update;
+	form.elements.login.oninput = () => { loginEdited = true; };
+	update();
 	return new Promise((resolve) => {
 		let result = null;
 		form.onsubmit = (event) => {
 			event.preventDefault();
-			if (form.elements.password.value !== form.elements.confirmation.value) {
-				$("#sql-restore-login-error").textContent = "Passwords do not match.";
-				return;
+			const name = form.elements.database.value.trim();
+			const match = existing();
+			if (match) {
+				// The server checks the confirmation against the name it restores as, as typed above
+				if (form.elements.match.value.trim() !== name) {
+					error.textContent = `Type ${name} to confirm.`;
+					return;
+				}
+				result = { target: name, overwrite: true, confirmation: name };
+			} else {
+				if (form.elements.password.value !== form.elements.confirmation.value) {
+					error.textContent = "Passwords do not match.";
+					return;
+				}
+				result = { target: name, overwrite: false, confirmation: "", login: form.elements.login.value.trim(), login_password: form.elements.password.value };
 			}
-			result = { login: form.elements.login.value.trim(), login_password: form.elements.password.value };
 			dialog.close();
 		};
-		$("#sql-restore-login-cancel").onclick = () => dialog.close();
-		dialog.onclose = () => { form.reset(); resolve(result); };
+		$("#sql-restore-cancel").onclick = () => dialog.close();
+		dialog.onclose = () => { form.reset(); error.textContent = ""; resolve(result); };
 		dialog.showModal();
+		form.elements.database.select();
 	});
 }
 
