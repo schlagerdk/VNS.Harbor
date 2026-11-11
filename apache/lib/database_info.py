@@ -9,6 +9,48 @@ def local_sql_server(server):
     return host in (".", "localhost", "127.0.0.1", "::1", "[::1]")
 
 
+def runtime_version(data):
+    """The .NET version, like 10.0, that a parsed <name>.runtimeconfig.json asks for, or an empty string"""
+    options = data.get("runtimeOptions") if isinstance(data, dict) else None
+    if not isinstance(options, dict):
+        return ""
+    frameworks = options.get("frameworks")
+    if not isinstance(frameworks, list):
+        frameworks = [options["framework"]] if isinstance(options.get("framework"), dict) else []
+    for framework in frameworks:
+        if (isinstance(framework, dict) and framework.get("name") in ("Microsoft.AspNetCore.App", "Microsoft.NETCore.App")
+                and isinstance(framework.get("version"), str) and re.match(r"\d+\.\d+", framework["version"])):
+            return ".".join(framework["version"].split(".")[:2])
+    match = re.fullmatch(r"net(\d+\.\d+)", str(options.get("tfm", "")))
+    return match.group(1) if match else ""
+
+
+def dotnet_runtime(folder, dll=""):
+    """The .NET a published site runs, from the runtimeconfig.json beside its dll (the given one first)"""
+    folder = Path(folder)
+    candidates = ([folder / (dll + ".runtimeconfig.json")] if dll else []) + sorted(folder.glob("*.runtimeconfig.json"))
+    for path in candidates:
+        try:
+            version = runtime_version(json.loads(path.read_text(encoding="utf-8-sig")))
+        except (OSError, ValueError):
+            continue
+        if version:
+            return version
+    return ""
+
+
+def project_dotnet(root):
+    """The .NET a site's project targets, like 10.0, from <TargetFramework>net10.0</TargetFramework>"""
+    for project in sorted(Path(root).glob("*.csproj")):
+        try:
+            match = re.search(r"<TargetFrameworks?>\s*net(\d+\.\d+)", read_config_text(project))
+        except OSError:
+            continue
+        if match:
+            return match.group(1)
+    return ""
+
+
 def read_config_text(path):
     """An appsettings file as text. Most are UTF-8; one saved by an old Windows editor is Windows-1252,
     where æ, ø and å are single bytes that are not valid UTF-8. Such a file is read, not refused."""

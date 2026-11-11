@@ -74,6 +74,19 @@ def handle(share, data):
     path = relative(data.get("path", ""))
     if action in ("delete", "rename") and not path:
         raise ValueError("Use Delete site to remove the site")
+    if action == "runtime":
+        # The .NET the site runs, from the runtimeconfig.json beside its dll
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from database_info import runtime_version
+        names = rclone("lsf", "--files-only", "--max-depth", "1", "--include", "*.runtimeconfig.json", share.remote("")).decode("utf-8", "replace").split()
+        for name in sorted(names):
+            try:
+                version = runtime_version(json.loads(rclone("cat", share.remote(name)).decode("utf-8-sig")))
+            except ValueError:
+                continue
+            if version:
+                return {"dotnet": version}
+        return {"dotnet": ""}
     if action == "list":
         items = []
         for entry in json.loads(rclone("lsjson", "--no-mimetype", share.remote(path))):

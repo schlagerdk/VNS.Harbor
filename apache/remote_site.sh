@@ -61,6 +61,13 @@ for line in text.splitlines():
                 seen.add(alias.lower())
 exec(os.environ.pop("DATABASE_CODE"))
 database = {"database": "Unknown", "database_name": ""}
+# The .NET the site runs, from the folder and dll its service starts
+working = re.search(r"^WorkingDirectory=(.+)$", service_text, re.M)
+started = re.search(r"([^\s/]+)\.dll\b", service_text)
+try:
+    dotnet = dotnet_runtime(working.group(1).strip().strip('"') if working else Path("/var/www", site), started.group(1) if started else "")
+except OSError:
+    dotnet = ""
 try:
     database = database_details(Path("/var/www", site), environment, variables)
 except (OSError, ValueError):
@@ -80,6 +87,7 @@ print(json.dumps({
     "scheme": "https" if secure else "http",
     "https": secure and bool(certificate and Path(certificate.group(1)).is_file()),
     "environment": environment,
+    "dotnet": dotnet,
     **database,
     "binding": binding.group(1) if binding else "",
     "aliases": aliases,

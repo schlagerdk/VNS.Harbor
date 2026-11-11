@@ -613,6 +613,9 @@ function environmentAddress(env) {
 
 const versionColors = 8; // majors 18, 19, 20 … get different colours (see .badge.version[data-major] in style.css)
 
+// .NET 10.0 is shown as .NET 10, a minor version only when it is not .0
+const dotnetLabel = (version) => ".NET " + String(version).replace(/\.0$/, "");
+
 function kindBadges(site) {
 	const badges = el("div", { className: "badges" }, el("span", { className: "badge " + site.kind, textContent: kindLabel[site.kind] || site.kind }));
 	if (site.umbraco_version) {
@@ -621,6 +624,7 @@ function kindBadges(site) {
 		if (Number.isFinite(major)) badge.dataset.major = String(major % versionColors);
 		badges.append(badge);
 	}
+	if (site.dotnet) badges.append(el("span", { className: "badge dotnet", textContent: dotnetLabel(site.dotnet), title: `Runs on .NET ${site.dotnet}` }));
 	if (site.admin) badges.append(el("span", { className: "badge admin", textContent: "this admin site" }));
 	if (site.not_set_up) badges.append(el("span", { className: "badge not-set-up", textContent: "Not set up", title: "A folder without a service, or a site whose setup was not finished. Open it and choose Set up site." }));
 	if (site.managed_by) badges.append(el("span", { className: "badge", textContent: "Managed from " + (site.managed_by.host || "another server"), title: `Environment of ${site.managed_by.site} on ${site.managed_by.host}. Publish and copy it from there.` }));
@@ -1134,6 +1138,7 @@ function envPanel(site, env) {
 			className: "database-name", textContent: env.database_name,
 		}));
 	}
+	if (env.dotnet) meta.append(el("dt", { textContent: "Runtime" }), el("dd", { textContent: dotnetLabel(env.dotnet), title: `This environment runs on .NET ${env.dotnet}, read from its runtimeconfig.json` }));
 	if (env.port) meta.append(el("dt", { textContent: "Port" }), el("dd", { textContent: env.port }));
 	if (env.mode === "remote") {
 		meta.append(el("dt", { textContent: "Server" }), el("dd", { textContent: `${env.user || "?"}@${env.host || "?"}:${env.ssh_port || 22}` }));

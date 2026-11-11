@@ -866,3 +866,4 @@ dialog.logs-dialog[open] { display: flex; flex-direction: column; }
 #sql-restore-overwrite { border-color: color-mix(in srgb, var(--red) 45%, var(--line)); }
 #sql-restore-overwrite legend { color: var(--red); }
 #sql-restore-submit.primary.danger { background: #da3633; border-color: var(--red); color: #fff; }
+.badge.dotnet { text-transform: none; color: #fff; background: #512bd4; }
