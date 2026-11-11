@@ -2,6 +2,12 @@
 
 All notable changes to VNS.Linux are listed here, newest first.
 
+## [1.0.11] - 2026-11-11
+
+### Fixes
+
+- Sites whose setup was not finished can be set up, and a site's page no longer shows the site list first on reload
+
 ## [1.0.10] - 2026-11-11
 
 ### Features
