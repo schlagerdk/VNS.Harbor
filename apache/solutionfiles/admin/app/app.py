@@ -1390,6 +1390,28 @@ def api_service(name):
     return jsonify(ok=True)
 
 
+def apache_error_logs():
+    """The Apache error logs the admin shows: the server's, and the admin site's own."""
+    paths = ["/var/log/apache2/error.log"]
+    if ADMIN_SITE:
+        paths += ["/var/log/apache2/" + ADMIN_SITE + suffix for suffix in ("-rewrite-error.log", "-443-error.log")]
+    return [path for path in paths if os.path.isfile(path)]
+
+
+@app.route("/api/server-logs/clear", methods=["POST"])
+def api_server_logs_clear():
+    # Only a log the viewer shows can be cleared. It is emptied, not removed, so Apache keeps writing to it.
+    path = (request.get_json(silent=True) or {}).get("path")
+    if path not in apache_error_logs():
+        return error("Unknown log file")
+    try:
+        os.truncate(path, 0)
+    except OSError as exc:
+        app.logger.error("Could not clear %s: %s", path, exc)
+        return error("Could not clear the log file.", 502)
+    return jsonify(ok=True)
+
+
 @app.route("/api/server-logs")
 def api_server_logs():
     source = request.args.get("source", "admin")
@@ -1402,11 +1424,7 @@ def api_server_logs():
             argv = ["journalctl", "-u", service_name(ADMIN_SITE), "-n", "300", "--no-pager", "-o", "short-iso"]
             sources = [f"journalctl -u {service_name(ADMIN_SITE)}.service"]
         else:
-            paths = ["/var/log/apache2/error.log"]
-            if ADMIN_SITE:
-                paths += ["/var/log/apache2/" + ADMIN_SITE + suffix
-                          for suffix in ("-rewrite-error.log", "-443-error.log")]
-            paths = [path for path in paths if os.path.isfile(path)]
+            paths = apache_error_logs()
             if not paths:
                 return error("No Apache error logs were found.", 404)
             argv = ["tail", "-v", "-n", "300", "--", *paths]

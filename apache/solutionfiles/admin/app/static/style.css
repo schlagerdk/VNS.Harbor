@@ -858,4 +858,7 @@ dialog.logs-dialog[open] { display: flex; flex-direction: column; }
 .logs-levels:not(:has(button:not([hidden]):not([data-level="all"]))) { display: none; }
 .logs-dialog h2 + .logs-source { margin: -8px 0 12px; }
 .logs-source { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; overflow-wrap: anywhere; }
-.log-file { position: sticky; top: 0; z-index: 1; padding: 6px 12px; border-bottom: 1px solid var(--line); background: var(--panel2, #1c2129); color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; font-weight: 600; }
+.log-file { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; gap: 12px; padding: 5px 8px 5px 12px; border-bottom: 1px solid var(--line); background: var(--panel2, #1c2129); color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; font-weight: 600; }
+.log-file > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-file-clear { margin-left: auto; padding: 2px 10px; font-family: inherit; font-size: 12px; font-weight: 500; }
+.log-file-clear:hover { border-color: var(--red, #f85149); color: var(--red, #f85149); }

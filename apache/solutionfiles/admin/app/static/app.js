@@ -1350,10 +1350,15 @@ function renderLogs() {
 		button.classList.toggle("active", button.dataset.level === logLevel);
 		button.querySelector("span").textContent = counts[button.dataset.level] || "";
 	}
-	const shown = logEntries.filter((entry) => entry.file || ((logLevel === "all" || entry.level === logLevel)
+	const matches = logEntries.filter((entry) => entry.file || ((logLevel === "all" || entry.level === logLevel)
 		&& (!words || `${entry.source} ${entry.message}`.toLowerCase().includes(words))));
+	// A file is only shown with lines under it: an empty log, or one the filter leaves nothing of, has no group
+	const shown = matches.filter((entry, index) => !entry.file || (matches[index + 1] && !matches[index + 1].file));
 	const list = $("#logs-text");
-	list.replaceChildren(...shown.map((entry) => entry.file ? el("div", { className: "log-file", textContent: entry.file }) : el("div", { className: "log-row level-" + entry.level },
+	list.replaceChildren(...shown.map((entry) => entry.file ? el("div", { className: "log-file" },
+		el("span", { textContent: entry.file, title: entry.file }),
+		el("button", { type: "button", className: "log-file-clear", textContent: "Clear", title: "Empty this log file", onclick: () => run(() => clearLogFile(entry.file)) }))
+		: el("div", { className: "log-row level-" + entry.level },
 		el("span", { className: "log-time", textContent: entry.time }),
 		el("span", { className: "log-level", textContent: { error: "Error", warn: "Warning", info: "Info" }[entry.level] }),
 		el("span", { className: "log-source", textContent: entry.source, title: entry.source }),
@@ -1372,6 +1377,12 @@ $("#logs-raw").onclick = () => {
 	$("#logs-text").hidden = raw;
 	if (raw) $("#logs-raw-text").scrollTop = $("#logs-raw-text").scrollHeight;
 };
+async function clearLogFile(path) {
+	if (!await ask({ title: "Clear log file?", message: `${path} is emptied. Its lines cannot be brought back.`, input: false, ok: "Clear", danger: true })) return;
+	await api("/api/server-logs/clear", { method: "POST", json: { path } });
+	toast("Log file cleared", "ok");
+	await refreshLogs();
+}
 async function refreshLogs() {
 	$("#logs-text").replaceChildren(el("p", { className: "muted logs-empty", textContent: "Loading…" }));
 	let data;
@@ -1384,9 +1395,10 @@ async function refreshLogs() {
 	}
 	$("#logs-raw-text").textContent = data.text || "(no log lines)";
 	// Where the lines come from: the files, or the journal command for a service
-	$("#logs-source").textContent = (data.sources || []).join(" · ");
-	$("#logs-source").hidden = !(data.sources || []).length;
 	logEntries = parseLog(data.text);
+	// Files are named in the list, above their lines; a journal has no file, so its command is named under the title
+	$("#logs-source").textContent = (data.sources || []).join(" · ");
+	$("#logs-source").hidden = !(data.sources || []).length || logEntries.some((entry) => entry.file);
 	renderLogs();
 }
 $("#logs-refresh").onclick = () => run(refreshLogs);
@@ -1578,7 +1590,7 @@ setInterval(() => {
 
 // ------------------------------------------------------------------ account
 
-$("#btn-user").onclick = (event) => { event.stopPropagation(); $("#user-menu").hidden = !$("#user-menu").hidden; };
+$("#btn-user").onclick = (event) => { event.stopPropagation(); $("#settings-menu").hidden = true; $("#user-menu").hidden = !$("#user-menu").hidden; };
 document.addEventListener("click", (event) => { if (!$("#user-menu").contains(event.target)) $("#user-menu").hidden = true; });
 const profileDialog = $("#dlg-profile");
 const profileForm = $("#form-profile");
@@ -3489,6 +3501,7 @@ async function checkSystemUpdate(refresh = false) {
 }
 $("#btn-settings").onclick = (event) => {
 	event.stopPropagation();
+	$("#user-menu").hidden = true;
 	settingsMenu.hidden = !settingsMenu.hidden;
 	if (!settingsMenu.hidden) run(() => checkSystemUpdate(true));
 };

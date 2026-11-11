@@ -21,7 +21,7 @@ class ServerLogTests(unittest.TestCase):
                        error=lambda text, status=400: (jsonify(error=text), status))
         source = Path(__file__).resolve().parents[1] / "solutionfiles/admin/app/app.py"
         nodes = [node for node in ast.parse(source.read_text()).body
-                 if isinstance(node, ast.FunctionDef) and node.name == "api_server_logs"]
+                 if isinstance(node, ast.FunctionDef) and node.name in ("apache_error_logs", "api_server_logs", "api_server_logs_clear")]
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "server logs", "exec"), self.ns)
         add_target_helpers(self.ns)
         self.client = self.app.test_client()
@@ -32,6 +32,14 @@ class ServerLogTests(unittest.TestCase):
         self.assertEqual(response.json["text"], "example log\n")
         self.assertEqual(self.runner.call_args.args[0],
                          ["journalctl", "-u", "admin.example.test", "-n", "300", "--no-pager", "-o", "short-iso"])
+
+    def test_clear_empties_only_a_shown_log_file(self):
+        with patch.object(os.path, "isfile", return_value=True), patch.object(os, "truncate") as truncate:
+            refused = self.client.post("/api/server-logs/clear", json={"path": "/etc/passwd"})
+            cleared = self.client.post("/api/server-logs/clear", json={"path": "/var/log/apache2/error.log"})
+        self.assertEqual(refused.status_code, 400)
+        self.assertEqual(cleared.status_code, 200)
+        truncate.assert_called_once_with("/var/log/apache2/error.log", 0)
 
     def test_apache_reads_only_fixed_existing_error_logs(self):
         with patch.object(os.path, "isfile", return_value=True):
