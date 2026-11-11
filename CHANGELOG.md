@@ -2,6 +2,12 @@
 
 All notable changes to VNS.Linux are listed here, newest first.
 
+## [1.1.0] - 2026-11-11
+
+### Features
+
+- Multiple users with roles, per-site and per-environment permissions, SQL access per connection and database, locked task windows for users, an activity log, and builds as the unprivileged user vns-build
+
 ## [1.0.25] - 2026-11-11
 
 ### Other
