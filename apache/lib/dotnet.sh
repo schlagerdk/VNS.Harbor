@@ -28,8 +28,10 @@ ensure_dotnet_channel() (
 	curl -fsSL https://dot.net/v1/dotnet-install.sh -o "${_installer}"
 	sudo mkdir -p "${_dir}"
 	set --
-	# Adding .NET 8 must not replace an existing, newer dotnet host.
-	if [[ ${_channel} == 8.0 && -x ${_dir}/dotnet ]]; then
+	# Adding an older channel must not replace an existing, newer dotnet host
+	local _newest
+	_newest=$(sed -nE 's/^([0-9]+)\..*/\1/p' <<<"${_sdks}" | sort -n | tail -n 1)
+	if [[ -x ${_dir}/dotnet && -n ${_newest} ]] && ((_newest > ${_channel%%.*})); then
 		set -- --skip-non-versioned-files
 	fi
 	sudo bash "${_installer}" --channel "${_channel}" --install-dir "${_dir}" "$@"
@@ -51,8 +53,11 @@ frameworks = [
 print(frameworks[0] if len(frameworks) == 1 else "")
 PY
 	)
+	# A project for another .NET than the default gets its SDK and runtime, e.g. net8.0 for Umbraco 13 or net11.0
+	if [[ ${_framework} =~ ^net([0-9]+)\.0$ ]] && ((BASH_REMATCH[1] >= 8)); then
+		ensure_dotnet_channel "${BASH_REMATCH[1]}.0"
+	fi
 	if [[ ${_framework} == net8.0 ]]; then
-		ensure_dotnet_channel 8.0
 		printf '%s\n' '{"sdk":{"version":"8.0.100","rollForward":"latestFeature","allowPrerelease":false}}' |
 			sudo tee "$(dirname "${_project}")/global.json" >/dev/null
 	fi

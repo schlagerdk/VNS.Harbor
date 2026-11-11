@@ -6,7 +6,8 @@ clear
 
 _adminMail=mhs@vns.dk
 _dotnetDir=/usr/lib/dotnet
-_dotnetChannel=10.0
+# The newest .NET is the default host; older channels that sites use are installed beside it
+_dotnetChannel=11.0
 
 echo Install Unzip and Zip
 sudo apt install -y unzip zip
@@ -52,13 +53,14 @@ sudo /etc/acmesh/acme.sh --home /etc/acmesh --config-home /etc/ssl/data --set-de
 echo Add cron job for acme
 sudo /etc/acmesh/acme.sh --home /etc/acmesh --config-home /etc/ssl/data --install-cronjob
 
-# Install the default SDK and runtime, plus .NET 8 for Umbraco 13.
+# Install the newest SDK and runtime, plus .NET 10 (LTS, which most sites use) and .NET 8 for Umbraco 13.
 echo "Install .NET ${_dotnetChannel} SDK and ASP.NET Core runtime"
 sudo mkdir -p "${_dotnetDir}"
 curl -fsSL https://dot.net/v1/dotnet-install.sh -o /tmp/dotnet-install.sh
 sudo bash /tmp/dotnet-install.sh --channel "${_dotnetChannel}" --install-dir "${_dotnetDir}"
 sudo bash /tmp/dotnet-install.sh --channel "${_dotnetChannel}" --runtime aspnetcore --install-dir "${_dotnetDir}"
 rm -f /tmp/dotnet-install.sh
+ensure_dotnet_channel 10.0
 ensure_dotnet_channel 8.0
 
 # The generated systemd services use /usr/bin/dotnet

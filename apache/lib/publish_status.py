@@ -1,4 +1,5 @@
 """Track .NET project configuration for publishes and package update checks."""
+import gzip
 import hashlib
 import json
 import os
@@ -7,6 +8,8 @@ import re
 import subprocess
 import sys
 import tempfile
+import urllib.parse
+import urllib.request
 
 
 def fingerprint(root):
@@ -100,6 +103,98 @@ def parse_updates(output):
     return sorted(packages.values(), key=lambda item: item["name"].lower())
 
 
+# dotnet list package --outdated names the newest version of a package, also when it is built for a newer .NET than
+# the project's, like Microsoft.AspNetCore.* 11.0.0 for a net10.0 project: adding that fails with NU1202.
+# The check asks NuGet which frameworks each version supports and offers the newest one the project can use.
+NUGET_REGISTRATION = "https://api.nuget.org/v3/registration5-gz-semver2/{}/index.json"
+
+
+def version_key(version):
+    """Sort key for a NuGet version: numbers first, and a release after its pre-releases"""
+    base, _, pre = version.split("+")[0].partition("-")
+    numbers = [int(part) for part in re.findall(r"\d+", base)][:4]
+    return (tuple(numbers + [0] * (4 - len(numbers))), not pre, pre.lower())
+
+
+def _core_framework(name):
+    """(major, minor, platform) of a .NET (Core) framework name such as net10.0, .NETCoreApp3.1 or net8.0-windows"""
+    match = re.fullmatch(r"(?:\.netcoreapp|netcoreapp|net)(\d+)\.(\d+)(?:-([a-z]+)[\d.]*)?", (name or "").strip().lower())
+    return (int(match.group(1)), int(match.group(2)), match.group(3) or "") if match else None
+
+
+def framework_supports(group, project):
+    """Whether a package built for the framework group can be used by a project for the framework project"""
+    name = (group or "").strip().lower()
+    if not name or name in ("any", "agnostic") or name.startswith((".netstandard", "netstandard")):
+        return True
+    built, used = _core_framework(name), _core_framework(project)
+    if not built or not used:
+        return False
+    return built[:2] <= used[:2] and (not built[2] or built[2] == used[2])
+
+
+def _nuget_json(url):
+    request = urllib.request.Request(url, headers={"Accept-Encoding": "gzip", "User-Agent": "vns-package-check"})
+    with urllib.request.urlopen(request, timeout=30) as response:
+        data = response.read()
+    return json.loads(gzip.decompress(data) if data[:2] == b"\x1f\x8b" else data)
+
+
+def compatible_latest(name, current, frameworks):
+    """The newest listed version of a package above current that every one of the project's frameworks can use,
+    or None. Pre-releases only when the current version is one."""
+    index = _nuget_json(NUGET_REGISTRATION.format(urllib.parse.quote(name.lower())))
+    best = None
+    for page in index.get("items", []):
+        items = page.get("items")
+        if items is None:
+            items = _nuget_json(page["@id"]).get("items", [])
+        for item in items:
+            entry = item.get("catalogEntry", {})
+            version = entry.get("version", "")
+            if not version or entry.get("listed") is False or version_key(version) <= version_key(current):
+                continue
+            if "-" in version.split("+")[0] and "-" not in current:
+                continue
+            groups = [group.get("targetFramework", "") for group in entry.get("dependencyGroups") or []]
+            if groups and not all(any(framework_supports(group, framework) for group in groups) for framework in frameworks):
+                continue
+            if best is None or version_key(version) > version_key(best):
+                best = version
+    return best
+
+
+def project_frameworks(output):
+    """The frameworks the project targets, as dotnet list package names them"""
+    data = json.loads(output)
+    return sorted({framework["framework"] for project in data.get("projects", []) for framework in project.get("frameworks", [])
+                   if isinstance(framework, dict) and isinstance(framework.get("framework"), str)})
+
+
+def fit_to_frameworks(found, frameworks, show_output=False):
+    """The updates the project can use: each package's newest version for the project's frameworks"""
+    if not frameworks:
+        return found
+    fitted = []
+    for item in found:
+        try:
+            latest = compatible_latest(item["name"], item["current"], frameworks)
+        except (OSError, ValueError, KeyError) as exc:
+            # NuGet could not be asked: the version dotnet named is kept
+            if show_output:
+                print(f'{item["name"]}: could not check which versions support {", ".join(frameworks)} ({exc})', file=sys.stderr, flush=True)
+            fitted.append(item)
+            continue
+        if latest is None:
+            if show_output:
+                print(f'{item["name"]} {item["latest"]} needs a newer .NET than {", ".join(frameworks)}: no update for this project', flush=True)
+            continue
+        if latest != item["latest"] and show_output:
+            print(f'{item["name"]} {item["latest"]} needs a newer .NET than {", ".join(frameworks)}: {latest} is offered instead', flush=True)
+        fitted.append({**item, "latest": latest})
+    return fitted
+
+
 def check_updates(root, show_output=False):
     value = fingerprint(root)
     available = False
@@ -110,7 +205,7 @@ def check_updates(root, show_output=False):
                 ["dotnet", "list", str(project), "package", "--outdated", "--format", "json", "--output-version", "1"],
                 cwd=root, env=os.environ | {"DOTNET_CLI_UI_LANGUAGE": "en-US", "VSLANG": "1033"},
                 capture_output=True, text=True, timeout=180, check=True)
-            found = parse_updates(result.stdout)
+            found = fit_to_frameworks(parse_updates(result.stdout), project_frameworks(result.stdout), show_output)
             for item in found:
                 key = item["name"].lower()
                 if key in packages and packages[key] != item:
