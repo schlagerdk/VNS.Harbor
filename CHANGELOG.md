@@ -2,6 +2,12 @@
 
 All notable changes to VNS.Linux are listed here, newest first.
 
+## [1.0.18] - 2026-11-11
+
+### Features
+
+- Filters for sites with pending publishes, updates, failed checks, unfinished setup or missing environments
+
 ## [1.0.17] - 2026-11-11
 
 ### Features
