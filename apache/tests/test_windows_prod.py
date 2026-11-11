@@ -62,6 +62,8 @@ done
 
 FAKE_CURL = r"""#!/bin/bash
 printf 'curl %s\n' "$*" >>"$FAKE_LOG"
+# While app_offline.htm is on, IIS answers 503: the publish waits for that before it copies
+if [[ "$*" == *"--max-time 5 "* ]]; then printf '%s' "${FAKE_OFFLINE_STATUS:-503}"; exit 0; fi
 printf '%s' "${FAKE_HTTP_STATUS:-200}"
 """
 
@@ -265,10 +267,21 @@ class WindowsPublishTests(ScriptTestCase):
         self.assertIn("--ignore-case", copy)
         self.assertFalse(any(call.startswith("sync ") for call in self.calls()))
 
-    def test_site_comes_back_online_when_the_copy_fails(self):
+    def test_a_failed_copy_keeps_the_update_page(self):
+        # Old and new files would be mixed: the page stays until a publish finishes
         result = self.publish(FAKE_COPY_FAILS="1")
         self.assertNotEqual(result.returncode, 0)
-        self.assertLess(self.index("copy /"), self.index("deletefile"))
+        self.assertFalse(any(call.startswith("deletefile") for call in self.calls()))
+        self.assertIn("keeps showing its update page", result.stderr)
+        self.assertIn("--retries 5 --retries-sleep 5s", self.calls()[self.index("copy /")])
+
+    def test_the_copy_waits_until_the_site_shows_the_update_page(self):
+        result = self.publish()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = self.calls()
+        probe = next(number for number, call in enumerate(calls) if call.startswith("curl") and "--max-time 5 " in call)
+        self.assertLess(probe, self.index("copy /"))
+        self.assertIn("The site shows the update page", result.stdout)
 
     def test_failed_build_never_takes_the_site_offline(self):
         executable(self.bin / "dotnet", "#!/bin/bash\nexit 1\n")

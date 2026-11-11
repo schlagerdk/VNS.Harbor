@@ -48,7 +48,22 @@ windows_take_offline() {
 		return 1
 	fi
 	rm -f "${_page}"
-	# IIS needs a moment to shut the app down and release its files
+	# IIS shuts the app down when it sees app_offline.htm, and answers with the page and 503 when it has.
+	# Wait for that, so the app's files are released before they are replaced, then a little more.
+	if [[ -n ${1:-} ]]; then
+		local _waited=0 _code=""
+		while ((_waited < 60)); do
+			_code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$1" 2>/dev/null || true)
+			[[ ${_code} != 503 ]] || break
+			sleep 2
+			_waited=$((_waited + 2))
+		done
+		if [[ ${_code} == 503 ]]; then
+			echo "The site shows the update page"
+		else
+			echo "The site did not answer with the update page within 60 seconds (last answer: ${_code:-none}). Going on."
+		fi
+	fi
 	sleep "${PROD_OFFLINE_WAIT:-5}"
 }
 

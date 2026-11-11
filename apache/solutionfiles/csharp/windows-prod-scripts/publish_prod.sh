@@ -55,10 +55,17 @@ esac
 _workDir=$(mktemp -d /tmp/publish-windows.XXXXXX)
 _publish=${_workDir}/publish
 
+_copying=0
 on_exit() {
 	local _status=$?
-	# Always bring the site back up, also if the publish fails
-	windows_bring_online || _status=1
+	# Bring the site back up, also if the publish fails before its files are touched. A copy that stopped halfway
+	# leaves old and new files mixed, so the update page stays until a publish finishes.
+	if ((_copying)); then
+		echo "FAILED: the copy did not finish, so the site keeps showing its update page. Publish again; it is removed when a publish finishes." >&2
+		_status=1
+	else
+		windows_bring_online || _status=1
+	fi
 	rm -rf "${_workDir}"
 	exit "${_status}"
 }
@@ -147,10 +154,12 @@ if ((_dryRun)); then
 	exit 0
 fi
 
-windows_take_offline
+windows_take_offline "${_siteUrl}"
 
 echo "Copy to ${PROD_WINDOWS_SHARE}"
-rclone copy "${_publish}" "${_windowsTarget}" "${_copyOpts[@]}"
+# A file IIS has not released yet is tried again, rather than leaving the site half updated
+_copying=1
+rclone copy "${_publish}" "${_windowsTarget}" "${_copyOpts[@]}" --retries 5 --retries-sleep 5s
 
 if ((_updateWebConfig)); then
 	echo "web.config: HTTPS redirect $([[ ${_webConfigHttps} == y ]] && echo added || echo removed)"
@@ -162,6 +171,8 @@ else
 	rclone copyto "${_workDir}/web.config" "${_windowsTarget}/web.config"
 fi
 
+# Every file is in place: the site may come back
+_copying=0
 windows_bring_online
 
 # The first request starts the app, which is why this can take a while.
