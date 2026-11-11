@@ -97,3 +97,17 @@ class WebConfigHttpsTests(unittest.TestCase):
             plain.write_text(helper.web_config("Site", "Production"))
             self.assertTrue(helper.set_https(str(plain), True))
             self.assertIn("<rewrite>", plain.read_text())
+
+
+class OfflinePageTests(unittest.TestCase):
+    def test_publish_shows_the_offline_page_which_needs_nothing_from_outside(self):
+        lib = Path(__file__).resolve().parents[1] / "lib"
+        page = (lib / "app_offline.htm").read_text()
+        self.assertIn('_design="$(dirname "${BASH_SOURCE[0]}")/app_offline.htm"', (lib / "windows_prod.sh").read_text())
+        # The site is down while it is shown, so nothing may be loaded from elsewhere
+        self.assertNotRegex(page, r"(?i)(src|href)=[\"']?(https?:)?//")
+        self.assertNotIn("@import", page)
+        self.assertIn('<noscript><meta http-equiv="refresh" content="5"></noscript>', page)
+        self.assertIn("response.status !== 503", page)
+        # IIS shows a page under 512 bytes as a browser's own error page in some browsers
+        self.assertGreater(len(page.encode()), 512)

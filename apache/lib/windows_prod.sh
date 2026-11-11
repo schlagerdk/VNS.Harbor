@@ -32,9 +32,15 @@ windows_smb_connect() {
 }
 
 windows_take_offline() {
-	local _page
+	local _page _design
 	_page=$(mktemp)
-	echo '<!doctype html><html><head><meta charset="utf-8"><title>Updating</title></head><body><h1>Updating, back shortly.</h1></body></html>' >"${_page}"
+	# The page visitors see while the site is updated. It reloads by itself as soon as the site answers again.
+	_design="$(dirname "${BASH_SOURCE[0]}")/app_offline.htm"
+	if [[ -f ${_design} ]]; then
+		cp "${_design}" "${_page}"
+	else
+		echo '<!doctype html><html><head><meta charset="utf-8"><title>Updating</title></head><body><h1>Updating, back shortly.</h1></body></html>' >"${_page}"
+	fi
 	echo "Take site offline"
 	_windowsOffline=1
 	if ! rclone copyto "${_page}" "${_windowsTarget}/app_offline.htm"; then
