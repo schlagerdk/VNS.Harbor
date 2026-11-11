@@ -2,6 +2,12 @@
 
 All notable changes to VNS.Linux are listed here, newest first.
 
+## [1.0.25] - 2026-11-11
+
+### Other
+
+- Style: The header search has its own clear button, larger and at the right edge
+
 ## [1.0.24] - 2026-11-11
 
 ### Features
