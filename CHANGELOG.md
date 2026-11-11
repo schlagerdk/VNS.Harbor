@@ -2,6 +2,12 @@
 
 All notable changes to VNS.Linux are listed here, newest first.
 
+## [1.1.1] - 2026-11-11
+
+### Features
+
+- Icons for Users and Activity log, root can clear the log, a nicer Profile, and the user editor lists a connection's databases
+
 ## [1.1.0] - 2026-11-11
 
 ### Features
