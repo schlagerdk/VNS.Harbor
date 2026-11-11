@@ -2,6 +2,12 @@
 
 All notable changes to VNS.Linux are listed here, newest first.
 
+## [1.0.14] - 2026-11-11
+
+### Fixes
+
+- A Windows site started by its own .exe is recognised when adopted, and a mismatch shows the web.config's start line
+
 ## [1.0.13] - 2026-11-11
 
 ### Features
