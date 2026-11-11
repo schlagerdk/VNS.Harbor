@@ -1042,6 +1042,90 @@ def api_run_system_update():
         return jsonify(state)
 
 
+GITHUB_REPO = "schlagerdk/VNS.Linux"
+UPDATE_DETAILS = {}
+
+
+def installed_version():
+    """The version in VERSION of the installed VNS, or empty for an installation from before versions"""
+    text = read_text(os.path.join(os.path.dirname(APACHE_DIR), "VERSION")).strip()
+    return text if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", text) else ""
+
+
+def version_key(value):
+    return tuple(int(part) for part in value.split("."))
+
+
+def github_get(url, raw=False):
+    request = urllib.request.Request(url, headers={"User-Agent": "VNS-Admin", "Accept": "application/vnd.github+json"})
+    with urllib.request.urlopen(request, timeout=10) as response:
+        body = response.read(2 * 1024 * 1024).decode("utf-8", errors="replace")
+    return body if raw else json.loads(body)
+
+
+GITHUB_RELEASES = {"etag": None, "releases": None, "blocked_until": 0.0}
+
+
+def github_releases():
+    """The published releases, newest first, or None when there are none or GitHub cannot be read. GitHub is
+    asked with the ETag of the last answer: an unchanged answer (304) does not count against its rate limit."""
+    now = time.time()
+    if now < GITHUB_RELEASES["blocked_until"]:
+        return GITHUB_RELEASES["releases"]
+    headers = {"User-Agent": "VNS-Admin", "Accept": "application/vnd.github+json"}
+    if GITHUB_RELEASES["etag"] and GITHUB_RELEASES["releases"] is not None:
+        headers["If-None-Match"] = GITHUB_RELEASES["etag"]
+    request = urllib.request.Request(f"https://api.github.com/repos/{GITHUB_REPO}/releases?per_page=30", headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            data = json.loads(response.read(4 * 1024 * 1024).decode("utf-8", errors="replace"))
+            etag = response.headers.get("ETag")
+        releases = []
+        for release in data if isinstance(data, list) else []:
+            tag = str(release.get("tag_name", "")).lstrip("vV")
+            if release.get("draft") or release.get("prerelease") or not re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", tag):
+                continue
+            releases.append({"version": tag, "name": str(release.get("name") or "v" + tag)[:200],
+                             "notes": str(release.get("body") or "")[:20000], "url": str(release.get("html_url", "")),
+                             "date": str(release.get("published_at") or "")})
+        releases.sort(key=lambda item: version_key(item["version"]), reverse=True)
+        GITHUB_RELEASES.update(etag=etag, releases=releases)
+    except urllib.error.HTTPError as exc:
+        if exc.code in (403, 429) and exc.headers.get("X-RateLimit-Remaining") == "0":
+            reset = float(exc.headers.get("X-RateLimit-Reset") or 0)
+            GITHUB_RELEASES["blocked_until"] = max(now + 60, min(reset, now + 3600))
+            app.logger.warning("GitHub rate limit reached; the release check waits")
+        elif exc.code != 304:
+            app.logger.warning("Could not read the releases: %s", exc)
+    except (OSError, ValueError) as exc:
+        app.logger.warning("Could not read the releases: %s", exc)
+    return GITHUB_RELEASES["releases"]
+
+
+def commit_details(installed, latest):
+    """Before the first release: the latest commit on main, and a link to every change since the installed one.
+    Read from GitHub once per new commit."""
+    if UPDATE_DETAILS.get("latest") == latest and UPDATE_DETAILS.get("installed") == installed:
+        return UPDATE_DETAILS["details"]
+    details = {"compare_url": f"https://github.com/{GITHUB_REPO}/compare/{installed}...{latest}" if installed
+               else f"https://github.com/{GITHUB_REPO}/commits/main"}
+    try:
+        commit = github_get(f"https://api.github.com/repos/{GITHUB_REPO}/commits/{latest}")
+        message = str(commit.get("commit", {}).get("message", ""))
+        details["latest_commit"] = {"subject": message.split("\n", 1)[0][:300], "body": message.partition("\n")[2].strip()[:3000],
+                                    "url": str(commit.get("html_url", "")), "date": str(commit.get("commit", {}).get("committer", {}).get("date", ""))}
+    except (OSError, ValueError, AttributeError) as exc:
+        app.logger.warning("Could not read the latest commit: %s", exc)
+    UPDATE_DETAILS.update(latest=latest, installed=installed, details=details)
+    return details
+
+
+def update_target():
+    """What an update installs: the newest release, or main before there is one"""
+    releases = github_releases()
+    return "v" + releases[0]["version"] if releases else ""
+
+
 @app.route("/api/system-update")
 def api_system_update():
     with SYSTEM_UPDATE_LOCK:
@@ -1059,8 +1143,20 @@ def api_system_update():
             if len(fields) != 2 or fields[1] != "HEAD" or not re.fullmatch(r"[0-9a-f]{40}", fields[0]):
                 raise ValueError("GitHub returned an invalid version")
             latest = fields[0]
-            response = {"status": "unknown" if not installed else "available" if installed != latest else "current",
-                        "installed": installed, "latest": latest}
+            version = installed_version()
+            releases = github_releases()
+            if releases:
+                # Releases decide: an update installs the newest one, and brings the notes of every newer release
+                newer = [release for release in releases if not version or version_key(release["version"]) > version_key(version)]
+                response = {"status": "available" if newer else "current", "mode": "release", "installed": installed,
+                            "installed_version": version, "latest_version": releases[0]["version"], "releases": newer[:10],
+                            "compare_url": f"https://github.com/{GITHUB_REPO}/compare/v{version}...v{releases[0]['version']}" if version and newer
+                            else releases[0]["url"]}
+            else:
+                response = {"status": "unknown" if not installed else "available" if installed != latest else "current",
+                            "mode": "commit", "installed": installed, "latest": latest, "installed_version": version}
+                if response["status"] != "current":
+                    response.update(commit_details(installed, latest))
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             app.logger.error("System update check failed: %s", exc)
             response = {"status": "error", "error": "Could not check GitHub for updates. Try again in one minute."}
@@ -1804,8 +1900,10 @@ def build_command(data):
         admin_updater = os.path.join(APACHE_DIR, "update_admin_site.sh")
         if not os.path.isfile(updater) or not os.path.isfile(admin_updater):
             abort(400, "VNS update scripts are missing")
-        return "Update VNS and admin site", [
-            bash, "-c", '/bin/bash "$1" && /bin/bash "$2" "$3"',
+        # The newest release, or main before the first one
+        target = update_target()
+        return "Update VNS and admin site" + (" to " + target if target else ""), [
+            "/usr/bin/env", "VNS_UPDATE_REF=" + target, bash, "-c", '/bin/bash "$1" && /bin/bash "$2" "$3"',
             "vns-update", updater, admin_updater, ADMIN_SITE,
         ], "/"
     if kind == "update_package":

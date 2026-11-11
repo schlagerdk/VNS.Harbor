@@ -32,6 +32,7 @@
   <div class="user">
     <button id="btn-settings" class="ghost" title="Settings" aria-haspopup="true">⚙ Settings <span id="system-update-badge" class="badge system-update-available" hidden>Update available</span></button>
     <div id="settings-menu" class="menu" hidden>
+      <div id="settings-version" class="settings-version muted"></div>
       <div id="settings-update-group" class="menu-group" role="group" aria-label="Updates" hidden>
         <div class="menu-group-title">Updates</div>
         <button id="settings-update" type="button" hidden>Update</button>
@@ -531,6 +532,18 @@
     </div>
     <p class="hint" id="setup-site-hint"></p>
     <menu><button type="button" id="setup-site-cancel" class="cancel-link">Cancel</button><button type="submit" class="primary">Set up site</button></menu>
+  </form>
+</dialog>
+
+<dialog id="dlg-system-update" class="newsite wide system-update-dialog" aria-labelledby="system-update-info-title">
+  <form method="dialog">
+    <header class="ns-head">
+      <span class="ns-icon" data-header-icon="download" aria-hidden="true"></span>
+      <div><h2 id="system-update-info-title">Update VNS</h2><p id="system-update-versions"></p></div>
+    </header>
+    <div id="system-update-notes" class="system-update-notes"></div>
+    <p class="hint">The admin service restarts during the update, and the page reloads by itself when it is done.</p>
+    <menu><a id="system-update-changes" class="cancel-link system-update-changes" target="_blank" rel="noopener noreferrer">See every change on GitHub ↗</a><button type="button" id="system-update-cancel" class="cancel-link">Cancel</button><button type="submit" value="ok" class="primary">Update</button></menu>
   </form>
 </dialog>
 

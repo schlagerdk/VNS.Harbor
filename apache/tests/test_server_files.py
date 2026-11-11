@@ -282,7 +282,7 @@ class ServerFilesTests(unittest.TestCase):
         updater = apache.parent / "update.sh"
         admin_updater = apache / "update_admin_site.sh"
         admin_updater.write_text(f'printf "admin:%s\\n" "$1" >> "{calls}"\n')
-        self.ns.update(APACHE_DIR=str(apache), ADMIN_SITE="admin.example.test")
+        self.ns.update(APACHE_DIR=str(apache), ADMIN_SITE="admin.example.test", update_target=lambda: "")
         for code in (0, 7):
             with self.subTest(code=code):
                 updater.write_text(f'echo vns >> "{calls}"\nexit {code}\n')

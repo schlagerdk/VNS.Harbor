@@ -34,7 +34,12 @@ class SystemUpdateTests(unittest.TestCase):
         self.ns = dict(app=self.app, jsonify=jsonify, request=request, Path=Path, BASE=str(self.root), re=re,
                        subprocess=Mock(run=self.run, SubprocessError=subprocess.SubprocessError),
                        SYSTEM_UPDATE_LOCK=threading.Lock(), SYSTEM_UPDATE_CACHE={},
-                       time=Mock(monotonic=self.clock))
+                       time=Mock(monotonic=self.clock), GITHUB_REPO="schlagerdk/VNS.Linux",
+                       installed_version=lambda: self.version, github_releases=lambda: self.releases,
+                       commit_details=lambda installed, latest: {"compare_url": "compare", "latest_commit": {"subject": "fix: x"}},
+                       version_key=lambda value: tuple(int(part) for part in value.split(".")))
+        self.version = ""
+        self.releases = None
         nodes = [node for node in ast.parse((APP / "app.py").read_text()).body
                  if isinstance(node, ast.FunctionDef) and node.name == "api_system_update"]
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "system updates", "exec"), self.ns)
@@ -54,6 +59,24 @@ class SystemUpdateTests(unittest.TestCase):
         self.run.return_value.stdout = self.installed + "\tHEAD\n"
         self.assertEqual(self.client.get("/api/system-update").json["status"], "current")
         self.assertEqual(self.run.call_count, 2)
+
+    def test_releases_decide_once_there_are_some(self):
+        self.marker.write_text(self.installed)
+        self.version = "1.0.0"
+        self.releases = [{"version": "1.2.0", "url": "r12", "notes": "b"}, {"version": "1.1.0", "url": "r11", "notes": "a"},
+                         {"version": "1.0.0", "url": "r10", "notes": ""}]
+        result = self.client.get("/api/system-update?refresh=1").json
+        self.assertEqual((result["status"], result["mode"], result["latest_version"]), ("available", "release", "1.2.0"))
+        self.assertEqual([release["version"] for release in result["releases"]], ["1.2.0", "1.1.0"])
+        self.assertIn("compare/v1.0.0...v1.2.0", result["compare_url"])
+        self.version = "1.2.0"
+        self.assertEqual(self.client.get("/api/system-update?refresh=1").json["status"], "current")
+
+    def test_before_the_first_release_the_latest_commit_is_shown(self):
+        self.marker.write_text(self.installed)
+        result = self.client.get("/api/system-update?refresh=1").json
+        self.assertEqual((result["status"], result["mode"]), ("available", "commit"))
+        self.assertEqual(result["latest_commit"]["subject"], "fix: x")
 
     def test_missing_and_empty_markers_are_unknown(self):
         for marker in (None, ""):

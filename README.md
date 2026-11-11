@@ -132,6 +132,15 @@ cd VNS.Linux
 
 Fetches the latest version from GitHub and synchronizes it to `/vns`. Local files are not deleted. Apache site ports are assigned automatically to the first available port starting at 4000, and a port is reusable after its site is deleted.
 
+`VNS_UPDATE_REF=v1.2.0 /vns/update.sh` installs that release; without it, the newest commit on main.
+
+### Versions and releases
+
+- The version is in `VERSION`, and each release is a tag `vX.Y.Z` and a GitHub release with its notes, also kept in `CHANGELOG.md`.
+- **Settings → Update** in the admin shows the installed version and the one it updates to, with the release notes of every release in between, and a link to every change on GitHub. Once there are releases, an update installs the newest release, not the newest commit on main. Before the first release it installs main as before, and shows the latest commit message instead. The installed version is shown at the top of the Settings menu.
+- GitHub is asked with the ETag of its last answer, so an unchanged answer does not count against its rate limit, and the check waits when the limit is reached.
+- A release is made with `.local/make_release.sh` on a developer's machine. `.local/` is not part of git. It suggests the next minor version (the version in `VERSION` for the first release), writes release notes from the commit messages since the last release (`feat:` under Features, `fix:` under Fixes, the rest under Other), lets you edit them, then updates `VERSION` and `CHANGELOG.md`, commits, tags, pushes and creates the GitHub release: with `gh`, with `GITHUB_TOKEN`, or by opening the filled-in release page.
+
 ## Contents
 
 | Directory / file | Description |

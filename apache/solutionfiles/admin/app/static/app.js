@@ -3311,9 +3311,13 @@ async function checkSystemUpdate(refresh = false) {
 	$("#settings-update").hidden = !available && !unknown;
 	$("#settings-update-group").hidden = $("#settings-update").hidden;
 	$("#settings-update").replaceChildren(svgIcon("sync"), unknown ? "Initialize / update" : "Update");
+	const installedText = result.installed_version ? `v${result.installed_version}` : shortCommit(result.installed);
+	const latestText = result.mode === "release" ? `v${result.latest_version}` : shortCommit(result.latest);
 	$("#btn-settings").title = unknown ? "Installed version unknown. Use Initialize / update to install the latest version and record it."
 		: result.status === "error" ? result.error
-		: available ? `Update available · Installed: ${result.installed.slice(0, 7)} · GitHub: ${result.latest.slice(0, 7)}` : "Settings";
+		: available ? `Update available · Installed: ${installedText} · New: ${latestText}` : "Settings";
+	$("#settings-version").textContent = result.installed_version ? `VNS v${result.installed_version}` : installedText ? `VNS ${installedText}` : "";
+	if (available) $("#settings-update").replaceChildren(svgIcon("sync"), `Update to ${latestText}`);
 	if (result.status === "error") throw new Error(result.error);
 }
 $("#btn-settings").onclick = (event) => {
@@ -3344,13 +3348,71 @@ $("#settings-keep-alive").onclick = () => run(async () => {
 	await api("/api/keep-alive", { method: "PUT", json: { enabled: answer.checked, interval_minutes: interval } });
 	toast("Keep-alive settings saved", "ok");
 });
-$("#settings-update").onclick = () => run(async () => {
-	if (await ask({
-		title: "Update VNS and the admin site?",
-		message: "Download and install the latest VNS version, then update this admin site. Please wait while the admin service restarts. The page reloads automatically after a successful update.",
-		input: false, ok: "Update",
-	})) await runSystemUpdate();
-});
+// Release notes are Markdown: headings, lists and paragraphs, built as text so nothing in them runs
+function markdownBlock(text) {
+	const box = el("div", { className: "release-notes" });
+	let list = null;
+	const plain = (line) => line.replace(/\*\*(.+?)\*\*/g, "$1").replace(/`([^`]+)`/g, "$1").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+	for (const raw of String(text || "").split("\n")) {
+		const line = raw.trimEnd();
+		const heading = line.match(/^#{1,6}\s+(.*)$/);
+		const item = line.match(/^(\s*)[-*]\s+(.*)$/);
+		if (item) {
+			if (!list) box.append(list = el("ul"));
+			list.append(el("li", { className: item[1].length >= 2 ? "nested" : "", textContent: plain(item[2]) }));
+			continue;
+		}
+		list = null;
+		if (heading) box.append(el("h4", { textContent: plain(heading[1]) }));
+		else if (line.trim()) box.append(el("p", { textContent: plain(line) }));
+	}
+	return box;
+}
+const shortCommit = (value) => (value || "").slice(0, 7);
+// What an update brings, before it starts: the versions, the release notes or the latest commit, and a link
+async function openSystemUpdateDialog() {
+	const result = await api("/api/system-update?refresh=1");
+	const releases = result.mode === "release";
+	const from = result.installed_version ? `v${result.installed_version}` : result.installed ? shortCommit(result.installed) : "an unknown version";
+	const to = releases ? `v${result.latest_version}` : shortCommit(result.latest);
+	$("#system-update-versions").textContent = `Installed: ${from} → ${to}`;
+	const notes = $("#system-update-notes");
+	notes.replaceChildren();
+	if (releases) {
+		for (const release of result.releases || []) {
+			notes.append(el("section", { className: "system-update-release" },
+				el("div", { className: "system-update-release-head" },
+					el("strong", { textContent: release.name }),
+					release.date ? el("span", { className: "muted", textContent: formatDate(release.date) }) : "",
+					release.url ? el("a", { href: release.url, target: "_blank", rel: "noopener noreferrer", textContent: "On GitHub ↗" }) : ""),
+				markdownBlock(release.notes || "No notes.")));
+		}
+	} else if (result.latest_commit) {
+		const commit = result.latest_commit;
+		notes.append(el("section", { className: "system-update-release" },
+			el("div", { className: "system-update-release-head" },
+				el("strong", { textContent: "Latest change" }),
+				commit.date ? el("span", { className: "muted", textContent: formatDate(commit.date) }) : "",
+				commit.url ? el("a", { href: commit.url, target: "_blank", rel: "noopener noreferrer", textContent: "Commit ↗" }) : ""),
+			el("p", { className: "system-update-subject", textContent: commit.subject }),
+			commit.body ? markdownBlock(commit.body) : ""));
+	}
+	if (!notes.children.length) notes.append(el("p", { className: "muted", textContent: "No release notes for this update." }));
+	const changes = $("#system-update-changes");
+	changes.hidden = !result.compare_url;
+	changes.href = result.compare_url || "#";
+	const dialog = $("#dlg-system-update");
+	const answer = await new Promise((resolve) => {
+		dialog.querySelector("form").returnValue = "";
+		dialog.returnValue = "";
+		dialog.onclose = () => resolve(dialog.returnValue === "ok");
+		dialog.showModal();
+		document.activeElement?.blur();
+	});
+	if (answer) await runSystemUpdate();
+}
+$("#system-update-cancel").onclick = () => $("#dlg-system-update").close();
+$("#settings-update").onclick = () => run(openSystemUpdateDialog);
 $("#settings-update").dataset.tone = "purple";
 $("#settings-update").prepend(svgIcon("sync"));
 
