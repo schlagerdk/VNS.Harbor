@@ -2,6 +2,12 @@
 
 All notable changes to VNS.Linux are listed here, newest first.
 
+## [1.0.4] - 2026-11-11
+
+### Fixes
+
+- The update finds the newest release from the git tags
+
 ## [1.0.3] - 2026-11-11
 
 ### Features
