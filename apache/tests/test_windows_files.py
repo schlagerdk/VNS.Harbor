@@ -17,6 +17,8 @@ FAKE_RCLONE = textwrap.dedent('''
     command = args.pop(0)
     stat = "--stat" in args
     args = [arg for arg in args if arg != "--stat"]
+    if command == "lsf":
+        args = [arg for arg in args if arg not in ("--files-only", "--max-depth", "1")]
     def entry(path):
         info = os.stat(path)
         return {"Name": os.path.basename(path), "IsDir": os.path.isdir(path), "Size": -1 if os.path.isdir(path) else info.st_size,
@@ -26,6 +28,8 @@ FAKE_RCLONE = textwrap.dedent('''
         if not os.path.exists(path):
             sys.exit("ERROR : directory not found")
         print(json.dumps(entry(path) if stat else [entry(os.path.join(path, name)) for name in os.listdir(path)]))
+    elif command == "lsf":
+        print(*(name for name in os.listdir(path) if os.path.isfile(os.path.join(path, name))), sep=chr(10))
     elif command == "cat":
         sys.stdout.buffer.write(open(path, "rb").read())
     elif command == "rcat":
@@ -64,6 +68,18 @@ class WindowsFilesTests(unittest.TestCase):
         result = subprocess.run([sys.executable, str(HELPER), str(self.root)], input=json.dumps(operation),
                                 capture_output=True, text=True, env=self.env)
         return result.returncode, json.loads(result.stdout)
+
+    def test_details_read_dotnet_and_database_from_the_share(self):
+        (self.root / "App.runtimeconfig.json").write_text(json.dumps({"runtimeOptions": {"tfm": "net10.0",
+            "frameworks": [{"name": "Microsoft.AspNetCore.App", "version": "10.0.0"}]}}))
+        (self.root / "AppSettings.Production.json").write_text(json.dumps({"ConnectionStrings": {
+            "umbracoDbDSN": "Server=sql.example.test;Database=Shop;User Id=shop;Password=x",
+            "umbracoDbDSN_ProviderName": "Microsoft.Data.SqlClient"}}))
+        code, data = self.run_operation(action="details", environment="Production")
+        self.assertEqual(code, 0, data)
+        self.assertEqual(data["dotnet"], "10.0")
+        self.assertEqual(data.get("database_name"), "Shop")
+        self.assertNotEqual(data.get("database"), "Unknown")
 
     def test_folders_come_first_then_files_alphabetically_without_owner(self):
         code, data = self.run_operation(action="list", path="")

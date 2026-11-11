@@ -1182,7 +1182,7 @@ function envPanel(site, env) {
 			className: "database-name", textContent: env.database_name,
 		}));
 	}
-	if (env.dotnet) meta.append(el("dt", { textContent: "Runtime" }), el("dd", {}, dotnetBadge(env.dotnet, `This environment runs on .NET ${env.dotnet}, read from its runtimeconfig.json`)));
+	if (env.dotnet) meta.append(el("dt", { textContent: "Runtime" }), el("dd", { textContent: dotnetLabel(env.dotnet), title: `This environment runs on .NET ${env.dotnet}, read from its runtimeconfig.json` }));
 	if (env.port) meta.append(el("dt", { textContent: "Port" }), el("dd", { textContent: env.port }));
 	if (env.mode === "remote") {
 		meta.append(el("dt", { textContent: "Server" }), el("dd", { textContent: `${env.user || "?"}@${env.host || "?"}:${env.ssh_port || 22}` }));
@@ -1622,6 +1622,9 @@ $("#search").oninput = (event) => {
 $("#btn-server-shell").onclick = () => run(() => openTask({ kind: "shell" }));
 $("#btn-browse").onclick = () => run(() => openFiles("", "", true));
 $("#btn-check-updates").onclick = () => run(async () => {
+	// It asks NuGet about every project on the server, which takes a while: only on purpose
+	const projects = listedSites().filter((site) => site.has_project).length;
+	if (!await ask({ title: "Check for updates?", message: `Check NuGet for package updates in all ${projects} projects on this server. It can take a few minutes. Nothing is installed.`, input: false, ok: "Check for updates" })) return;
 	$("#btn-check-updates").disabled = true;
 	try {
 		updateCheckCurrent.clear();

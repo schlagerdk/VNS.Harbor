@@ -881,7 +881,8 @@ dialog.logs-dialog[open] { display: flex; flex-direction: column; }
 /* Grid or list in the overview */
 .layout-toggle { display: inline-flex; padding: 3px; gap: 2px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
 .layout-toggle button { display: grid; place-items: center; width: 32px; height: 28px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; }
-.layout-toggle button .ico { width: 16px; height: 16px; }
+/* No text beside the icon, so none of the space buttons keep between an icon and its text */
+.layout-toggle button .ico { width: 16px; height: 16px; margin: 0; }
 .layout-toggle button:hover { color: var(--text); background: var(--hover); }
 .layout-toggle button[aria-pressed="true"] { color: var(--text); background: var(--hover); box-shadow: inset 0 0 0 1px var(--line); }
 .cards.list { display: flex; flex-direction: column; gap: 8px; }
@@ -889,7 +890,13 @@ dialog.logs-dialog[open] { display: flex; flex-direction: column; }
 .cards.list > .site .site-head { flex: 0 0 min(40%, 420px); min-width: 0; }
 .cards.list > .site .site-emblem { width: 34px; height: 34px; border-radius: 10px; }
 .cards.list > .site .site-emblem .ico { width: 18px; height: 18px; }
-.cards.list > .site .site-identity { flex-direction: row; align-items: center; flex-wrap: wrap; gap: 6px 12px; }
+/* The name above its badges in every row, so the rows look alike however long the name is */
+.cards.list > .site .site-identity { gap: 6px; }
+/* Each environment line in columns: environment, its status, its links. The columns line up down the list. */
+.cards.list .site-link-group.compact { display: grid; grid-template-columns: 170px minmax(0, 1fr) auto; align-items: center; gap: 12px; }
+.cards.list .site-link-group.compact > .site-environment-head { grid-column: 1; }
+.cards.list .site-link-group.compact > .badge, .cards.list .site-link-group.compact > .publish-status { grid-column: 2; justify-self: start; }
+.cards.list .site-link-group.compact > .site-environment-links, .cards.list .site-link-group.compact > .muted { grid-column: 3; justify-self: end; }
 .cards.list > .site .site-head > .dot { order: -1; margin: 0 2px 0 0; }
 .cards.list > .site .site-links { flex: 1; min-width: 0; margin: 0; }
 .cards.list > .site .multi-select { flex: none; }

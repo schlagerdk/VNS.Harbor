@@ -545,29 +545,31 @@ def windows_probe(site, target, binding, saved):
     return result
 
 
-WINDOWS_RUNTIME = {}
-WINDOWS_RUNTIME_LOCK = threading.Lock()
+WINDOWS_DETAILS = {}
+WINDOWS_DETAILS_LOCK = threading.Lock()
 
 
-def windows_runtime(site, target):
-    """The .NET a Windows environment runs. It is read over SMB in the background, at most every 10 minutes,
-    so the page shows what was read last and never waits for the share."""
+def windows_details(site, target, environment):
+    """The .NET and database of a Windows environment, from its runtimeconfig.json and appsettings files.
+    They are read over SMB in the background, at most every 10 minutes, so the page shows what was read last
+    and never waits for the share."""
     key = (site, target)
-    with WINDOWS_RUNTIME_LOCK:
-        checked, value, running = WINDOWS_RUNTIME.get(key, (0, "", False))
+    with WINDOWS_DETAILS_LOCK:
+        checked, value, running = WINDOWS_DETAILS.get(key, (0, {}, False))
         if running or time.time() - checked < 600:
             return value
-        WINDOWS_RUNTIME[key] = (checked, value, True)
+        WINDOWS_DETAILS[key] = (checked, value, True)
 
     def read():
         found = value
         try:
             with app.app_context():
-                found = windows_files(site, target, {"action": "runtime"}).get("dotnet", "") or value
-        except Exception as exc:  # noqa: BLE001 - a share that does not answer only leaves the version unknown
-            app.logger.warning("Could not read the .NET version of %s %s: %s", site, target, exc)
-        with WINDOWS_RUNTIME_LOCK:
-            WINDOWS_RUNTIME[key] = (time.time(), found, False)
+                answer = windows_files(site, target, {"action": "details", "environment": environment})
+            found = {key: answer[key] for key in answer if key != "ok"}
+        except Exception as exc:  # noqa: BLE001 - a share that does not answer only leaves the details unknown
+            app.logger.warning("Could not read the details of %s %s: %s", site, target, exc)
+        with WINDOWS_DETAILS_LOCK:
+            WINDOWS_DETAILS[key] = (time.time(), found, False)
 
     threading.Thread(target=read, daemon=True).start()
     return value
@@ -812,7 +814,8 @@ def site_info(name, states):
                                  "state_error": answer.get("error", ""), "state_checked": answer.get("checked"), "binding": prod["PROD_BINDING"],
                                  "port": "", "path": "", "host": share[2:].split("/", 1)[0], "user": prod["PROD_SMB_USER"], "folder": share,
                                  "environment": prod["PROD_ENVIRONMENT"] or "Unknown", "scheme": "https" if secure else "http", "https": secure,
-                                 "dotnet": windows_runtime(name, target)})
+                                 "database": "Unknown",
+                                 **windows_details(name, target, prod["PROD_ENVIRONMENT"] or "Production")})
         elif local:
             full = os.path.realpath(local)
             inside = full == WEB_ROOT or full.startswith(WEB_ROOT + os.sep)

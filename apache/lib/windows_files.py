@@ -74,19 +74,35 @@ def handle(share, data):
     path = relative(data.get("path", ""))
     if action in ("delete", "rename") and not path:
         raise ValueError("Use Delete site to remove the site")
-    if action == "runtime":
-        # The .NET the site runs, from the runtimeconfig.json beside its dll
+    if action == "details":
+        # What the site page shows of a Windows environment, read from the files in its folder:
+        # the .NET it runs (its runtimeconfig.json) and its database (its appsettings files)
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-        from database_info import runtime_version
-        names = rclone("lsf", "--files-only", "--max-depth", "1", "--include", "*.runtimeconfig.json", share.remote("")).decode("utf-8", "replace").split()
-        for name in sorted(names):
+        import tempfile
+        from database_info import database_details, runtime_version
+        names = rclone("lsf", "--files-only", "--max-depth", "1", share.remote("")).decode("utf-8", "replace").splitlines()
+        details = {"dotnet": ""}
+        for name in sorted(name for name in names if name.lower().endswith(".runtimeconfig.json")):
             try:
-                version = runtime_version(json.loads(rclone("cat", share.remote(name)).decode("utf-8-sig")))
+                details["dotnet"] = runtime_version(json.loads(rclone("cat", share.remote(name)).decode("utf-8-sig")))
             except ValueError:
                 continue
-            if version:
-                return {"dotnet": version}
-        return {"dotnet": ""}
+            if details["dotnet"]:
+                break
+        environment = data.get("environment") if isinstance(data.get("environment"), str) else ""
+        wanted = {"appsettings.json"} | ({"appsettings." + environment.lower() + ".json"} if environment else set())
+        with tempfile.TemporaryDirectory() as folder:
+            for name in names:
+                # Windows does not mind the case of a name: the copy gets the name database_details looks for
+                if name.lower() in wanted:
+                    local = "appsettings.json" if name.lower() == "appsettings.json" else "appsettings." + environment + ".json"
+                    with open(os.path.join(folder, local), "wb") as stream:
+                        stream.write(rclone("cat", share.remote(name)))
+            try:
+                details.update(database_details(folder, environment))
+            except (OSError, ValueError):
+                details["database"] = "Unknown"
+        return details
     if action == "list":
         items = []
         for entry in json.loads(rclone("lsjson", "--no-mimetype", share.remote(path))):
