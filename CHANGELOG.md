@@ -2,6 +2,13 @@
 
 All notable changes to VNS.Linux are listed here, newest first.
 
+## [1.1.8] - 2026-11-11
+
+### Features
+
+- The DNS card's CNAME follows the address the admin is visited on, and a domain itself gets only an A record
+- A subdomain's DNS card also suggests a CNAME to the server's own host name
+
 ## [1.1.7] - 2026-11-11
 
 ### Features
