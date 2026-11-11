@@ -15,7 +15,9 @@ def normalize_dns_name(value, fully_qualified=False):
     if (len(name) > 253 or (fully_qualified and len(labels) < 2)
             or any(not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", label)
                    for label in labels)):
-        raise ValueError("Use valid DNS labels (at most 63 characters each, 253 total).")
+        # The name is shown as Python writes it, so a space or a control character in it can be seen
+        raise ValueError(f"{value!r} is not a valid DNS name. Use letters, digits and hyphens between the dots "
+                         "(at most 63 characters each, 253 total).")
     return name.lower() if fully_qualified else name
 
 

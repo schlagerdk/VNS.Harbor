@@ -43,10 +43,11 @@ if [[ ! -x /etc/acmesh/acme.sh ]]; then
 fi
 
 echo Set letsencrypt to default
-sudo /etc/acmesh/acme.sh --set-default-ca --server letsencrypt
+# acme.sh is given its folders, as when it was installed: without them it looks for its config in /root/.acme.sh
+sudo /etc/acmesh/acme.sh --home /etc/acmesh --config-home /etc/ssl/data --set-default-ca --server letsencrypt
 
 echo Add cron job for acme
-sudo /etc/acmesh/acme.sh --install-cronjob
+sudo /etc/acmesh/acme.sh --home /etc/acmesh --config-home /etc/ssl/data --install-cronjob
 
 # Install the default SDK and runtime, plus .NET 8 for Umbraco 13.
 echo "Install .NET ${_dotnetChannel} SDK and ASP.NET Core runtime"

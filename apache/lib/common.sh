@@ -16,15 +16,21 @@ _acmeServer=letsencrypt
 _adminMail=mhs@vns.dk
 
 # Ask for a value unless it is already set. Usage: ask VARNAME "Prompt" [default]
+# A yes/no question, a prompt ending in (y/n) with y or n as default, is shown as [Y/n] or [y/N] like the other scripts'.
+# -e lets backspace and the arrow keys edit the answer, so no control characters end up in it; spaces around it are dropped.
 ask() {
-	local _name=$1 _prompt=$2 _default=${3:-}
+	local _name=$1 _prompt=$2 _default=${3:-} _answer
 	if [[ -z ${!_name:-} ]]; then
-		if [[ -n ${_default} ]]; then
-			read -r -p "${_prompt} [${_default}]: " "${_name}"
-		else
-			read -r -p "${_prompt}: " "${_name}"
+		if [[ ${_prompt} == *" (y/n)" && ${_default} == [yYnN] ]]; then
+			_prompt=${_prompt% (y/n)}
+			[[ ${_default} == [yY] ]] && _prompt+=" [Y/n]" || _prompt+=" [y/N]"
+		elif [[ -n ${_default} ]]; then
+			_prompt+=" [${_default}]"
 		fi
-		printf -v "${_name}" '%s' "${!_name:-${_default}}"
+		read -r -e -p "${_prompt}: " _answer
+		_answer=${_answer#"${_answer%%[![:space:]]*}"}
+		_answer=${_answer%"${_answer##*[![:space:]]}"}
+		printf -v "${_name}" '%s' "${_answer:-${_default}}"
 	fi
 }
 
