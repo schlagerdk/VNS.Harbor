@@ -2,6 +2,12 @@
 
 All notable changes to VNS.Linux are listed here, newest first.
 
+## [1.0.21] - 2026-11-11
+
+### Features
+
+- A site's environments can be shown as a list with Publish, Clear logs and Sync on each row, unfolding to the whole card
+
 ## [1.0.20] - 2026-11-11
 
 ### Fixes
