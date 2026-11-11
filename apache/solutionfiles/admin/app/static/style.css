@@ -367,6 +367,8 @@ body.login { display: grid; place-items: center; min-height: 100vh; min-height: 
 .detail-title { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 12px; }
 .detail-title h2 { margin: 0; font-size: 26px; }
 .detail-title .detail-title-action { margin-left: auto; }
+/* Several actions beside the title: only the first is pushed right, the rest follow it */
+.detail-title .detail-title-action ~ .detail-title-action { margin-left: 0; }
 .sql-heading { margin-bottom: 16px; }
 #site-head > .detail-title:last-child { margin-bottom: 16px; }
 #site-head > .actions { display: flex; gap: 8px; flex-wrap: wrap; padding-top: 20px; margin-bottom: 20px; }
@@ -866,4 +868,34 @@ dialog.logs-dialog[open] { display: flex; flex-direction: column; }
 #sql-restore-overwrite { border-color: color-mix(in srgb, var(--red) 45%, var(--line)); }
 #sql-restore-overwrite legend { color: var(--red); }
 #sql-restore-submit.primary.danger { background: #da3633; border-color: var(--red); color: #fff; }
-.badge.dotnet { text-transform: none; color: #fff; background: #512bd4; }
+
+/* .NET versions: each major its own colour. Outlined, so they are not taken for the Umbraco version next to them. */
+.badge.dotnet { --tone: #a371f7; text-transform: none; color: var(--tone); background: color-mix(in srgb, var(--tone) 12%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tone) 55%, transparent); }
+.badge.dotnet[data-major="8"] { --tone: #8b949e; }
+.badge.dotnet[data-major="9"] { --tone: #d29922; }
+.badge.dotnet[data-major="10"] { --tone: #a371f7; }
+.badge.dotnet[data-major="11"] { --tone: #39c5cf; }
+.badge.dotnet[data-major="12"] { --tone: #3fb950; }
+.badge.dotnet[data-major="13"] { --tone: #f778ba; }
+
+/* Grid or list in the overview */
+.layout-toggle { display: inline-flex; padding: 3px; gap: 2px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); }
+.layout-toggle button { display: grid; place-items: center; width: 32px; height: 28px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); cursor: pointer; }
+.layout-toggle button .ico { width: 16px; height: 16px; }
+.layout-toggle button:hover { color: var(--text); background: var(--hover); }
+.layout-toggle button[aria-pressed="true"] { color: var(--text); background: var(--hover); box-shadow: inset 0 0 0 1px var(--line); }
+.cards.list { display: flex; flex-direction: column; gap: 8px; }
+.cards.list > .site { flex-direction: row; align-items: center; gap: 20px; padding: 12px 16px; border-radius: 10px; }
+.cards.list > .site .site-head { flex: 0 0 min(40%, 420px); min-width: 0; }
+.cards.list > .site .site-emblem { width: 34px; height: 34px; border-radius: 10px; }
+.cards.list > .site .site-emblem .ico { width: 18px; height: 18px; }
+.cards.list > .site .site-identity { flex-direction: row; align-items: center; flex-wrap: wrap; gap: 6px 12px; }
+.cards.list > .site .site-head > .dot { order: -1; margin: 0 2px 0 0; }
+.cards.list > .site .site-links { flex: 1; min-width: 0; margin: 0; }
+.cards.list > .site .multi-select { flex: none; }
+@media (max-width: 760px) {
+	.cards.list > .site { flex-direction: column; align-items: stretch; gap: 12px; }
+	.cards.list > .site .site-head { flex-basis: auto; }
+}
+.site.selectable { user-select: none; }
+.site.selectable:hover { border-color: var(--blue); }

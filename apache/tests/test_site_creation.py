@@ -703,7 +703,7 @@ ensure_dotnet_channel 8.0
 class ProjectRuntimeTests(unittest.TestCase):
     def test_net8_templates_install_and_select_net8(self):
         helper = (APACHE / "lib/dotnet.sh").read_text()
-        for framework in ("net8.0", "net10.0"):
+        for framework in ("net8.0", "net10.0", "net11.0"):
             with self.subTest(framework=framework), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
                 project = root / "example-site.csproj"
@@ -723,7 +723,8 @@ configure_project_dotnet "$1"
                     self.assertEqual(json.loads((root / "global.json").read_text())["sdk"]["version"],
                                      "8.0.100")
                 else:
-                    self.assertNotIn("ensure:", result.stdout)
+                    # Every project gets the .NET it targets; only .NET 8 is pinned to its own SDK
+                    self.assertIn("ensure:" + framework[3:], result.stdout)
                     self.assertFalse((root / "global.json").exists())
 
     def test_all_publish_paths_select_the_project(self):

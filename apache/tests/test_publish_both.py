@@ -129,13 +129,13 @@ const openTask = async payload => tasks.push(payload);
             allSites = [site];
             renderSite(site.name);
             const actions = $("#site-targets-actions").children;
-            const button = actions.find(item => item.textContent === "Publish all");
+            const button = actions.find(item => item.textContent === "Publish environments");
             assert.ok(button);
             tasks = [];
             confirmed = false;
             await button.onclick();
             assert.equal(tasks.length, 0);
-            assert.equal(prompts.at(-1).title, "Publish all?");
+            assert.equal(prompts.at(-1).title, "Publish environments?");
             confirmed = true;
             await button.onclick();
             assert.deepEqual(tasks, [{kind: "publish_both", site: site.name, environments_only: true}]);
@@ -147,7 +147,7 @@ const openTask = async payload => tasks.push(payload);
     ]) {
         allSites = [{name: "example.test", kind: "csharp", prod, scripts, environments: []}];
         renderSite("example.test");
-        assert.ok(!$("#site-targets-actions").children.some(item => item.textContent === "Publish all"));
+        assert.ok(!$("#site-targets-actions").children.some(item => item.textContent === "Publish environments"));
     }
 })().catch(error => {console.error(error); process.exitCode = 1;});
 """

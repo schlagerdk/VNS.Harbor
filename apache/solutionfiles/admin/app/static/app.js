@@ -433,6 +433,8 @@ function matches(site) {
 // ------------------------------------------------------------------ button icons
 // Inline SVG (Lucide-style, 24x24 stroke icons); the CSP does not allow external images
 const iconPaths = {
+	grid: "M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z",
+	rows: "M4 5h16v4H4zM4 15h16v4H4z",
 	lock: "M5 11h14v10H5zM8 11V7a4 4 0 0 1 8 0v4",
 	unlock: "M5 11h14v10H5zM8 11V7a4 4 0 0 1 7.5-2",
 	terminal: "M4 17l6-6-6-6M12 19h8",
@@ -465,7 +467,7 @@ const iconPaths = {
 // label (exact, or a prefix ending in "*") -> [icon, tone]
 const buttonStyles = {
 	"Shell": ["terminal", "blue"], "Server shell": ["terminal", "blue"], "New file": ["file", "blue"], "New folder": ["folder", "blue"], "Upload": ["upload", "blue"], "Browse /": ["folder", "blue"], "Files": ["folder", "blue"], "Manage": ["manage", "blue"],
-	"Publish": ["upload", "green"], "Publish all": ["upload", "green"], "Sync settings…": ["sync", "blue"], "Start": ["play", "green"],
+	"Publish": ["upload", "green"], "Publish all": ["upload", "green"], "Publish environments": ["upload", "green"], "Sync settings…": ["sync", "blue"], "Start": ["play", "green"],
 	"Check for updates": ["download", "amber"],
 	"Add package": ["download", "green"], "Remove package": ["trash", "red"],
 	"Add": ["download", "green"], "Remove": ["trash", "red"], "Check": ["download", "amber"],
@@ -531,6 +533,24 @@ function renderMultiSelection() {
 	$("#btn-multi-cancel").hidden = !multiSelecting;
 }
 
+// The overview as cards in a grid (the default) or as a list with a row per site, remembered in this browser
+let siteLayout = "grid";
+try { if (localStorage.getItem("vns-site-layout") === "list") siteLayout = "list"; } catch (error) {}
+function applySiteLayout() {
+	$("#sites").classList.toggle("list", siteLayout === "list");
+	$("#layout-grid").setAttribute("aria-pressed", String(siteLayout === "grid"));
+	$("#layout-list").setAttribute("aria-pressed", String(siteLayout === "list"));
+}
+$("#layout-grid").append(svgIcon("grid"));
+$("#layout-list").append(svgIcon("rows"));
+for (const layout of ["grid", "list"]) {
+	$("#layout-" + layout).onclick = () => {
+		siteLayout = layout;
+		try { localStorage.setItem("vns-site-layout", layout); } catch (error) {}
+		renderSites();
+	};
+}
+
 function renderSites() {
 	const siteCount = listedSites().length;
 	const hideFilters = siteCount <= 1;
@@ -546,6 +566,7 @@ function renderSites() {
 	}
 	renderMultiSelection();
 	const box = $("#sites");
+	applySiteLayout();
 	box.replaceChildren();
 	const visible = overviewSites().filter(matches);
 	$("#no-sites").hidden = visible.length > 0;
@@ -615,6 +636,13 @@ const versionColors = 8; // majors 18, 19, 20 … get different colours (see .ba
 
 // .NET 10.0 is shown as .NET 10, a minor version only when it is not .0
 const dotnetLabel = (version) => ".NET " + String(version).replace(/\.0$/, "");
+// Each major version its own colour (see .badge.dotnet[data-major] in style.css), so sites on an old .NET stand out
+function dotnetBadge(version, title) {
+	const badge = el("span", { className: "badge dotnet", textContent: dotnetLabel(version), title });
+	const major = parseInt(version, 10);
+	if (Number.isFinite(major)) badge.dataset.major = String(major);
+	return badge;
+}
 
 function kindBadges(site) {
 	const badges = el("div", { className: "badges" }, el("span", { className: "badge " + site.kind, textContent: kindLabel[site.kind] || site.kind }));
@@ -624,7 +652,7 @@ function kindBadges(site) {
 		if (Number.isFinite(major)) badge.dataset.major = String(major % versionColors);
 		badges.append(badge);
 	}
-	if (site.dotnet) badges.append(el("span", { className: "badge dotnet", textContent: dotnetLabel(site.dotnet), title: `Runs on .NET ${site.dotnet}` }));
+	if (site.dotnet) badges.append(dotnetBadge(site.dotnet, `Runs on .NET ${site.dotnet}`));
 	if (site.admin) badges.append(el("span", { className: "badge admin", textContent: "this admin site" }));
 	if (site.not_set_up) badges.append(el("span", { className: "badge not-set-up", textContent: "Not set up", title: "A folder without a service, or a site whose setup was not finished. Open it and choose Set up site." }));
 	if (site.managed_by) badges.append(el("span", { className: "badge", textContent: "Managed from " + (site.managed_by.host || "another server"), title: `Environment of ${site.managed_by.site} on ${site.managed_by.host}. Publish and copy it from there.` }));
@@ -701,7 +729,7 @@ function siteCard(site) {
 	const state = siteState(site);
 	const actions = el("div", { className: "site-links" });
 	const allEnvironments = sortedEnvironments(site.environments);
-	const compact = allEnvironments.length > 1;
+	const compact = allEnvironments.length > 1 || siteLayout === "list";
 	const expanded = expandedCards.has(site.name);
 	const listed = compact && !expanded ? allEnvironments.slice(0, maxCardEnvironments) : allEnvironments;
 	for (const env of listed) {
@@ -760,7 +788,14 @@ function siteCard(site) {
 					renderMultiSelection();
 				} }), el("span", { textContent: "Select site" }))
 		: null;
-	return el("article", { className: "site " + state + (hasProd(site) ? " with-production" : "") + (site.admin ? " is-admin" : ""), onclick: () => go(siteLink(site.name)) },
+	// While sites are being selected, a click anywhere on the card selects it; links on it still open
+	const open = () => {
+		if (!selection) return go(siteLink(site.name));
+		const box = selection.querySelector("input");
+		box.checked = !box.checked;
+		box.dispatchEvent(new Event("change"));
+	};
+	return el("article", { className: "site " + state + (hasProd(site) ? " with-production" : "") + (site.admin ? " is-admin" : "") + (selection ? " selectable" : ""), onclick: open },
 		...(selection ? [selection] : []),
 		el("div", { className: "site-head" },
 			el("span", { className: "site-emblem" }, svgIcon("globe")),
@@ -911,14 +946,22 @@ function renderSite(name) {
 	}
 	const actions = el("div", { className: "actions" });
 	const add = (label, handler, className) => actions.append(el("button", { textContent: label, className: className || "", onclick: () => run(handler) }));
+	// Publish all, beside the title, publishes the main site and then every environment.
+	// Publish environments, above the environments, publishes only them.
+	let publishAll = null;
 	if (site.has_project && hasProd(site) && site.scripts.includes("publish_prod.sh") && ["publish_local.sh", "publish.sh"].some((file) => site.scripts.includes(file))) {
-		targetsActions.append(el("button", { textContent: "Publish all", title: "Publish the main site, then every environment", onclick: () => run(async () => {
-			const deleted = site.environments.filter(isMissingEnv).map((env) => bindingLabel(env) || env.folder);
-			const skipped = deleted.length ? `\nSkipped, as they no longer exist on their servers: ${deleted.join(", ")}.` : "";
-			if (await ask({ title: "Publish all?", message: `Build the main site and publish it to every environment, one at a time. The main site itself is not published. The services are restarted. If one fails, the rest are not published.${skipped}`, input: false, ok: "Publish all" })) {
+		const deleted = site.environments.filter(isMissingEnv).map((env) => bindingLabel(env) || env.folder);
+		const skipped = deleted.length ? `\nSkipped, as they no longer exist on their servers: ${deleted.join(", ")}.` : "";
+		targetsActions.append(el("button", { textContent: "Publish environments", title: "Publish to every environment, not the main site", onclick: () => run(async () => {
+			if (await ask({ title: "Publish environments?", message: `Build the main site and publish it to every environment, one at a time. The main site itself is not published. The services are restarted. If one fails, the rest are not published.${skipped}`, input: false, ok: "Publish environments" })) {
 				await openTask({ kind: "publish_both", site: site.name, environments_only: true });
 			}
 		}) }));
+		publishAll = el("button", { textContent: "Publish all", className: "detail-title-action", title: "Publish the main site, then every environment", onclick: () => run(async () => {
+			if (await ask({ title: "Publish all?", message: `Publish the main site, then every environment, one at a time. The services are restarted. If one fails, the rest are not published.${skipped}`, input: false, ok: "Publish all" })) {
+				await openTask({ kind: "publish_both", site: site.name });
+			}
+		}) });
 	}
 	if (site.has_project && site.kind !== "csharp" && site.kind !== "umbraco" && site.scripts.includes("outdated.sh")) {
 		actions.append(el("button", { textContent: "Check outdated", title: "outdated.sh", onclick: () => run(() => openTask({ kind: "script", site: site.name, script: "outdated.sh" })) }));
@@ -951,6 +994,7 @@ function renderSite(name) {
 	if ((site.adopt_into || []).length) {
 		title.append(el("button", { textContent: "Move under main site", className: "detail-title-action", onclick: () => run(() => openAdoptDialog(site)) }));
 	}
+	if (publishAll) title.append(publishAll);
 	head.append(title);
 	if (actions.childElementCount) head.append(actions);
 	for (const env of site.environments) {
@@ -1138,7 +1182,7 @@ function envPanel(site, env) {
 			className: "database-name", textContent: env.database_name,
 		}));
 	}
-	if (env.dotnet) meta.append(el("dt", { textContent: "Runtime" }), el("dd", { textContent: dotnetLabel(env.dotnet), title: `This environment runs on .NET ${env.dotnet}, read from its runtimeconfig.json` }));
+	if (env.dotnet) meta.append(el("dt", { textContent: "Runtime" }), el("dd", {}, dotnetBadge(env.dotnet, `This environment runs on .NET ${env.dotnet}, read from its runtimeconfig.json`)));
 	if (env.port) meta.append(el("dt", { textContent: "Port" }), el("dd", { textContent: env.port }));
 	if (env.mode === "remote") {
 		meta.append(el("dt", { textContent: "Server" }), el("dd", { textContent: `${env.user || "?"}@${env.host || "?"}:${env.ssh_port || 22}` }));

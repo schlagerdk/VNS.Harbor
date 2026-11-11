@@ -2139,7 +2139,7 @@ def build_command(data):
         active = publishable_targets(site, root)
         if not active and not main_too:
             abort(400, "No environment to publish to: they no longer exist on their servers")
-        return "Publish all: " + site, [
+        return ("Publish all: " if main_too else "Publish environments: ") + site, [
             sys.executable, os.path.join(APACHE_DIR, "lib", "publish_status.py"),
             "both", root, *([os.path.realpath(os.path.join(folder, local))] if main_too else []),
             *(os.path.realpath(os.path.join(target_folder(root, target), "publish_prod.sh")) for target in active),
