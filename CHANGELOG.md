@@ -2,6 +2,12 @@
 
 All notable changes to VNS.Linux are listed here, newest first.
 
+## [1.1.3] - 2026-11-11
+
+### Fixes
+
+- A user is sent to the part they have access to, and a user without sites is told who gives access
+
 ## [1.1.2] - 2026-11-11
 
 ### Fixes
