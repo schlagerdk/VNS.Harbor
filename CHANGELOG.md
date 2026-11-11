@@ -2,6 +2,12 @@
 
 All notable changes to VNS.Linux are listed here, newest first.
 
+## [1.0.15] - 2026-11-11
+
+### Features
+
+- Sites show the .NET version they run, in the overview and per environment, also on remote Linux and Windows servers
+
 ## [1.0.14] - 2026-11-11
 
 ### Fixes
