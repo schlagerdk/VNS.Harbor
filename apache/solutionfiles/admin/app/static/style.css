@@ -1125,3 +1125,23 @@ dialog.newsite > form > .ns-head, dialog.newsite > .ns-head { position: sticky; 
 #dlg-user .switch:focus-visible { outline: 2px solid rgba(88, 166, 255, .6); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) { #dlg-user .switch, #dlg-user .switch::after { transition: none; } }
 #dlg-user .grant-card-text strong { color: var(--text); font-weight: 600; }
+/* An option under a card (May create sites, May add SQL connections) and Locked: a row with an icon, a line and a
+   small switch. Under a card it is set in, on a line that joins it to the card. */
+#dlg-user .option-row { display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255, 255, 255, .02); cursor: pointer; transition: border-color .15s, background .15s; }
+#dlg-user .option-row:hover { border-color: rgba(88, 166, 255, .3); }
+#dlg-user .grant-area > .option-row { position: relative; margin: -2px 0 4px 26px; }
+#dlg-user .grant-area > .option-row::before { content: ""; position: absolute; left: -17px; top: -12px; width: 12px; height: 32px; border-left: 1px solid var(--line); border-bottom: 1px solid var(--line); border-bottom-left-radius: 8px; }
+#dlg-user .option-row:has(.switch:checked) { border-color: rgba(88, 166, 255, .45); background: rgba(88, 166, 255, .07); }
+#dlg-user .user-locked { margin: 12px 0 2px; }
+#dlg-user .user-locked:has(.switch:checked) { border-color: rgba(248, 81, 73, .5); background: rgba(248, 81, 73, .08); }
+.option-icon { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; color: #b9d8ff; background: rgba(88, 166, 255, .14); }
+.option-icon.sql { color: #c9b6ff; background: rgba(163, 113, 247, .14); }
+.option-icon.lock { color: #ffa198; background: rgba(248, 81, 73, .14); }
+.option-icon .ico { width: 15px; height: 15px; margin: 0; }
+.option-text { display: grid; gap: 1px; min-width: 0; }
+#dlg-user .option-text strong { color: var(--text); font-size: 13px; font-weight: 600; }
+.option-text small { color: var(--muted); font-size: 12px; }
+#dlg-user .switch.small { width: 34px; height: 20px; }
+#dlg-user .switch.small::after { width: 14px; height: 14px; }
+#dlg-user .switch.small:checked::after { transform: translateX(14px); }
+#dlg-user .switch.danger:checked { border-color: var(--red); background: var(--red); }

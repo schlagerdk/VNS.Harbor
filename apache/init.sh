@@ -79,6 +79,12 @@ dotnet --list-runtimes
 echo "Installed SDKs:"
 dotnet --list-sdks
 
+echo "Install Umbraco templates"
+dotnet new install Umbraco.Templates --force
+
+echo "Install VNS templates"
+dotnet new install VNS.Templates --force
+
 echo "Install configurable site keep-alive cron job"
 sudo python3 "$(pwd)/lib/keep_alive.py" --install
 sudo systemctl enable --now cron

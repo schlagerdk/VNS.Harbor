@@ -632,13 +632,17 @@
       <label class="type-card"><input type="radio" name="role" value="user" checked><span class="tc-title">User</span><span class="tc-sub">Only what you choose below. Never a terminal or the server's files.</span></label>
       <label class="type-card"><input type="radio" name="role" value="admin"><span class="tc-title">Administrator</span><span class="tc-sub">Everything, also users. Can do what you can.</span></label>
     </div>
-    <label class="grant-flag user-disabled"><input name="disabled" type="checkbox"><span><strong>Locked</strong> <span class="muted">· cannot log in, and a session that is open ends at once</span></span></label>
+    <label class="option-row user-locked"><span class="option-icon lock" data-header-icon="lock" aria-hidden="true"></span>
+      <span class="option-text"><strong>Locked</strong><small>Cannot log in, and a session that is open ends at once</small></span>
+      <input name="disabled" type="checkbox" class="switch small danger" aria-label="Locked"></label>
     <div id="user-scope">
       <label class="grant-card"><span class="grant-card-icon" data-header-icon="globe" aria-hidden="true"></span>
         <span class="grant-card-text"><strong>Web Server</strong><small>Sites and their environments</small></span>
         <input name="web" type="checkbox" class="switch" aria-label="Web Server"></label>
       <div id="user-web" class="grant-area">
-        <label class="grant-flag"><input name="create_sites" type="checkbox"> May create sites; a site they create is theirs, with everything</label>
+        <label class="option-row"><span class="option-icon" data-header-icon="globe" aria-hidden="true"></span>
+          <span class="option-text"><strong>May create sites</strong><small>A site they create is theirs, with everything on it</small></span>
+          <input name="create_sites" type="checkbox" class="switch small" aria-label="May create sites"></label>
         <p class="hint">Tick a site for all of it, also environments added later, or open it and choose environments. An environment alone shows only that, not the main site. The actions count for the chosen environments: a user publishes and syncs only to those.</p>
         <div id="user-sites" class="grant-list"></div>
       </div>
@@ -646,7 +650,9 @@
         <span class="grant-card-text"><strong>SQL Server</strong><small>Connections and their databases</small></span>
         <input name="sql" type="checkbox" class="switch" aria-label="SQL Server"></label>
       <div id="user-sql" class="grant-area">
-        <label class="grant-flag"><input name="manage_connections" type="checkbox"> May add SQL connections; one they add is theirs to change. The others stay locked.</label>
+        <label class="option-row"><span class="option-icon sql" data-header-icon="server" aria-hidden="true"></span>
+          <span class="option-text"><strong>May add SQL connections</strong><small>One they add is theirs to change; the others stay locked</small></span>
+          <input name="manage_connections" type="checkbox" class="switch small" aria-label="May add SQL connections"></label>
         <div id="user-connections" class="grant-list"></div>
       </div>
     </div>
