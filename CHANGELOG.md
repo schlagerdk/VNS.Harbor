@@ -2,6 +2,12 @@
 
 All notable changes to VNS.Linux are listed here, newest first.
 
+## [1.0.19] - 2026-11-11
+
+### Fixes
+
+- The overview's buttons stay on the right when there are no filters, e.g. with a single site
+
 ## [1.0.18] - 2026-11-11
 
 ### Features
