@@ -2,6 +2,16 @@
 
 All notable changes to VNS.Linux are listed here, newest first.
 
+## [1.1.2] - 2026-11-11
+
+### Fixes
+
+- Small dialogs are back as they were, and changing a user's access no longer logs them out
+
+### Other
+
+- Style: The buttons in small dialogs have room and a line above them
+
 ## [1.1.1] - 2026-11-11
 
 ### Features
