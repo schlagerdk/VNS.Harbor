@@ -519,7 +519,11 @@ function renderMultiSelection() {
 	}
 	$("#btn-check-updates").hidden = !multipleProjects;
 	$("#btn-multi").hidden = multiSelecting || !multipleProjects;
-	$("#btn-multi-action").hidden = !multiSelecting;
+	// Choose action appears once a site is chosen; Select all chooses every site shown, or none again
+	$("#btn-multi-action").hidden = !multiSelecting || multiSites.size === 0;
+	const shownSites = overviewSites().filter(matches);
+	$("#btn-multi-all").hidden = !multiSelecting || !shownSites.length;
+	$("#btn-multi-all").textContent = shownSites.length && shownSites.every((site) => multiSites.has(site.name)) ? "Select none" : "Select all";
 	$("#btn-multi-action").disabled = multiSites.size === 0;
 	$("#btn-multi-action").textContent = `Choose action (${multiSites.size})`;
 	$("#btn-multi-cancel").hidden = !multiSelecting;
@@ -2125,6 +2129,7 @@ function syncMultiAction() {
 		prod: "Build and deploy each selected site's production environment.",
 		both: "Publish local, then production for each site. Sites run in parallel.",
 		outdated: "Run dotnet outdated --upgrade for every selected project. Review changes and publish afterward.",
+		clear_logs: "Delete the Umbraco logs of each selected site. Sites that are not Umbraco are skipped.",
 	}[action] || "";
 	const packageAction = action === "add" || action === "remove";
 	$("#multi-package-fields").hidden = !packageAction;
@@ -2133,16 +2138,28 @@ function syncMultiAction() {
 	multiForm.elements.namedItem("version").disabled = action !== "add";
 	const selected = listedSites().filter((site) => multiSites.has(site.name));
 	const skipped = action === "prod" || action === "both"
-		? selected.filter((site) => !site.scripts.includes("publish_prod.sh")) : [];
+		? selected.filter((site) => !site.scripts.includes("publish_prod.sh"))
+		: action === "clear_logs" ? selected.filter((site) => site.kind !== "umbraco") : [];
 	$("#multi-skipped").textContent = skipped.length
-		? "Will be skipped (no production): " + skipped.map(siteLabel).join(", ") : "";
+		? `Will be skipped (${action === "clear_logs" ? "not Umbraco" : "no production"}): ` + skipped.map(siteLabel).join(", ") : "";
 	$("#multi-submit").disabled = !action || submittingMulti || !selected.length || skipped.length === selected.length;
 }
+$("#btn-multi-all").onclick = () => {
+	const shownSites = overviewSites().filter(matches);
+	const all = shownSites.every((site) => multiSites.has(site.name));
+	for (const site of shownSites) {
+		if (all) multiSites.delete(site.name);
+		else multiSites.add(site.name);
+	}
+	renderSites();
+};
 $("#btn-multi-action").onclick = () => {
 	multiForm.reset();
 	$("#multi-selection").replaceChildren(...Array.from(multiSites, (name) =>
 		el("span", { className: "multi-site-tag", role: "listitem" }, svgIcon("globe"), el("span", { textContent: name }))));
 	$("#multi-count").textContent = `${multiSites.size} site${multiSites.size === 1 ? "" : "s"} selected. Choose what to do with them.`;
+	// Clearing logs is for Umbraco sites
+	$("#multi-maintenance").hidden = !listedSites().some((site) => multiSites.has(site.name) && site.kind === "umbraco");
 	syncMultiAction();
 	multiDialog.showModal();
 };

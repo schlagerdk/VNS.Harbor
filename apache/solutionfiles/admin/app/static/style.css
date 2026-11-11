@@ -836,9 +836,9 @@ dialog.logs-dialog[open] { display: flex; flex-direction: column; }
 .logs-raw[aria-pressed="true"] { border-color: var(--blue); color: var(--blue); }
 .logs-list, .logs-raw-text { flex: 1; min-height: 0; overflow: auto; margin: 0; border: 1px solid var(--line); border-radius: 10px; background: rgba(0, 0, 0, .22); }
 .logs-raw-text { padding: 12px; font-size: 12px; white-space: pre-wrap; }
-.log-row { display: grid; grid-template-columns: 120px 72px minmax(0, 150px) minmax(0, 1fr); gap: 12px; align-items: baseline; padding: 6px 12px; border-bottom: 1px solid rgba(255, 255, 255, .04); font-size: 12px; }
+.log-row { display: grid; grid-template-columns: 140px 72px minmax(0, 150px) minmax(0, 1fr); gap: 12px; align-items: baseline; padding: 6px 12px; border-bottom: 1px solid rgba(255, 255, 255, .04); font-size: 12px; }
 .log-row:hover { background: rgba(255, 255, 255, .03); }
-.log-time { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; }
+.log-time { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; overflow: hidden; }
 .log-level { justify-self: start; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; background: rgba(255, 255, 255, .06); color: var(--muted); }
 .log-row.level-error { background: rgba(248, 81, 73, .05); }
 .log-row.level-error .log-level { background: rgba(248, 81, 73, .18); color: #ff7b72; }
@@ -853,3 +853,5 @@ dialog.logs-dialog[open] { display: flex; flex-direction: column; }
 	.log-row { grid-template-columns: auto auto 1fr; }
 	.log-message { grid-column: 1 / -1; }
 }
+.multi-package-fields { margin-top: 10px; }
+#dlg-multi #multi-action-description:not(:empty) { margin-top: 12px; }

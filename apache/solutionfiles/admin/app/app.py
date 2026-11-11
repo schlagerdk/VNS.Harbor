@@ -1936,7 +1936,7 @@ def build_command(data):
         if (not isinstance(sites, list) or not sites or len(sites) > 100
                 or any(not isinstance(site, str) for site in sites)
                 or len(set(sites)) != len(sites)
-                or action not in ("check", "add", "remove", "local", "prod", "both", "outdated")):
+                or action not in ("check", "add", "remove", "local", "prod", "both", "outdated", "clear_logs")):
             abort(400, "Invalid multi action selection")
         tasks = []
         for name in sites:
@@ -1950,6 +1950,15 @@ def build_command(data):
             targets = target_ids(os.path.join(WEB_ROOT, site))
             if action in ("prod", "both") and not targets:
                 tasks.append({"site": site, "skip": "No production publish script"})
+                continue
+            if action == "clear_logs":
+                # Umbraco's logs, with the site's own clear_logs script
+                script = next((name for name in ("clear_logs_local.sh", "clear_logs.sh") if name in scripts), "")
+                if info["kind"] != "umbraco" or not script:
+                    tasks.append({"site": site, "skip": "Not an Umbraco site with a clear_logs script"})
+                    continue
+                _, argv, cwd = build_command({"kind": "script", "site": site, "script": script})
+                tasks.append({"site": site, "argv": argv, "cwd": cwd})
                 continue
             if action in ("add", "remove"):
                 payload = {"kind": "dotnet_package", "site": site, "action": action,

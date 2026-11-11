@@ -181,6 +181,7 @@
       <div class="stats" id="stats"></div>
       <span class="spacer"></span>
       <button id="btn-multi" type="button" hidden>Multi action</button>
+      <button id="btn-multi-all" type="button" hidden>Select all</button>
       <button id="btn-multi-action" class="primary" type="button" hidden>Choose action</button>
       <button id="btn-multi-cancel" type="button" hidden>Cancel selection</button>
       <button id="btn-check-updates" type="button" hidden>Check for updates</button>
@@ -217,8 +218,14 @@
         <label class="type-card multi-choice"><input type="radio" name="action" value="add"><span class="tc-title">Add</span><span class="tc-sub">A NuGet package</span></label>
         <label class="type-card multi-choice"><input type="radio" name="action" value="remove"><span class="tc-title">Remove</span><span class="tc-sub">A NuGet package</span></label>
       </div>
+      <div id="multi-maintenance">
+        <div class="ns-section">Maintenance</div>
+        <div class="type-cards multi-choices">
+          <label class="type-card multi-choice"><input type="radio" name="action" value="clear_logs"><span class="tc-title">Clear logs</span><span class="tc-sub">Delete the Umbraco logs</span></label>
+        </div>
+      </div>
       <p id="multi-action-description" class="hint"></p>
-      <div id="multi-package-fields" hidden>
+      <div id="multi-package-fields" class="ns-grid multi-package-fields" hidden>
         <label>Package name<input name="package" required autocomplete="off" disabled></label>
         <label id="multi-version-row">Version (optional)<input name="version" autocomplete="off" disabled></label>
       </div>
