@@ -173,12 +173,18 @@ function dnsCard(input, { expect = "", name: targetName = "" } = {}) {
 			return;
 		}
 		asked = name;
+		// The records wait for the answer: a name that points here already needs none
+		card.classList.remove("here");
+		card.classList.add("checking");
 		status.className = "dns-status checking";
 		status.textContent = "Checking…";
+		status.title = "";
 		let answer;
 		try { answer = await api(`/api/dns?name=${encodeURIComponent(name)}${expect ? "&expect=" + encodeURIComponent(expect) : ""}`); }
-		catch (error) { status.className = "dns-status muted"; status.textContent = "Could not check"; return; }
+		catch (error) { card.classList.remove("checking"); status.className = "dns-status muted"; status.textContent = "Could not check"; return; }
 		if (asked !== name) return;
+		card.classList.remove("checking");
+		card.classList.toggle("here", Boolean(answer.here));
 		// A subdomain can follow the server's own name instead, so it moves with the server
 		if (answer.host && !targetName) records.append(record("CNAME", name, answer.host));
 		if (answer.here) { status.className = "dns-status ok"; status.textContent = "Points here"; }

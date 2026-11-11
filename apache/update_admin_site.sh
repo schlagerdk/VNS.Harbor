@@ -252,7 +252,7 @@ set_site_vars
 echo "Update the app files"
 sudo rsync -a --delete \
 	--exclude /config.json --exclude /static/vendor/ --exclude /__pycache__/ \
-	--exclude /sql-connections.json \
+	--exclude /sql-connections.json --exclude /audit.log \
 	--exclude /system-update.json --exclude /system-update.log --exclude /system-update.tmp \
 	"${_solutionFolder}/admin/app/" "${_siteRoot}/app/"
 if [[ -f ${_apacheDir}/../.vns-version ]]; then

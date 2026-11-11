@@ -1185,6 +1185,10 @@ dialog.newsite > form > .ns-head, dialog.newsite > .ns-head { position: sticky; 
 .dns-note { margin: 0; color: var(--muted); font-size: 12px; }
 .dns-note.warn { color: #d29922; }
 .dns-card { margin-bottom: 16px; }
+/* Pointing here already: only the status, a little larger, on a green card. While checking, the records wait. */
+.dns-card.checking .dns-records, .dns-card.checking .dns-note, .dns-card.here .dns-records, .dns-card.here .dns-note { display: none; }
+.dns-card.here { border-color: rgba(63, 185, 80, .4); background: rgba(63, 185, 80, .06); }
+.dns-card.here .dns-status { padding: 6px 14px; font-size: 13.5px; }
 /* Remove package: the project's packages to choose from */
 .package-pick { display: grid; gap: 10px; }
 .package-pick[hidden] { display: none; }
