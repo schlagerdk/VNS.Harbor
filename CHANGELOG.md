@@ -2,6 +2,12 @@
 
 All notable changes to VNS.Linux are listed here, newest first.
 
+## [1.0.22] - 2026-11-11
+
+### Features
+
+- The config editor can insert snippets for web.config and Apache: ignore paths, allowed IPs, trailing slash, remove www, redirect to a domain, rewrites and secure cookies
+
 ## [1.0.21] - 2026-11-11
 
 ### Features
