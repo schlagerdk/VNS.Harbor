@@ -398,7 +398,7 @@ def api_dns():
     expected = (request.args.get("expect") or "").strip()
     ours = own_addresses(expected)
     # A CNAME is suggested only for this server, not for an address given for another
-    host = "" if expected else host_name_for(name, ours)
+    host = "" if expected else host_name_for(name, ours, request.host)
     return jsonify(name=name, addresses=found, here=bool(found) and any(item in ours for item in found), host=host)
 
 
@@ -415,14 +415,26 @@ def own_addresses(expected=""):
     return ours
 
 
-def host_name_for(name, ours):
-    """This server's own DNS name, for a CNAME to it: its full host name, or its short host name under one
-    of the name's parent domains (test-01 and test.vns.dk give test-01.vns.dk). Only a name that resolves
-    to this server is offered, so another machine with that name is never suggested."""
+def host_name_for(name, ours, visited=""):
+    """This server's own DNS name, for a subdomain's CNAME to it. A domain itself (narhat.dk) can only
+    have an A record, so it gets none. First the name the admin is visited on, without its first label
+    while the rest is still a subdomain (admin.test-01.vns.dk gives test-01.vns.dk, admin.vns.dk stays).
+    Then the server's full host name, and its short host name under one of the name's parent domains.
+    Only a name that resolves to this server is offered, so another machine is never suggested."""
+    labels = name.split(".")
+    if len(labels) < 3:
+        return ""
+    candidates = []
+    visited = re.sub(r":\d+$", "", (visited or "").strip().lower()).rstrip(".")
+    if "." in visited and not valid_ip(visited.strip("[]")):
+        parts = visited.split(".")
+        if len(parts) >= 4:
+            candidates.append(".".join(parts[1:]))
+        candidates.append(visited)
     short = socket.gethostname().split(".")[0].lower()
     fqdn = socket.getfqdn().lower().rstrip(".")
-    candidates = [fqdn] if "." in fqdn and not fqdn.endswith(".arpa") and not fqdn.startswith("localhost") else []
-    labels = name.split(".")
+    if "." in fqdn and not fqdn.endswith(".arpa") and not fqdn.startswith("localhost"):
+        candidates.append(fqdn)
     if re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", short):
         candidates += [short + "." + ".".join(labels[index:]) for index in range(1, len(labels) - 1)]
     for candidate in dict.fromkeys(candidates):

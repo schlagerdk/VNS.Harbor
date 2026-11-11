@@ -84,18 +84,18 @@ class HostNameTests(unittest.TestCase):
     def setUp(self):
         self.ns = dict(re=re, socket=socket)
         nodes = [node for node in ast.parse((APP / "app.py").read_text()).body
-                 if isinstance(node, ast.FunctionDef) and node.name == "host_name_for"]
+                 if isinstance(node, ast.FunctionDef) and node.name in ("host_name_for", "valid_ip")]
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "host name", "exec"), self.ns)
         self.dns = {"test-01.vns.dk": "185.150.199.44", "test-01.example.com": "192.0.2.80"}
 
-    def host(self, name, hostname="test-01", fqdn="test-01"):
+    def host(self, name, hostname="test-01", fqdn="test-01", visited=""):
         def lookup(candidate, *args, **kwargs):
             if candidate not in self.dns:
                 raise socket.gaierror("unknown")
             return [(None, None, None, None, (self.dns[candidate], 0))]
         with patch.object(socket, "gethostname", return_value=hostname), \
                 patch.object(socket, "getfqdn", return_value=fqdn), patch.object(socket, "getaddrinfo", lookup):
-            return self.ns["host_name_for"](name, {"185.150.199.44"})
+            return self.ns["host_name_for"](name, {"185.150.199.44"}, visited)
 
     def test_short_host_name_under_the_bindings_domain(self):
         self.assertEqual(self.host("test.vns.dk"), "test-01.vns.dk")
@@ -110,3 +110,18 @@ class HostNameTests(unittest.TestCase):
         self.assertEqual(self.host("vns.dk"), "")
         self.assertEqual(self.host("test-01.vns.dk"), "")
         self.assertEqual(self.host("test.vns.dk", fqdn="1.0.ip6.arpa", hostname="bad_name"), "")
+
+    def test_admin_address_without_its_first_label_while_still_a_subdomain(self):
+        self.assertEqual(self.host("min.narhat.dk", hostname="web", visited="admin.test-01.vns.dk"), "test-01.vns.dk")
+        self.assertEqual(self.host("min.narhat.dk", hostname="web", visited="admin.test-01.vns.dk:443"), "test-01.vns.dk")
+
+    def test_admin_on_a_domain_of_its_own_is_the_target_itself(self):
+        self.dns.update({"admin.vns.dk": "185.150.199.44", "vns.dk": "104.21.75.189"})
+        self.assertEqual(self.host("min.narhat.dk", hostname="web", visited="admin.vns.dk"), "admin.vns.dk")
+
+    def test_a_domain_itself_gets_only_an_a_record(self):
+        self.dns["admin.vns.dk"] = "185.150.199.44"
+        self.assertEqual(self.host("narhat.dk", visited="admin.vns.dk"), "")
+
+    def test_an_admin_visited_by_ip_falls_back_to_the_host_name(self):
+        self.assertEqual(self.host("test.vns.dk", visited="185.150.199.44:8443"), "test-01.vns.dk")
