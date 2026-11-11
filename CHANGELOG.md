@@ -2,6 +2,12 @@
 
 All notable changes to VNS.Linux are listed here, newest first.
 
+## [1.1.7] - 2026-11-11
+
+### Features
+
+- Check for updates covers the sites shown, DNS records point to the public address, and the admin fits a phone
+
 ## [1.1.6] - 2026-11-11
 
 ### Fixes
