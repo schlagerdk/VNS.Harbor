@@ -862,3 +862,4 @@ dialog.logs-dialog[open] { display: flex; flex-direction: column; }
 .log-file > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .log-file-clear { margin-left: auto; padding: 2px 10px; font-family: inherit; font-size: 12px; font-weight: 500; }
 .log-file-clear:hover { border-color: var(--red, #f85149); color: var(--red, #f85149); }
+#preferences-keep-alive-hint { margin-top: 14px; }
