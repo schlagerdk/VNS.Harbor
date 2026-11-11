@@ -1883,8 +1883,9 @@ def api_user(user_id):
             if len(password) < 12:
                 return error("The password must be at least 12 characters.")
             user["password_hash"] = generate_password_hash(password)
-        # A new password, a role, a lock or less access ends the user's sessions: they log in again to the new rules
-        user["version"] = existing.get("version", 1) + 1
+        # A new password ends the user's other sessions. Access is read again on every request, so a change to it
+        # counts at once without logging them out; a locked user is turned away by the same check.
+        user["version"] = existing.get("version", 1) + (1 if password else 0)
         for key in ("created_by", "start_view"):
             if key in existing:
                 user[key] = existing[key]

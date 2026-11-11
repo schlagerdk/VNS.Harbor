@@ -407,6 +407,8 @@ function monitorUpdateCheck(state) {
 }
 
 async function loadSites() {
+	// What the user may do can have changed since the page opened: it is fetched again with the sites
+	try { currentUser = await api("/api/me"); } catch (error) { /* the page goes on with what it had */ }
 	const data = await api("/api/sites");
 	allSites = data.sites;
 	sitesLoaded = true;
@@ -4608,7 +4610,7 @@ function openUserEditor(user = null) {
 	userForm.reset();
 	userForm.dataset.id = user?.id || "";
 	$("#user-title").textContent = user ? user.username : "Add user";
-	$("#user-description").textContent = user ? "Change what they may do. Saving ends their open sessions, so they log in to the new rules." : "They log in with this name and password.";
+	$("#user-description").textContent = user ? "Change what they may do. It counts at once; a new password logs them out." : "They log in with this name and password.";
 	$("#user-error").textContent = "";
 	userForm.username.value = user?.username || "";
 	userForm.password.required = !user;

@@ -1094,8 +1094,7 @@ dialog.newsite > .ns-head { margin: 0 0 4px; }
 .grant-database-list[hidden] { display: none; }
 /* Every dialog keeps its buttons at the bottom and, with a header, that at the top: only what is between scrolls.
    The footer reaches the dialog's edges, on its own background, so nothing shows through it. */
-dialog > menu, dialog > form > menu { position: sticky; bottom: 0; z-index: 3; background: var(--panel); }
-dialog:not(.newsite) > menu, dialog:not(.newsite) > form > menu { margin: 14px -22px -22px; padding: 12px 22px 22px; }
+dialog.newsite > menu, dialog.newsite > form > menu { position: sticky; bottom: 0; z-index: 3; background: var(--panel); }
 dialog.newsite > form > menu { margin: 16px -24px -20px; padding: 14px 24px 20px; }
 dialog.newsite > menu { margin: 16px 0 0; padding: 14px 24px 20px; }
 #dlg-users > menu { margin: 16px 0 0; }
