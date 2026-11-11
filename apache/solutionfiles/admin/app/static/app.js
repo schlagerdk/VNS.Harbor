@@ -138,6 +138,8 @@ function dnsCard(input, { expect = "", name: targetName = "" } = {}) {
 		el("div", { className: "dns-head" }, el("span", { className: "dns-icon" }, svgIcon("globe")),
 			el("strong", { textContent: "DNS for this name" }), status),
 		records, note);
+	// Hidden until a name is checked, so an empty binding never shows it for a moment
+	card.hidden = true;
 	const copyButton = (text) => {
 		const button = el("button", { type: "button", className: "dns-copy", title: "Copy " + text, ariaLabel: "Copy " + text });
 		button.append(svgIcon("copy"));
@@ -195,9 +197,12 @@ function dnsCard(input, { expect = "", name: targetName = "" } = {}) {
 	let seen = null;
 	const watch = setInterval(() => {
 		if (!document.contains(card)) { clearInterval(watch); return; }
-		if (input.value === seen || !input.offsetParent) return;
+		// A closed dialog hides it, so it is checked again when the dialog opens
+		if (!input.offsetParent) { card.hidden = true; seen = null; clearTimeout(timer); return; }
+		if (input.value === seen) return;
 		seen = input.value;
 		clearTimeout(timer);
+		if (!input.value.trim()) { card.hidden = true; return; }
 		timer = setTimeout(() => run(show), 450);
 	}, 250);
 	return card;
