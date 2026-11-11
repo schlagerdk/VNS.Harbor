@@ -2,6 +2,17 @@
 
 All notable changes to VNS.Linux are listed here, newest first.
 
+## [1.0.24] - 2026-11-11
+
+### Features
+
+- A styled snippet menu, a choice of answer for Allowed IPs, a compression snippet, and X-Powered-By and Apache's version left out on every site
+- Allowed IPs updates the rule for the same paths and adds a new rule for other paths
+
+### Other
+
+- Style: The header search matches the section switch, with a search icon and the / shortcut
+
 ## [1.0.23] - 2026-11-11
 
 ### Fixes
