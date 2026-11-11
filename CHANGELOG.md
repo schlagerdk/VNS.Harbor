@@ -2,6 +2,12 @@
 
 All notable changes to VNS.Linux are listed here, newest first.
 
+## [1.0.7] - 2026-11-11
+
+### Features
+
+- Log files can be cleared from the logs window, empty files are not shown, and the Server and account menus close each other
+
 ## [1.0.6] - 2026-11-11
 
 ### Fixes
