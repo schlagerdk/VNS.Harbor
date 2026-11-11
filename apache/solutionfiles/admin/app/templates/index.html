@@ -518,6 +518,22 @@
   </form>
 </dialog>
 
+<dialog id="dlg-setup-site" class="newsite" aria-labelledby="setup-site-title">
+  <form method="dialog" id="form-setup-site">
+    <header class="ns-head">
+      <span class="ns-icon" data-header-icon="server" aria-hidden="true"></span>
+      <div><h2 id="setup-site-title">Set up site</h2><p id="setup-site-found"></p></div>
+    </header>
+    <div class="ns-grid">
+      <label>Binding (domain) <input name="binding" autocomplete="off" spellcheck="false" placeholder="Empty: answers any name"></label>
+      <label>HTTPS certificate <select name="certificate"><option value="y">Create certificate and enforce HTTPS</option><option value="n">HTTP only - issue certificate later</option></select></label>
+      <label id="setup-site-environment-row">Environment <select name="environment"><option>Development</option><option>Test</option><option>Staging</option><option>Production</option></select></label>
+    </div>
+    <p class="hint" id="setup-site-hint"></p>
+    <menu><button type="button" id="setup-site-cancel" class="cancel-link">Cancel</button><button type="submit" class="primary">Set up site</button></menu>
+  </form>
+</dialog>
+
 <dialog id="dlg-package" class="newsite">
   <form method="dialog" id="form-package">
     <header class="ns-head">

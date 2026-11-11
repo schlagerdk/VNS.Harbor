@@ -704,6 +704,21 @@ def published_project_info(root, service_text):
     return None
 
 
+def setup_kind(root):
+    """What a folder that was put in /var/www by hand holds, as setup_site.sh sees it"""
+    projects = glob.glob(os.path.join(root, "*.csproj"))
+    if projects:
+        return "umbraco project" if any("Umbraco.Cms" in read_text(path) for path in projects) else "C# project"
+    for folder in (root, os.path.join(root, "_publish")):
+        for runtime in glob.glob(os.path.join(folder, "*.runtimeconfig.json")):
+            name = os.path.basename(runtime)[:-len(".runtimeconfig.json")]
+            if os.path.isfile(os.path.join(folder, name + ".dll")):
+                return "umbraco build" if '"Umbraco.Cms/' in read_text(os.path.join(folder, name + ".deps.json")) else "C# build"
+    if os.path.isfile(os.path.join(root, "app", "app.py")):
+        return "python"
+    return "html"
+
+
 def site_info(name, states):
     root = os.path.join(WEB_ROOT, name)
     conf = os.path.join(APACHE_SITES, name + ".conf")
@@ -818,6 +833,9 @@ def site_info(name, states):
     for environment in environments:
         environment["display_binding"] = display_dns_name(environment.get("binding", ""))
         environment["display_aliases"] = [display_dns_name(alias) for alias in environment.get("aliases", [])]
+    # A folder put in /var/www by hand: no Apache config and no service. Apache's own default site is not one.
+    not_set_up = (name != ADMIN_SITE and not os.path.exists(conf) and not service_text
+                  and not (name == "html" and os.path.exists(os.path.join(APACHE_SITES, "000-default.conf"))))
     return {
         "name": name,
         "display_name": display_dns_name(name),
@@ -832,6 +850,8 @@ def site_info(name, states):
         "scripts": scripts,
         "admin": name == ADMIN_SITE,
         "answers_any_name": default_site_name() == name,
+        "not_set_up": not_set_up,
+        "setup_kind": setup_kind(root) if not_set_up else "",
         "environments": environments,
     }
 
@@ -1404,7 +1424,7 @@ def terminal_scope(payload):
 
 def terminal_auto_close(payload):
     kind = payload.get("kind")
-    if kind in ("shell", "create_site", "copy_site", "register_env", "create_prod", "sync_env", "data_sync", "data_sync_settings", "move_env", "adopt_site", "release_site", "delete_site", "change_binding", "prod_action", "dotnet_package", "fix_permissions", "publish_both", "bulk", "update_package", "sql_action", "install_sql_tools"):
+    if kind in ("shell", "create_site", "setup_site", "copy_site", "register_env", "create_prod", "sync_env", "data_sync", "data_sync_settings", "move_env", "adopt_site", "release_site", "delete_site", "change_binding", "prod_action", "dotnet_package", "fix_permissions", "publish_both", "bulk", "update_package", "sql_action", "install_sql_tools"):
         return True
     if kind == "remote_tool":
         return payload.get("tool") == "shell"
@@ -1966,6 +1986,24 @@ def build_command(data):
     if kind == "release_site":
         site = site_arg(data)
         return "Move out: " + site, [bash, os.path.join(APACHE_DIR, "adopt_site.sh"), "--release", site, target_arg(site, data)], APACHE_DIR
+    if kind == "setup_site":
+        site = site_arg(data)
+        certificate = data.get("certificate", "y")
+        if certificate not in ("y", "n"):
+            abort(400, "Invalid certificate option")
+        binding = data.get("binding", "")
+        if not isinstance(binding, str):
+            abort(400, "Invalid binding")
+        if binding in ("", "*"):
+            binding = "*"
+            if default_site_name():
+                abort(400, default_site_name() + " already answers any name. Only one site can.")
+        else:
+            binding = dns_name(binding, "binding", fully_qualified=certificate == "y", short=certificate == "n")
+        environment = data.get("environment", "")
+        if environment not in ("", "Development", "Test", "Staging", "Production"):
+            abort(400, "Invalid environment")
+        return "Set up site: " + site, [bash, os.path.join(APACHE_DIR, "setup_site.sh"), site, binding, certificate, environment], APACHE_DIR
     if kind == "data_sync_settings":
         site = site_arg(data)
         site_id = data_sync_id(site, data.get("id"))

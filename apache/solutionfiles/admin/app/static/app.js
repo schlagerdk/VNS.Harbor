@@ -464,7 +464,7 @@ const buttonStyles = {
 	"Add": ["download", "green"], "Remove": ["trash", "red"], "Check": ["download", "amber"],
 	"Fix permissions": ["shield", "teal"], "Update Python packages": ["sync", "blue"],
 	"Add environment": ["server", "purple"],
-	"Move under main site": ["server", "purple"],
+	"Move under main site": ["server", "purple"], "Set up site…": ["server", "green"],
 	"Migrate…": ["server", "purple"],
 	"Check outdated": ["download", "amber"], "Restart": ["restart", "amber"], "Restart Apache": ["restart", "amber"],
 	"Stop": ["stop", "red"], "Clear logs": ["eraser", "gray"], "Logs": ["file", "gray"],
@@ -610,6 +610,7 @@ function kindBadges(site) {
 		badges.append(badge);
 	}
 	if (site.admin) badges.append(el("span", { className: "badge admin", textContent: "this admin site" }));
+	if (site.not_set_up) badges.append(el("span", { className: "badge not-set-up", textContent: "Not set up", title: "A folder without a service or Apache config. Open it and choose Set up site." }));
 	if (site.managed_by) badges.append(el("span", { className: "badge", textContent: "Managed from " + (site.managed_by.host || "another server"), title: `Environment of ${site.managed_by.site} on ${site.managed_by.host}. Publish and copy it from there.` }));
 	if (site.updates === "available") badges.append(el("span", { className: "badge updates-available", textContent: "Updates available", title: "NuGet updates were found. Install package updates, then publish the site." }));
 	if (site.updates === "error") badges.append(el("span", { className: "badge updates-error", textContent: "Update check failed", title: "Run Check for updates again. See server logs for details." }));
@@ -924,6 +925,9 @@ function renderSite(name) {
 	danger.hidden = site.admin || !hasProd(site);
 	if (!danger.hidden) danger.append(el("button", { textContent: "Delete everything", className: "danger", onclick: () => run(() => deleteSite(site, "all")) }));
 	const title = el("div", { className: "detail-title" }, el("h2", { textContent: siteTitle(site) }), kindBadges(site));
+	if (site.not_set_up && site.setup_kind !== "python") {
+		title.append(el("button", { textContent: "Set up site…", className: "detail-title-action", onclick: () => run(() => openSetupSiteDialog(site)) }));
+	}
 	if ((site.adopt_into || []).length) {
 		title.append(el("button", { textContent: "Move under main site", className: "detail-title-action", onclick: () => run(() => openAdoptDialog(site)) }));
 	}
@@ -1868,6 +1872,39 @@ function syncDestinations(site, source) {
 	return sortedEnvironments(site.environments).filter((env) => env !== source && isTarget(env) && !isMissingEnv(env)
 		&& (env.scripts || []).includes("sync_prod.sh") && env.data_sync?.settings_receive !== false);
 }
+// A folder put in /var/www by hand gets a service, an Apache config and a certificate, like Create site,
+// without anything in it being overwritten
+const setupSiteDialog = $("#dlg-setup-site");
+const setupSiteForm = $("#form-setup-site");
+const setupKindText = {
+	"umbraco project": "an Umbraco project. It gets the site's scripts, and is built into _publish unless a build is there already.",
+	"C# project": "a C# project. It gets the site's scripts, and is built into _publish unless a build is there already.",
+	"umbraco build": "an Umbraco build. It runs as it is: nothing is built.",
+	"C# build": "a C# build. It runs as it is: nothing is built.",
+	html: "static files. It is set up as an HTML site.",
+};
+function openSetupSiteDialog(site) {
+	setupSiteForm.reset();
+	setupSiteForm.dataset.site = site.name;
+	const build = site.setup_kind.endsWith("build");
+	$("#setup-site-found").textContent = `${siteLabel(site)} holds ${setupKindText[site.setup_kind] || site.setup_kind}`;
+	setupSiteForm.binding.value = site.name.includes(".") ? siteLabel(site) : "";
+	setupSiteForm.environment.value = build ? "Production" : "Test";
+	$("#setup-site-environment-row").hidden = site.setup_kind === "html";
+	$("#setup-site-hint").textContent = "Only the service, the Apache config, the certificate and missing scripts are created. Nothing in the folder is overwritten, but the folder the site runs from is owned by www-data, so the site can write there. With HTTPS, DNS for the binding must point to this server.";
+	setupSiteDialog.showModal();
+}
+$("#setup-site-cancel").onclick = () => setupSiteDialog.close();
+setupSiteForm.onsubmit = (event) => {
+	event.preventDefault();
+	const data = Object.fromEntries(new FormData(setupSiteForm));
+	run(async () => {
+		await openTask({ kind: "setup_site", site: setupSiteForm.dataset.site, binding: data.binding.trim(), certificate: data.certificate,
+			environment: $("#setup-site-environment-row").hidden ? "" : data.environment });
+		setupSiteDialog.close();
+	});
+};
+
 const adoptDialog = $("#dlg-adopt");
 const adoptForm = $("#form-adopt");
 function openAdoptDialog(site) {
