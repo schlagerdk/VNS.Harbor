@@ -2,6 +2,12 @@
 
 All notable changes to VNS.Linux are listed here, newest first.
 
+## [1.0.9] - 2026-11-11
+
+### Other
+
+- Style: More space above the keep-alive hint in Preferences
+
 ## [1.0.8] - 2026-11-11
 
 ### Fixes
