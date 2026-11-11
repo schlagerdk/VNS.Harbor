@@ -2,6 +2,16 @@
 
 All notable changes to VNS.Linux are listed here, newest first.
 
+## [1.0.10] - 2026-11-11
+
+### Features
+
+- Restore database asks for name, login or overwrite confirmation in one dialog
+
+### Fixes
+
+- Prompts can be edited and trimmed, yes/no questions show [Y/n] or [y/N], acme.sh gets its folders in init.sh, and an invalid DNS name shows what was typed
+
 ## [1.0.9] - 2026-11-11
 
 ### Other
