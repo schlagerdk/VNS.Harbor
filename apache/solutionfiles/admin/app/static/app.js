@@ -438,6 +438,8 @@ const iconPaths = {
 	back: "M19 12H5M12 19l-7-7 7-7",
 	upload: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12",
 	download: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3",
+	user: "M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z",
+	logout: "M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9",
 	sync: "M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8M21 3v5h-5M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16M8 16H3v5",
 	restart: "M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8M21 3v5h-5",
 	trash: "M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2",
@@ -1272,32 +1274,110 @@ async function serviceAction(site, env, action) {
 }
 
 const logsDialog = $("#dlg-logs");
+// Another log starts with every line shown, as a list
+function resetLogView() {
+	logLevel = "all";
+	$("#logs-search").value = "";
+	$("#logs-raw").setAttribute("aria-pressed", "false");
+	$("#logs-raw-text").hidden = true;
+	$("#logs-text").hidden = false;
+}
 let logsTarget = null;
 async function showLogs(site, env) {
 	logsTarget = { site, env };
+	resetLogView();
 	$("#logs-title").textContent = `Logs · ${env.unit || env.folder}`;
 	if (!logsDialog.open) logsDialog.showModal();
 	await refreshLogs();
 }
+// Log lines, read into time, level, source and message, so they read like a list and not a terminal.
+// Apache's error log, the journal (site and admin services) and anything else, line by line.
+let logEntries = [];
+let logLevel = "all";
+const logLevelOf = (text) => /\b(crit|alert|emerg|fatal|fail(ed|ure)?|error|err|exception|panic|denied)\b/i.test(text) ? "error"
+	: /\bwarn(ing)?\b/i.test(text) ? "warn" : "info";
+function parseLog(text) {
+	const entries = [];
+	for (const line of String(text || "").split("\n")) {
+		if (!line.trim()) continue;
+		// A stack trace or a wrapped line belongs to the line above
+		if (entries.length && /^(\s+|at |--- )/.test(line)) {
+			entries[entries.length - 1].message += "\n" + line;
+			continue;
+		}
+		let match = line.match(/^\[([^\]]+)\]\s+\[(?:([^\]:]+):)?([a-z0-9]+)\]\s+(?:\[pid [^\]]*\]\s+)?(?:\[client [^\]]*\]\s+)?(.*)$/i);
+		if (match) {
+			const time = match[1].replace(/^\w{3}\s+/, "").replace(/\.\d+/, "").replace(/\s+\d{4}$/, "");
+			const level = /^(error|crit|alert|emerg)$/i.test(match[3]) ? "error" : /^warn/i.test(match[3]) ? "warn" : "info";
+			entries.push({ time, source: match[2] || "", level, message: match[4] });
+			continue;
+		}
+		match = line.match(/^([A-Z][a-z]{2}\s+\d+\s+\d\d:\d\d:\d\d|\d{4}-\d\d-\d\d[T ]\d\d:\d\d:\d\d)\S*\s+\S+\s+([^\s:[]+)(?:\[\d+\])?:\s?(.*)$/);
+		if (match) {
+			// The journal writes each line of a stack trace on its own, with the same prefix
+			const previous = entries[entries.length - 1];
+			if (previous && previous.source === match[2] && /^(\s+|at |--- )/.test(match[3])) {
+				previous.message += "\n" + match[3];
+				continue;
+			}
+			// .NET starts a line with its level (info:, warn:, fail:), which the level shows already
+			entries.push({ time: match[1].replace("T", " "), source: match[2], level: logLevelOf(match[3]),
+				message: match[3].replace(/^(trce|dbug|info|warn|fail|crit):\s*/, "") });
+			continue;
+		}
+		entries.push({ time: "", source: "", level: logLevelOf(line), message: line });
+	}
+	return entries;
+}
+function renderLogs() {
+	const words = $("#logs-search").value.trim().toLowerCase();
+	const counts = { all: logEntries.length, error: 0, warn: 0 };
+	for (const entry of logEntries) if (entry.level in counts) counts[entry.level] += 1;
+	for (const button of document.querySelectorAll(".logs-levels button")) {
+		button.classList.toggle("active", button.dataset.level === logLevel);
+		button.querySelector("span").textContent = counts[button.dataset.level] || "";
+	}
+	const shown = logEntries.filter((entry) => (logLevel === "all" || entry.level === logLevel)
+		&& (!words || `${entry.source} ${entry.message}`.toLowerCase().includes(words)));
+	const list = $("#logs-text");
+	list.replaceChildren(...shown.map((entry) => el("div", { className: "log-row level-" + entry.level },
+		el("span", { className: "log-time", textContent: entry.time }),
+		el("span", { className: "log-level", textContent: { error: "Error", warn: "Warning", info: "Info" }[entry.level] }),
+		el("span", { className: "log-source", textContent: entry.source, title: entry.source }),
+		el("span", { className: "log-message", textContent: entry.message }))));
+	if (!shown.length) list.append(el("p", { className: "muted logs-empty", textContent: logEntries.length ? "No lines match." : "No log lines." }));
+	$("#logs-count").textContent = `${shown.length} of ${logEntries.length} lines`;
+	list.scrollTop = list.scrollHeight;
+}
+$("#logs-search").oninput = renderLogs;
+for (const button of document.querySelectorAll(".logs-levels button")) button.onclick = () => { logLevel = button.dataset.level; renderLogs(); };
+$("#logs-raw").onclick = () => {
+	const raw = $("#logs-raw").getAttribute("aria-pressed") !== "true";
+	$("#logs-raw").setAttribute("aria-pressed", String(raw));
+	$("#logs-raw-text").hidden = !raw;
+	$("#logs-text").hidden = raw;
+	if (raw) $("#logs-raw-text").scrollTop = $("#logs-raw-text").scrollHeight;
+};
 async function refreshLogs() {
-	$("#logs-text").textContent = "Loading…";
+	$("#logs-text").replaceChildren(el("p", { className: "muted logs-empty", textContent: "Loading…" }));
 	let data;
 	try {
 		data = await api(logsTarget.source ? `/api/server-logs?source=${logsTarget.source}`
 			: `/api/sites/${encodeURIComponent(logsTarget.site.name)}/logs?unit=${encodeURIComponent(logsTarget.env.unit)}&scope=${logsTarget.env.mode === "remote" ? "prod" : "local"}${logsTarget.env.target && logsTarget.env.target !== "prod" ? "&target=" + encodeURIComponent(logsTarget.env.target) : ""}`);
 	} catch (error) {
-		$("#logs-text").textContent = error.message;
+		$("#logs-text").replaceChildren(el("p", { className: "logs-error", textContent: error.message }));
 		throw error;
 	}
-	const box = $("#logs-text");
-	box.textContent = data.text || "(no log lines)";
-	box.scrollTop = box.scrollHeight;
+	$("#logs-raw-text").textContent = data.text || "(no log lines)";
+	logEntries = parseLog(data.text);
+	renderLogs();
 }
 $("#logs-refresh").onclick = () => run(refreshLogs);
 $("#logs-close").onclick = () => logsDialog.close();
 for (const source of ["admin", "apache"]) {
 	$(`#settings-${source}-logs`).onclick = () => run(async () => {
 		logsTarget = { source };
+		resetLogView();
 		$("#logs-title").textContent = source === "admin" ? "Admin app log" : "Apache error logs";
 		if (!logsDialog.open) logsDialog.showModal();
 		await refreshLogs();
@@ -2062,10 +2142,11 @@ $("#btn-multi-action").onclick = () => {
 	multiForm.reset();
 	$("#multi-selection").replaceChildren(...Array.from(multiSites, (name) =>
 		el("span", { className: "multi-site-tag", role: "listitem" }, svgIcon("globe"), el("span", { textContent: name }))));
+	$("#multi-count").textContent = `${multiSites.size} site${multiSites.size === 1 ? "" : "s"} selected. Choose what to do with them.`;
 	syncMultiAction();
 	multiDialog.showModal();
 };
-multiForm.elements.namedItem("action").onchange = syncMultiAction;
+multiForm.addEventListener("change", (event) => { if (event.target.name === "action") syncMultiAction(); });
 $("#multi-close").onclick = () => multiDialog.close();
 let submittingMulti = false;
 multiForm.onsubmit = (event) => {
@@ -3050,6 +3131,7 @@ $("#menu-preferences").onclick = () => run(async () => {
 	preferencesForm.elements.keep_alive.checked = keepAlive.enabled;
 	preferencesForm.elements.keep_alive_interval.value = keepAlive.interval_minutes;
 	for (const name of ["keep_alive", "keep_alive_interval"]) preferencesForm.elements[name].disabled = !keepAlive.installed;
+	syncKeepAliveInterval();
 	$("#preferences-keep-alive-hint").textContent = keepAlive.installed
 		? "From 1 to 1440 minutes. It does not restart services or prevent Boot failed."
 		: "The keep-alive cron job is missing. Run apache/init.sh on this server to install it.";
@@ -3057,10 +3139,29 @@ $("#menu-preferences").onclick = () => run(async () => {
 	document.activeElement?.blur();
 });
 $("#preferences-cancel").onclick = () => preferencesDialog.close();
+// The interval: a quick choice, or any number of minutes. It is only in play while keep-alive is on.
+function syncKeepAliveInterval() {
+	const minutes = Number(preferencesForm.elements.keep_alive_interval.value);
+	const on = preferencesForm.elements.keep_alive.checked && !preferencesForm.elements.keep_alive.disabled;
+	$("#keep-alive-interval").classList.toggle("off", !on);
+	for (const button of $("#keep-alive-interval").querySelectorAll("button")) {
+		button.classList.toggle("active", Number(button.dataset.minutes) === minutes);
+		button.disabled = !on;
+	}
+	preferencesForm.elements.keep_alive_interval.disabled = !on;
+}
+for (const button of $("#keep-alive-interval").querySelectorAll("button")) {
+	button.onclick = () => {
+		preferencesForm.elements.keep_alive_interval.value = button.dataset.minutes;
+		syncKeepAliveInterval();
+	};
+}
+preferencesForm.elements.keep_alive_interval.oninput = syncKeepAliveInterval;
+preferencesForm.elements.keep_alive.onchange = syncKeepAliveInterval;
 preferencesForm.onsubmit = (event) => {
 	event.preventDefault();
 	const next = preferencesForm.elements.start_view.value;
-	const interval = Number(preferencesForm.elements.keep_alive_interval.value);
+	const interval = Number(preferencesForm.elements.keep_alive_interval.value) || 5;
 	run(async () => {
 		if (keepAliveInstalled) {
 			if (!Number.isInteger(interval) || interval < 1 || interval > 1440) throw new Error("The interval must be a whole number from 1 to 1440 minutes.");
@@ -3435,8 +3536,11 @@ $("#settings-update").prepend(svgIcon("sync"));
 decorate($("#settings-menu"));
 // Restarting Apache takes every site down for a moment: it stands last, in red
 $("#settings-restart-apache").dataset.tone = "red";
-$("#menu-preferences").dataset.tone = "purple";
-$("#menu-preferences").prepend(svgIcon("sliders"));
+// The account menu: every item with its icon
+for (const [id, icon, tone] of [["menu-preferences", "sliders", "purple"], ["menu-profile", "user", "blue"], ["menu-logout", "logout", "red"]]) {
+	$("#" + id).dataset.tone = tone;
+	$("#" + id).prepend(svgIcon(icon));
+}
 decorate($("#view-sites .toolbar"));
 decorate($("#view-files"));
 run(() => checkSystemUpdate(true));

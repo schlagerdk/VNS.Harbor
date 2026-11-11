@@ -114,15 +114,10 @@ dialog.sql-query-dialog[open] { display: flex; flex-direction: column; }
 .multi-select input { width: 18px; height: 18px; margin: 0; accent-color: var(--blue); }
 .site:has(.multi-select input:checked) { border-color: var(--blue); }
 #multi-selection, #multi-skipped { overflow-wrap: anywhere; }
-#dlg-multi { width: min(520px, 92vw); min-width: 0; max-height: 90dvh; overflow-y: auto; padding: 26px; background: linear-gradient(145deg, rgba(163, 113, 247, .08), transparent 55%), var(--panel); }
-#multi-title { margin-top: 0; }
-#multi-selection { display: flex; flex-wrap: wrap; gap: 7px; max-height: 120px; overflow-y: auto; margin: 14px 0 20px; padding: 2px; font-size: 12px; }
+#multi-selection { display: flex; flex-wrap: wrap; gap: 7px; max-height: 120px; overflow-y: auto; margin: 0 0 6px; padding: 2px; font-size: 12px; }
 .multi-site-tag { display: inline-flex; align-items: center; gap: 7px; max-width: 100%; padding: 6px 10px; border: 1px solid rgba(163, 113, 247, .3); border-radius: 8px; color: #d3baff; background: rgba(163, 113, 247, .1); }
 .multi-site-tag .ico { width: 14px; height: 14px; flex: none; }
 .multi-site-tag > span { min-width: 0; overflow-wrap: anywhere; }
-#dlg-multi .multi-action-label { color: var(--muted); font-size: 12px; font-weight: 600; }
-#dlg-multi select { appearance: none; margin-top: 8px; padding: 13px 40px 13px 14px; border: 1px solid rgba(163, 113, 247, .5); border-radius: 10px; background-color: var(--panel2); color: var(--text); font-size: 15px; font-weight: 600; cursor: pointer; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23a371f7' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 14px center; }
-#dlg-multi select:hover { border-color: var(--purple); background-color: var(--hover); }
 #multi-action-description { font-size: 13px; line-height: 1.6; }
 .site { background: linear-gradient(135deg, rgba(88, 166, 255, .04), transparent 60%), var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 20px; box-shadow: 0 4px 16px rgba(0, 0, 0, .15); display: flex; flex-direction: column; gap: 20px; position: relative; cursor: pointer; transition: border-color .2s, box-shadow .2s; }
 .site:hover { border-color: rgba(88, 166, 255, .5); box-shadow: 0 10px 28px rgba(0, 0, 0, .3), 0 0 20px rgba(88, 166, 255, .07); }
@@ -438,7 +433,6 @@ dialog.files-dialog { padding: 18px; }
 .files-dialog #view-files { display: flex; flex-direction: column; height: 100%; }
 .files-heading h2 { margin: 0; font-size: 18px; }
 .files-dialog #drop { flex: 1; min-height: 0; overflow: auto; }
-#logs-text { flex: 1; min-height: 0; overflow: auto; background: #000; padding: 10px; border-radius: 6px; font: 12px/1.4 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; }
 @media (max-width: 800px) { .page-header #search { min-width: 0; width: 0; flex: 1; } .page-header:has(#search:not([hidden])) > .spacer { display: none; } .brand h1, .brand .host { display: none; } .envs { grid-template-columns: 1fr; } }
 @media (max-width: 800px) {
 	.env .desktop-only, .env .actions:not(:has(> button:not(.desktop-only))) { display: none; }
@@ -803,3 +797,59 @@ dialog.wide.system-update-dialog { width: min(720px, 92vw); }
 .page-header .view-switch button { color: rgba(255, 255, 255, .78); }
 .page-header .view-switch button:hover { color: #fff; background: rgba(255, 255, 255, .12); }
 .page-header .view-switch button.active { color: #fff; background: rgba(255, 255, 255, .22); box-shadow: none; }
+
+/* Preferences: keep-alive as a card that turns on, and the interval as quick choices */
+#dlg-preferences label.sync-option { flex-direction: row; align-items: center; justify-content: flex-start; margin: 0; text-align: left; font-size: inherit; color: inherit; }
+.keep-alive-option { --option-tone: var(--green); }
+.keep-alive-interval { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 12px; transition: opacity .15s; }
+.keep-alive-interval.off { opacity: .45; }
+.keep-alive-every { margin-right: 4px; color: var(--muted); font-size: 13px; }
+.keep-alive-interval button { padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; background: rgba(255, 255, 255, .02); color: var(--text); font-size: 13px; cursor: pointer; }
+.keep-alive-interval button:hover:not(:disabled) { border-color: color-mix(in srgb, var(--green) 60%, var(--line)); }
+.keep-alive-interval button.active { border-color: var(--green); background: color-mix(in srgb, var(--green) 14%, transparent); color: var(--green); font-weight: 600; }
+.keep-alive-interval button:disabled { cursor: default; }
+#dlg-preferences .keep-alive-custom { display: inline-flex; flex-direction: row; align-items: center; gap: 6px; margin: 0 0 0 6px; color: var(--muted); font-size: 13px; }
+#dlg-preferences .keep-alive-custom input { width: 76px; height: 32px; }
+
+/* Multi action: the selected sites, then the actions as cards */
+#dlg-multi { width: min(720px, 94vw); max-height: 90dvh; overflow-y: auto; }
+#dlg-multi #multi-selection { margin: 2px 0 6px; }
+.multi-choices { margin-bottom: 6px; }
+.multi-choices-4 { grid-template-columns: repeat(4, 1fr); }
+.multi-choice .tc-sub { font-size: 12px; }
+#dlg-multi .ns-section { margin-top: 14px; }
+@media (max-width: 640px) { .multi-choices-4 { grid-template-columns: repeat(2, 1fr); } }
+
+/* Logs as a list: time, level, source and message, with a filter */
+dialog.wide.logs-dialog { width: min(1180px, 94vw); height: min(780px, 86vh); }
+dialog.logs-dialog[open] { display: flex; flex-direction: column; }
+.logs-dialog h2 { margin: 0 0 12px; }
+.logs-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.logs-toolbar #logs-search { flex: 1 1 220px; height: 34px; }
+.logs-levels { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--line); border-radius: 9px; }
+.logs-levels button { padding: 4px 10px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 12px; cursor: pointer; }
+.logs-levels button span { margin-left: 4px; opacity: .8; }
+.logs-levels button.active { background: rgba(255, 255, 255, .08); color: var(--text); }
+.logs-levels button[data-level="error"].active { background: rgba(248, 81, 73, .16); color: #ff7b72; }
+.logs-levels button[data-level="warn"].active { background: rgba(210, 153, 34, .18); color: #e3b341; }
+.logs-raw { padding: 6px 12px; font-size: 12px; }
+.logs-raw[aria-pressed="true"] { border-color: var(--blue); color: var(--blue); }
+.logs-list, .logs-raw-text { flex: 1; min-height: 0; overflow: auto; margin: 0; border: 1px solid var(--line); border-radius: 10px; background: rgba(0, 0, 0, .22); }
+.logs-raw-text { padding: 12px; font-size: 12px; white-space: pre-wrap; }
+.log-row { display: grid; grid-template-columns: 120px 72px minmax(0, 150px) minmax(0, 1fr); gap: 12px; align-items: baseline; padding: 6px 12px; border-bottom: 1px solid rgba(255, 255, 255, .04); font-size: 12px; }
+.log-row:hover { background: rgba(255, 255, 255, .03); }
+.log-time { color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: nowrap; }
+.log-level { justify-self: start; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; background: rgba(255, 255, 255, .06); color: var(--muted); }
+.log-row.level-error { background: rgba(248, 81, 73, .05); }
+.log-row.level-error .log-level { background: rgba(248, 81, 73, .18); color: #ff7b72; }
+.log-row.level-warn .log-level { background: rgba(210, 153, 34, .2); color: #e3b341; }
+.log-source { color: #79c0ff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.log-message { color: var(--text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.logs-empty, .logs-error { margin: 0; padding: 14px; }
+.logs-error { color: #f85149; }
+.logs-dialog menu { align-items: center; }
+.logs-count { margin-right: auto; font-size: 12px; }
+@media (max-width: 700px) {
+	.log-row { grid-template-columns: auto auto 1fr; }
+	.log-message { grid-column: 1 / -1; }
+}

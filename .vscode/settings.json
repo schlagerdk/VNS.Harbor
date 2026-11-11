@@ -1,0 +1,6 @@
+{
+	// The only .csproj here is a template with placeholders (DotNetVersion ...), used by create_site.sh.
+	// It is not a project to build, so the C# extension does not load or restore it.
+	"dotnet.defaultSolution": "disable",
+	"dotnet.automaticallyCreateSolutionInWorkspace": false
+}

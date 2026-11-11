@@ -63,6 +63,7 @@ main() {
         --exclude '.DS_Store' \
         --exclude '.gitignore' \
         --exclude '.vns-version' \
+        --exclude '.vscode' \
         "$src"/ "$TARGET"/
 
     # Site ports are discovered from active configs now; remove the obsolete counter.

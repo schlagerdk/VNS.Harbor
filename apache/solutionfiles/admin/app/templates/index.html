@@ -29,7 +29,7 @@
     <span><h1>Server admin</h1><span class="host">{{ hostname }}</span></span>
   </a>
   <nav class="view-switch" aria-label="Section">
-    <button type="button" id="switch-sites" data-view="sites">Sites</button>
+    <button type="button" id="switch-sites" data-view="sites">Web Server</button>
     <button type="button" id="switch-sql" data-view="sql">SQL Server</button>
   </nav>
   <input id="search" type="search" placeholder="Search sites…  ( / )" autocomplete="off" hidden>
@@ -67,7 +67,7 @@
       <div class="menu-head"><b id="menu-user">{{ user }}</b><span class="muted">Administrator</span></div>
       <button id="menu-preferences" type="button">Preferences…</button>
       <button id="menu-profile" type="button">Profile…</button>
-      <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit">Log out</button></form>
+      <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit" id="menu-logout">Log out</button></form>
     </div>
   </div>
 </header>
@@ -197,27 +197,27 @@
     </div>
   </section>
 
-  <dialog id="dlg-multi" aria-labelledby="multi-title">
+  <dialog id="dlg-multi" class="newsite" aria-labelledby="multi-title">
     <form id="form-multi">
-      <h2 id="multi-title">Multi action</h2>
+      <header class="ns-head">
+        <span class="ns-icon" data-header-icon="manage" aria-hidden="true"></span>
+        <div><h2 id="multi-title">Multi action</h2><p id="multi-count"></p></div>
+      </header>
       <div id="multi-selection" role="list" aria-label="Selected sites"></div>
-      <label class="multi-action-label">Choose an action
-        <select name="action" required>
-          <option value="" selected disabled>Choose...</option>
-          <optgroup label="Packages">
-            <option value="check">Check</option>
-            <option value="add">Add</option>
-            <option value="remove">Remove</option>
-            <option value="outdated">Update outdated</option>
-          </optgroup>
-          <optgroup label="Publish">
-            <option value="local">Local</option>
-            <option value="prod">Prod</option>
-            <option value="both">Both</option>
-          </optgroup>
-        </select>
-      </label>
-      <p id="multi-action-description" class="muted"></p>
+      <div class="ns-section">Publish</div>
+      <div id="multi-actions" class="type-cards multi-choices">
+        <label class="type-card multi-choice"><input type="radio" name="action" value="local"><span class="tc-title">Main sites</span><span class="tc-sub">Build and restart each site here</span></label>
+        <label class="type-card multi-choice"><input type="radio" name="action" value="prod"><span class="tc-title">Environments</span><span class="tc-sub">Build and deploy each environment</span></label>
+        <label class="type-card multi-choice"><input type="radio" name="action" value="both"><span class="tc-title">Both</span><span class="tc-sub">The main site, then its environments</span></label>
+      </div>
+      <div class="ns-section">Packages</div>
+      <div class="type-cards multi-choices multi-choices-4">
+        <label class="type-card multi-choice"><input type="radio" name="action" value="check"><span class="tc-title">Check</span><span class="tc-sub">Look for newer versions</span></label>
+        <label class="type-card multi-choice"><input type="radio" name="action" value="outdated"><span class="tc-title">Update outdated</span><span class="tc-sub">Upgrade every outdated package</span></label>
+        <label class="type-card multi-choice"><input type="radio" name="action" value="add"><span class="tc-title">Add</span><span class="tc-sub">A NuGet package</span></label>
+        <label class="type-card multi-choice"><input type="radio" name="action" value="remove"><span class="tc-title">Remove</span><span class="tc-sub">A NuGet package</span></label>
+      </div>
+      <p id="multi-action-description" class="hint"></p>
       <div id="multi-package-fields" hidden>
         <label>Package name<input name="package" required autocomplete="off" disabled></label>
         <label id="multi-version-row">Version (optional)<input name="version" autocomplete="off" disabled></label>
@@ -572,12 +572,23 @@
     <div class="ns-section">Start page</div>
     <fieldset class="environment-options">
       <legend class="visually-hidden">Where the admin opens after you log in</legend>
-      <label class="type-card environment-option"><input type="radio" name="start_view" value="sites" required><span class="tc-title">Sites</span><span class="tc-sub">The sites and their environments</span></label>
+      <label class="type-card environment-option"><input type="radio" name="start_view" value="sites" required><span class="tc-title">Web Server</span><span class="tc-sub">The sites and their environments</span></label>
       <label class="type-card environment-option"><input type="radio" name="start_view" value="sql"><span class="tc-title">SQL Server</span><span class="tc-sub">For a server that is mostly a SQL Server</span></label>
     </fieldset>
     <div class="ns-section">Site keep-alive</div>
-    <label class="copy-connection-toggle"><input name="keep_alive" type="checkbox"><span>Request active sites and environments now and then, so they stay warm</span></label>
-    <label class="preferences-interval">Interval in minutes <input name="keep_alive_interval" type="number" min="1" max="1440" step="1" required></label>
+    <label class="sync-option keep-alive-option"><input name="keep_alive" type="checkbox">
+      <span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></span>
+      <span class="sync-option-text"><span class="sync-option-title">Keep sites warm</span><span class="sync-option-sub">Request active sites and environments now and then, so the first visitor is not kept waiting</span></span>
+    </label>
+    <div id="keep-alive-interval" class="keep-alive-interval" role="group" aria-label="How often">
+      <span class="keep-alive-every">Every</span>
+      <button type="button" data-minutes="1">1 min</button>
+      <button type="button" data-minutes="5">5 min</button>
+      <button type="button" data-minutes="15">15 min</button>
+      <button type="button" data-minutes="30">30 min</button>
+      <button type="button" data-minutes="60">1 hour</button>
+      <label class="keep-alive-custom"><input name="keep_alive_interval" type="number" min="1" max="1440" step="1" required aria-label="Minutes"> min</label>
+    </div>
     <p class="hint" id="preferences-keep-alive-hint">From 1 to 1440 minutes. It does not restart services or prevent Boot failed.</p>
     <menu><button type="button" id="preferences-cancel" class="cancel-link">Cancel</button><button type="submit" class="primary">Save</button></menu>
   </form>
@@ -652,10 +663,20 @@
   <div id="sql-query-output" class="sql-query-output" aria-live="polite"></div>
 </dialog>
 
-<dialog id="dlg-logs" class="wide">
+<dialog id="dlg-logs" class="wide logs-dialog">
   <h2 id="logs-title"></h2>
-  <pre id="logs-text"></pre>
-  <menu><button type="button" id="logs-refresh">Refresh</button><button type="button" id="logs-close" class="primary">Close</button></menu>
+  <div class="logs-toolbar">
+    <input id="logs-search" type="search" placeholder="Filter lines…" autocomplete="off" spellcheck="false" aria-label="Filter lines">
+    <div class="logs-levels" role="group" aria-label="Level">
+      <button type="button" data-level="all" class="active">All <span></span></button>
+      <button type="button" data-level="error">Errors <span></span></button>
+      <button type="button" data-level="warn">Warnings <span></span></button>
+    </div>
+    <button type="button" id="logs-raw" class="logs-raw" aria-pressed="false">Raw text</button>
+  </div>
+  <div id="logs-text" class="logs-list" aria-live="polite"></div>
+  <pre id="logs-raw-text" class="logs-raw-text" hidden></pre>
+  <menu><span id="logs-count" class="muted logs-count"></span><button type="button" id="logs-refresh">Refresh</button><button type="button" id="logs-close" class="primary">Close</button></menu>
 </dialog>
 
 <script src="/static/vendor/xterm.js"></script>
