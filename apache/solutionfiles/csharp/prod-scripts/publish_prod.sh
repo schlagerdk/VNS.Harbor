@@ -427,6 +427,9 @@ PY
 fi
 fi
 
+# The main site's config snippets (Allowed IPs, rewrites and the like), so the environment has the same rules
+VNS_TARGET=${_scope#target-} bash "@APACHE_DIR@/carry_snippets.sh" "${_siteFolder##*/}" || echo "The config snippets were not carried. The publish goes on." >&2
+
 echo "Start service"
 run_script <<'REMOTE'
 set -euo pipefail

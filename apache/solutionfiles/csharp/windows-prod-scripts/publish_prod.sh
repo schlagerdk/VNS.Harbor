@@ -146,9 +146,16 @@ if ((!_hasWebConfig)); then
 	python3 "@APACHE_DIR@/lib/windows_prod.py" web-config "${_projectName}" "${PROD_ENVIRONMENT}" "${_webConfigHttps}" "${_webConfigUmbraco}" >"${_workDir}/web.config"
 fi
 
+# The main site's config snippets (Allowed IPs, rewrites and the like) as rules named "VNS: ...", made equal to
+# the main site's at every publish. Rules written by hand are kept. A snippet that cannot be carried is told about.
+_mainConf="/etc/apache2/sites-available/${_siteFolder##*/}.conf"
+if [[ -f ${_mainConf} ]] && [[ $(python3 "@APACHE_DIR@/lib/config_snippets.py" iis "${_mainConf}" "${_workDir}/web.config" || true) == changed ]]; then
+	((!_hasWebConfig)) || _updateWebConfig=1
+fi
+
 if ((_dryRun)); then
 	((_hasWebConfig)) || echo "web.config would be created."
-	((!_updateWebConfig)) || echo "The HTTPS redirect in web.config would be $([[ ${_webConfigHttps} == y ]] && echo added || echo removed)."
+	((!_updateWebConfig)) || echo "web.config would be updated: its HTTPS redirect and the main site's config snippets."
 	rclone copy "${_publish}" "${_windowsTarget}" "${_copyOpts[@]}" --dry-run
 	echo "Dry run completed."
 	exit 0
@@ -162,7 +169,7 @@ _copying=1
 rclone copy "${_publish}" "${_windowsTarget}" "${_copyOpts[@]}" --retries 5 --retries-sleep 5s
 
 if ((_updateWebConfig)); then
-	echo "web.config: HTTPS redirect $([[ ${_webConfigHttps} == y ]] && echo added || echo removed)"
+	echo "web.config: the HTTPS redirect and the main site's config snippets are brought up to date"
 	rclone copyto "${_workDir}/web.config" "${_windowsTarget}/${_webConfigName}"
 elif ((_hasWebConfig)); then
 	echo "web.config already exists on the server - not touched"

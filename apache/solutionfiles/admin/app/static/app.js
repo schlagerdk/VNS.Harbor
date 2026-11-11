@@ -1032,7 +1032,7 @@ function renderSite(name) {
 		// What the filter matches: binding, aliases, environment, folder, server
 		panel.dataset.search = [env.binding, bindingLabel(env), ...(env.aliases || []), ...aliasLabels(env), env.environment,
 			env.folder, env.unit, env.path, env.host, env.target].filter(Boolean).join(" ").toLowerCase();
-		if (envLayout === "list") envListRow(panel, site.name + "/" + (env.target || "prod"));
+		if (envLayout === "list") envListRow(panel, site.name + "/" + (env.target || "prod"), site, env);
 		targets.append(panel);
 	}
 	const canAddEnvironment = site.has_project && !site.admin && (site.kind === "csharp" || site.kind === "umbraco");
@@ -1366,9 +1366,22 @@ let envLayout = "grid";
 try { if (localStorage.getItem("vns-env-layout") === "list") envLayout = "list"; } catch (error) {}
 const unfoldedEnvs = new Set();
 const envRowButtons = ["Publish", "Clear logs", "Sync data…", "Sync settings…"];
-function envListRow(panel, key) {
+function envListRow(panel, key, site, env) {
 	const head = panel.querySelector(".env-head");
 	const buttons = [...panel.querySelectorAll("button")];
+	// The environment's addresses, as on the overview's cards: the site, and Umbraco's backoffice
+	const address = environmentAddress(env);
+	const links = el("div", { className: "env-row-links" });
+	if (address.url && !isMissingEnv(env)) {
+		const frontend = openLink(bindingLabel(env) || address.hostname, address.url, address.title, true);
+		frontend.classList.add("frontend");
+		links.append(frontend);
+		if (site.kind === "umbraco") {
+			const backend = openLink("Backend", address.url + "umbraco", "Backoffice: " + address.title, true);
+			backend.classList.add("backend");
+			links.append(backend);
+		}
+	}
 	const shortcuts = el("div", { className: "env-row-actions" });
 	// Each one clicks the card's own button, so it asks and does exactly the same
 	for (const label of envRowButtons) {
@@ -1385,7 +1398,19 @@ function envListRow(panel, key) {
 	toggle.onclick = (event) => { event.stopPropagation(); unfold(!panel.classList.contains("unfolded")); };
 	// The whole row unfolds it, except its links and buttons
 	head.onclick = (event) => { if (!event.target.closest("a, button, input, label")) unfold(!panel.classList.contains("unfolded")); };
-	head.append(shortcuts, toggle);
+	// The head's parts in columns of the same width in every row, so they line up down the list
+	const parts = [...head.children];
+	const take = (test) => parts.filter((item) => test(item) && !item.dataset.placed).map((item) => { item.dataset.placed = "1"; return item; });
+	const column = (className, items) => el("div", { className: "env-col " + className }, ...items);
+	const title = take((item) => item.tagName === "H3");
+	if (title[0]) title[0].title = title[0].textContent;
+	const status = take((item) => item.classList.contains("site-activity") || item.classList.contains("dot") || /\bstate-/.test(item.className) || /badge (|static|remote|windows)$/.test(item.className));
+	const kind = take((item) => /\benv-(?!missing)/.test(item.className));
+	const icons = take((item) => item.classList.contains("https-lock") || item.classList.contains("remote-icon"));
+	const note = take((item) => item.classList.contains("publish-status") || item.classList.contains("env-missing"));
+	head.replaceChildren(column("env-col-name", title), column("env-col-status", status), column("env-col-kind", kind),
+		column("env-col-icons", icons), column("env-col-note", [...note, ...parts.filter((item) => !item.dataset.placed)]),
+		el("div", { className: "env-col env-col-actions" }, ...(links.childElementCount ? [links] : []), shortcuts), toggle);
 	panel.classList.add("env-listed");
 	unfold(unfoldedEnvs.has(key));
 }
@@ -1688,6 +1713,13 @@ async function deleteSite(site, scope, selected) {
 	await openTask({ kind: "delete_site", site: site.name, certificates, scope, ...(scope === "prod" ? { target: prod.target || "prod" } : {}) });
 }
 
+// The clear button empties the search and keeps the cursor in it, as the browser's own did
+$("#search-clear").onclick = () => {
+	const field = $("#search");
+	field.value = "";
+	field.dispatchEvent(new Event("input"));
+	field.focus();
+};
 $("#search").oninput = (event) => {
 	query = event.target.value;
 	if (currentView !== "sites") go("sites");
@@ -2908,6 +2940,17 @@ function askSnippet(key, snippet, config) {
 	});
 }
 
+// Each Apache snippet keeps what it was made from on its second line, "# vns {...}": a publish reads it there
+// and writes the same snippet for the site's environments, in their own form (lib/config_snippets.py)
+for (const [key, snippet] of Object.entries(apacheSnippets)) {
+	const build = snippet.build;
+	snippet.build = (values, config) => {
+		const [first, ...rest] = build(values, config).split("\n");
+		const kept = Object.fromEntries(Object.entries(values || {}).filter(([name, value]) => name !== "name" && value !== ""));
+		return [first, "# vns " + JSON.stringify({ key, values: kept }), ...rest].join("\n");
+	};
+}
+
 // The indentation of the line that holds position, and a block indented to it
 const lineIndent = (text, position) => (text.slice(text.lastIndexOf("\n", position - 1) + 1).match(/^[ \t]*/) || [""])[0];
 const indentBlock = (block, indent) => block.split("\n").map((line) => (line ? indent + line : line)).join("\n");
@@ -3039,6 +3082,11 @@ function insertApacheSnippet(text, name, snippet, place) {
 }
 
 function editorReplaceAll(text) {
+	// Where the new text starts: the first place it differs from what was there
+	const before = editorValue();
+	let at = 0;
+	while (at < before.length && at < text.length && before[at] === text[at]) at += 1;
+	at = text.lastIndexOf("\n", at - 1) + 1;
 	if (monacoEditor && !$("#editor-box").hidden) {
 		const model = monacoEditor.getModel();
 		// One edit, so Ctrl+Z takes the snippet out again
@@ -3048,6 +3096,31 @@ function editorReplaceAll(text) {
 		$("#editor-text").value = text;
 	}
 	setDirty(true);
+	focusEditor(at);
+}
+
+// Back in the editor, with the cursor at offset and that line in view
+function focusEditor(offset = null) {
+	// After the snippet's window has closed and given the focus back to the menu button
+	setTimeout(() => {
+		if (monacoEditor && !$("#editor-box").hidden) {
+			if (offset !== null) {
+				const position = monacoEditor.getModel().getPositionAt(offset);
+				monacoEditor.setPosition(position);
+				monacoEditor.revealLineInCenterIfOutsideViewport(position.lineNumber);
+			}
+			monacoEditor.focus();
+			return;
+		}
+		const area = $("#editor-text");
+		area.focus();
+		if (offset !== null) {
+			area.setSelectionRange(offset, offset);
+			// A textarea shows the cursor's line when it is given the focus again
+			area.blur();
+			area.focus();
+		}
+	}, 0);
 }
 
 function snippetKind() {
@@ -3169,10 +3242,14 @@ async function insertSnippet(key) {
 	if (!key || !kind) return;
 	const snippet = (kind === "iis" ? iisSnippets : apacheSnippets)[key];
 	const answer = await askSnippet(key, snippet, editorValue());
-	if (!answer) return;
+	if (!answer) {
+		focusEditor();
+		return;
+	}
 	if (key === "ips") {
 		const placed = placeAllowedIps(kind, editorValue(), snippet, answer.values);
 		if (placed.text !== editorValue()) editorReplaceAll(placed.text);
+		else focusEditor();
 		toast(placed.message, "ok");
 		return;
 	}

@@ -142,6 +142,13 @@ def update_publish_script(path, production):
         if additions:
             text = text[:publish.start()] + additions + text[publish.start():]
 
+    # A production script carries the main site's config snippets before it starts the service
+    if production and "carry_snippets.sh" not in text and "_scope=" in text and "_siteFolder=" in text:
+        start = re.search(r'(?m)^echo "Start service"$', text)
+        if start:
+            text = (text[:start.start()] + "# The main site's config snippets (Allowed IPs, rewrites and the like), so the environment has the same rules\n"
+                    + 'VNS_TARGET=${_scope#target-} bash "' + str(apache) + '/carry_snippets.sh" "${_siteFolder##*/}" || echo "The config snippets were not carried. The publish goes on." >&2\n\n'
+                    + text[start.start():])
     (unchanged if text == original else planned).append((path, text))
 
 
