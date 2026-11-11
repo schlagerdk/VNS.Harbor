@@ -8,6 +8,9 @@ _adminMail=mhs@vns.dk
 _dotnetDir=/usr/lib/dotnet
 _dotnetChannel=10.0
 
+echo Install Unzip and Zip
+sudo apt install -y unzip zip
+
 echo Install prerequisites
 sudo apt-get update
 sudo apt-get install -y curl unzip tar git ca-certificates uuid-runtime python3 python3-venv python3-pip cron
