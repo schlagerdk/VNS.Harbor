@@ -2665,6 +2665,330 @@ async function showInEditor(path, content) {
 }
 
 const editorValue = () => (monacoEditor && !$("#editor-box").hidden ? monacoEditor.getValue() : $("#editor-text").value);
+// ------------------------------------------------------------------ config snippets
+// Ready-made rules for an IIS web.config or an Apache site config, put in the right place in the file that is open.
+// The file only changes in the editor, so the rules can be read and adjusted before Save.
+// They do what the rewrite rules on the Windows servers do, in the same order whichever is added first:
+// Ignore, Allowed IPs, AddTrailingSlash, Remove www, Rewrite to a domain, HTTP to HTTPS.
+const regexEscape = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const xmlEscape = (text) => text.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+const snippetDomain = /^(?=.{1,253}$)[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$/;
+const snippetPath = /^[A-Za-z0-9._~\-/]+$/;
+const snippetOrder = ["Ignore", "Allowed IPs", "AddTrailingSlash", "Remove www", "Rewrite to domain", "Rewrite HTTP to HTTPS"];
+
+async function askDomain() {
+	const value = await ask({ title: "Redirect to which domain?", message: "Every other name the site answers on is sent here, e.g. example.dk.", placeholder: "example.dk", ok: "Insert" });
+	if (value === null) return null;
+	const domain = value.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+	if (!snippetDomain.test(domain)) throw new Error("Enter a domain name like example.dk.");
+	return domain;
+}
+async function askList(title, message, value, valid, error) {
+	const answer = await ask({ title, message, value, ok: "Next" });
+	if (answer === null) return null;
+	const items = answer.split(/[\s,]+/).map((item) => item.replace(/^\/+|\/+$/g, "")).filter(Boolean);
+	if (!items.length || items.some((item) => !valid(item))) throw new Error(error);
+	return items;
+}
+const askPaths = (title, message, value) => askList(title, message + " Separate them with spaces or commas.", value,
+	(path) => snippetPath.test(path), "Enter paths like umbraco/api or app_plugins.");
+const askAddresses = (cidr) => askList("Allowed IP addresses", "Only these reach the protected paths. This server itself always does. Separate them with spaces or commas."
+	+ (cidr ? " Ranges like 10.0.0.0/24 are allowed." : ""), "", (address) => (cidr ? /^[0-9a-fA-F:.]+(\/\d{1,3})?$/ : /^[0-9a-fA-F:.]+$/).test(address) && /[.:]/.test(address),
+	cidr ? "Enter IP addresses or ranges, like 192.0.2.10 or 10.0.0.0/24." : "Enter single IP addresses, like 192.0.2.10.");
+const ignoredPaths = () => askPaths("Paths to leave alone", "The rules after this one do not touch these paths.", "umbraco/api, umbraco/surface, umbraco/backoffice");
+const protectedPaths = () => askPaths("Paths to protect", "Only the allowed IP addresses reach these.", "umbraco, app_plugins, config");
+const pathPattern = (paths) => paths.map(regexEscape).join("|");
+// A rewrite: the address visitors use, and the path the site answers it from, e.g. sitemap.xml to SEO_SiteMap_xml
+async function askRewrite() {
+	const from = await ask({ title: "Rewrite from", message: "The address visitors ask for, without the domain.", placeholder: "sitemap.xml", ok: "Next" });
+	if (from === null) return null;
+	const to = await ask({ title: "Rewrite to", message: `The path the site answers /${from.trim().replace(/^\/+/, "")} from. Visitors keep seeing the address they asked for.`, placeholder: "SEO_SiteMap_xml", ok: "Insert" });
+	if (to === null) return null;
+	const clean = (value) => value.trim().replace(/^\/+/, "");
+	if (![from, to].map(clean).every((path) => path && snippetPath.test(path))) throw new Error("Enter paths like sitemap.xml or .well-known/file.txt.");
+	return { from: clean(from), to: clean(to) };
+}
+
+// IIS: each rule, with where it goes when no rule of the list is there yet
+const iisSnippets = {
+	ignore: { label: "Ignore", name: "Ignore", rule: async () => {
+		const paths = await ignoredPaths();
+		return paths && `<rule name="Ignore" stopProcessing="true" enabled="true">
+  <match url="^(?:${xmlEscape(pathPattern(paths))})/" />
+  <action type="None" />
+</rule>`;
+	} },
+	ips: { label: "Allowed IPs", name: "Allowed IPs", rule: async () => {
+		const addresses = await askAddresses(false);
+		const paths = addresses && await protectedPaths();
+		return paths && `<rule name="Allowed IPs" stopProcessing="true" enabled="true">
+  <match url="^(?:${xmlEscape(pathPattern(paths))})(?:/|$)" />
+  <conditions>
+    <add input="{REMOTE_ADDR}" matchType="Pattern" pattern="^(?:::1|127\\.0\\.0\\.1|${xmlEscape(addresses.map(regexEscape).join("|"))})$" ignoreCase="true" negate="true" />
+    <add input="{HTTP_X_FORWARDED_FOR}" matchType="Pattern" pattern="(?:^|,\\s*)(?:${xmlEscape(addresses.map(regexEscape).join("|"))})$" ignoreCase="true" negate="true" />
+  </conditions>
+  <action type="AbortRequest" />
+</rule>`;
+	} },
+	slash: { label: "AddTrailingSlash", name: "AddTrailingSlash", rule: async () => `<rule name="AddTrailingSlash" stopProcessing="true" enabled="true">
+  <match url=".*" />
+  <conditions logicalGrouping="MatchAll">
+    <!-- Not for files, Umbraco's paths, or an address that has a slash already -->
+    <add input="{REQUEST_FILENAME}" matchType="IsFile" negate="true" />
+    <add input="{REQUEST_URI}" pattern="\\.[a-zA-Z0-9]{2,10}($|\\?)" negate="true" />
+    <add input="{REQUEST_URI}" pattern="^/umbraco" negate="true" />
+    <add input="{REQUEST_URI}" pattern="^/media" negate="true" />
+    <add input="{REQUEST_URI}" pattern="/$" negate="true" />
+  </conditions>
+  <action type="Redirect" url="{R:0}/" redirectType="Permanent" />
+</rule>` },
+	www: { label: "Remove www", name: "Remove www", rule: async () => `<rule name="Remove www" stopProcessing="true" enabled="true">
+  <match url="(.*)" ignoreCase="true" />
+  <conditions logicalGrouping="MatchAll">
+    <add input="{HTTP_HOST}" pattern="^www\\.(.+)$" />
+  </conditions>
+  <action type="Redirect" url="https://{C:1}/{R:0}" appendQueryString="true" redirectType="Permanent" />
+</rule>` },
+	domain: { label: "Rewrite to domain", name: "Rewrite to domain", rule: async () => {
+		const domain = await askDomain();
+		return domain && `<rule name="Rewrite to domain" stopProcessing="true" enabled="true">
+  <match url="(.*)" />
+  <conditions>
+    <add input="{HTTP_HOST}" pattern="^${xmlEscape(regexEscape(domain))}$" negate="true" />
+  </conditions>
+  <action type="Redirect" url="https://${domain}/{R:0}" appendQueryString="true" redirectType="Permanent" />
+</rule>`;
+	} },
+	https: { label: "Rewrite HTTP to HTTPS", name: "Rewrite HTTP to HTTPS", rule: async () => `<rule name="Rewrite HTTP to HTTPS" stopProcessing="true" enabled="true">
+  <match url="(.*)" />
+  <conditions>
+    <add input="{HTTPS}" pattern="^OFF$" />
+  </conditions>
+  <action type="Redirect" url="https://{HTTP_HOST}{REQUEST_URI}" appendQueryString="false" />
+</rule>` },
+	rewrite: { label: "Rewrite from → to", rule: async () => {
+		const rewrite = await askRewrite();
+		if (!rewrite) return null;
+		iisSnippets.rewrite.name = "Rewrite " + rewrite.from;
+		return `<rule name="Rewrite ${xmlEscape(rewrite.from)}" stopProcessing="true" enabled="true">
+  <match url="^${xmlEscape(regexEscape(rewrite.from))}$" />
+  <action type="Rewrite" url="${xmlEscape(rewrite.to)}" appendQueryString="true" />
+</rule>`;
+	} },
+	cookies: { label: "Add Secure to ALL cookies", name: "Add Secure to ALL cookies", outbound: true, rule: async () => `<rule name="Add Secure to ALL cookies" preCondition="NeedsSecureFlag">
+  <match serverVariable="RESPONSE_Set-Cookie" pattern="(.*)" />
+  <action type="Rewrite" value="{R:1}; secure" />
+</rule>`, preCondition: `<preCondition name="NeedsSecureFlag">
+  <add input="{RESPONSE_Set-Cookie}" pattern="secure" negate="true" />
+</preCondition>` },
+};
+
+// Apache: the same rules for the HTTPS site. HTTP to HTTPS is not one: every site's HTTP part already sends there.
+const apacheSnippets = {
+	ignore: { label: "Ignore", name: "Ignore", text: async () => {
+		const paths = await ignoredPaths();
+		return paths && `RewriteRule ^/(?:${pathPattern(paths)})/ - [L]`;
+	} },
+	ips: { label: "Allowed IPs", name: "Allowed IPs", text: async () => {
+		const addresses = await askAddresses(true);
+		const paths = addresses && await protectedPaths();
+		if (!paths) return null;
+		// mod_rewrite cannot match ranges, so the addresses are checked with Require; anyone else gets 403
+		return `RewriteCond expr "! -R '127.0.0.0/8' && ! -R '::1'${addresses.map((address) => ` && ! -R '${address}'`).join("")}"
+RewriteRule ^/(?:${pathPattern(paths)})(?:/|$) - [F,NC,L]`;
+	} },
+	slash: { label: "AddTrailingSlash", name: "AddTrailingSlash", text: async () => `RewriteCond %{REQUEST_METHOD} ^(GET|HEAD)$
+RewriteCond %{REQUEST_URI} !\\.[a-zA-Z0-9]{2,10}$
+RewriteCond %{REQUEST_URI} !^/umbraco [NC]
+RewriteCond %{REQUEST_URI} !^/media [NC]
+RewriteCond %{REQUEST_URI} !/$
+RewriteRule ^(.*)$ $1/ [R=301,L]` },
+	www: { label: "Remove www", name: "Remove www", text: async () => `RewriteCond %{HTTP_HOST} ^www\\.(.+)$ [NC]
+RewriteRule ^ https://%1%{REQUEST_URI} [R=301,L]` },
+	domain: { label: "Rewrite to domain", name: "Rewrite to domain", text: async () => {
+		const domain = await askDomain();
+		return domain && `RewriteCond %{HTTP_HOST} !^${regexEscape(domain)}$ [NC]
+RewriteRule ^ https://${domain}%{REQUEST_URI} [R=301,L]`;
+	} },
+	// PT hands the new path on to the rest of the config, so it is sent to the site's service like any other
+	rewrite: { label: "Rewrite from → to", text: async () => {
+		const rewrite = await askRewrite();
+		if (!rewrite) return null;
+		apacheSnippets.rewrite.name = "Rewrite " + rewrite.from;
+		return `RewriteRule ^/${regexEscape(rewrite.from)}$ /${rewrite.to} [PT,L]`;
+	} },
+	cookies: { label: "Add Secure to ALL cookies", name: "Add Secure to ALL cookies", place: "end", text: async () => `Header always edit Set-Cookie "(?i)^((?!.*;\\s*secure).*)$" "$1; Secure"` },
+};
+
+// The indentation of the line that holds position, and a block indented to it
+const lineIndent = (text, position) => (text.slice(text.lastIndexOf("\n", position - 1) + 1).match(/^[ \t]*/) || [""])[0];
+const indentBlock = (block, indent) => block.split("\n").map((line) => (line ? indent + line : line)).join("\n");
+const lineStart = (text, position) => text.lastIndexOf("\n", position - 1) + 1;
+const rank = (name) => snippetOrder.indexOf(name);
+
+function insertIisRule(text, name, rule, snippet) {
+	if (new RegExp(`<rule\\s+name="${regexEscape(xmlEscape(name))}"`).test(text)) throw new Error(`web.config already has the rule "${name}".`);
+	const step = "  ";
+	if (snippet.outbound) {
+		const preCondition = snippet.preCondition;
+		let result = text;
+		const outbound = /<outboundRules\b[^>]*>/.exec(result);
+		if (outbound) {
+			const indent = lineIndent(result, outbound.index) + step;
+			result = result.slice(0, outbound.index + outbound[0].length) + "\n" + indentBlock(rule, indent) + result.slice(outbound.index + outbound[0].length);
+			const conditions = /<preConditions\b[^>]*>/.exec(result.slice(outbound.index));
+			if (conditions) {
+				const at = outbound.index + conditions.index + conditions[0].length;
+				return result.slice(0, at) + "\n" + indentBlock(preCondition, lineIndent(result, at) + step) + result.slice(at);
+			}
+			const close = result.indexOf("</outboundRules>", outbound.index);
+			const start = lineStart(result, close);
+			return result.slice(0, start) + indentBlock(`<preConditions>\n${indentBlock(preCondition, step)}\n</preConditions>`, indent) + "\n" + result.slice(start);
+		}
+		const block = `<outboundRules>\n${indentBlock(rule, step)}\n${step}<preConditions>\n${indentBlock(preCondition, step + step)}\n${step}</preConditions>\n</outboundRules>`;
+		const rulesEnd = /<\/rules>/.exec(result);
+		if (rulesEnd) {
+			const at = rulesEnd.index + rulesEnd[0].length;
+			return result.slice(0, at) + "\n" + indentBlock(block, lineIndent(result, rulesEnd.index)) + result.slice(at);
+		}
+		return insertRewriteBlock(result, `<rewrite>\n${indentBlock(block, step)}\n</rewrite>`);
+	}
+	const rules = /<rewrite\b[^>]*>\s*<rules\b[^>]*>/.exec(text);
+	if (!rules) return insertRewriteBlock(text, `<rewrite>\n${step}<rules>\n${indentBlock(rule, step + step)}\n${step}</rules>\n</rewrite>`);
+	const open = rules.index + rules[0].length;
+	const close = text.indexOf("</rules>", open);
+	const existing = [...text.slice(open, close).matchAll(/<rule\s+name="([^"]*)"/g)].map((match) => ({ name: match[1], at: open + match.index }));
+	const mine = rank(name);
+	// Before the first rule of the list that comes after this one, else after the last that comes before it
+	const later = mine < 0 ? null : existing.find((item) => rank(item.name) > mine);
+	if (later) {
+		const start = lineStart(text, later.at);
+		return text.slice(0, start) + indentBlock(rule, lineIndent(text, later.at)) + "\n" + text.slice(start);
+	}
+	const earlier = mine < 0 ? [] : existing.filter((item) => rank(item.name) >= 0 && rank(item.name) < mine);
+	if (earlier.length) {
+		const last = earlier[earlier.length - 1];
+		const after = text.indexOf("</rule>", last.at) + "</rule>".length;
+		return text.slice(0, after) + "\n" + indentBlock(rule, lineIndent(text, last.at)) + text.slice(after);
+	}
+	const indent = existing.length ? lineIndent(text, existing[0].at) : lineIndent(text, rules.index) + step + step;
+	// Ignore and Allowed IPs go first, the redirects last
+	if (mine >= 0 && mine <= 1) return text.slice(0, open) + "\n" + indentBlock(rule, indent) + text.slice(open);
+	const start = lineStart(text, close);
+	return text.slice(0, start) + indentBlock(rule, indent) + "\n" + text.slice(start);
+}
+
+// A new <rewrite> section, at the end of the site's <system.webServer>
+function insertRewriteBlock(text, block) {
+	const rewrite = /<rewrite\b[^>]*>/.exec(text);
+	if (rewrite) {
+		const at = rewrite.index + rewrite[0].length;
+		const inner = block.replace(/^<rewrite>\n/, "").replace(/\n<\/rewrite>$/, "");
+		return text.slice(0, at) + "\n" + indentBlock(inner, lineIndent(text, rewrite.index)) + text.slice(at);
+	}
+	const close = text.indexOf("</system.webServer>");
+	if (close < 0) throw new Error("This web.config has no <system.webServer> section to put the rule in.");
+	const indent = lineIndent(text, close);
+	const start = lineStart(text, close);
+	return text.slice(0, start) + indentBlock(block, indent + "  ") + "\n" + text.slice(start);
+}
+
+function insertApacheSnippet(text, name, snippet, place) {
+	const marker = "# " + name;
+	if (text.split("\n").some((line) => line.trim() === marker)) throw new Error(`The config already has "${name}".`);
+	// The HTTPS site when there is one: that is where visitors end up
+	const hosts = [...text.matchAll(/<VirtualHost\b[^>]*>/g)];
+	if (!hosts.length) throw new Error("This file has no <VirtualHost> to put the rule in.");
+	const host = hosts.find((match) => /:443>/.test(match[0])) || hosts[0];
+	const start = host.index + host[0].length;
+	const end = text.indexOf("</VirtualHost>", start);
+	const indent = lineIndent(text, text.indexOf("\n", start) + 1) || "  ";
+	const block = indentBlock(marker + "\n" + snippet, indent);
+	const body = text.slice(start, end);
+	if (place === "end") {
+		const before = text.slice(0, end).replace(/[ \t]*$/, "");
+		return before + "\n" + block + "\n" + lineIndent(text, end) + text.slice(end);
+	}
+	const proxy = /^[ \t]*(ProxyPass|ProxyPreserveHost)\b/m.exec(body);
+	// The rules of the list keep their order: before the first that comes after this one, else after the last before it
+	const markers = [...body.matchAll(/^[ \t]*# (.+)$/gm)].map((match) => ({ name: match[1].trim(), at: start + match.index })).filter((item) => rank(item.name) >= 0);
+	const mine = rank(name);
+	if (mine < 0) {
+		const at = proxy ? start + proxy.index : end;
+		return text.slice(0, at) + block + "\n\n" + text.slice(at);
+	}
+	const later = markers.find((item) => rank(item.name) > mine);
+	if (later) return text.slice(0, later.at) + block + "\n\n" + text.slice(later.at);
+	const earlier = markers.filter((item) => rank(item.name) < mine);
+	if (earlier.length) {
+		const last = earlier[earlier.length - 1];
+		const blank = text.indexOf("\n\n", last.at);
+		const at = blank < 0 || blank > end ? end : blank + 1;
+		return text.slice(0, at) + "\n" + block + "\n" + text.slice(at);
+	}
+	const engine = /^[ \t]*RewriteEngine\s+On[ \t]*$/im.exec(body);
+	if (!engine) {
+		const at = proxy ? start + proxy.index : end;
+		return text.slice(0, at) + indent + "RewriteEngine On\n\n" + block + "\n\n" + text.slice(at);
+	}
+	// Ignore and Allowed IPs first among the rewrite rules, the redirects after those already there
+	if (mine <= 1) {
+		const at = start + engine.index + engine[0].length;
+		return text.slice(0, at) + "\n\n" + block + text.slice(at);
+	}
+	const at = proxy ? start + proxy.index : end;
+	return text.slice(0, at) + block + "\n\n" + text.slice(at);
+}
+
+function editorReplaceAll(text) {
+	if (monacoEditor && !$("#editor-box").hidden) {
+		const model = monacoEditor.getModel();
+		// One edit, so Ctrl+Z takes the snippet out again
+		monacoEditor.executeEdits("snippet", [{ range: model.getFullModelRange(), text }]);
+		monacoEditor.pushUndoStop();
+	} else {
+		$("#editor-text").value = text;
+	}
+	setDirty(true);
+}
+
+function snippetKind() {
+	const name = (openFile || "").split("/").pop().toLowerCase();
+	if (name === "web.config") return "iis";
+	if (configurationEditor?.kind === "conf" || (/\.conf$/.test(name) && /sites-(available|enabled)/.test(openFile || ""))) return "apache";
+	return "";
+}
+
+function refreshSnippetMenu() {
+	const kind = snippetKind();
+	const select = $("#editor-snippets");
+	select.hidden = !kind;
+	if (!kind) return;
+	const snippets = kind === "iis" ? iisSnippets : apacheSnippets;
+	select.replaceChildren(el("option", { value: "", textContent: "Insert snippet…" }),
+		...Object.entries(snippets).map(([key, snippet]) => el("option", { value: key, textContent: snippet.label })));
+	select.value = "";
+}
+
+$("#editor-snippets").onchange = () => run(async () => {
+	const select = $("#editor-snippets");
+	const key = select.value;
+	select.value = "";
+	const kind = snippetKind();
+	if (!key || !kind) return;
+	const snippet = (kind === "iis" ? iisSnippets : apacheSnippets)[key];
+	if (kind === "iis") {
+		const rule = await snippet.rule();
+		if (!rule) return;
+		editorReplaceAll(insertIisRule(editorValue(), /name="([^"]+)"/.exec(rule)[1].replace(/&quot;/g, '"').replace(/&amp;/g, "&"), rule, snippet));
+	} else {
+		const text = await snippet.text(editorValue());
+		if (!text) return;
+		editorReplaceAll(insertApacheSnippet(editorValue(), snippet.name, text, snippet.place));
+	}
+	toast(`${snippet.label} inserted. Check it, then save.`, "ok");
+});
+
 
 async function editFile(path, remoteSite = null) {
 	if (!(await discardOk())) return;
@@ -2678,6 +3002,7 @@ async function editFile(path, remoteSite = null) {
 	$("#editor-path").textContent = path;
 	$("#editor-status").textContent = "";
 	await showInEditor(path, data.content);
+	refreshSnippetMenu();
 	setDirty(false);
 }
 
@@ -2703,6 +3028,7 @@ async function editConfiguration(site, env, kind) {
 	$("#editor-status").textContent = configurationEditor.encoding === "utf-8" ? ""
 		: `Opened as ${configurationEditor.encoding}. Check the characters before saving; Save converts this file to UTF-8.`;
 	await showInEditor(data.path, data.content);
+	refreshSnippetMenu();
 	setDirty(false);
 }
 

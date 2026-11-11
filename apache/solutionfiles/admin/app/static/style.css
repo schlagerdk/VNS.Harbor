@@ -936,3 +936,4 @@ dialog.logs-dialog[open] { display: flex; flex-direction: column; }
 .env-row-toggle .ico { width: 16px; height: 16px; margin: 0; transition: transform .15s; }
 .env-row-toggle[aria-expanded="true"] .ico { transform: rotate(90deg); }
 @media (prefers-reduced-motion: reduce) { .env-row-toggle .ico { transition: none; } }
+.editor-snippets { flex: none; width: auto; max-width: 240px; height: 34px; padding: 0 30px 0 12px; border-radius: 8px; cursor: pointer; }
