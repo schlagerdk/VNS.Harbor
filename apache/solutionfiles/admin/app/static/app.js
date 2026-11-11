@@ -130,7 +130,22 @@ async function loadServerAddress() {
 	if (!serverAddress) serverAddress = await api("/api/server-address");
 	return serverAddress;
 }
-function dnsCard(input, { expect = "", name: targetName = "" } = {}) {
+// A DNS record to make, with a button that copies its value
+function dnsRecord(type, name, value) {
+	const button = el("button", { type: "button", className: "dns-copy", title: "Copy " + value, ariaLabel: "Copy " + value });
+	button.append(svgIcon("copy"));
+	button.onclick = () => run(async () => {
+		// Copied from inside its card, so it works in an open dialog too
+		await copyText(value, button.closest(".dns-card") || document.body);
+		button.classList.add("copied");
+		setTimeout(() => button.classList.remove("copied"), 1200);
+	});
+	return el("div", { className: "dns-record" },
+		el("span", { className: "dns-type", textContent: type }), el("code", { textContent: name }),
+		el("span", { className: "dns-arrow", textContent: "→" }), el("code", { className: "dns-value", textContent: value }), button);
+}
+
+function dnsCard(input, { expect = "", name: targetName = "", onState = () => {} } = {}) {
 	const status = el("span", { className: "dns-status" });
 	const records = el("div", { className: "dns-records" });
 	const note = el("p", { className: "dns-note" });
@@ -140,25 +155,13 @@ function dnsCard(input, { expect = "", name: targetName = "" } = {}) {
 		records, note);
 	// Hidden until a name is checked, so an empty binding never shows it for a moment
 	card.hidden = true;
-	const copyButton = (text) => {
-		const button = el("button", { type: "button", className: "dns-copy", title: "Copy " + text, ariaLabel: "Copy " + text });
-		button.append(svgIcon("copy"));
-		button.onclick = () => run(async () => {
-			await copyText(text, card);
-			button.classList.add("copied");
-			setTimeout(() => button.classList.remove("copied"), 1200);
-		});
-		return button;
-	};
-	const record = (type, name, value) => el("div", { className: "dns-record" },
-		el("span", { className: "dns-type", textContent: type }), el("code", { textContent: name }),
-		el("span", { className: "dns-arrow", textContent: "→" }), el("code", { className: "dns-value", textContent: value }), copyButton(value));
+	const record = dnsRecord;
 	let timer = null;
 	let asked = "";
 	const show = async () => {
 		const name = input.value.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
 		card.hidden = !name;
-		if (!name) return;
+		if (!name) { onState("empty"); return; }
 		const server = expect ? null : await loadServerAddress().catch(() => null);
 		const address = expect || server?.address || "";
 		// Only an A record to the public address: the server's own host name is rarely public DNS
@@ -172,6 +175,7 @@ function dnsCard(input, { expect = "", name: targetName = "" } = {}) {
 		if (!name.includes(".")) {
 			status.className = "dns-status muted";
 			status.textContent = "A local name: no public DNS";
+			onState("local");
 			return;
 		}
 		asked = name;
@@ -183,7 +187,7 @@ function dnsCard(input, { expect = "", name: targetName = "" } = {}) {
 		status.title = "";
 		let answer;
 		try { answer = await api(`/api/dns?name=${encodeURIComponent(name)}${expect ? "&expect=" + encodeURIComponent(expect) : ""}`); }
-		catch (error) { card.classList.remove("checking"); status.className = "dns-status muted"; status.textContent = "Could not check"; return; }
+		catch (error) { card.classList.remove("checking"); status.className = "dns-status muted"; status.textContent = "Could not check"; onState("unknown"); return; }
 		if (asked !== name) return;
 		card.classList.remove("checking");
 		card.classList.toggle("here", Boolean(answer.here));
@@ -192,6 +196,7 @@ function dnsCard(input, { expect = "", name: targetName = "" } = {}) {
 		if (answer.here) { status.className = "dns-status ok"; status.textContent = "Points here"; }
 		else if (answer.addresses.length) { status.className = "dns-status warn"; status.textContent = `Points to ${answer.addresses[0]}`; status.title = answer.addresses.join(", "); }
 		else { status.className = "dns-status muted"; status.textContent = "No record yet"; }
+		onState(answer.here ? "here" : answer.addresses.length ? "elsewhere" : "none");
 	};
 	// Typed, or filled in by the dialog (the binding follows the folder name): checked shortly after it changes
 	let seen = null;
@@ -202,9 +207,48 @@ function dnsCard(input, { expect = "", name: targetName = "" } = {}) {
 		if (input.value === seen) return;
 		seen = input.value;
 		clearTimeout(timer);
-		if (!input.value.trim()) { card.hidden = true; return; }
+		if (!input.value.trim()) { card.hidden = true; onState("empty"); return; }
 		timer = setTimeout(() => run(show), 450);
 	}, 250);
+	return card;
+}
+
+// Before a certificate: whether every name of it points to the server that issues it.
+// done(true) only when all do; the names that do not are listed with where they point.
+function certificateDnsCard({ names, expect = "" }, done) {
+	const status = el("span", { className: "dns-status checking", textContent: "Checking…" });
+	const rows = el("div", { className: "dns-check-rows" });
+	const note = el("p", { className: "dns-note" });
+	const card = el("div", { className: "dns-card checking" },
+		el("div", { className: "dns-head" }, el("span", { className: "dns-icon" }, svgIcon("globe")),
+			el("strong", { textContent: "DNS for the certificate" }), status),
+		rows, note);
+	const query = (name) => api(`/api/dns?name=${encodeURIComponent(name)}${expect ? "&expect=" + encodeURIComponent(expect) : ""}`).catch(() => null);
+	run(async () => {
+		const [answers, server] = await Promise.all([Promise.all(names.map(query)),
+			expect ? null : loadServerAddress().catch(() => null)]);
+		// A dialog that was closed or replaced meanwhile is not told: OK belongs to the dialog open now
+		if (!card.isConnected) return;
+		const address = expect || server?.address || "";
+		const ready = answers.every((answer) => answer?.here);
+		card.classList.remove("checking");
+		card.classList.toggle("here", ready);
+		status.className = "dns-status " + (ready ? "ok" : "warn");
+		status.textContent = ready ? (names.length > 1 ? "All names point here" : "Points here") : "Does not point here";
+		rows.replaceChildren(...names.map((name, index) => {
+			const answer = answers[index];
+			const [kind, text] = !answer ? ["muted", "Could not check"] : answer.here ? ["ok", "Points here"]
+				: answer.addresses.length ? ["warn", "Points to " + answer.addresses[0]] : ["muted", "No record yet"];
+			const row = el("div", { className: "dns-check-row" }, el("code", { textContent: name }), el("span", { className: "dns-status " + kind, textContent: text }));
+			if (answer?.here) return row;
+			// The record to make for a name that does not point here yet, as in New site
+			return el("div", { className: "dns-check-name" }, row, el("div", { className: "dns-records" },
+				dnsRecord("A", name, address || "this server's address"),
+				...(answer?.host && !expect ? [dnsRecord("CNAME", name, answer.host)] : [])));
+		}));
+		note.textContent = ready ? "" : `A certificate can be issued once every name points to ${expect || "this server"}. Change the DNS records, then open Issue certificate again.`;
+		done(ready);
+	});
 	return card;
 }
 
@@ -317,10 +361,13 @@ async function copyText(text, container) {
 let copyStatusTimer = null;
 
 // Replaces prompt()/confirm(). Resolves to the entered text (or true without an input), or null when cancelled.
-function ask({ title, message = "", value = "", placeholder = "", ok = "OK", danger = false, input = true, match = null, extra = null, checkbox = null, checkboxChecked = false, loginCheckbox = false, dns = null }) {
+function ask({ title, message = "", value = "", placeholder = "", ok = "OK", danger = false, input = true, match = null, extra = null, checkbox = null, checkboxChecked = false, loginCheckbox = false, dns = null, dnsCheck = null }) {
 	const dlg = $("#dlg-prompt");
 	const field = $("#prompt-input");
-	$("#prompt-dns").replaceChildren(...(dns && input ? [dnsCard(field, dns)] : []));
+	// dnsCheck: names that must point to the server before OK can be used, as for a certificate
+	let dnsReady = !dnsCheck;
+	$("#prompt-dns").replaceChildren(...(dns && input ? [dnsCard(field, dns)]
+		: dnsCheck ? [certificateDnsCard(dnsCheck, (ready) => { dnsReady = ready; if (dlg.open) updateConfirmation(); })] : []));
 	const extraRow = $("#prompt-extra-row");
 	const extraField = $("#prompt-extra");
 	const okButton = $("#prompt-ok");
@@ -380,7 +427,7 @@ function ask({ title, message = "", value = "", placeholder = "", ok = "OK", dan
 	}
 	okButton.value = "ok";
 	okButton.textContent = ok;
-	const updateConfirmation = () => { okButton.disabled = match !== null && field.value !== match; };
+	const updateConfirmation = () => { okButton.disabled = (match !== null && field.value !== match) || !dnsReady; };
 	updateConfirmation();
 	dlg.classList.toggle("danger", danger);
 	field.oninput = updateConfirmation;
@@ -1500,7 +1547,10 @@ function envPanel(site, env) {
 			const confirmText = missing && label === "Publish"
 				? `The site no longer exists on ${env.host}. This creates it again as a new installation, without its old content and database.`
 				: confirm;
-			if (confirmText && !(await ask({ title: `${label}?`, message: `${confirmText} (${bindingLabel(env) || siteLabel(site)})`, input: false, ok: label }))) return;
+			// A certificate needs the binding and every alias to point to the server that issues it
+			const certificateNames = action === "issue_certificate" ? [env.binding, ...(env.aliases || [])].filter((name) => name && name.includes(".")) : [];
+			const dnsCheck = certificateNames.length ? { names: certificateNames, expect: env.mode === "remote" ? env.host || "" : "" } : null;
+			if (confirmText && !(await ask({ title: `${label}?`, message: `${confirmText} (${bindingLabel(env) || siteLabel(site)})`, input: false, ok: label, dnsCheck }))) return;
 			await openTask(action ? { kind: "prod_action", site: site.name, action, scope: isTarget(env) ? "prod" : "test", ...targetFields(env) } : { kind: "script", site: site.name, script: file, ...targetFields(env) });
 		}) }));
 	}
@@ -2073,12 +2123,27 @@ siteForm.addEventListener("click", (event) => {
 siteForm.elements.template.oninput = syncTemplateVersion;
 siteForm.site.oninput = () => { if (!siteForm.binding.dataset.edited) siteForm.binding.value = siteForm.site.value; };
 siteForm.binding.oninput = () => { siteForm.binding.dataset.edited = "1"; };
-$("#site-dns").replaceChildren(dnsCard(siteForm.binding));
+// HTTPS is a choice only when the binding points here: the certificate is issued as the site is created.
+// An empty binding is the site for any name, where the server decides. The choice comes back when DNS is right.
+const httpsOption = siteForm.certificate.querySelector('option[value="y"]');
+const httpsLabel = httpsOption.textContent;
+let httpsChosen = true;
+function syncHttps(state) {
+	if (state === "checking") return;
+	const allowed = state === "here" || state === "empty";
+	httpsOption.disabled = !allowed;
+	httpsOption.textContent = allowed ? httpsLabel : "HTTPS - possible once DNS points here";
+	if (!allowed && siteForm.certificate.value === "y") siteForm.certificate.value = "n";
+	else if (allowed && httpsChosen) siteForm.certificate.value = "y";
+}
+siteForm.certificate.addEventListener("change", () => { httpsChosen = siteForm.certificate.value === "y"; });
+$("#site-dns").replaceChildren(dnsCard(siteForm.binding, { onState: syncHttps }));
 $("#setup-site-dns").replaceChildren(dnsCard($("#form-setup-site").binding));
 // The binding's message is about the certificate choice as well: any change clears it, or the browser keeps
 // refusing the form before it is checked again
 for (const type of ["input", "change"]) siteForm.addEventListener(type, () => siteForm.binding.setCustomValidity(""));
 $("#btn-new-site").onclick = () => { siteForm.reset(); siteForm.elements.template.setCustomValidity(""); siteForm.binding.setCustomValidity(""); delete siteForm.binding.dataset.edited; syncSiteForm(); dialog.showModal(); siteForm.site.focus(); };
+$("#btn-new-site").addEventListener("click", () => { httpsChosen = true; syncHttps("empty"); });
 $("#btn-empty-new-site").onclick = () => $("#btn-new-site").click();
 $("#site-cancel").onclick = (e) => { e.preventDefault(); dialog.close(); };
 siteForm.onsubmit = (event) => {

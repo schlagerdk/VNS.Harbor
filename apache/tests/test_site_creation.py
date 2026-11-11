@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from werkzeug.exceptions import HTTPException
 from unittest.mock import Mock, patch
 
 from flask import Flask, abort, jsonify
@@ -215,7 +216,10 @@ class CreateCommandTests(unittest.TestCase):
                    "_normalize_site_name": normalize_site_name, "service_name": service_name,
                    "installed_template_packages": lambda: {"custom": {"package": "Custom.Templates"}},
                    "installed_dotnet_templates": lambda: [{"short_name": name} for name in ("web", "webapi", "custom")],
-                   "app": Flask(__name__), "subprocess": subprocess, "default_site_name": lambda: ""}
+                   "app": Flask(__name__), "subprocess": subprocess, "default_site_name": lambda: "",
+                   "display_dns_name": lambda value: value}
+        self.here = {"example.test"}
+        self.ns["points_here"] = lambda name: name in self.here
         self.ns["default_umbraco_version"] = lambda: "18.3.1"
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "create command", "exec"), self.ns)
         add_target_helpers(self.ns)
@@ -224,6 +228,17 @@ class CreateCommandTests(unittest.TestCase):
 
     def command(self, **changes):
         return self.ns["build_command"](self.data | changes)[1]
+
+    def test_https_needs_a_binding_that_points_here(self):
+        self.assertEqual(self.command(certificate="y")[10], "y")
+        self.here.clear()
+        with self.assertRaises(HTTPException) as raised:
+            self.command(certificate="y")
+        self.assertEqual(raised.exception.code, 400)
+        self.assertIn("does not point to this server", raised.exception.description)
+        # HTTP is always possible, and the site for any name is left to the server
+        self.assertEqual(self.command(certificate="n")[10], "n")
+        self.assertEqual(self.command(certificate="y", binding="")[7], "*")
 
     def test_custom_template_is_a_separate_argument(self):
         args = self.command(template="webapi", version="18.3.1")

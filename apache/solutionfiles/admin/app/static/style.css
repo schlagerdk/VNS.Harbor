@@ -1189,6 +1189,14 @@ dialog.newsite > form > .ns-head, dialog.newsite > .ns-head { position: sticky; 
 .dns-card.checking .dns-records, .dns-card.checking .dns-note, .dns-card.here .dns-records, .dns-card.here .dns-note { display: none; }
 .dns-card.here { border-color: rgba(63, 185, 80, .4); background: rgba(63, 185, 80, .06); }
 .dns-card.here .dns-status { padding: 6px 14px; font-size: 13.5px; }
+/* Issue certificate: one row per name of the certificate, shown when not all point here */
+.dns-check-rows { display: grid; gap: 6px; }
+.dns-check-name { display: grid; gap: 6px; }
+.dns-check-name + .dns-check-name, .dns-check-name + .dns-check-row, .dns-check-row + .dns-check-name { padding-top: 8px; border-top: 1px solid var(--line); }
+.dns-card.checking .dns-check-rows, .dns-card.here .dns-check-rows { display: none; }
+.dns-check-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 12.5px; }
+.dns-check-row code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dns-note:empty { display: none; }
 /* Remove package: the project's packages to choose from */
 .package-pick { display: grid; gap: 10px; }
 .package-pick[hidden] { display: none; }

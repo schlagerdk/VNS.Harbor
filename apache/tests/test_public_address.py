@@ -1,6 +1,7 @@
 import ast
 import io
 import logging
+import os
 import re
 import socket
 import threading
@@ -125,3 +126,47 @@ class HostNameTests(unittest.TestCase):
 
     def test_an_admin_visited_by_ip_falls_back_to_the_host_name(self):
         self.assertEqual(self.host("test.vns.dk", visited="185.150.199.44:8443"), "test-01.vns.dk")
+
+
+class CertificateDnsTests(unittest.TestCase):
+    def setUp(self):
+        from werkzeug.exceptions import abort
+        self.dns = {"shop.dk": "185.150.199.44", "www.shop.dk": "185.150.199.45", "prod.shop.dk": "198.51.100.20"}
+        self.prod = {"PROD_BINDING": "prod.shop.dk", "PROD_LOCAL_PATH": "", "PROD_IP": "198.51.100.20"}
+        self.ns = dict(os=os, socket=socket, abort=abort, APACHE_SITES="/sites", WEB_ROOT="/www",
+                       conf_binding=lambda site: "shop.dk", read_text=lambda path: "",
+                       server_aliases=lambda text, binding: ["www.shop.dk"],
+                       parse_prod=lambda root, target: self.prod, target_arg=lambda site, data: "prod",
+                       display_dns_name=lambda name: name,
+                       own_addresses=lambda expect="": {expect} if expect else {"185.150.199.44"})
+        nodes = [node for node in ast.parse((APP / "app.py").read_text()).body
+                 if isinstance(node, ast.FunctionDef) and node.name in ("not_pointing", "certificate_names_point")]
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), "certificate dns", "exec"), self.ns)
+
+    def check(self, **data):
+        def lookup(name, *args, **kwargs):
+            if name not in self.dns:
+                raise socket.gaierror("unknown")
+            return [(None, None, None, None, (self.dns[name], 0))]
+        with patch.object(socket, "getaddrinfo", lookup):
+            return self.ns["certificate_names_point"]("shop.dk", data)
+
+    def test_every_name_of_the_main_site_must_point_here(self):
+        from werkzeug.exceptions import HTTPException
+        with self.assertRaises(HTTPException) as raised:
+            self.check(scope="test")
+        self.assertIn("www.shop.dk does not point to this server", raised.exception.description)
+        self.assertNotIn("shop.dk,", raised.exception.description)
+        self.dns["www.shop.dk"] = "185.150.199.44"
+        self.assertIsNone(self.check(scope="test"))
+
+    def test_a_remote_environment_must_point_to_its_own_server(self):
+        self.assertIsNone(self.check(scope="prod"))
+        from werkzeug.exceptions import HTTPException
+        self.dns["prod.shop.dk"] = "185.150.199.44"
+        with self.assertRaises(HTTPException) as raised:
+            self.check(scope="prod")
+        self.assertIn("does not point to 198.51.100.20", raised.exception.description)
+        # A local environment issues its certificate here
+        self.prod["PROD_LOCAL_PATH"] = "/www/shop.dk/_prod"
+        self.assertIsNone(self.check(scope="prod"))

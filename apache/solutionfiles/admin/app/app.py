@@ -402,6 +402,44 @@ def api_dns():
     return jsonify(name=name, addresses=found, here=bool(found) and any(item in ours for item in found), host=host)
 
 
+def points_here(name):
+    """Whether a DNS name resolves to this server now. Let's Encrypt issues a certificate only then."""
+    return not not_pointing([name])
+
+
+def not_pointing(names, expect=""):
+    """The names that do not resolve to this server, or to the server expect names (a remote environment's)"""
+    ours = own_addresses(expect)
+    missing = []
+    for name in names:
+        try:
+            found = {info[4][0] for info in socket.getaddrinfo(name, None, proto=socket.IPPROTO_TCP)}
+        except (socket.gaierror, UnicodeError, OSError):
+            found = set()
+        if not found & ours:
+            missing.append(name)
+    return missing
+
+
+def certificate_names_point(site, data):
+    """Issue certificate needs every name of the certificate to point to the server that issues it"""
+    if data.get("scope") == "test":
+        binding = conf_binding(site)
+        names = [binding, *server_aliases(read_text(os.path.join(APACHE_SITES, site + ".conf")), binding)]
+        expect = ""
+    else:
+        prod = parse_prod(os.path.join(WEB_ROOT, site), target_arg(site, data)) or {}
+        names = [prod.get("PROD_BINDING", "")]
+        # A remote environment issues its certificate on its own server
+        expect = "" if prod.get("PROD_LOCAL_PATH") else prod.get("PROD_IP", "")
+    names = [name.lower() for name in names if name and "." in name and name != "*"]
+    missing = not_pointing(names, expect)
+    if missing:
+        abort(400, ", ".join(display_dns_name(name) for name in missing)
+              + (" does" if len(missing) == 1 else " do") + " not point to " + (expect or "this server")
+              + " yet, so no certificate can be issued. Change the DNS records first.")
+
+
 def own_addresses(expected=""):
     """The addresses that count as this server (or as the address the page names)"""
     ours = {expected} if expected else set(server_addresses()) | {cfg.get("public_address", "") or detected_public_address()} - {""}
@@ -2869,6 +2907,10 @@ def build_command(data):
                 abort(400, default_site_name() + " already answers any name. Only one site can.")
         else:
             binding = dns_name(binding, "binding", fully_qualified=certificate == "y", short=certificate == "n")
+            # The certificate is issued as the site is created: it fails while DNS points elsewhere
+            if certificate == "y" and not points_here(binding):
+                abort(400, display_dns_name(binding) + " does not point to this server yet, so no certificate can be issued. "
+                      "Create the site with HTTP only, and use Issue certificate once DNS points here.")
         args = [site, site_type, "", "", "", binding, "", "", certificate]
         if site_type == "csharp":
             legacy = "csharp" in data
@@ -2987,6 +3029,7 @@ def build_command(data):
             args.append(environment)
         else:
             args.append("--yes")
+            certificate_names_point(site, data)
         if data.get("scope") == "test":
             if not os.path.isdir(os.path.join(WEB_ROOT, site)):
                 abort(404, "Unknown site")
