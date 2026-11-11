@@ -2,6 +2,12 @@
 
 All notable changes to VNS.Linux are listed here, newest first.
 
+## [1.0.16] - 2026-11-11
+
+### Features
+
+- The overview can be shown as a list, .NET badges have a colour per version, Publish all beside a site's title, and a selected card can be clicked anywhere
+
 ## [1.0.15] - 2026-11-11
 
 ### Features
