@@ -279,6 +279,19 @@ class UpdateCheckApiTests(unittest.TestCase):
         self.assertEqual(thread.call_count, 1)
         self.assertEqual(self.client.get("/api/package-updates").json["completed"], 0)
 
+    def test_start_checks_only_the_selected_sites_that_have_projects(self):
+        response = self.client.post("/api/package-updates", json={"sites": ["source.test", "python.test", "unknown.test"]})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json["pending"], ["source.test"])
+        self.assertEqual(self.ns["threading"].Thread.call_args.kwargs["args"], (["source.test"],))
+
+    def test_invalid_or_empty_selection_is_rejected_without_starting(self):
+        for body in ({"sites": "source.test"}, {"sites": [1]}, {"sites": ["admin.test", "python.test"]}, {"sites": []}):
+            with self.subTest(body=body):
+                self.assertEqual(self.client.post("/api/package-updates", json=body).status_code, 400)
+        self.ns["threading"].Thread.assert_not_called()
+        self.assertFalse(self.state["running"])
+
     def test_worker_progress_and_errors(self):
         self.state.update(running=True, total=2, pending=["source.test", "other.test"])
         self.ns["_publish_module"].check_updates.side_effect = ["current", RuntimeError("failed")]

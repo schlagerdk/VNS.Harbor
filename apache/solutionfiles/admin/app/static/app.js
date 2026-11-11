@@ -159,11 +159,12 @@ function dnsCard(input, { expect = "", name: targetName = "" } = {}) {
 		if (!name) return;
 		const server = expect ? null : await loadServerAddress().catch(() => null);
 		const address = expect || server?.address || "";
-		const host = targetName || server?.name || "";
+		// Only an A record to the public address: the server's own host name is rarely public DNS
+		const host = targetName;
 		records.replaceChildren(record("A", name, address || "this server's address"),
 			...(host && host.includes(".") && host !== name ? [record("CNAME", name, host)] : []));
 		note.textContent = !expect && server?.behind_nat
-			? `This server has only an internal address (${address}). Set its public address under Preferences, so the record points to where the internet reaches it.`
+			? `The public address could not be found, only an internal one (${address}). Set the public address under Preferences, so the record points to where the internet reaches it.`
 			: "Make one of these where the domain's DNS is kept. An HTTPS certificate is issued only when the name points here.";
 		note.classList.toggle("warn", Boolean(!expect && server?.behind_nat));
 		if (!name.includes(".")) {
@@ -714,6 +715,8 @@ let multiSelecting = false;
 const multiSites = new Set();
 const canMultiSelect = (site) => !site.admin && site.has_project && (site.kind === "csharp" || site.kind === "umbraco");
 const overviewSites = () => listedSites().filter((site) => !multiSelecting || canMultiSelect(site));
+// Check for updates covers the C# sites the overview shows now: the search and filter decide which
+const updateCheckSites = () => overviewSites().filter(matches).filter(canMultiSelect);
 
 function renderMultiSelection() {
 	const multipleProjects = listedSites().filter(canMultiSelect).length > 1;
@@ -721,7 +724,7 @@ function renderMultiSelection() {
 		multiSelecting = false;
 		multiSites.clear();
 	}
-	$("#btn-check-updates").hidden = !multipleProjects;
+	$("#btn-check-updates").hidden = !multipleProjects || updateCheckSites().length === 0;
 	$("#btn-multi").hidden = multiSelecting || !multipleProjects;
 	// Choose action appears once a site is chosen; Select all chooses every site shown, or none again
 	$("#btn-multi-action").hidden = !multiSelecting || multiSites.size === 0;
@@ -761,6 +764,10 @@ function renderSites() {
 	}
 	$("#search").hidden = hideFilters;
 	renderStats();
+	// Check for updates says how many sites it covers when a search or filter narrows them
+	const checkable = updateCheckSites().length;
+	const narrowed = checkable < listedSites().filter(canMultiSelect).length;
+	$("#btn-check-updates").title = narrowed ? `Check the ${checkable} C# ${checkable === 1 ? "site" : "sites"} shown` : "Check all C# sites";
 	for (const name of multiSites) {
 		if (!listedSites().some((site) => site.name === name && canMultiSelect(site))) multiSites.delete(name);
 	}
@@ -1176,7 +1183,7 @@ function renderSite(name) {
 	if (site.has_project && hasProd(site) && site.scripts.includes("publish_prod.sh") && ["publish_local.sh", "publish.sh"].some((file) => site.scripts.includes(file))) {
 		const deleted = site.environments.filter(isMissingEnv).map((env) => bindingLabel(env) || env.folder);
 		const skipped = deleted.length ? `\nSkipped, as they no longer exist on their servers: ${deleted.join(", ")}.` : "";
-		targetsActions.append(el("button", { textContent: "Publish environments", title: "Publish to every environment, not the main site", onclick: () => run(async () => {
+		targetsActions.append(el("button", { textContent: "Publish environments", className: "desktop-only", title: "Publish to every environment, not the main site", onclick: () => run(async () => {
 			if (await ask({ title: "Publish environments?", message: `Build the main site and publish it to every environment, one at a time. The main site itself is not published. The services are restarted. If one fails, the rest are not published.${skipped}`, input: false, ok: "Publish environments" })) {
 				await openTask({ kind: "publish_both", site: site.name, environments_only: true });
 			}
@@ -1201,10 +1208,10 @@ function renderSite(name) {
 	const mainEnv = site.environments.find((env) => !isTarget(env));
 	if (mainEnv && site.kind === "umbraco" && !site.admin) {
 		if (dataSyncDestinations(site, mainEnv).length) {
-			targetsActions.append(el("button", { textContent: "Sync data…", title: "Merge content and media from the main site into others", onclick: () => run(() => openSyncDialog(site, mainEnv, true)) }));
+			targetsActions.append(el("button", { textContent: "Sync data…", className: "desktop-only", title: "Merge content and media from the main site into others", onclick: () => run(() => openSyncDialog(site, mainEnv, true)) }));
 		}
 		if (syncDestinations(site, mainEnv).length) {
-			targetsActions.append(el("button", { textContent: "Sync settings…", title: "Sync settings from the main site", onclick: () => run(() => openSyncDialog(site, mainEnv)) }));
+			targetsActions.append(el("button", { textContent: "Sync settings…", className: "desktop-only", title: "Sync settings from the main site", onclick: () => run(() => openSyncDialog(site, mainEnv)) }));
 		}
 	}
 	const danger = $("#site-danger");
@@ -1236,7 +1243,7 @@ function renderSite(name) {
 	const canAddEnvironment = site.has_project && !site.admin && (site.kind === "csharp" || site.kind === "umbraco") && canAnywhere(site, "create_env");
 	const noEnvironments = !targets.childElementCount;
 	if (canAddEnvironment && !noEnvironments) {
-		targetsAdd.append(el("button", { textContent: "Add environment", onclick: () => run(() => openCreateProdDialog(site)) }));
+		targetsAdd.append(el("button", { textContent: "Add environment", className: "desktop-only", onclick: () => run(() => openCreateProdDialog(site)) }));
 	}
 	$("#btn-empty-add-environment").onclick = () => run(() => openCreateProdDialog(site));
 	$("#site-targets-head").hidden = noEnvironments;
@@ -1263,8 +1270,8 @@ function renderSite(name) {
 		if (updates.size > 1) {
 			packageActions.append(el("button", { textContent: "Update all", className: "small primary", onclick: () => run(() => updatePackages(site)) }));
 		}
-		packageActions.append(el("button", { textContent: "Add", className: "small package-add", title: "Add package", onclick: () => run(() => openPackageDialog(site, "add")) }),
-			el("button", { textContent: "Remove", className: "small", title: "Remove package", onclick: () => run(() => openPackageDialog(site, "remove")) }));
+		packageActions.append(el("button", { textContent: "Add", className: "small package-add desktop-only", title: "Add package", onclick: () => run(() => openPackageDialog(site, "add")) }),
+			el("button", { textContent: "Remove", className: "small desktop-only", title: "Remove package", onclick: () => run(() => openPackageDialog(site, "remove")) }));
 		const packageList = el("div", { className: "package-list" });
 		for (const item of packages) {
 			const update = updates.get(item.name.toLowerCase());
@@ -1550,6 +1557,11 @@ function envPanel(site, env) {
 	for (const row of [quick, sync, extraTools, actions]) {
 		const first = row && [...row.children].find((button) => /^(Clear logs|Sync settings…|Sync data…|Edit .*|Logs|Shell|Files)$/.test(button.textContent));
 		if (first && first !== row.firstElementChild) first.classList.add("push-right");
+	}
+	// A phone keeps what is used on the go: publish, start or stop, restart, logs and delete.
+	// The rest is on the desktop; rows left without buttons are hidden by the stylesheet.
+	for (const node of panel.querySelectorAll(".actions > *")) {
+		if (!/^(Publish|Start|Stop|Restart|Logs|Delete site|Remove environment)$/.test(node.textContent.trim())) node.classList.add("desktop-only");
 	}
 	return panel;
 }
@@ -1933,13 +1945,16 @@ $("#btn-server-shell").onclick = () => run(() => openTask({ kind: "shell" }));
 $("#btn-browse").onclick = () => run(() => openFiles("", "", true));
 $("#btn-check-updates").onclick = () => run(async () => {
 	// It asks NuGet about every project on the server, which takes a while: only on purpose
-	const projects = listedSites().filter((site) => site.has_project).length;
-	if (!await ask({ title: "Check for updates?", message: `Check NuGet for package updates in all ${projects} projects on this server. It can take a few minutes. Nothing is installed.`, input: false, ok: "Check for updates" })) return;
+	const sites = updateCheckSites().map((site) => site.name);
+	if (!sites.length) throw new Error("No sites with a C# project are shown. Change the search or filter.");
+	const all = sites.length === listedSites().filter(canMultiSelect).length;
+	const which = all ? `all ${sites.length} projects on this server` : `the ${sites.length} ${sites.length === 1 ? "project" : "projects"} shown`;
+	if (!await ask({ title: "Check for updates?", message: `Check NuGet for package updates in ${which}. It can take a few minutes. Nothing is installed.`, input: false, ok: "Check for updates" })) return;
 	$("#btn-check-updates").disabled = true;
 	try {
 		updateCheckCurrent.clear();
 		updateCheckFeedback = true;
-		monitorUpdateCheck(await api("/api/package-updates", { method: "POST" }));
+		monitorUpdateCheck(await api("/api/package-updates", { json: { sites } }));
 	} catch (error) {
 		$("#btn-check-updates").disabled = false;
 		throw error;
@@ -4196,7 +4211,8 @@ $("#menu-preferences").onclick = () => run(async () => {
 		serverAddress = null;
 		const server = await loadServerAddress().catch(() => null);
 		preferencesForm.elements.public_address.value = server?.public || "";
-		preferencesForm.elements.public_address.placeholder = server?.behind_nat
+		preferencesForm.elements.public_address.placeholder = server?.detected
+			? `Found automatically: ${server.detected}` : server?.behind_nat
 			? `Behind NAT (${server.address}): the IP or name the internet reaches it on` : "Only behind NAT: the IP or name the internet reaches it on";
 	}
 	// The start page is a choice only with both Web Server and SQL Server

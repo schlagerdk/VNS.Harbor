@@ -46,9 +46,9 @@
     <button type="button" id="search-clear" class="search-clear" aria-label="Clear search" title="Clear search"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
   </div>
   <span class="spacer"></span>
-  <button id="btn-dock" class="ghost" title="Terminals (Ctrl+`)" hidden>⌨ Terminals <span id="term-count" class="count" hidden></span></button>
+  <button id="btn-dock" class="ghost" title="Terminals (Ctrl+`)" hidden>⌨<span class="btn-label"> Terminals</span> <span id="term-count" class="count" hidden></span></button>
   <div class="user">
-    <button id="btn-settings" class="ghost" title="Server" aria-haspopup="true">⚙ Server <span id="system-update-badge" class="badge system-update-available" hidden>Update available</span></button>
+    <button id="btn-settings" class="ghost" title="Server" aria-label="Server" aria-haspopup="true">⚙<span class="btn-label"> Server</span> <span id="system-update-badge" class="badge system-update-available" hidden>Update available</span></button>
     <div id="settings-menu" class="menu" hidden>
       <div class="menu-group" role="group" aria-label="Tools">
         <div class="menu-group-title">Tools</div>
@@ -698,7 +698,7 @@
     <div class="admin-only-block">
     <div class="ns-section">This server</div>
     <label>Public address <input name="public_address" autocomplete="off" spellcheck="false" placeholder="Only behind NAT: the IP or name the internet reaches it on"></label>
-    <p class="hint">Where a site's DNS records point. Leave it empty when the server has a public address of its own.</p>
+    <p class="hint">Where a site's DNS records point. Leave it empty to use the public address found automatically.</p>
     <div class="ns-section">Site keep-alive</div>
     <label class="sync-option keep-alive-option"><input name="keep_alive" type="checkbox">
       <span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></span>

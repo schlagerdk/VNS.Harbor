@@ -1203,3 +1203,28 @@ button.primary.danger-primary:disabled { opacity: .5; }
 .package-pick-row { grid-template-columns: 30px minmax(0, 1fr) auto 20px; }
 .package-pick-row::after { content: ""; width: 18px; height: 18px; border: 1.5px solid var(--line); border-radius: 5px; }
 .package-pick-row[aria-checked="true"]::after { border-color: var(--red); background: var(--red) url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><path d='M3.5 8.5l3 3 6-6.5' fill='none' stroke='white' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/></svg>") center / 12px no-repeat; }
+
+/* ---- Phone: the header's controls on one line with the search below, and only the everyday buttons.
+   Placed last, so it wins over the desktop sizes above (the search's min-width made the page wider than the screen). */
+@media (max-width: 800px) {
+	.desktop-only { display: none !important; }
+	.page-header { flex-wrap: wrap; gap: 8px; padding: 8px 12px; }
+	.page-header > .spacer, .page-header:has(#search:not([hidden])) > .spacer { display: block; flex: 1; }
+	.brand .logo { width: 44px; }
+	.page-header .view-switch { margin-left: 0; }
+	.page-header .search-box { order: 10; flex: 1 1 100%; width: auto; min-width: 0; margin: 0; }
+	.page-header .search-box #search { height: 36px; }
+	.page-header .btn-label { display: none; }
+	#btn-dock, #btn-settings { padding: 6px 10px; }
+	/* An update is a dot on the gear, not a label */
+	#system-update-badge:not([hidden]) { display: inline-block; width: 8px; height: 8px; padding: 0; margin-left: 2px; border-radius: 50%; background: var(--orange); font-size: 0; vertical-align: top; }
+	main { padding: 12px; }
+	#view-sites > .toolbar .stats { flex: 1 1 100%; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+	#view-sites > .toolbar .stats::-webkit-scrollbar { display: none; }
+	.chip { flex: none; padding: 5px 10px; }
+	#site-layout-toggle, #btn-multi, #btn-multi-all, #btn-multi-action, #btn-multi-cancel, .site-targets-head .layout-toggle { display: none !important; }
+	/* Cards are as tall as their content, not as the tallest in the grid */
+	.cards { grid-auto-rows: auto; gap: 12px; }
+	.site { padding: 14px; gap: 14px; }
+	.detail-title h2 { font-size: 21px; }
+}

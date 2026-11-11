@@ -344,15 +344,45 @@ def is_private(address):
         return False
 
 
+PUBLIC_ADDRESS = {}
+PUBLIC_ADDRESS_LOCK = threading.Lock()
+
+
+def detected_public_address():
+    """The server's public IPv4 address as the internet sees it, asked of an outside service.
+    A server behind NAT knows only its internal address. Kept for an hour, or five minutes after a failure."""
+    with PUBLIC_ADDRESS_LOCK:
+        cached = PUBLIC_ADDRESS.get("value")
+        if cached and time.monotonic() < cached[1]:
+            return cached[0]
+        address = ""
+        for url in ("https://1.1.1.1/cdn-cgi/trace", "https://api.ipify.org"):
+            try:
+                with urllib.request.urlopen(url, timeout=4) as response:
+                    text = response.read(4096).decode("ascii", "replace")
+            except (OSError, ValueError) as exc:
+                app.logger.warning("Could not detect the public address from %s: %s", url, exc)
+                continue
+            match = re.search(r"(?m)^ip=(\S+)$", text) or re.fullmatch(r"\s*(\S+)\s*", text)
+            candidate = match.group(1) if match else ""
+            if valid_ip(candidate) and ":" not in candidate and not is_private(candidate):
+                address = candidate
+                break
+        PUBLIC_ADDRESS["value"] = (address, time.monotonic() + (3600 if address else 300))
+        return address
+
+
 @app.route("/api/server-address")
 def api_server_address():
-    """Where a site's DNS should point: the public address when one is set, else the server's own"""
+    """Where a site's DNS should point: the public address set under Preferences,
+    else the public address found automatically, else the server's own"""
     addresses = server_addresses()
     public = cfg.get("public_address", "")
+    detected = "" if public else detected_public_address()
     ipv4 = [item for item in addresses if ":" not in item]
-    best = public or next((item for item in ipv4 if not is_private(item)), "") or (ipv4[0] if ipv4 else "")
-    return jsonify(name=socket.getfqdn(), addresses=addresses, public=public, address=best,
-                   behind_nat=not public and bool(ipv4) and all(is_private(item) for item in ipv4))
+    best = public or detected or next((item for item in ipv4 if not is_private(item)), "") or (ipv4[0] if ipv4 else "")
+    return jsonify(name=socket.getfqdn(), addresses=addresses, public=public, detected=detected, address=best,
+                   behind_nat=not public and not detected and bool(ipv4) and all(is_private(item) for item in ipv4))
 
 
 @app.route("/api/dns")
@@ -366,7 +396,7 @@ def api_dns():
     except (socket.gaierror, UnicodeError, OSError):
         found = []
     expected = (request.args.get("expect") or "").strip()
-    ours = {expected} if expected else set(server_addresses()) | {cfg.get("public_address", "")} - {""}
+    ours = {expected} if expected else set(server_addresses()) | {cfg.get("public_address", "") or detected_public_address()} - {""}
     # A public address set as a host name counts by what it resolves to
     for item in list(ours):
         if item and not valid_ip(item):
@@ -1498,6 +1528,14 @@ def api_package_updates():
         if request.method == "POST" and not UPDATE_CHECK["running"]:
             names = [name for name in site_dirs() if name != ADMIN_SITE
                      and any(os.path.isfile(path) for path in glob.glob(os.path.join(WEB_ROOT, name, "*.csproj")))]
+            # The overview sends the sites it shows, so a search or filter limits the check to them
+            wanted = (request.get_json(silent=True) or {}).get("sites")
+            if wanted is not None:
+                if not isinstance(wanted, list) or any(not isinstance(name, str) for name in wanted):
+                    return error("Invalid site selection", 400)
+                names = [name for name in names if name in set(wanted)]
+                if not names:
+                    return error("None of the selected sites has a C# project to check", 400)
             UPDATE_CHECK.update(running=True, completed=0, total=len(names), errors=[], pending=list(names), results={})
             try:
                 threading.Thread(target=check_all_updates, args=(names,), daemon=True).start()
