@@ -23,6 +23,8 @@ from pathlib import Path
 USER = "vns-build"
 HOME = Path("/var/lib/vns-build")
 OUTPUT_FOLDERS = ("obj", "bin")
+# Files a build writes into the project folder itself, like Umbraco's JSON schemas: the build user's to write
+GENERATED = ("appsettings-schema*.json", "umbraco-package-schema.json")
 # Never the build user's, whatever is in them: scripts run as root, and the publish folder is the live site
 NOT_FOR_BUILD = {"scripts", ".vns-publish", ".git", "_publish"}
 
@@ -61,10 +63,22 @@ def give(path, uid, gid):
 
 
 def prepare(project, account, keep):
-    """The build user may write obj/ and bin/, and read the rest of the project. The project folder and scripts/
-    stay root's: a build that could change them could change what root runs."""
+    """The build user may write obj/ and bin/, and read the rest of the project. The project folder stays root's,
+    with the sticky bit, as /tmp has it: the build user may add files of its own there (a build writes some, like
+    Umbraco's JSON schemas), but cannot rename, remove or replace what is root's, such as scripts/ and the project
+    file. A build that could change those could change what root runs."""
     if project.is_symlink() or not project.is_dir():
         raise ValueError("The project folder is missing or is a symbolic link")
+    group = grp.getgrnam(USER).gr_gid
+    os.chown(project, 0, group)
+    os.chmod(project, (project.stat().st_mode & 0o7777) | stat.S_ISVTX | stat.S_IRGRP | stat.S_IWGRP | stat.S_IXGRP)
+    # Root's own records stay root's: made here first, so the build user cannot make them
+    (project / ".vns-publish").mkdir(mode=0o700, exist_ok=True)
+    # Generated files root's builds left behind become the build user's, so the next build can write them again
+    for pattern in GENERATED:
+        for path in project.glob(pattern):
+            if path.is_file() and not path.is_symlink():
+                os.lchown(path, account.pw_uid, account.pw_gid)
     for name in OUTPUT_FOLDERS:
         folder = project / name
         if not folder.exists():
