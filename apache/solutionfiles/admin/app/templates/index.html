@@ -28,43 +28,44 @@
     <img class="logo" src="/static/vns-logo.webp" width="64" height="45" alt="VNS - vital new software">
     <span><h1>Server admin</h1><span class="host">{{ hostname }}</span></span>
   </a>
+  <nav class="view-switch" aria-label="Section">
+    <button type="button" id="switch-sites" data-view="sites">Sites</button>
+    <button type="button" id="switch-sql" data-view="sql">SQL Server</button>
+  </nav>
   <input id="search" type="search" placeholder="Search sites…  ( / )" autocomplete="off" hidden>
   <span class="spacer"></span>
   <button id="btn-dock" class="ghost" title="Terminals (Ctrl+`)" hidden>⌨ Terminals <span id="term-count" class="count" hidden></span></button>
   <div class="user">
-    <button id="btn-settings" class="ghost" title="Settings" aria-haspopup="true">⚙ Settings <span id="system-update-badge" class="badge system-update-available" hidden>Update available</span></button>
+    <button id="btn-settings" class="ghost" title="Server" aria-haspopup="true">⚙ Server <span id="system-update-badge" class="badge system-update-available" hidden>Update available</span></button>
     <div id="settings-menu" class="menu" hidden>
-      <div id="settings-update-group" class="menu-group" role="group" aria-label="Updates" hidden>
-        <div class="menu-group-title">Updates</div>
-        <button id="settings-update" type="button" hidden>Update</button>
-      </div>
-      <div class="menu-group" role="group" aria-label="Server">
-        <div class="menu-group-title">Server</div>
+      <div class="menu-group" role="group" aria-label="Tools">
+        <div class="menu-group-title">Tools</div>
         <button id="btn-server-shell" type="button">Server shell</button>
-        <button id="btn-browse" type="button">Browse /</button>
-        <button id="settings-web" type="button" hidden>Web server</button>
-        <button id="settings-sql" type="button">SQL Server</button>
-        <button id="settings-start-view" type="button">Start page…</button>
+        <button id="btn-browse" type="button">Files (/)</button>
       </div>
       <div class="menu-group" role="group" aria-label="Apache">
         <div class="menu-group-title">Apache</div>
-        <button id="settings-apache-test" type="button">Test Apache config</button>
-        <button id="settings-restart-apache" type="button">Restart Apache</button>
-        <button id="settings-apache-logs" type="button">Apache error logs</button>
-        <button id="settings-keep-alive" type="button">Site keep-alive</button>
+        <button id="settings-apache-test" type="button">Test config</button>
+        <button id="settings-apache-logs" type="button">Error logs</button>
+        <button id="settings-restart-apache" type="button" class="menu-danger" title="All sites on this server are briefly unavailable">Restart Apache</button>
       </div>
-      <div id="settings-admin-group" class="menu-group" role="group" aria-label="Administration" hidden>
-        <div class="menu-group-title">Administration</div>
+      <div id="settings-admin-group" class="menu-group" role="group" aria-label="Admin" hidden>
+        <div class="menu-group-title">Admin</div>
         <button id="settings-admin-site" type="button" hidden>Admin site</button>
         <button id="settings-admin-logs" type="button">Admin app log</button>
       </div>
-      <div id="settings-version" class="settings-version muted"></div>
+      <div class="settings-footer">
+        <span id="settings-version" class="settings-version"></span>
+        <span id="settings-uptodate" class="settings-uptodate" hidden>Up to date ✓</span>
+        <button id="settings-update" type="button" hidden>Update</button>
+      </div>
     </div>
   </div>
   <div class="user">
     <button id="btn-user" class="avatar" title="Account" aria-haspopup="true">{{ user[:1]|upper }}</button>
     <div id="user-menu" class="menu" hidden>
       <div class="menu-head"><b id="menu-user">{{ user }}</b><span class="muted">Administrator</span></div>
+      <button id="menu-preferences" type="button">Preferences…</button>
       <button id="menu-profile" type="button">Profile…</button>
       <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit">Log out</button></form>
     </div>
@@ -562,18 +563,23 @@
   </form>
 </dialog>
 
-<dialog id="dlg-start-view" class="newsite environment-dialog" aria-labelledby="start-view-title">
-  <form method="dialog" id="form-start-view">
+<dialog id="dlg-preferences" class="newsite environment-dialog" aria-labelledby="preferences-title">
+  <form method="dialog" id="form-preferences">
     <div class="ns-head">
       <span class="ns-icon" data-header-icon="sliders" aria-hidden="true"></span>
-      <div><h2 id="start-view-title">Start page</h2><p>Where the admin opens after you log in.</p></div>
+      <div><h2 id="preferences-title">Preferences</h2><p>For this admin site.</p></div>
     </div>
+    <div class="ns-section">Start page</div>
     <fieldset class="environment-options">
-      <legend>Open the admin on</legend>
-      <label class="type-card environment-option"><input type="radio" name="start_view" value="sites" required><span class="tc-title">Web server</span><span class="tc-sub">The sites and their environments</span></label>
-      <label class="type-card environment-option"><input type="radio" name="start_view" value="sql"><span class="tc-title">SQL Server</span><span class="tc-sub">For a server that is mostly a SQL Server. The sites are under Web server in Settings</span></label>
+      <legend class="visually-hidden">Where the admin opens after you log in</legend>
+      <label class="type-card environment-option"><input type="radio" name="start_view" value="sites" required><span class="tc-title">Sites</span><span class="tc-sub">The sites and their environments</span></label>
+      <label class="type-card environment-option"><input type="radio" name="start_view" value="sql"><span class="tc-title">SQL Server</span><span class="tc-sub">For a server that is mostly a SQL Server</span></label>
     </fieldset>
-    <menu><button type="button" id="start-view-cancel" class="cancel-link">Cancel</button><button type="submit" class="primary">Save</button></menu>
+    <div class="ns-section">Site keep-alive</div>
+    <label class="copy-connection-toggle"><input name="keep_alive" type="checkbox"><span>Request active sites and environments now and then, so they stay warm</span></label>
+    <label class="preferences-interval">Interval in minutes <input name="keep_alive_interval" type="number" min="1" max="1440" step="1" required></label>
+    <p class="hint" id="preferences-keep-alive-hint">From 1 to 1440 minutes. It does not restart services or prevent Boot failed.</p>
+    <menu><button type="button" id="preferences-cancel" class="cancel-link">Cancel</button><button type="submit" class="primary">Save</button></menu>
   </form>
 </dialog>
 

@@ -213,14 +213,18 @@ console.log(JSON.stringify([first, firstNone, none.hidden]));
         self.assertIn('actions.prepend(el("button", { textContent: "Query", onclick: () => openSqlQuery(database) }));', source)
         page = (APP / "templates/index.html").read_text()
         self.assertIn('<meta name="start-view" content="{{ start_view }}">', page)
-        self.assertIn('id="dlg-start-view"', page)
-        self.assertIn('id="settings-web"', page)
+        # Sites | SQL Server is a switch in the header; start page and keep-alive are Preferences
+        self.assertIn('id="switch-sites"', page)
+        self.assertIn('id="switch-sql"', page)
+        self.assertIn('id="dlg-preferences"', page)
+        self.assertIn('id="menu-preferences"', page)
+        for gone in ("settings-sql", "settings-web", "settings-start-view", "settings-keep-alive", "dlg-start-view", "settings-update-group"):
+            self.assertNotIn(gone, page)
         self.assertNotIn("sql-back-bar", page)
-        self.assertIn('$("#settings-sql").hidden = name === "sql";', source)
-        self.assertIn('$("#settings-web").hidden = name !== "sql";', source)
+        self.assertIn('const active = button.dataset.view === (name === "sql" ? "sql" : "sites");', source)
         self.assertIn('if (currentView === "site") go("#sites");', source)
         self.assertIn('body[data-view="sql"] .page-header #search { display: none; }', (APP / "static/style.css").read_text())
-        for label in ("SQL Server", "Web server", "Start page…", "Site keep-alive"):
+        for label in ("SQL Server", "Preferences…", "Files (/)", "Test config", "Error logs"):
             self.assertIn(f'"{label}": [', source)
         self.assertIn('id="dlg-sql-query"', page)
 

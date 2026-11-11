@@ -229,9 +229,12 @@ function showView(name) {
 	currentView = name;
 	// The site search belongs to the sites: it is hidden on the SQL page
 	document.body.dataset.view = name;
-	// Settings switches between the two: SQL Server from the sites, Web server from SQL Server
-	$("#settings-sql").hidden = name === "sql";
-	$("#settings-web").hidden = name !== "sql";
+	// The switch in the header shows which of the two sections is open
+	for (const button of document.querySelectorAll(".view-switch button")) {
+		const active = button.dataset.view === (name === "sql" ? "sql" : "sites");
+		button.classList.toggle("active", active);
+		button.setAttribute("aria-pressed", String(active));
+	}
 	for (const view of views) $("#view-" + view).hidden = view !== name;
 	if (name === "sites" && $("#dock").hidden && !$("#search").hidden) $("#search").focus({ preventScroll: true });
 }
@@ -468,7 +471,8 @@ const buttonStyles = {
 	"Migrate…": ["server", "purple"],
 	"Check outdated": ["download", "amber"], "Restart": ["restart", "amber"], "Restart Apache": ["restart", "amber"],
 	"Stop": ["stop", "red"], "Clear logs": ["eraser", "gray"], "Logs": ["file", "gray"],
-	"SQL Server": ["server", "purple"], "Web server": ["globe", "blue"], "Start page…": ["sliders", "purple"], "Site keep-alive": ["activity", "green"],
+	"SQL Server": ["server", "purple"], "Web server": ["globe", "blue"], "Preferences…": ["sliders", "purple"], "Files (/)": ["folder", "blue"],
+	"Test config": ["activity", "teal"], "Error logs": ["file", "teal"],
 	"Admin app log": ["file", "gray"], "Apache error logs": ["file", "teal"],
 	"Copy site": ["file", "blue"],
 	"Issue certificate": ["shield", "teal"], "Change environment": ["sliders", "purple"], "Sync setup…": ["sliders", "teal"], "Sync data…": ["sync", "pink"], "Change bindings": ["globe", "blue"],
@@ -3013,7 +3017,8 @@ function decorateSql() {
 	decorate($("#view-sql"));
 }
 
-$("#settings-sql").onclick = () => go("#sql");
+$("#switch-sites").onclick = () => go("#sites");
+$("#switch-sql").onclick = () => go("#sql");
 // With SQL Server as the start page, it is the home: its page has no link back to the sites
 function applyStartView() {
 	const sql = startView === "sql";
@@ -3032,26 +3037,42 @@ document.querySelector(".brand").onclick = (event) => {
 	});
 };
 applyStartView();
-$("#settings-web").onclick = () => go("#sites");
-const startViewDialog = $("#dlg-start-view");
-const startViewForm = $("#form-start-view");
-$("#settings-start-view").onclick = () => {
-	startViewForm.reset();
-	startViewForm.elements.start_view.value = startView;
-	startViewDialog.showModal();
-	startViewForm.querySelector("input[name=start_view]:checked")?.focus();
-};
-$("#start-view-cancel").onclick = () => startViewDialog.close();
-startViewForm.onsubmit = (event) => {
+// Preferences: where the admin opens, and the keep-alive of the sites
+const preferencesDialog = $("#dlg-preferences");
+const preferencesForm = $("#form-preferences");
+let keepAliveInstalled = false;
+$("#menu-preferences").onclick = () => run(async () => {
+	$("#user-menu").hidden = true;
+	preferencesForm.reset();
+	preferencesForm.elements.start_view.value = startView;
+	const keepAlive = await api("/api/keep-alive");
+	keepAliveInstalled = keepAlive.installed;
+	preferencesForm.elements.keep_alive.checked = keepAlive.enabled;
+	preferencesForm.elements.keep_alive_interval.value = keepAlive.interval_minutes;
+	for (const name of ["keep_alive", "keep_alive_interval"]) preferencesForm.elements[name].disabled = !keepAlive.installed;
+	$("#preferences-keep-alive-hint").textContent = keepAlive.installed
+		? "From 1 to 1440 minutes. It does not restart services or prevent Boot failed."
+		: "The keep-alive cron job is missing. Run apache/init.sh on this server to install it.";
+	preferencesDialog.showModal();
+	document.activeElement?.blur();
+});
+$("#preferences-cancel").onclick = () => preferencesDialog.close();
+preferencesForm.onsubmit = (event) => {
 	event.preventDefault();
-	const next = startViewForm.elements.start_view.value;
+	const next = preferencesForm.elements.start_view.value;
+	const interval = Number(preferencesForm.elements.keep_alive_interval.value);
 	run(async () => {
-		await api("/api/preferences", { method: "PUT", json: { start_view: next } });
-		startView = next;
-		applyStartView();
-		startViewDialog.close();
-		toast(`The admin now opens on ${next === "sql" ? "SQL Server" : "Web server"}`, "ok");
-		go(next === "sql" ? "#sql" : "#sites");
+		if (keepAliveInstalled) {
+			if (!Number.isInteger(interval) || interval < 1 || interval > 1440) throw new Error("The interval must be a whole number from 1 to 1440 minutes.");
+			await api("/api/keep-alive", { method: "PUT", json: { enabled: preferencesForm.elements.keep_alive.checked, interval_minutes: interval } });
+		}
+		if (next !== startView) {
+			await api("/api/preferences", { method: "PUT", json: { start_view: next } });
+			startView = next;
+			applyStartView();
+		}
+		preferencesDialog.close();
+		toast("Preferences saved", "ok");
 	});
 };
 
@@ -3246,10 +3267,6 @@ $("#form-sql-connection").onsubmit = (event) => {
 	});
 };
 decorateSql();
-$("#settings-sql").dataset.tone = "blue";
-$("#settings-sql").prepend(svgIcon("server"));
-$("#settings-keep-alive").dataset.tone = "teal";
-$("#settings-keep-alive").prepend(svgIcon("clock"));
 
 const settingsMenu = $("#settings-menu");
 let systemUpdating = false;
@@ -3322,8 +3339,9 @@ async function checkSystemUpdate(refresh = false) {
 	badge.hidden = !available && !unknown;
 	badge.textContent = unknown ? "Version unknown" : "Update available";
 	badge.classList.toggle("system-update-available", available);
+	// At the bottom of the menu: the version, and an update when there is one
 	$("#settings-update").hidden = !available && !unknown;
-	$("#settings-update-group").hidden = $("#settings-update").hidden;
+	$("#settings-uptodate").hidden = result.status !== "current";
 	$("#settings-update").replaceChildren(svgIcon("sync"), unknown ? "Initialize / update" : "Update");
 	const installedText = result.installed_version ? `v${result.installed_version}` : shortCommit(result.installed);
 	const latestText = result.mode === "release" ? `v${result.latest_version}` : `main (${shortCommit(result.latest)})`;
@@ -3345,23 +3363,6 @@ $("#settings-restart-apache").onclick = () => run(async () => {
 });
 $("#settings-admin-site").onclick = () => { const admin = allSites.find((s) => s.admin); if (admin) go(siteLink(admin.name)); };
 $("#settings-apache-test").onclick = () => run(() => openTask({ kind: "apache", tool: "configtest" }));
-$("#settings-keep-alive").onclick = () => run(async () => {
-	const settings = await api("/api/keep-alive");
-	if (!settings.installed) throw new Error("Keep-alive cron job is missing. Run apache/init.sh on this server.");
-	const answer = await ask({
-		title: "Site keep-alive",
-		message: "Send local requests to active dynamic sites. Interval: 1–1440 minutes. Does not restart services or prevent Boot failed.",
-		value: String(settings.interval_minutes), placeholder: "Interval in minutes", ok: "Save",
-		checkbox: "Enabled", checkboxChecked: settings.enabled,
-	});
-	if (answer === null) return;
-	const interval = Number(answer.value);
-	if (!Number.isInteger(interval) || interval < 1 || interval > 1440) {
-		throw new Error("Interval must be a whole number from 1 to 1440 minutes.");
-	}
-	await api("/api/keep-alive", { method: "PUT", json: { enabled: answer.checked, interval_minutes: interval } });
-	toast("Keep-alive settings saved", "ok");
-});
 // Release notes are Markdown: headings, lists and paragraphs, built as text so nothing in them runs
 function markdownBlock(text) {
 	const box = el("div", { className: "release-notes" });
@@ -3432,6 +3433,10 @@ $("#settings-update").dataset.tone = "purple";
 $("#settings-update").prepend(svgIcon("sync"));
 
 decorate($("#settings-menu"));
+// Restarting Apache takes every site down for a moment: it stands last, in red
+$("#settings-restart-apache").dataset.tone = "red";
+$("#menu-preferences").dataset.tone = "purple";
+$("#menu-preferences").prepend(svgIcon("sliders"));
 decorate($("#view-sites .toolbar"));
 decorate($("#view-files"));
 run(() => checkSystemUpdate(true));
