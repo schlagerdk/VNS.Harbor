@@ -2,6 +2,12 @@
 
 All notable changes to VNS.Linux are listed here, newest first.
 
+## [1.0.20] - 2026-11-11
+
+### Fixes
+
+- The list view always shows every environment of a site
+
 ## [1.0.19] - 2026-11-11
 
 ### Fixes
