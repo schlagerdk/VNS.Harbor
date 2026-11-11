@@ -2,6 +2,12 @@
 
 All notable changes to VNS.Linux are listed here, newest first.
 
+## [1.0.12] - 2026-11-11
+
+### Fixes
+
+- Appsettings saved as Windows-1252 are read, and a failure to make a site wait for SQL Server does not stop its setup
+
 ## [1.0.11] - 2026-11-11
 
 ### Fixes
