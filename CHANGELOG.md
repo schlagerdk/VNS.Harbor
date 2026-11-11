@@ -2,6 +2,13 @@
 
 All notable changes to VNS.Linux are listed here, newest first.
 
+## [1.0.6] - 2026-11-11
+
+### Fixes
+
+- The log list only offers the levels the log has feat: The logs window shows the files or journal command it reads, with a heading per file in the Apache logs
+- The log list only offers the levels the log has feat: The logs window shows the files or journal command it reads, with a heading per file in the Apache logs
+
 ## [1.0.5] - 2026-11-11
 
 ### Features
