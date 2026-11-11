@@ -3518,7 +3518,8 @@ async function openSystemUpdateDialog() {
 					el("strong", { textContent: release.name }),
 					release.date ? el("span", { className: "muted", textContent: formatDate(release.date) }) : "",
 					release.url ? el("a", { href: release.url, target: "_blank", rel: "noopener noreferrer", textContent: "On GitHub ↗" }) : ""),
-				markdownBlock(release.notes || "No notes.")));
+				markdownBlock(release.notes || (result.notes_unavailable
+					? "The release notes could not be read from GitHub right now. They are on GitHub." : "No notes."))));
 		}
 	} else if (result.latest_commit) {
 		const commit = result.latest_commit;

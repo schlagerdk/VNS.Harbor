@@ -1127,10 +1127,31 @@ def commit_details(installed, latest):
     return details
 
 
+RELEASE_TAGS = {"checked_at": 0.0, "versions": None}
+
+
+def release_versions():
+    """The released versions, newest first, from the repository's tags. git does not count against GitHub's
+    limit on API calls, so the version is known also when the release notes cannot be read. Kept a minute."""
+    if RELEASE_TAGS["versions"] is not None and time.time() - RELEASE_TAGS["checked_at"] < 60:
+        return RELEASE_TAGS["versions"]
+    result = subprocess.run(["git", "ls-remote", "--tags", "--refs", f"https://github.com/{GITHUB_REPO}.git"],
+                            capture_output=True, text=True, timeout=15, check=True)
+    versions = [line.split("refs/tags/v", 1)[1] for line in result.stdout.splitlines() if "refs/tags/v" in line]
+    versions = sorted((version for version in versions if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version)),
+                      key=version_key, reverse=True)
+    RELEASE_TAGS.update(checked_at=time.time(), versions=versions)
+    return versions
+
+
 def update_target():
     """What an update installs: the newest release, or main before there is one"""
-    releases = github_releases()
-    return "v" + releases[0]["version"] if releases else ""
+    try:
+        versions = release_versions()
+    except (OSError, subprocess.SubprocessError) as exc:
+        app.logger.error("Could not read the releases: %s", exc)
+        abort(502, "Could not read the releases on GitHub. Try again in a minute.")
+    return "v" + versions[0] if versions else ""
 
 
 @app.route("/api/system-update")
@@ -1151,14 +1172,20 @@ def api_system_update():
                 raise ValueError("GitHub returned an invalid version")
             latest = fields[0]
             version = installed_version()
-            releases = github_releases()
-            if releases:
-                # Releases decide: an update installs the newest one, and brings the notes of every newer release
-                newer = [release for release in releases if not version or version_key(release["version"]) > version_key(version)]
-                response = {"status": "available" if newer else "current", "mode": "release", "installed": installed,
-                            "installed_version": version, "latest_version": releases[0]["version"], "releases": newer[:10],
-                            "compare_url": f"https://github.com/{GITHUB_REPO}/compare/v{version}...v{releases[0]['version']}" if version and newer
-                            else releases[0]["url"]}
+            versions = release_versions()
+            if versions:
+                # The tags decide which release an update installs. The notes come from GitHub's API, which may be
+                # out of reach (it allows few calls without a login): then the versions are shown without them.
+                newest = versions[0]
+                newer_versions = [item for item in versions if not version or version_key(item) > version_key(version)]
+                notes = {release["version"]: release for release in (github_releases() or [])}
+                releases = [notes.get(item) or {"version": item, "name": "v" + item, "notes": "", "url": f"https://github.com/{GITHUB_REPO}/releases/tag/v{item}", "date": ""}
+                            for item in newer_versions[:10]]
+                response = {"status": "available" if newer_versions else "current", "mode": "release", "installed": installed,
+                            "installed_version": version, "latest_version": newest, "releases": releases,
+                            "notes_unavailable": bool(newer_versions) and not any(item in notes for item in newer_versions),
+                            "compare_url": f"https://github.com/{GITHUB_REPO}/compare/v{version}...v{newest}" if version and newer_versions
+                            else f"https://github.com/{GITHUB_REPO}/releases/tag/v{newest}"}
             else:
                 response = {"status": "unknown" if not installed else "available" if installed != latest else "current",
                             "mode": "commit", "installed": installed, "latest": latest, "installed_version": version}
