@@ -145,7 +145,28 @@ function dnsRecord(type, name, value) {
 		el("span", { className: "dns-arrow", textContent: "→" }), el("code", { className: "dns-value", textContent: value }), button);
 }
 
-function dnsCard(input, { expect = "", name: targetName = "", onState = () => {} } = {}) {
+// One row per name with where it points, and the record to make under each name that does not point here
+function dnsNameRows(names, answers, address, expect) {
+	return names.map((name, index) => {
+		const answer = answers[index];
+		const [kind, text] = answer?.local ? ["muted", "Local name"] : !answer ? ["muted", "Could not check"] : answer.here ? ["ok", "Points here"]
+			: answer.addresses.length ? ["warn", "Points to " + answer.addresses[0]] : ["muted", "No record yet"];
+		const status = el("span", { className: "dns-status " + kind, textContent: text });
+		if (answer?.addresses?.length > 1) status.title = answer.addresses.join(", ");
+		const row = el("div", { className: "dns-check-row" }, el("code", { textContent: name }), status);
+		if (answer?.here || answer?.local) return row;
+		return el("div", { className: "dns-check-name" }, row, el("div", { className: "dns-records" },
+			dnsRecord("A", name, address || "this server's address"),
+			...(answer?.host && !expect ? [dnsRecord("CNAME", name, answer.host)] : [])));
+	});
+}
+
+// A name as typed, as DNS asks for it: no scheme or path, and a name with æ, ø or å in its punycode form
+const dnsName = (text) => text.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+const dnsAscii = (name) => { try { return new URL("http://" + name).hostname; } catch { return name; } };
+
+// aliases: a textarea with more names (one per line), each checked as the binding is
+function dnsCard(input, { expect = "", name: targetName = "", aliases = null, onState = () => {} } = {}) {
 	const status = el("span", { className: "dns-status" });
 	const records = el("div", { className: "dns-records" });
 	const note = el("p", { className: "dns-note" });
@@ -153,13 +174,50 @@ function dnsCard(input, { expect = "", name: targetName = "", onState = () => {}
 		el("div", { className: "dns-head" }, el("span", { className: "dns-icon" }, svgIcon("globe")),
 			el("strong", { textContent: "DNS for this name" }), status),
 		records, note);
+	const title = card.querySelector(".dns-head strong");
 	// Hidden until a name is checked, so an empty binding never shows it for a moment
 	card.hidden = true;
 	const record = dnsRecord;
 	let timer = null;
 	let asked = "";
+	const names = () => [...new Set([input.value, ...(aliases ? aliases.value.split(/[\s,]+/) : [])].map(dnsName).filter((name) => name && name !== "*"))];
+	// The binding and its aliases: every name gets a row, and the card says how many point here
+	const showAll = async (list) => {
+		card.hidden = false;
+		title.textContent = "DNS for these names";
+		card.classList.remove("here");
+		card.classList.add("checking", "several");
+		status.className = "dns-status checking";
+		status.textContent = "Checking…";
+		status.title = "";
+		asked = list.join(" ");
+		const query = (name) => name.includes(".")
+			? api(`/api/dns?name=${encodeURIComponent(dnsAscii(name))}${expect ? "&expect=" + encodeURIComponent(expect) : ""}`).catch(() => null)
+			: Promise.resolve({ local: true });
+		const [answers, server] = await Promise.all([Promise.all(list.map(query)), expect ? null : loadServerAddress().catch(() => null)]);
+		if (asked !== list.join(" ")) return;
+		const address = expect || server?.address || "";
+		const publicNames = answers.filter((answer) => !answer?.local);
+		const here = publicNames.filter((answer) => answer?.here).length;
+		const ready = here === publicNames.length;
+		card.classList.remove("checking");
+		card.classList.toggle("here", ready && here > 0);
+		records.replaceChildren(el("div", { className: "dns-check-rows" }, ...dnsNameRows(list, answers, address, expect)));
+		if (!publicNames.length) { status.className = "dns-status muted"; status.textContent = "Local names: no public DNS"; }
+		else if (ready) { status.className = "dns-status ok"; status.textContent = "All names point here"; }
+		else { status.className = "dns-status warn"; status.textContent = `${here} of ${publicNames.length} point here`; }
+		note.textContent = !expect && server?.behind_nat
+			? `The public address could not be found, only an internal one (${address}). Set the public address under Preferences, so the records point to where the internet reaches it.`
+			: ready ? "" : "Make the missing records where each domain's DNS is kept. An HTTPS certificate covers every name, so each must point here.";
+		note.classList.toggle("warn", Boolean(!expect && server?.behind_nat));
+		onState(!publicNames.length ? "local" : ready ? "here" : "elsewhere");
+	};
 	const show = async () => {
-		const name = input.value.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+		const list = names();
+		if (list.length > 1) return showAll(list);
+		title.textContent = "DNS for this name";
+		card.classList.remove("several");
+		const name = list[0] || "";
 		card.hidden = !name;
 		if (!name) { onState("empty"); return; }
 		const server = expect ? null : await loadServerAddress().catch(() => null);
@@ -204,10 +262,11 @@ function dnsCard(input, { expect = "", name: targetName = "", onState = () => {}
 		if (!document.contains(card)) { clearInterval(watch); return; }
 		// A closed dialog hides it, so it is checked again when the dialog opens
 		if (!input.offsetParent) { card.hidden = true; seen = null; clearTimeout(timer); return; }
-		if (input.value === seen) return;
-		seen = input.value;
+		const typed = input.value + "\n" + (aliases ? aliases.value : "");
+		if (typed === seen) return;
+		seen = typed;
 		clearTimeout(timer);
-		if (!input.value.trim()) { card.hidden = true; onState("empty"); return; }
+		if (!names().length) { card.hidden = true; onState("empty"); return; }
 		timer = setTimeout(() => run(show), 450);
 	}, 250);
 	return card;
@@ -235,17 +294,7 @@ function certificateDnsCard({ names, expect = "" }, done) {
 		card.classList.toggle("here", ready);
 		status.className = "dns-status " + (ready ? "ok" : "warn");
 		status.textContent = ready ? (names.length > 1 ? "All names point here" : "Points here") : "Does not point here";
-		rows.replaceChildren(...names.map((name, index) => {
-			const answer = answers[index];
-			const [kind, text] = !answer ? ["muted", "Could not check"] : answer.here ? ["ok", "Points here"]
-				: answer.addresses.length ? ["warn", "Points to " + answer.addresses[0]] : ["muted", "No record yet"];
-			const row = el("div", { className: "dns-check-row" }, el("code", { textContent: name }), el("span", { className: "dns-status " + kind, textContent: text }));
-			if (answer?.here) return row;
-			// The record to make for a name that does not point here yet, as in New site
-			return el("div", { className: "dns-check-name" }, row, el("div", { className: "dns-records" },
-				dnsRecord("A", name, address || "this server's address"),
-				...(answer?.host && !expect ? [dnsRecord("CNAME", name, answer.host)] : [])));
-		}));
+		rows.replaceChildren(...dnsNameRows(names, answers, address, expect));
 		note.textContent = ready ? "" : `A certificate can be issued once every name points to ${expect || "this server"}. Change the DNS records, then open Issue certificate again.`;
 		done(ready);
 	});
@@ -366,7 +415,8 @@ function ask({ title, message = "", value = "", placeholder = "", ok = "OK", dan
 	const field = $("#prompt-input");
 	// dnsCheck: names that must point to the server before OK can be used, as for a certificate
 	let dnsReady = !dnsCheck;
-	$("#prompt-dns").replaceChildren(...(dns && input ? [dnsCard(field, dns)]
+	// With an extra field (aliases), its names are checked with the main one
+	$("#prompt-dns").replaceChildren(...(dns && input ? [dnsCard(field, { ...dns, aliases: extra ? $("#prompt-extra") : null })]
 		: dnsCheck ? [certificateDnsCard(dnsCheck, (ready) => { dnsReady = ready; if (dlg.open) updateConfirmation(); })] : []));
 	const extraRow = $("#prompt-extra-row");
 	const extraField = $("#prompt-extra");

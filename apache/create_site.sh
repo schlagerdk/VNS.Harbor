@@ -286,6 +286,8 @@ create_umbraco_project() {
 	if [[ ${_umbracoVersion%%.*} -ge 18 ]]; then
 		echo "Add default wwwroot, views and uSync"
 		sudo cp -rf "${_files}/wwwroot" "${_files}/Views" "${_files}/uSync" "${_publish}/"
+		# The template's cache stamp becomes the time the site was made, so its CSS and scripts load fresh
+		sudo sed -i -E 's/(var cacheDate = ")[0-9]{12}(")/\1'"$(date +%Y%m%d%H%M)"'\2/' "${_publish}/Views/ROOT.cshtml"
 	fi
 }
 
