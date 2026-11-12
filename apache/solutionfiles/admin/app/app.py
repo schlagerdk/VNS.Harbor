@@ -7,6 +7,7 @@ import base64
 import glob
 import hmac
 import io
+import ipaddress
 import importlib.util
 import json
 import os
@@ -399,7 +400,27 @@ def api_dns():
     ours = own_addresses(expected)
     # A CNAME is suggested only for this server, not for an address given for another
     host = "" if expected else host_name_for(name, ours, request.host)
-    return jsonify(name=name, addresses=found, here=bool(found) and any(item in ours for item in found), host=host)
+    proxy = "Cloudflare" if via_cloudflare(found) else ""
+    return jsonify(name=name, addresses=found, here=bool(proxy) or bool(found) and any(item in ours for item in found), host=host, proxy=proxy)
+
+
+# Cloudflare's published ranges (cloudflare.com/ips). A proxied name resolves to these, never to the server
+# behind them, so a name that resolves only to Cloudflare is taken as pointing here.
+CLOUDFLARE = tuple(ipaddress.ip_network(item) for item in (
+    "173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22", "103.31.4.0/22", "141.101.64.0/18", "108.162.192.0/18",
+    "190.93.240.0/20", "188.114.96.0/20", "197.234.240.0/22", "198.41.128.0/17", "162.158.0.0/15", "104.16.0.0/13",
+    "104.24.0.0/14", "172.64.0.0/13", "131.0.72.0/22", "2400:cb00::/32", "2606:4700::/32", "2803:f800::/32",
+    "2405:b500::/32", "2405:8100::/32", "2a06:98c0::/29", "2c0f:f248::/32"))
+
+
+def via_cloudflare(found):
+    """Whether every address a name resolves to is Cloudflare's"""
+    def ours(address):
+        try:
+            return any(ipaddress.ip_address(address.split("%")[0]) in network for network in CLOUDFLARE)
+        except ValueError:
+            return False
+    return bool(found) and all(ours(address) for address in found)
 
 
 def points_here(name):
@@ -416,7 +437,7 @@ def not_pointing(names, expect=""):
             found = {info[4][0] for info in socket.getaddrinfo(name, None, proto=socket.IPPROTO_TCP)}
         except (socket.gaierror, UnicodeError, OSError):
             found = set()
-        if not found & ours:
+        if not found & ours and not via_cloudflare(found):
             missing.append(name)
     return missing
 

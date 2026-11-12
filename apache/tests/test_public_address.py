@@ -1,4 +1,5 @@
 import ast
+import ipaddress
 import io
 import logging
 import os
@@ -133,14 +134,15 @@ class CertificateDnsTests(unittest.TestCase):
         from werkzeug.exceptions import abort
         self.dns = {"shop.dk": "185.150.199.44", "www.shop.dk": "185.150.199.45", "prod.shop.dk": "198.51.100.20"}
         self.prod = {"PROD_BINDING": "prod.shop.dk", "PROD_LOCAL_PATH": "", "PROD_IP": "198.51.100.20"}
-        self.ns = dict(os=os, socket=socket, abort=abort, APACHE_SITES="/sites", WEB_ROOT="/www",
+        self.ns = dict(os=os, socket=socket, ipaddress=ipaddress, abort=abort, APACHE_SITES="/sites", WEB_ROOT="/www",
                        conf_binding=lambda site: "shop.dk", read_text=lambda path: "",
                        server_aliases=lambda text, binding: ["www.shop.dk"],
                        parse_prod=lambda root, target: self.prod, target_arg=lambda site, data: "prod",
                        display_dns_name=lambda name: name,
                        own_addresses=lambda expect="": {expect} if expect else {"185.150.199.44"})
         nodes = [node for node in ast.parse((APP / "app.py").read_text()).body
-                 if isinstance(node, ast.FunctionDef) and node.name in ("not_pointing", "certificate_names_point")]
+                 if isinstance(node, ast.FunctionDef) and node.name in ("not_pointing", "certificate_names_point", "via_cloudflare")
+                 or isinstance(node, ast.Assign) and any(getattr(target, "id", "") == "CLOUDFLARE" for target in node.targets)]
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "certificate dns", "exec"), self.ns)
 
     def check(self, **data):
@@ -159,6 +161,16 @@ class CertificateDnsTests(unittest.TestCase):
         self.assertNotIn("shop.dk,", raised.exception.description)
         self.dns["www.shop.dk"] = "185.150.199.44"
         self.assertIsNone(self.check(scope="test"))
+
+    def test_a_name_behind_cloudflare_counts_as_pointing_here(self):
+        # Proxied: the name resolves to Cloudflare, never to the server behind it
+        self.dns["www.shop.dk"] = "104.21.32.1"
+        self.assertIsNone(self.check(scope="test"))
+        self.dns["www.shop.dk"] = "2606:4700:3030::6815:2001"
+        self.assertIsNone(self.check(scope="test"))
+        self.assertFalse(self.ns["via_cloudflare"](["104.21.32.1", "198.51.100.7"]))
+        self.assertFalse(self.ns["via_cloudflare"]([]))
+        self.assertFalse(self.ns["via_cloudflare"](["fe80::1%eth0"]))
 
     def test_a_remote_environment_must_point_to_its_own_server(self):
         self.assertIsNone(self.check(scope="prod"))

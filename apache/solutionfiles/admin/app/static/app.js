@@ -149,7 +149,7 @@ function dnsRecord(type, name, value) {
 function dnsNameRows(names, answers, address, expect) {
 	return names.map((name, index) => {
 		const answer = answers[index];
-		const [kind, text] = answer?.local ? ["muted", "Local name"] : !answer ? ["muted", "Could not check"] : answer.here ? ["ok", "Points here"]
+		const [kind, text] = answer?.local ? ["muted", "Local name"] : !answer ? ["muted", "Could not check"] : answer.here ? ["ok", answer.proxy ? "Via " + answer.proxy : "Points here"]
 			: answer.addresses.length ? ["warn", "Points to " + answer.addresses[0]] : ["muted", "No record yet"];
 		const status = el("span", { className: "dns-status " + kind, textContent: text });
 		if (answer?.addresses?.length > 1) status.title = answer.addresses.join(", ");
@@ -251,7 +251,7 @@ function dnsCard(input, { expect = "", name: targetName = "", aliases = null, on
 		card.classList.toggle("here", Boolean(answer.here));
 		// A subdomain can follow the server's own name instead, so it moves with the server
 		if (answer.host && !targetName) records.append(record("CNAME", name, answer.host));
-		if (answer.here) { status.className = "dns-status ok"; status.textContent = "Points here"; }
+		if (answer.here) { status.className = "dns-status ok"; status.textContent = answer.proxy ? "Via " + answer.proxy : "Points here"; status.title = answer.proxy ? `Proxied by ${answer.proxy}: its addresses stand in for this server's` : ""; }
 		else if (answer.addresses.length) { status.className = "dns-status warn"; status.textContent = `Points to ${answer.addresses[0]}`; status.title = answer.addresses.join(", "); }
 		else { status.className = "dns-status muted"; status.textContent = "No record yet"; }
 		onState(answer.here ? "here" : answer.addresses.length ? "elsewhere" : "none");
