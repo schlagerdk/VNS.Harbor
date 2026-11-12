@@ -2,6 +2,12 @@
 
 All notable changes to VNS.Linux are listed here, newest first.
 
+## [1.1.13] - 2026-11-12
+
+### Features
+
+- A name that resolves only to Cloudflare's addresses counts as pointing here, shown as Via Cloudflare in the DNS check, and does not block a certificate
+
 ## [1.1.12] - 2026-11-12
 
 ### Features
