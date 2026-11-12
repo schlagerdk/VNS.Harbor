@@ -2,6 +2,12 @@
 
 All notable changes to VNS.Linux are listed here, newest first.
 
+## [1.1.12] - 2026-11-12
+
+### Features
+
+- The DNS check in Change bindings checks every alias as well, one row per name with the record to make, and the selected grid/list layout is lit in blue
+
 ## [1.1.11] - 2026-11-11
 
 ### Features
