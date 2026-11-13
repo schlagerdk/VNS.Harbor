@@ -81,7 +81,7 @@ export default class VnsHarborDashboard extends UmbElementMixin(LitElement) {
 				<uui-button look="primary" ?disabled=${this._busy || !destination.settings}
 					title=${destination.settings ? "Document types, templates, views, css and scripts" : "Sync setup does not let this site send settings there"}
 					@click=${() => this.#sync(destination, "settings")}>Sync settings</uui-button>
-				<uui-button look="secondary" ?disabled=${this._busy || !kinds}
+				<uui-button look="outline" ?disabled=${this._busy || !kinds}
 					title=${kinds ? `Merges ${kinds}: nothing is deleted there` : "Sync setup does not let this site send data there"}
 					@click=${() => this.#sync(destination, "data")}>Sync ${kinds || "data"}</uui-button>
 			</div>
@@ -144,7 +144,8 @@ export default class VnsHarborDashboard extends UmbElementMixin(LitElement) {
 		.destination { background: var(--uui-color-surface); border: 1px solid var(--uui-color-border); border-top: 3px solid var(--tone);
 			border-radius: var(--uui-border-radius); padding: var(--uui-size-space-5); display: flex; flex-direction: column; gap: var(--uui-size-space-3);
 			box-shadow: var(--uui-shadow-depth-1); }
-		.destination .actions { margin-top: auto; padding-top: var(--uui-size-space-2); }
+		.destination .actions { display: grid; grid-template-columns: 1fr; margin-top: auto; padding-top: var(--uui-size-space-3); }
+		.destination .actions uui-button { width: 100%; }
 		.everywhere { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--uui-size-space-4);
 			background: var(--uui-color-surface); border: 1px solid var(--uui-color-border); border-radius: var(--uui-border-radius);
 			padding: var(--uui-size-space-4) var(--uui-size-space-5); box-shadow: var(--uui-shadow-depth-1); }

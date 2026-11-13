@@ -4353,7 +4353,8 @@ function setTaskOutput(t, open) {
 	t.outputOpen = open;
 	$("#task-details").hidden = !open;
 	$("#task-toggle").textContent = open ? "Hide output" : "Show output";
-	if (open) requestAnimationFrame(() => { try { t.fit.fit(); } catch (_) { /* not measured yet */ } });
+	// Again once the window has its size (the terminal also follows its own size from then on)
+	if (open) requestAnimationFrame(() => { try { t.fit.fit(); } catch (_) { /* not measured yet */ } requestAnimationFrame(() => { try { t.fit.fit(); } catch (_) { /* not measured yet */ } }); });
 }
 function showTaskWindow(t) {
 	if (taskShown && taskShown !== t) hideTaskWindow();
@@ -4538,7 +4539,8 @@ function openTerminal(id, title, autoClose, sites = [], running = true, scope = 
 	});
 	term.onData((data) => t.ws && t.ws.readyState === 1 && t.ws.send(JSON.stringify({ t: "i", d: data })));
 	term.onResize(({ rows, cols }) => t.ws && t.ws.readyState === 1 && t.ws.send(JSON.stringify({ t: "r", rows, cols })));
-	new ResizeObserver(() => { if (!pane.hidden && pane.clientHeight > 0) { try { fit.fit(); } catch (_) { /* ignore */ } } }).observe($("#panes"));
+	// Fitted to wherever it is shown, the dock or a task's window: its own size decides, not the dock's
+	new ResizeObserver(() => { if (!pane.hidden && pane.clientWidth > 0 && pane.clientHeight > 0) { try { fit.fit(); } catch (_) { /* ignore */ } } }).observe(pane);
 	setInterval(() => t.ws && t.ws.readyState === 1 && t.ws.send(JSON.stringify({ t: "p" })), 30000);
 
 	t.remove = async () => {

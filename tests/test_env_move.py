@@ -142,7 +142,7 @@ esac
             text = text.replace(path, path.replace("=/", f"={folder}/", 1))
         legacy_request = {key: value.replace("/var/www", f"{folder}/var/www") if key == "VNS_PROD_LOCAL_PATH" else value for key, value in request.items()}
         result = subprocess.run(["/bin/bash", "-c", text, "move_env.sh", "shop.dk", "staging"], capture_output=True, text=True, input="",
-                                env=fake.env() | legacy_request | env, cwd=ROOT / "apache")
+                                env=fake.env() | legacy_request | env, cwd=ROOT)
         legacy_files, legacy_calls = self.files(folder), self.calls(fake, folder)
         legacy_sent = (folder / "remote.sent").read_text().replace(str(folder), "") if (folder / "remote.sent").exists() else ""
         result.stderr = result.stderr.replace(str(folder), "")

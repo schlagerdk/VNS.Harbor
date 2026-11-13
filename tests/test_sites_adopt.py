@@ -59,7 +59,7 @@ class Base(unittest.TestCase):
             path.write_text(content.replace("=/var/www", f"={self.web}").replace("'/var/www", f"'{self.web}"))
         try:
             result = subprocess.run(["/bin/bash", "-c", text, script, *args], capture_output=True, text=True, input="",
-                                    env=self.fake.env() | (env or {}), cwd=ROOT / "apache")
+                                    env=self.fake.env() | (env or {}), cwd=ROOT)
         finally:
             for path, content in saved.items():
                 if path.exists():

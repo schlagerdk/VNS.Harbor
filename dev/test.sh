@@ -9,7 +9,7 @@ _host=${1:-linux-01}
 shift || true
 _source=/tmp/vns-dev-tests
 
-rsync -az --delete --exclude .git --exclude .DS_Store --exclude __pycache__ ./ "${_host}:${_source}/"
+rsync -az --delete --delete-excluded --exclude .git --exclude .DS_Store --exclude __pycache__ ./ "${_host}:${_source}/"
 _modules=""
 (($# == 0)) || _modules=$(printf ' %q' "$@")
 ssh "${_host}" "bash -s -- $(printf %q "${_source}")${_modules}" <<'REMOTE'
