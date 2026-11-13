@@ -144,10 +144,17 @@ class AdminTests(unittest.TestCase):
     source = (APACHE / "solutionfiles/admin/app/static/app.js").read_text()
     app = (APACHE / "solutionfiles/admin/app/app.py").read_text()
 
-    def test_main_site_offers_migrate_and_copy_to_another_server(self):
-        self.assertIn('if (movableSite) addManage("Migrate…", () => openMoveSiteDialog(site));', self.source)
-        self.assertIn('if (movableSite) addManage("Copy to server…", () => openMoveSiteDialog(site, true));', self.source)
-        self.assertIn("!site.admin && !site.managed_by", self.source)
+    def test_main_site_has_one_copy_dialog_for_this_server_and_another(self):
+        self.assertIn('if (!isTarget(env) && !site.admin && !site.managed_by && (copyHere || copyToServer)) addManage("Copy site", () => copySite(site, env));', self.source)
+        self.assertIn("const copyToServer = currentUser.admin && Boolean(env.unit || env.apache);", self.source)
+        self.assertNotIn("openMoveSiteDialog", self.source)
+        html = (APACHE / "solutionfiles/admin/app/templates/index.html").read_text()
+        self.assertIn('name="destination" value="server"', html)
+        self.assertIn('name="remove_here"', html)
+
+    def test_migrating_is_copying_and_removing_it_here(self):
+        self.assertIn('copy: !removing,', self.source)
+        self.assertIn('delete_local: removing && field("delete_local").checked ? "y" : "n"', self.source)
 
     def test_move_site_is_for_administrators_and_runs_the_script(self):
         self.assertRegex(self.app, r'ADMIN_TASKS = \{[^}]*"move_site"')
@@ -155,7 +162,12 @@ class AdminTests(unittest.TestCase):
 
     def test_environment_to_another_server_starts_with_http(self):
         self.assertIn('extra_env["VNS_PROD_HTTPS"] = "n"', self.app)
-        self.assertIn("const otherServer = moving && !release && !same", self.source)
+        self.assertIn("const otherServer = moving && !same", self.source)
+
+    def test_only_what_the_user_may_do_is_offered(self):
+        self.assertIn("const server = currentUser.admin && Boolean(main && (main.unit || main.apache));", self.source)
+        self.assertIn('$("#copy-server-card").hidden = !server;', self.source)
+        self.assertIn('$("#copy-destination").hidden = !(here && server);', self.source)
 
 
 if __name__ == "__main__":

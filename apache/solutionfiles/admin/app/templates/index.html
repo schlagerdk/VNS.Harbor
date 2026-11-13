@@ -377,34 +377,62 @@
   </form>
 </dialog>
 
-<dialog id="dlg-copy-site" class="newsite">
+<dialog id="dlg-copy-site" class="newsite" aria-labelledby="copy-site-title">
   <form id="form-copy-site">
     <header class="ns-head">
       <span class="ns-icon" id="copy-site-icon" aria-hidden="true"></span>
-      <div><h2>Copy site</h2><p>Copy files, service and Apache configuration.</p></div>
+      <div><h2 id="copy-site-title">Copy site</h2><p id="copy-site-description"></p></div>
     </header>
-    <div class="ns-grid">
-      <label>New folder<input name="target" required autocomplete="off" placeholder="copy.example.com"></label>
-      <label>Binding<input name="binding" required autocomplete="off" placeholder="copy.example.com"></label>
+    <div id="copy-destination">
+    <div class="ns-section">Where to?</div>
+    <div class="type-cards copy-destination-cards">
+      <label class="type-card" id="copy-here-card"><input type="radio" name="destination" value="here" checked><span class="tc-title">This server</span><span class="tc-sub" id="copy-here-sub">A new folder and binding</span></label>
+      <label class="type-card" id="copy-server-card"><input type="radio" name="destination" value="server"><span class="tc-title">Another server</span><span class="tc-sub" id="copy-server-sub">Linux, over SSH, with its environments</span></label>
     </div>
-    <div id="copy-project-row" hidden>
-      <label>Project name<input name="project" autocomplete="off" spellcheck="false" maxlength="128" pattern="[A-Za-z0-9][A-Za-z0-9._\-]*"></label>
-      <p class="hint">The project file and dll get this name, and the copy is built. Namespaces in the code are not changed.</p>
     </div>
-    <p class="hint" id="copy-site-path"></p>
-    <p class="hint copy-dns-hint">For HTTPS, the new binding must point to this server.</p>
-    <label class="copy-connection-toggle"><input name="change_connection" type="checkbox" aria-controls="copy-sql-fields"><span>Change SQL connection strings</span></label>
-    <fieldset id="copy-sql-fields" hidden disabled>
-      <legend>SQL connection</legend>
-      <p class="hint">The database and login must already exist. No SQL database or login is created.</p>
+    <fieldset id="copy-here" class="copy-section">
       <div class="ns-grid">
-        <label>Server<input name="server" value="localhost" required autocomplete="off"></label>
-        <label>Database<input name="database" required maxlength="128" autocomplete="off"></label>
-        <label>Username<input name="username" required autocomplete="off"></label>
-        <label>Password<input name="password" type="password" required autocomplete="new-password"></label>
+        <label>New folder<input name="target" required autocomplete="off" placeholder="copy.example.com"></label>
+        <label>Binding<input name="binding" required autocomplete="off" placeholder="copy.example.com"></label>
       </div>
+      <div id="copy-project-row" hidden>
+        <label>Project name<input name="project" autocomplete="off" spellcheck="false" maxlength="128" pattern="[A-Za-z0-9][A-Za-z0-9._\-]*"></label>
+        <p class="hint">The project file and dll get this name, and the copy is built. Namespaces in the code are not changed.</p>
+      </div>
+      <p class="hint" id="copy-site-path"></p>
+      <p class="hint copy-dns-hint">For HTTPS, the new binding must point to this server.</p>
+      <div class="copy-options">
+        <label class="sync-option copy-option sql" aria-controls="copy-sql-fields"><input name="change_connection" type="checkbox"><span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg></span><span class="sync-option-text"><span class="sync-option-title">Change SQL connection strings</span><span class="sync-option-sub">Point the copy at another database. Nothing is created in SQL Server</span></span></label>
+      </div>
+      <fieldset id="copy-sql-fields" hidden disabled>
+        <legend>SQL connection</legend>
+        <p class="hint">The database and login must already exist. No SQL database or login is created.</p>
+        <div class="ns-grid">
+          <label>Server<input name="server" value="localhost" required autocomplete="off"></label>
+          <label>Database<input name="database" required maxlength="128" autocomplete="off"></label>
+          <label>Username<input name="username" required autocomplete="off"></label>
+          <label>Password<input name="password" type="password" required autocomplete="new-password"></label>
+        </div>
+      </fieldset>
     </fieldset>
-    <menu><li class="cancel-action"><button type="button" id="copy-site-cancel" class="cancel-link">Cancel</button></li><li><button type="submit" class="primary">Copy site</button></li></menu>
+    <fieldset id="copy-server" class="copy-section" hidden disabled>
+      <div class="ns-grid">
+        <label>Server host <input name="host" required autocomplete="url" spellcheck="false" placeholder="server.example.com"></label>
+        <label>SSH port <input name="ssh_port" type="number" min="1" max="65535" value="22" required></label>
+        <label>SSH username <input name="user" required autocomplete="username" value="root"></label>
+        <label>SSH password <input name="ssh_password" type="password" autocomplete="new-password" placeholder="Leave empty to use an SSH key"></label>
+      </div>
+      <div class="ns-section">What goes</div>
+      <ul id="copy-server-list" class="move-site-list"></ul>
+      <p class="hint move-site-http"><strong>Set up with HTTP.</strong> DNS may not point to the new server yet, so no certificates are issued there. When it does, use Issue certificate on each site.</p>
+      <div class="copy-options">
+        <label class="sync-option copy-option move"><input name="remove_here" type="checkbox"><span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span><span class="sync-option-text"><span class="sync-option-title">Remove it here afterwards</span><span class="sync-option-sub">Migrate: the sites here are stopped while they are copied, and their services and Apache configs are removed once the new server runs them</span></span></label>
+        <label class="sync-option copy-option delete copy-option-nested" id="copy-delete-row" hidden><input name="delete_local" type="checkbox"><span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v6M14 11v6"/></svg></span><span class="sync-option-text"><span class="sync-option-title">Also delete the files here</span><span class="sync-option-sub">Otherwise the folders stay on this server, without a service</span></span></label>
+        <label class="sync-option copy-option stop" id="copy-stop-row"><input name="stop_source" type="checkbox"><span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg></span><span class="sync-option-text"><span class="sync-option-title">Stop the sites here while copying</span><span class="sync-option-sub">So a SQLite database stays consistent. They start again afterwards</span></span></label>
+      </div>
+      <p class="hint" id="copy-server-hint"></p>
+    </fieldset>
+    <menu><li class="cancel-action"><button type="button" id="copy-site-cancel" class="cancel-link">Cancel</button></li><li><button type="submit" class="primary" id="copy-site-submit">Copy site</button></li></menu>
   </form>
 </dialog>
 
@@ -493,11 +521,14 @@
       <label>Absolute folder path <input name="local_path" required autocomplete="off" spellcheck="false"></label>
       <p class="hint" id="prod-local-hint"></p>
     </div>
-    <p class="hint" id="prod-release-hint" hidden>The environment becomes a separate site again, in the folder it already has. Its files, service and Apache config are not touched, and it can no longer be published from this site until it is moved back.</p>
     <p class="hint prod-dest-path" id="prod-dest-path" hidden></p>
+    <div id="prod-remove-options" class="copy-options" hidden>
+      <label class="sync-option copy-option move" id="prod-remove-row"><input name="remove_here" type="checkbox"><span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span><span class="sync-option-text"><span class="sync-option-title">Remove it here afterwards</span><span class="sync-option-sub" id="prod-remove-sub">Migrate: it keeps its name and binding, and is removed where it is once it runs at the destination</span></span></label>
+      <label class="sync-option copy-option delete copy-option-nested" id="prod-delete-row"><input type="checkbox" name="delete_local" value="y"><span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v6M14 11v6"/></svg></span><span class="sync-option-text"><span class="sync-option-title">Delete the old files afterwards</span><span class="sync-option-sub">Only once the migration has worked. Otherwise the folder stays, without a service</span></span></label>
+    </div>
     <div id="prod-copy-options" hidden>
-      <label class="copy-connection-toggle" id="prod-stop-row"><input name="stop_source" type="checkbox"><span>Stop the source while copying, so its SQLite database stays consistent</span></label>
-      <label class="copy-connection-toggle" id="prod-connection-row"><input name="change_connection" type="checkbox"><span>Use another SQL connection in the copy</span></label>
+      <label class="sync-option copy-option stop" id="prod-stop-row"><input name="stop_source" type="checkbox"><span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg></span><span class="sync-option-text"><span class="sync-option-title">Stop the source while copying</span><span class="sync-option-sub">So its SQLite database stays consistent. It starts again afterwards</span></span></label>
+      <label class="sync-option copy-option sql" id="prod-connection-row"><input name="change_connection" type="checkbox"><span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg></span><span class="sync-option-text"><span class="sync-option-title">Use another SQL connection in the copy</span><span class="sync-option-sub">Point the copy at another database. Nothing is created in SQL Server</span></span></label>
       <fieldset id="prod-sql-fields" class="copy-server-fields" hidden disabled>
         <legend>SQL connection</legend>
         <p class="hint">The database and login must already exist. No SQL database or login is created.</p>
@@ -510,33 +541,9 @@
       </fieldset>
     </div>
     <div id="prod-move-options" hidden>
-      <p class="hint" id="prod-move-hint">The site is stopped while the whole folder is copied, including its build, media, logs and a SQLite database, so it runs the same version afterwards. To Windows only settings and content are copied, and it is built there. A SQLite database goes with the files. A database in SQL Server stays where it is: a connection to the old server's own SQL Server is changed to that server's IP, and it must accept connections from the new server. With HTTPS, DNS must already point to the new server. If a step fails, the site keeps running where it is.</p>
-      <label class="copy-connection-toggle" id="prod-delete-row"><input type="checkbox" name="delete_local" value="y"><span>Delete the old files after a successful migration</span></label>
+      <p class="hint" id="prod-move-hint">The site is stopped while the whole folder is copied, including its build, media, logs and a SQLite database, so it runs the same version afterwards. To Windows only settings and content are copied, and it is built there. A SQLite database goes with the files. A database in SQL Server stays where it is: a connection to the old server's own SQL Server is changed to that server's IP, and it must accept connections from the new server. On another server it is set up with HTTP, as DNS may not point there yet. If a step fails, the site keeps running where it is.</p>
     </div>
     <menu><button type="button" id="prod-cancel" class="cancel-link">Cancel</button><button type="submit" value="ok" class="primary" id="prod-submit">Add environment</button></menu>
-  </form>
-</dialog>
-
-<dialog id="dlg-move-site" class="newsite" aria-labelledby="move-site-title">
-  <form method="dialog" id="form-move-site">
-    <header class="ns-head">
-      <span class="ns-icon" aria-hidden="true">↗</span>
-      <div><h2 id="move-site-title">Migrate site</h2><p id="move-site-description"></p></div>
-    </header>
-    <div class="ns-section">New server</div>
-    <div class="ns-grid">
-      <label>Server host <input name="host" required autocomplete="url" spellcheck="false" placeholder="server.example.com"></label>
-      <label>SSH port <input name="ssh_port" type="number" min="1" max="65535" value="22" required></label>
-      <label>SSH username <input name="user" required autocomplete="username" value="root"></label>
-      <label>SSH password <input name="password" type="password" autocomplete="new-password" placeholder="Leave empty to use an SSH key"></label>
-    </div>
-    <div class="ns-section">What goes</div>
-    <ul id="move-site-list" class="move-site-list"></ul>
-    <p class="hint move-site-http"><strong>Set up with HTTP.</strong> DNS may not point to the new server yet, so no certificates are issued there. When it does, use Issue certificate on each site.</p>
-    <p class="hint" id="move-site-hint"></p>
-    <label class="copy-connection-toggle" id="move-site-delete-row"><input type="checkbox" name="delete_local" value="y"><span>Delete the old files after a successful migration</span></label>
-    <label class="copy-connection-toggle" id="move-site-stop-row"><input type="checkbox" name="stop_source"><span>Stop the sites here while copying, so a SQLite database stays consistent</span></label>
-    <menu><button type="button" id="move-site-cancel" class="cancel-link">Cancel</button><button type="submit" class="primary" id="move-site-submit">Migrate</button></menu>
   </form>
 </dialog>
 

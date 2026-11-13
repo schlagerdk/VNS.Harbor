@@ -1264,3 +1264,29 @@ button.primary.danger-primary:disabled { opacity: .5; }
 	.move-site-list li { grid-template-columns: minmax(0, 1fr) auto; }
 	.move-site-where { grid-column: 1 / -1; justify-self: start; }
 }
+
+/* Copy site: this server or another, and its choices as option cards */
+.copy-destination-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 560px) { .copy-destination-cards { grid-template-columns: 1fr; } .copy-option-nested { margin-left: 20px; } }
+.type-card.disabled { opacity: .45; cursor: not-allowed; }
+.type-card.disabled:hover { border-color: var(--line); }
+.copy-section { min-width: 0; margin: 0; padding: 0; border: 0; }
+.copy-section[hidden] { display: none; }
+.copy-options { display: grid; gap: 10px; margin: 14px 0 12px; }
+.copy-option.sql { --option-tone: var(--purple); }
+.copy-option.move { --option-tone: var(--orange); }
+.copy-option.delete { --option-tone: var(--red); }
+.copy-option.stop { --option-tone: var(--blue); }
+.copy-option-nested { margin-left: 46px; }
+.copy-option .sync-option-text { flex: 1; }
+.copy-option::after { content: ""; flex: none; width: 18px; height: 18px; border: 1.5px solid var(--line); border-radius: 5px; transition: background .15s, border-color .15s; }
+.copy-option:has(input:checked)::after { content: ""; position: static; color: transparent; border-color: var(--option-tone); background: var(--option-tone) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230d1117' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E") center / 12px no-repeat; }
+.copy-option:has(input:focus-visible) { outline: 2px solid var(--option-tone); outline-offset: 2px; }
+#dlg-copy-site label.copy-option, #dlg-prod label.copy-option { flex-direction: row; align-items: center; justify-content: flex-start; margin: 0; text-align: left; font-size: inherit; color: inherit; }
+#dlg-copy-site label.copy-option[hidden], #dlg-prod label.copy-option[hidden] { display: none; }
+#dlg-copy-site label.copy-option-nested, #dlg-prod label.copy-option-nested { margin-left: 46px; }
+@media (max-width: 560px) { #dlg-copy-site label.copy-option-nested, #dlg-prod label.copy-option-nested { margin-left: 20px; } }
+#prod-copy-options, #prod-move-options { display: grid; gap: 10px; }
+#prod-copy-options[hidden], #prod-move-options[hidden] { display: none; }
+#prod-copy-options > .copy-option:first-child { margin-top: 4px; }
+#prod-remove-options { margin-bottom: 4px; }

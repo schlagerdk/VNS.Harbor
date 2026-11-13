@@ -60,7 +60,7 @@ const buttonPermission = {
 	"Check service": "admin", "Edit service": "admin", "Edit config": "admin", "Edit web.config": "files", "Edit appsettings.json": "appsettings",
 	"Stop": "service", "Start": "service", "Restart": "service", "Logs": "logs", "Shell": "admin", "Files": "files",
 	"Copy site": "copy_site", "Delete site": "delete", "Remove environment": "delete", "Delete everything": "delete_all",
-	"Migrate…": "admin", "Set up site…": "admin", "Move under main site": "admin", "Add environment": "create_env",
+	"Migrate…": "admin", "Move out…": "admin", "Set up site…": "admin", "Move under main site": "admin", "Add environment": "create_env",
 	"Check": "packages", "Update all": "packages", "Update": "packages", "Add": "packages", "Remove": "packages", "Run custom script": "scripts",
 };
 function allowedButton(label, site, envKey) {
@@ -1643,13 +1643,15 @@ function envPanel(site, env) {
 		}
 		extraTools = tools;
 	}
-	// The whole site, with its environments on this server, can go to another server
-	const movableSite = !isTarget(env) && !site.admin && !site.managed_by && (env.unit || env.apache);
-	if (movableSite) addManage("Migrate…", () => openMoveSiteDialog(site));
-	if (isTarget(env) && (env.mode === "local" && env.exists !== false || env.mode === "remote" && !missing)) addManage("Migrate…", () => openCreateProdDialog(site, env));
-	if (isTarget(env) && (env.mode === "local" && env.exists !== false || env.mode === "windows" || env.mode === "remote" && !missing)) addManage("Copy site", () => openCreateProdDialog(site, env, true));
-	if (!hasProd(site) && !site.admin && !site.managed_by) addManage("Copy site", () => copySite(site));
-	if (movableSite) addManage("Copy to server…", () => openMoveSiteDialog(site, true));
+	// Copy site copies an environment, and migrates it with Remove it here afterwards where that can be done. Only administrators.
+	if (currentUser.admin && isTarget(env) && (env.mode === "local" && env.exists !== false || env.mode === "windows" || env.mode === "remote" && !missing)) addManage("Copy site", () => openCreateProdDialog(site, env, true));
+	// An environment in a folder of its own can become a separate site again
+	if (currentUser.admin && isTarget(env) && env.separate) addManage("Move out…", () => releaseEnvironment(site, env));
+	// The main site: to a new folder here when it has no environments, and with them to another server (administrators),
+	// where it can also be migrated
+	const copyHere = !hasProd(site);
+	const copyToServer = currentUser.admin && Boolean(env.unit || env.apache);
+	if (!isTarget(env) && !site.admin && !site.managed_by && (copyHere || copyToServer)) addManage("Copy site", () => copySite(site, env));
 	// An environment on Windows is only removed here: its IIS site and files stay on the server
 	if (hasProd(site) && !site.admin && env.mode === "windows") addManage("Remove environment", () => deleteSite(site, "prod", env), "push-right");
 	else if (hasProd(site) && !site.admin) addManage("Delete site", () => deleteSite(site, isTarget(env) ? "prod" : "test", env), "danger");
@@ -1919,19 +1921,27 @@ async function changeBinding(site, scope, env) {
 	}
 }
 
-async function copySite(site) {
+async function copySite(site, main) {
 	const dialog = $("#dlg-copy-site");
 	const form = $("#form-copy-site");
 	form.reset();
 	$("#copy-site-icon").replaceChildren(svgIcon("file"));
 	const field = (name) => form.elements.namedItem(name);
+	// Only what can be done, and what the user may do: a site with environments is only copied to another server,
+	// which takes them along, and only administrators copy or migrate to another server
+	const here = !hasProd(site);
+	const server = currentUser.admin && Boolean(main && (main.unit || main.apache));
+	$("#copy-here-card").hidden = !here;
+	field("destination")[0].disabled = !here;
+	$("#copy-server-card").hidden = !server;
+	field("destination")[1].disabled = !server;
+	$("#copy-destination").hidden = !(here && server);
+	field("destination").value = here ? "here" : "server";
 	const hasSqlConnection = site.environments.some((env) =>
 		!isTarget(env) && ["MS SQL", "SQL Express", "Azure SQL"].includes(env.database));
 	field("change_connection").closest("label").hidden = !hasSqlConnection;
 	field("change_connection").disabled = !hasSqlConnection;
 	const sqlFields = $("#copy-sql-fields");
-	sqlFields.hidden = true;
-	sqlFields.disabled = true;
 	let databaseEdited = false;
 	let bindingEdited = false;
 	let usernameEdited = false;
@@ -1941,13 +1951,55 @@ async function copySite(site) {
 	const showCopyPath = () => {
 		$("#copy-site-path").textContent = `Copied to /var/www/${field("target").value.trim() || "…"}`;
 	};
-	showCopyPath();
 	// A site with a project gets a project of its own
 	const hasProject = site.has_project;
 	$("#copy-project-row").hidden = !hasProject;
-	field("project").required = hasProject;
-	field("project").disabled = !hasProject;
 	let projectEdited = false;
+
+	// What goes to another server: the site and its environments here. The others stay where they are.
+	const items = sortedEnvironments(site.environments).map((env) => {
+		const goes = !isTarget(env) || env.mode === "local";
+		const where = goes ? "Goes" : env.mode === "windows" ? "Stays on Windows" : `Stays on ${env.host || "its server"}`;
+		return el("li", { className: goes ? "goes" : "stays" },
+			el("span", { className: "move-site-name", textContent: bindingLabel(env) || env.folder || siteLabel(site) }),
+			el("span", { className: `sync-env-name env-${environmentLabel(site, env).toLowerCase()}`, textContent: environmentLabel(site, env) }),
+			el("span", { className: "move-site-where", textContent: where }));
+	});
+	$("#copy-server-list").replaceChildren(...items);
+	const kept = site.environments.some((env) => isTarget(env) && env.mode !== "local");
+
+	const update = () => {
+		const toServer = field("destination").value === "server";
+		const removing = toServer && field("remove_here").checked;
+		$("#copy-here").hidden = toServer;
+		$("#copy-here").disabled = toServer;
+		$("#copy-server").hidden = !toServer;
+		$("#copy-server").disabled = !toServer;
+		field("project").required = hasProject && !toServer;
+		field("project").disabled = !hasProject || toServer;
+		const newConnection = hasSqlConnection && field("change_connection").checked;
+		sqlFields.hidden = !newConnection;
+		sqlFields.disabled = !newConnection;
+		$("#copy-delete-row").hidden = !removing;
+		field("delete_local").disabled = !removing;
+		if (!removing) field("delete_local").checked = false;
+		$("#copy-stop-row").hidden = removing;
+		$("#copy-site-title").textContent = removing ? "Migrate site" : "Copy site";
+		$("#copy-site-description").textContent = !toServer
+			? `Copy ${siteLabel(site)} to a new folder here, with its own service and Apache config.`
+			: removing ? `Move ${siteLabel(site)} to another server. It no longer runs here.` : `Copy ${siteLabel(site)} to another server. It stays here as it is.`;
+		$("#copy-site-submit").textContent = removing ? "Migrate site" : "Copy site";
+		for (const item of $("#copy-server-list").querySelectorAll(".goes .move-site-where")) item.textContent = removing ? "Moves" : "Copied";
+		$("#copy-server-hint").textContent = "The whole folders go, including builds, media, logs and SQLite databases, so the sites run the same version and nothing is built. A database in SQL Server stays where it is: connections to this server's own SQL Server are pointed at its address, which must accept connections from the new server."
+			+ (kept ? ` Environments on other servers are not touched, and are published to${removing ? " from the new server" : " from both servers"}.` : "")
+			+ " The new server needs the same VNS version and CPU architecture, and none of the sites. If a step fails, the sites here run as before.";
+	};
+	for (const input of field("destination")) input.onchange = update;
+	field("remove_here").onchange = update;
+	field("change_connection").onchange = update;
+	update();
+	showCopyPath();
+
 	field("project").oninput = () => { projectEdited = true; };
 	field("target").oninput = () => {
 		showCopyPath();
@@ -1964,10 +2016,6 @@ async function copySite(site) {
 	};
 	field("username").oninput = () => { usernameEdited = true; };
 	field("binding").oninput = () => { bindingEdited = true; };
-	field("change_connection").onchange = () => {
-		sqlFields.hidden = !field("change_connection").checked;
-		sqlFields.disabled = !field("change_connection").checked;
-	};
 	$("#copy-site-cancel").onclick = () => dialog.close();
 	dialog.onclose = () => form.reset();
 	form.onsubmit = (event) => {
@@ -1976,12 +2024,19 @@ async function copySite(site) {
 			const submit = form.querySelector('[type="submit"]');
 			submit.disabled = true;
 			try {
-				const payload = { kind: "copy_site", site: site.name,
-					target: field("target").value.trim(), binding: field("binding").value.trim() };
-				if (hasProject) payload.project = field("project").value.trim();
-				if (hasSqlConnection && field("change_connection").checked) {
-					payload.connection = { server: field("server").value.trim(), database: field("database").value.trim(),
-						username: field("username").value.trim(), password: field("password").value };
+				let payload;
+				if (field("destination").value === "server") {
+					const removing = field("remove_here").checked;
+					payload = { kind: "move_site", site: site.name, host: field("host").value.trim(), ssh_port: field("ssh_port").value,
+						user: field("user").value.trim(), password: field("ssh_password").value, copy: !removing,
+						delete_local: removing && field("delete_local").checked ? "y" : "n", stop_source: !removing && field("stop_source").checked };
+				} else {
+					payload = { kind: "copy_site", site: site.name, target: field("target").value.trim(), binding: field("binding").value.trim() };
+					if (hasProject) payload.project = field("project").value.trim();
+					if (hasSqlConnection && field("change_connection").checked) {
+						payload.connection = { server: field("server").value.trim(), database: field("database").value.trim(),
+							username: field("username").value.trim(), password: field("password").value };
+					}
 				}
 				await openTask(payload);
 				dialog.close();
@@ -2248,10 +2303,9 @@ function syncProdForm() {
 	prodForm.smb_password.required = windows;
 	const moving = Boolean(prodForm.dataset.moveTarget);
 	const copying = Boolean(prodForm.dataset.copy);
-	const release = target === "release";
 	const same = target === "same";
 	const sameServerMove = moving && !copying && local && prodForm.dataset.moveMode === "local";
-	const noSettings = sameServerMove || release;
+	const noSettings = sameServerMove;
 	$("#prod-folder-row").hidden = moving && local || noSettings;
 	$("#prod-folder-label").textContent = windows ? "Folder name" : "Folder / service name";
 	// On Windows the IIS site's folder is the share and the folder name, shown in full
@@ -2261,7 +2315,7 @@ function syncProdForm() {
 	$("#prod-binding-row").hidden = noSettings && !sameServerMove;
 	$("#prod-environment-row").hidden = noSettings;
 	// To another server it starts with HTTP, as DNS may not point there yet. Issue certificate turns HTTPS on.
-	const otherServer = moving && !release && !same && !(local && prodForm.dataset.moveMode === "local");
+	const otherServer = moving && !same && !(local && prodForm.dataset.moveMode === "local");
 	if (otherServer && !prodForm.dataset.httpsChoice) {
 		prodForm.dataset.httpsChoice = prodForm.elements.https.value;
 		prodForm.elements.https.value = "n";
@@ -2273,17 +2327,23 @@ function syncProdForm() {
 	$("#prod-protocol-hint").hidden = noSettings;
 	if (otherServer) $("#prod-protocol-hint").textContent = "It is set up with HTTP on the new server, as DNS may not point there yet. Use Issue certificate on the environment when it does.";
 	prodForm.folder.required = !(moving && local) && !noSettings;
-	prodForm.binding.required = !release;
+	prodForm.binding.required = true;
 	const fromWindows = prodForm.dataset.moveMode === "windows";
 	const hasSql = fromWindows || prodForm.dataset.moveSql === "1";
-	const copyOptions = copying && !release;
+	const copyOptions = copying;
 	$("#prod-copy-options").hidden = !copyOptions;
 	$("#prod-stop-row").hidden = prodForm.dataset.moveDatabase !== "SQLite";
 	$("#prod-connection-row").hidden = !hasSql;
 	const newConnection = copyOptions && hasSql && prodForm.elements.change_connection.checked;
 	$("#prod-sql-fields").hidden = !newConnection;
 	$("#prod-sql-fields").disabled = !newConnection;
-	$("#prod-delete-row").hidden = copying;
+	// Copying is where it starts; where it can be done, Remove it here afterwards makes it a migration
+	$("#prod-remove-options").hidden = !moving || !prodForm.dataset.canMigrate;
+	prodForm.elements.remove_here.disabled = !prodForm.dataset.canMigrate;
+	$("#prod-remove-sub").textContent = same || local && prodForm.dataset.moveMode === "local"
+		? "Move it to the new folder: it keeps its name and binding, and the service and Apache config follow it"
+		: "Migrate: it keeps its name and binding, and is removed where it is once it runs at the destination";
+	$("#prod-delete-row").hidden = copying || sameServerMove;
 	$("#prod-move-hint").textContent = windows
 		? "Settings and content are copied, and the project is built for Windows. A connection to the source's own SQL Server is changed to its address, which must accept connections from the new server. With a Windows target, the IIS site and its folder must already exist."
 		: fromWindows
@@ -2293,12 +2353,12 @@ function syncProdForm() {
 	const destinationPath = windows ? prodForm.smb_share.value.trim() || "…"
 		: local ? prodForm.local_path.value.trim() || "…"
 			: `${destinationServer}:/var/www/${prodForm.folder.value.trim() || "…"}`;
-	$("#prod-dest-path").hidden = !moving || release;
+	$("#prod-dest-path").hidden = !moving;
 	$("#prod-dest-path").textContent = `${copying ? "Copied" : "Migrated"} to ${destinationPath}`;
-	$("#prod-move-options").hidden = !moving || sameServerMove || release;
-	prodForm.elements.delete_local.disabled = copying;
-	$("#prod-release-hint").hidden = !release;
-	$("#prod-submit").textContent = !moving ? "Add environment" : release ? "Move out" : copying ? "Copy" : "Migrate";
+	$("#prod-move-options").hidden = !moving || sameServerMove;
+	prodForm.elements.delete_local.disabled = copying || sameServerMove;
+	if (prodForm.elements.delete_local.disabled) prodForm.elements.delete_local.checked = false;
+	$("#prod-submit").textContent = !moving ? "Add environment" : copying ? "Copy" : "Migrate";
 	$("#prod-local-hint").textContent = sameServerMove
 		? "The folder is moved, and the service and Apache config follow it. It must be a new folder directly under /var/www, which also becomes the site's name. The port is unchanged. A new binding with HTTPS gets a new certificate, so DNS must point here first."
 		: moving ? "It must be a new folder directly under /var/www, which also becomes the site's name."
@@ -2335,19 +2395,17 @@ function openCreateProdDialog(site, moveEnv, copying = false) {
 		prodForm.dataset.moveTarget = moveEnv.target;
 		prodForm.dataset.moveMode = moveEnv.mode;
 	}
-	$("#prod-title").textContent = moveEnv ? `${copying ? "Copy" : "Migrate"} ${environmentLabel(site, moveEnv)}` : "Add environment";
-	$("#prod-description").textContent = moveEnv
-		? copying
-			? `Copy ${bindingLabel(moveEnv) || moveEnv.unit || moveEnv.folder} to a new folder or server. It stays as it is, and the copy becomes a new environment here.`
-			: `Migrate ${bindingLabel(moveEnv) || moveEnv.unit || moveEnv.folder} to another folder or server. Everything goes with it.`
-		: "Configure where this site is published to, then publish and sync content automatically when available.";
-	// Migrating adds the choices of staying on the same server or becoming a separate site again
+	$("#prod-title").textContent = "Add environment";
+	$("#prod-description").textContent = "Configure where this site is published to, then publish and sync content automatically when available.";
+	// An environment on Windows can only be copied: its IIS site cannot be stopped or removed from here
+	prodForm.dataset.canMigrate = moveEnv && moveEnv.mode !== "windows" ? "1" : "";
+	prodForm.elements.remove_here.checked = Boolean(moveEnv && !copying && prodForm.dataset.canMigrate);
+	// A remote environment can also go to another folder on its own server
 	const targets = $("#prod-target-row");
-	for (const value of ["release", "same"]) targets.querySelector(`input[value=${value}]`)?.closest("label").remove();
+	for (const value of ["same"]) targets.querySelector(`input[value=${value}]`)?.closest("label").remove();
 	const targetCard = (value, title, sub) => el("label", { className: "type-card" },
 		el("input", { type: "radio", name: "target", value }), el("span", { className: "tc-title", textContent: title }), el("span", { className: "tc-sub", textContent: sub }));
 	if (moveEnv?.mode === "remote") targets.prepend(targetCard("same", "Same server", moveEnv.host || "Another folder there"));
-	if (moveEnv?.separate && !copying) targets.append(targetCard("release", "Separate site", "Move it out again"));
 	const main = site.environments.find((env) => !isTarget(env));
 	const binding = (main && bindingLabel(main)) || siteLabel(site);
 	prodForm.folder.value = siteLabel(site);
@@ -2359,20 +2417,11 @@ function openCreateProdDialog(site, moveEnv, copying = false) {
 	prodForm.dataset.remoteBinding = binding;
 	prodForm.dataset.localFolder = `production-${siteLabel(site)}`;
 	prodForm.dataset.localBinding = `production-${siteLabel(site)}`;
-	prodForm.elements.target.value = moveEnv?.separate && !copying ? "release" : moveEnv?.mode === "remote" ? "same" : "local";
+	prodForm.elements.target.value = moveEnv?.mode === "remote" ? "same" : "local";
 	prodForm.elements.https.value = main && main.scheme === "http" ? "n" : "y";
+	prodMoveContext = moveEnv ? { site, moveEnv, binding } : null;
 	if (moveEnv) {
-		// A copy needs its own name and binding, a migration keeps them unless they are changed
-		const name = copying ? "" : moveEnv.unit || moveEnv.folder || siteLabel(site);
-		const movedBinding = copying ? "" : bindingLabel(moveEnv) || binding;
-		prodForm.folder.value = name;
-		prodForm.binding.value = movedBinding;
-		if (!copying) prodForm.binding.dataset.edited = "1";
-		prodForm.local_path.value = `/var/www/${name}`;
-		prodForm.dataset.remoteFolder = name;
-		prodForm.dataset.remoteBinding = movedBinding;
-		prodForm.dataset.localFolder = name;
-		prodForm.dataset.localBinding = movedBinding;
+		applyProdMoveMode();
 		prodForm.elements.https.value = moveEnv.scheme === "http" ? "n" : "y";
 		const current = [...prodForm.elements.environment.options].find((option) => option.value === moveEnv.environment);
 		if (current) prodForm.elements.environment.value = current.value;
@@ -2390,6 +2439,41 @@ function openCreateProdDialog(site, moveEnv, copying = false) {
 	prodDialog.showModal();
 	// The dialog opens without a card in focus, so only the chosen one is marked
 	document.activeElement?.blur();
+}
+// Copy or migrate: a copy is a new environment with its own name and binding, a migration keeps them unless they are changed
+let prodMoveContext = null;
+function applyProdMoveMode() {
+	if (!prodMoveContext) return;
+	const { site, moveEnv, binding } = prodMoveContext;
+	const copying = !prodForm.elements.remove_here.checked;
+	if (copying) prodForm.dataset.copy = "1";
+	else delete prodForm.dataset.copy;
+	const label = bindingLabel(moveEnv) || moveEnv.unit || moveEnv.folder;
+	$("#prod-title").textContent = `${copying ? "Copy" : "Migrate"} ${environmentLabel(site, moveEnv)}`;
+	$("#prod-description").textContent = copying
+		? `Copy ${label} to a new folder or server. It stays as it is, and the copy becomes a new environment here.`
+		: `Migrate ${label} to another folder or server. Everything goes with it.`;
+	const name = copying ? "" : moveEnv.unit || moveEnv.folder || siteLabel(site);
+	const movedBinding = copying ? "" : bindingLabel(moveEnv) || binding;
+	prodForm.folder.value = name;
+	prodForm.binding.value = movedBinding;
+	if (copying) delete prodForm.binding.dataset.edited;
+	else prodForm.binding.dataset.edited = "1";
+	prodForm.local_path.value = `/var/www/${name}`;
+	prodForm.dataset.remoteFolder = name;
+	prodForm.dataset.remoteBinding = movedBinding;
+	prodForm.dataset.localFolder = name;
+	prodForm.dataset.localBinding = movedBinding;
+}
+prodForm.elements.remove_here.onchange = () => {
+	applyProdMoveMode();
+	syncProdForm();
+};
+// Move out: the environment becomes a separate site again, in the folder it has
+async function releaseEnvironment(site, env) {
+	if (!(await ask({ title: "Move out?", input: false, ok: "Move out",
+		message: `${bindingLabel(env) || env.folder} becomes a separate site again, in the folder it already has. Its files, service and Apache config are not touched, and it can no longer be published from ${siteLabel(site)} until it is moved back.` }))) return;
+	await openTask({ kind: "release_site", site: site.name, target: env.target });
 }
 $("#prod-target-row").addEventListener("change", syncProdForm);
 // A local environment gets its own folder and site name, so the defaults follow the environment
@@ -2418,14 +2502,6 @@ prodForm.binding.oninput = () => { prodForm.binding.dataset.edited = "1"; };
 $("#prod-cancel").onclick = () => prodDialog.close();
 prodForm.onsubmit = (event) => {
 	event.preventDefault();
-	if (prodForm.elements.target.value === "release" && !prodForm.dataset.copy) {
-		const release = { kind: "release_site", site: prodForm.dataset.site, target: prodForm.dataset.moveTarget };
-		run(async () => {
-			await openTask(release);
-			prodDialog.close();
-		});
-		return;
-	}
 	const data = Object.fromEntries(new FormData(prodForm));
 	data.kind = prodForm.dataset.moveTarget ? "move_env" : "create_prod";
 	if (prodForm.dataset.moveTarget) data.environment_id = prodForm.dataset.moveTarget;
@@ -2436,7 +2512,7 @@ prodForm.onsubmit = (event) => {
 			data.connection = { server: data.conn_server.trim(), database: data.conn_database.trim(), username: data.conn_username.trim(), password: data.conn_password };
 		}
 	}
-	for (const key of ["conn_server", "conn_database", "conn_username", "conn_password", "change_connection"]) delete data[key];
+	for (const key of ["conn_server", "conn_database", "conn_username", "conn_password", "change_connection", "remove_here"]) delete data[key];
 	data.site = prodForm.dataset.site;
 	run(async () => {
 		await openTask(data);
@@ -2548,51 +2624,6 @@ setupSiteForm.onsubmit = (event) => {
 		await openTask({ kind: "setup_site", site: setupSiteForm.dataset.site, binding: data.binding.trim(), certificate: data.certificate,
 			environment: $("#setup-site-environment-row").hidden ? "" : data.environment });
 		setupSiteDialog.close();
-	});
-};
-
-// A whole site to another Linux server: the site and its environments on this server go, the others stay where they are
-const moveSiteDialog = $("#dlg-move-site");
-const moveSiteForm = $("#form-move-site");
-function openMoveSiteDialog(site, copying = false) {
-	moveSiteForm.reset();
-	moveSiteForm.dataset.site = site.name;
-	moveSiteForm.dataset.copy = copying ? "1" : "";
-	$("#move-site-title").textContent = `${copying ? "Copy" : "Migrate"} ${siteLabel(site)}`;
-	$("#move-site-description").textContent = copying
-		? "Copy the site to another Linux server. It stays here as it is."
-		: "Move the site to another Linux server. Everything on this server goes with it.";
-	const going = copying ? "Copied" : "Moves";
-	const items = sortedEnvironments(site.environments).map((env) => {
-		const here = !isTarget(env) || env.mode === "local";
-		const where = here ? going : env.mode === "windows" ? "Stays on Windows" : `Stays on ${env.host || "its server"}`;
-		return el("li", { className: here ? "goes" : "stays" },
-			el("span", { className: "move-site-name", textContent: bindingLabel(env) || env.folder || siteLabel(site) }),
-			el("span", { className: `sync-env-name env-${environmentLabel(site, env).toLowerCase()}`, textContent: environmentLabel(site, env) }),
-			el("span", { className: "move-site-where", textContent: where }));
-	});
-	$("#move-site-list").replaceChildren(...items);
-	const kept = site.environments.some((env) => isTarget(env) && env.mode !== "local");
-	$("#move-site-hint").textContent = `${copying ? "The whole folders are copied" : "The sites here are stopped while the whole folders are copied"}, including builds, media, logs and SQLite databases, so they run the same version and nothing is built. A database in SQL Server stays where it is: connections to this server's own SQL Server are pointed at its address, and it must accept connections from the new server.`
-		+ (kept ? ` Environments on other servers are not touched: the site keeps publishing to them${copying ? ", from both servers" : " from the new server"}.` : "")
-		+ " The new server needs the same VNS version and CPU architecture, and none of the sites. If a step fails, the sites here run as before.";
-	$("#move-site-delete-row").hidden = copying;
-	$("#move-site-stop-row").hidden = !copying;
-	$("#move-site-submit").textContent = copying ? "Copy" : "Migrate";
-	moveSiteDialog.showModal();
-}
-$("#move-site-cancel").onclick = () => moveSiteDialog.close();
-moveSiteForm.onsubmit = (event) => {
-	event.preventDefault();
-	const form = moveSiteForm.elements;
-	const copying = Boolean(moveSiteForm.dataset.copy);
-	const data = { kind: "move_site", site: moveSiteForm.dataset.site, host: form.host.value.trim(), ssh_port: form.ssh_port.value,
-		user: form.user.value.trim(), password: form.password.value, copy: copying,
-		delete_local: !copying && form.delete_local.checked ? "y" : "n", stop_source: copying && form.stop_source.checked };
-	run(async () => {
-		await openTask(data);
-		moveSiteForm.reset();
-		moveSiteDialog.close();
 	});
 };
 

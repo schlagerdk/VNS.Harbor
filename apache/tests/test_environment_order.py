@@ -58,11 +58,12 @@ console.log(JSON.stringify(sortedEnvironments(input).map((env) => env.binding)))
         self.assertIn(".site-layout.with-packages { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);", css)
         self.assertIn(".env-targets { grid-template-columns: repeat(2, minmax(0, 1fr)); }", css)
 
-    def test_move_out_is_a_choice_in_the_move_dialog(self):
+    def test_move_out_is_a_button_of_its_own_for_administrators(self):
         source = (APP / "static/app.js").read_text()
-        self.assertNotIn('add("Move out"', source)
-        self.assertIn('targetCard("release", "Separate site", "Move it out again")', source)
+        self.assertIn('if (currentUser.admin && isTarget(env) && env.separate) addManage("Move out…", () => releaseEnvironment(site, env));', source)
+        self.assertNotIn('targetCard("release"', source)
         self.assertIn('kind: "release_site"', source)
+        self.assertIn('"Move out…": "admin"', source)
 
     def test_package_list_keeps_the_scroll_to_itself(self):
         self.assertIn("overflow-y: auto; overscroll-behavior: contain;", (APP / "static/style.css").read_text())
@@ -144,15 +145,17 @@ console.log(JSON.stringify([
         self.assertIn('bash "@APACHE_DIR@/register_env.sh" "${_site}"', script)
         self.assertIn('windows_prod.py" describe', script)
 
-    def test_migrate_is_offered_on_local_and_remote_environments(self):
+    def test_migrating_is_a_choice_in_copy_except_from_windows(self):
         source = (APP / "static/app.js").read_text()
-        self.assertIn('env.mode === "remote" && !missing)) addManage("Migrate…"', source)
+        self.assertNotIn('addManage("Migrate…"', source)
+        self.assertIn('prodForm.dataset.canMigrate = moveEnv && moveEnv.mode !== "windows" ? "1" : "";', source)
+        self.assertIn('$("#prod-remove-options").hidden = !moving || !prodForm.dataset.canMigrate;', source)
         self.assertNotIn('add("Move…"', source)
 
     def test_copy_and_migrate_share_one_dialog(self):
         source = (APP / "static/app.js").read_text()
-        self.assertIn('addManage("Copy site", () => openCreateProdDialog(site, env, true))', source)
-        self.assertIn('addManage("Migrate…", () => openCreateProdDialog(site, env));', source)
+        self.assertIn('if (currentUser.admin && isTarget(env) && (env.mode === "local" && env.exists !== false || env.mode === "windows" || env.mode === "remote" && !missing)) addManage("Copy site", () => openCreateProdDialog(site, env, true));', source)
+        self.assertIn("const copying = !prodForm.elements.remove_here.checked;", source)
         self.assertIn('targetCard("same", "Same server", moveEnv.host || "Another folder there")', source)
         self.assertIn("data.copy = true;", source)
         self.assertNotIn("copy_env", source)
