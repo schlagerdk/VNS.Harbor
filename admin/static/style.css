@@ -1306,7 +1306,7 @@ dialog label.copy-option-nested { margin-left: 46px; }
 /* The server's addresses in the header: a click copies one */
 .server-ips { display: flex; align-items: stretch; gap: 2px; padding: 2px; border: 1px solid rgba(255, 255, 255, .18); border-radius: 9px; background: rgba(13, 17, 23, .14); }
 .server-ips[hidden] { display: none; }
-.page-header .server-ip { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 1px; padding: 3px 10px; border: 0; border-radius: 7px; background: transparent; color: #fff; line-height: 1.1; cursor: copy; transition: background .15s; }
+.page-header .server-ip { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 1px; padding: 3px 10px; border: 0; border-radius: 7px; background: transparent; color: #fff; line-height: 1.1; cursor: pointer; transition: background .15s; }
 .page-header .server-ip:hover { background: rgba(255, 255, 255, .14); }
 .page-header .server-ip:focus-visible { outline: 2px solid rgba(255, 255, 255, .7); outline-offset: 1px; }
 .page-header .server-ip + .server-ip { box-shadow: -2px 0 0 -1px rgba(255, 255, 255, .16); }
