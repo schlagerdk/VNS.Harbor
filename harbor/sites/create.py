@@ -25,6 +25,7 @@ from harbor.server.apache import own_name
 DEFAULT_UMBRACO_VERSION = "18.3.1"
 DEFAULT_UMBRACO13_VERSION = "13.16.4"
 DOTNET_VERSION = "net10.0"
+NEW_PUBLISH_FOLDER = "_development"
 
 APACHE = Path(__file__).resolve().parents[2] / "apache"
 SOLUTION = APACHE / "solutionfiles"
@@ -203,7 +204,8 @@ class Creation:
         if self.csharp_kind not in ("umbraco", "empty"):
             raise Stop("C# site kind must be umbraco or empty.")
         site.csharp_kind = self.csharp_kind
-        publish = ask(system, self.publish_arg, "Enter local publish folder", site.publish_folder)
+        # A new site is where development happens: Development, published to _development
+        publish = ask(system, self.publish_arg, "Enter local publish folder", NEW_PUBLISH_FOLDER)
         try:
             validate_publish_folder(publish)
         except ValueError as error:
@@ -212,7 +214,7 @@ class Creation:
         site.build_config = ask(system, self.build_config, "Build configuration (Debug/Release)", "Debug")
         if site.build_config not in ("Debug", "Release"):
             raise Stop("Build configuration must be Debug or Release")
-        site.environment = self.environment_arg or ("Test" if site.build_config == "Debug" else "Production")
+        site.environment = self.environment_arg or ("Development" if site.build_config == "Debug" else "Production")
         if site.environment not in ("Development", "Test", "Staging", "Production"):
             raise Stop("Environment must be Development, Test, Staging or Production.")
         site.doc_root = f"{site.publish_root}/wwwroot"

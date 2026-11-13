@@ -142,6 +142,11 @@ def _sql(args, system):
     getattr(module, name)(system, *getattr(args, "names", [])[:words])
 
 
+def _state_sync(args, system):
+    from harbor.state.store import sync_command
+    sync_command(system, args.site)
+
+
 def _environment_binding(args, system):
     from harbor.environments.bindings import change_binding
     change_binding(system, args.site, args.binding, args.aliases, yes=args.confirm == "--yes" or args.yes, target=target())
@@ -251,6 +256,11 @@ def parser():
             command.add_argument("names", nargs="*", default=[])
         command.set_defaults(handler=_sql)
 
+    state = groups.add_parser("state", help="Harbor's own copy of the state in the site folders").add_subparsers(dest="command", required=True, metavar="<command>")
+    command = state.add_parser("sync", help="make Harbor's copy equal to the site folders, of one site or all")
+    command.add_argument("site", nargs="?", default="")
+    command.set_defaults(handler=_state_sync)
+
     environment = groups.add_parser("env", help="an environment of a site, chosen with VNS_TARGET").add_subparsers(dest="command", required=True, metavar="<command>")
     command = environment.add_parser("action", help="issue_certificate or change_env where the environment is (was prod_action.sh)")
     command.add_argument("site", nargs="?", default="")
@@ -308,8 +318,36 @@ def parser():
     return root
 
 
-def main(argv=None, system=None):
+def touched_sites(args):
+    """The sites a command may have changed the state of; None for every site"""
+    if args.group not in ("site", "env"):
+        return []
+    if args.command == "receive":
+        return None
+    names = [getattr(args, key, "") for key in ("site", "source", "target", "main")]
+    if args.command == "create" and args.arguments:
+        names.append(args.arguments[0])
+    return [name for name in names if isinstance(name, str) and name]
+
+
+def keep_state(system, args):
+    """Harbor's copy of the sites' state stays equal to the site folders after a command (harbor/state)"""
+    from harbor.state import store
+    names = touched_sites(args)
+    if names == []:
+        return
+    try:
+        problems = store.sync_all(system) if names is None else [problem for name in names for problem in store.sync(system, name)]
+    except (OSError, ValueError) as error:
+        problems = [str(error)]
+    for problem in problems:
+        system.warn(f"Harbor's copy of the state was not updated: {problem}")
+
+
+def main(argv=None, system=None, keep=None):
+    """keep: update Harbor's copy of the state after the command; by default only on the server itself (no system given)"""
     args = parser().parse_args(argv)
+    keep = system is None if keep is None else keep
     system = system or System()
     try:
         args.handler(args, system)
@@ -320,6 +358,9 @@ def main(argv=None, system=None):
     except CommandFailed as error:
         system.warn(str(error))
         return error.result.returncode or 1
+    finally:
+        if keep:
+            keep_state(system, args)
     return 0
 
 

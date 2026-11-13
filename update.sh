@@ -83,6 +83,8 @@ main() {
     sudo bash "$TARGET/apache/install_tls_policy.sh"
     # Not needed for the update itself: a failure is reported, and the update goes on
     sudo bash "$TARGET/apache/install_apache_conf.sh" || echo "The server-wide Apache configs were not installed." >&2
+    # Harbor's copy of the sites' state, equal to the site folders (they stay the truth until phase 6)
+    sudo python3 "$TARGET/bin/harbor" state sync || echo "Harbor's copy of the sites' state was not updated." >&2
     printf '%s\n' "$revision" > "$TARGET/.vns-version"
     echo "VNS updated in $TARGET"
 }

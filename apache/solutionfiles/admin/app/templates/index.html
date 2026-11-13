@@ -535,8 +535,8 @@
         <label>Version (optional) <input name="version" placeholder="Installed template version" autocomplete="off" spellcheck="false"></label>
         <label>C# project name <input name="project" placeholder="same as folder name"></label>
         <label>Build <select name="build"><option>Debug</option><option>Release</option></select></label>
-        <div class="choice-field wide"><span class="choice-label">Environment</span><div class="env-choices" role="radiogroup" aria-label="Environment"><label class="env-choice env-development"><input type="radio" name="environment" value="Development"><span>Development</span></label><label class="env-choice env-test"><input type="radio" name="environment" value="Test" checked><span>Test</span></label><label class="env-choice env-staging"><input type="radio" name="environment" value="Staging"><span>Staging</span></label><label class="env-choice env-production"><input type="radio" name="environment" value="Production"><span>Production</span></label></div></div>
-        <label>Local publish folder <input name="publish" value="_publish" placeholder="Site root when empty"></label>
+        <div class="choice-field wide"><span class="choice-label">Environment</span><div class="env-choices" role="radiogroup" aria-label="Environment"><label class="env-choice env-development"><input type="radio" name="environment" value="Development" checked><span>Development</span></label><label class="env-choice env-test"><input type="radio" name="environment" value="Test"><span>Test</span></label><label class="env-choice env-staging"><input type="radio" name="environment" value="Staging"><span>Staging</span></label><label class="env-choice env-production"><input type="radio" name="environment" value="Production"><span>Production</span></label></div></div>
+        <label>Local publish folder <input name="publish" value="_development" placeholder="Site root when empty"></label>
       </div>
       <p id="template-status" class="hint template-status" role="status" hidden></p>
     </div>

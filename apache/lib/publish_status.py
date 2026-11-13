@@ -41,8 +41,36 @@ def fingerprint(root):
     return digest.hexdigest()
 
 
+HARBOR_STATE = Path("/var/lib/harbor/sites")
+
+
+def mirror(site_root, relative, data):
+    """The same in Harbor's copy (harbor/state), where there is one. Not there or not writable: the next
+    harbor state sync makes it equal, so nothing stops for it."""
+    if not HARBOR_STATE.is_dir():
+        return
+    target = HARBOR_STATE / Path(site_root).name / relative
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, temporary = tempfile.mkstemp(dir=target.parent, prefix=".mirror-", suffix=".json")
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump(data, stream, indent=2, sort_keys=True, ensure_ascii=False)
+            stream.write("\n")
+        os.chmod(temporary, 0o644)
+        os.replace(temporary, target)
+    except OSError:
+        pass
+
+
+def status_path(root, name):
+    """Where a status is read: the site folder while it is there, else Harbor's copy (harbor/state)"""
+    path = Path(root) / ".vns-publish" / name
+    copy = HARBOR_STATE / Path(root).name / "publish" / name
+    return copy if not path.exists() and copy.is_file() else path
+
+
 def status(root, scope, current):
-    path = Path(root) / ".vns-publish" / (scope + ".json")
+    path = status_path(root, scope + ".json")
     try:
         data = json.loads(path.read_text())
     except FileNotFoundError:
@@ -61,6 +89,7 @@ def record(root, scope, value, **metadata):
             json.dump({"fingerprint": value, **metadata}, stream)
             stream.write("\n")
         os.replace(temporary, folder / (scope + ".json"))
+        mirror(root, f"publish/{scope}.json", {"fingerprint": value, **metadata})
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
@@ -68,7 +97,7 @@ def record(root, scope, value, **metadata):
 
 def updates_details(root, current):
     try:
-        data = json.loads((Path(root) / ".vns-publish/updates.json").read_text())
+        data = json.loads(status_path(root, "updates.json").read_text())
     except FileNotFoundError:
         return {"status": "", "packages": []}
     if not isinstance(data, dict) or not isinstance(data.get("fingerprint"), str) or data.get("status") not in ("current", "available", "error"):

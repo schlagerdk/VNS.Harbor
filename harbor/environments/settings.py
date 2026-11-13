@@ -5,6 +5,7 @@ Each environment has its settings in <site>/scripts/targets/<id>/publish_prod.sh
 for one made before several were possible (id "prod"). Only the PROD_* assignments in it are read, as the script does.
 """
 from dataclasses import dataclass, field, fields
+import json
 import re
 import shlex
 
@@ -72,14 +73,25 @@ class Environment:
 SETTINGS = {item.name for item in fields(Environment)} - {"id", "script", "other"}
 
 
-def target_ids(system, site_root):
-    """The id of every environment of a site: the older single one first, then those in scripts/targets"""
+def script_ids(system, site_root):
+    """The environments that have a script in the site folder: the older single one first, then scripts/targets"""
     root = system.path(site_root)
     ids = ["prod"] if (root / "scripts/publish_prod.sh").is_file() else []
     targets = root / "scripts/targets"
     if targets.is_dir():
         ids += sorted(path.name for path in targets.iterdir() if path.is_dir() and (path / "publish_prod.sh").is_file())
     return ids
+
+
+def target_ids(system, site_root):
+    """The id of every environment of a site. While the site folder has any of their scripts it is the truth;
+    without, Harbor's copy is (harbor/state)."""
+    ids = script_ids(system, site_root)
+    if ids:
+        return ids
+    copy = system.path(f"{STATE}/{site_name(site_root)}/environments")
+    found = sorted(path.stem for path in copy.glob("*.json")) if copy.is_dir() else []
+    return (["prod"] if "prod" in found else []) + [item for item in found if item != "prod" and TARGET.fullmatch(item)]
 
 
 def settings_script(site_root, target="prod"):
@@ -107,15 +119,43 @@ def parse(text):
     return values
 
 
+# Harbor's copy of the state (harbor/state/store.py): read when the site folder no longer has the script
+STATE = "/var/lib/harbor/sites"
+SECRETS = "/etc/harbor/secrets/sites"
+
+
+def site_name(site_root):
+    return str(site_root).rstrip("/").rsplit("/", 1)[-1]
+
+
+def values(system, site_root, target="prod"):
+    """An environment's settings, its passwords too: from its script in the site folder while that is there, else from
+    Harbor's copy. None when it has neither."""
+    path = system.path(settings_script(site_root, target))
+    if path.is_file():
+        return parse(path.read_text())
+    name = site_name(site_root)
+    copy = system.path(f"{STATE}/{name}/environments/{target}.json")
+    if not copy.is_file():
+        return None
+    try:
+        found = json.loads(copy.read_text())
+        secret = system.path(f"{SECRETS}/{name}/{target}.json")
+        if secret.is_file():
+            found.update(json.loads(secret.read_text()))
+    except (OSError, ValueError) as error:
+        raise SettingsError(f"Could not read Harbor's settings of {name} {target}: {error}") from None
+    return {key: str(value) for key, value in found.items()}
+
+
 def load(system, site_root, target="prod"):
     """An environment's settings, as load_prod_settings reads them"""
     script = settings_script(site_root, target)
-    path = system.path(script)
-    if not path.is_file():
+    found = values(system, site_root, target)
+    if found is None:
         raise SettingsError(f"This site has no production site (missing {script}).")
-    values = parse(path.read_text())
     environment = Environment(id=target, script=script)
-    for name, value in values.items():
+    for name, value in found.items():
         if name in SETTINGS:
             setattr(environment, name, value)
         else:

@@ -70,7 +70,7 @@ class CreateSiteTests(unittest.TestCase):
                 self.assertTrue(any("dotnet publish" in line for line in system.commands))
 
     def test_umbraco_13_gets_dotnet_8(self):
-        result, system = self.compare("old.dk", "csharp", "umbraco", "13", "Old", "old.dk", "_publish", "Debug", "y")
+        result, system = self.compare("old.dk", "csharp", "umbraco", "13", "Old", "old.dk", "_publish", "Debug", "y", "", "Test")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue((self.new.root / "var/www/old.dk/global.json").is_file())
         self.assertIn("dotnet add package VNS.Umbraco -v 13.0.0", system.commands)
@@ -101,8 +101,9 @@ class CreateSiteTests(unittest.TestCase):
         self.assertEqual(system.asked, ["Create an HTTPS certificate? [Y/n]: ", "Enter folder name: ", "Choose [1]: ",
                                         "Enter site URL binding (* = answer any name) [blog.dk]: "])
         # The certificate, the project, the kind, the publish folder, the build and the Umbraco version
-        answers = [""] * 6
-        result, system = self.compare("shop.dk", "csharp", "", "", "", "shop.dk", stdin="\n" * 6, replies=answers)
+        # A new site's defaults are harbor's own (test_new_site_defaults): here the script's are given
+        answers = ["", "", "", "_publish", "Release", ""]
+        result, system = self.compare("shop.dk", "csharp", "", "", "", "shop.dk", stdin="\n".join(answers) + "\n", replies=answers)
         self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_answering_any_name_and_refusals(self):
@@ -120,6 +121,21 @@ class CreateSiteTests(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(system.said[-1], result.stderr)
                 self.assertEqual(comparable(self.new.files()), comparable(self.old.files()))
+
+
+@NEEDS_BASH_4
+class NewSiteDefaultTests(unittest.TestCase):
+    def test_new_site_defaults(self):
+        """A new site is where development happens: Development, published to _development (asked 2026-11-13)"""
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        server = Server(folder.name, "new")
+        system = server.system(replies=[""] * 6)
+        self.assertEqual(main(["site", "create", "shop.dk", "csharp", "", "", "", "shop.dk"], system), 0, system.said)
+        self.assertIn("Enter local publish folder [_development]: ", system.asked)
+        service = (server.root / "etc/systemd/system/shop.dk.service").read_text()
+        self.assertIn("Environment=ASPNETCORE_ENVIRONMENT=Development", service)
+        self.assertIn("/var/www/shop.dk/_development", service)
 
 
 class WrapperTests(unittest.TestCase):

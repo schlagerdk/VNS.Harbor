@@ -42,6 +42,35 @@ Where the work stands, so it can go on from here after any interruption.
    - The tab first checks that it reaches the managing Harbor. If it does not, it says the site needs access to Harbor
      at its address over HTTPS to sync from here, and the sync buttons stay off.
    - Depends on phase 2 (settings and the token out of the site folder). Not on phase 5.
+   - **Automatic login to the backoffice** (asked 2026-11-13): the admin's Backend button logs straight in. On the site
+     one chooses which Umbraco user that is; no Umbraco password is stored or sent. A click makes Harbor issue a
+     one-time token that lives for seconds, signed with a key only Harbor and the site have; the package checks it,
+     signs that user in with Umbraco's own sign-in and opens /umbraco. Only users with access to the site in Harbor get
+     the button, and each login is logged (who, when).
+
+## Phase 2 steps (state out of the site folders)
+State in a site folder today: `scripts/publish_prod.sh` and `scripts/targets/<id>/publish_prod.sh` (an environment's
+settings, its password too, at the top of the script that publishes), `scripts/data_sync.json` (Sync setup),
+`.vns-publish/*.json` (publish status, package update checks). The generated scripts still run and read their settings
+from themselves, so while they exist the old files stay the truth: Harbor keeps a copy in its own place, always equal,
+and reads through one API. When the scripts are gone (2d, removed in phase 6) the new place becomes the truth.
+- Layout: `/var/lib/harbor/sites/<site>/environments/<id>.json` (settings without passwords), `.../data_sync.json`,
+  `.../publish/<scope>.json`; `/etc/harbor/secrets/sites/<site>/<id>.json` (passwords; folders 0700, files 0600, root).
+- [x] 2a `harbor/state`: the store, and `harbor state sync [site]`, which makes Harbor's copy equal to the site folder
+  (idempotent; an environment or site that is gone there goes here too). update.sh runs it for every site.
+  (tests/test_state_store.py; on linux-01 after the deploy: 4 sites, no passwords there, so no /etc/harbor yet)
+- [x] 2b One API for reading: harbor's settings, and the admin (environments, Sync setup, publish status), read the site
+  folder while the old file is there, else Harbor's copy. (`settings.values/target_ids`, `script_ids` for the site folder
+  alone; the admin's target_ids/parse_prod use them; lib/data_sync.py and lib/publish_status.py fall back too; tests/test_state_read.py)
+- [x] 2c Every harbor command and admin action that changes a site's state syncs that site after; a deleted, renamed,
+  copied or moved site or environment takes its state along (also to the other server in move_site).
+  (harbor's main syncs the sites a command touched, all of them after `site receive`; the admin syncs all after each task,
+  as root only; lib/data_sync.py and lib/publish_status.py write the copy as they write the site folder. Sync reads the
+  site folder only, never its own copy. Tried on linux-01: a changed setting is in the copy at once.)
+- [ ] 2d The site scripts' work into harbor commands (publish, sync, clear logs, change environment, service tools), so
+  nothing needs the files in the site folder. The scripts there then only call harbor; phase 6 removes them.
+
+- New site defaults (asked 2026-11-13): environment Development and publish folder `_development` (dialog, admin, `harbor site create`).
 
 ## Kept as files that can be changed by hand (asked 2026-11-13)
 - `apache/solutionfiles/csharp/umbraco/project` (the Umbraco site a new site starts from: Program.cs, the csproj,

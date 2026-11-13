@@ -58,6 +58,9 @@ _normalize_dns_name = _domains_module.normalize_dns_name
 _display_dns_name = _domains_module.display_dns_name
 _normalize_site_name = _domains_module.normalize_site_name
 service_name = _domains_module.service_name
+# Harbor, installed beside the apache folder (domain_names.py above already needs it): how environments are read
+if os.path.dirname(APACHE_DIR) not in sys.path:
+    sys.path.insert(0, os.path.dirname(APACHE_DIR))
 _publish_spec = importlib.util.spec_from_file_location("vns_publish_status", os.path.join(APACHE_DIR, "lib", "publish_status.py"))
 _publish_module = importlib.util.module_from_spec(_publish_spec)
 _publish_spec.loader.exec_module(_publish_module)
@@ -552,13 +555,26 @@ def target_folder(root, target="prod"):
     return os.path.join(root, "scripts") if target == "prod" else os.path.join(root, "scripts", "targets", target)
 
 
+def keep_harbor_state():
+    """After a task: Harbor's copy of the sites' state equal to the site folders again (harbor/state). A task can have
+    made, changed, moved or deleted an environment; the scripts it ran do not keep the copy themselves."""
+    harbor = os.path.join(os.path.dirname(APACHE_DIR), "bin", "harbor")
+    # Only the admin itself, which runs as root: never a test run as a user
+    if not os.path.isfile(harbor) or os.geteuid() != 0:
+        return
+    try:
+        result = subprocess.run(["/usr/bin/python3", harbor, "state", "sync"], capture_output=True, text=True, timeout=120)
+        if result.returncode or result.stderr.strip() or result.stdout.strip():
+            app.logger.warning("harbor state sync: %s", (result.stdout + result.stderr).strip() or result.returncode)
+    except (OSError, subprocess.SubprocessError) as exc:
+        app.logger.warning("harbor state sync could not run: %s", exc)
+
+
 def target_ids(root):
-    ids = ["prod"] if os.path.isfile(os.path.join(root, "scripts", "publish_prod.sh")) else []
-    for script in sorted(glob.glob(os.path.join(glob.escape(root), "scripts", "targets", "*", "publish_prod.sh"))):
-        name = os.path.basename(os.path.dirname(script))
-        if TARGET_RE.match(name):
-            ids.append(name)
-    return ids
+    """The site's environments: from its folder while their scripts are there, else from Harbor's copy (harbor/state)"""
+    from harbor.core.system import System
+    from harbor.environments import settings
+    return [name for name in settings.target_ids(System(), root) if TARGET_RE.match(name)]
 
 
 def target_scope(target):
@@ -633,18 +649,18 @@ def adoption_candidates(sites):
 
 
 def parse_prod(root, target="prod"):
-    """An environment's settings block has the details. The password is never read."""
-    text = read_text(os.path.join(target_folder(root, target), "publish_prod.sh"))
-    if not text:
+    """An environment's settings, as harbor reads them (its script, else Harbor's copy). The password is never given."""
+    from harbor.core.system import System
+    from harbor.environments import settings
+    try:
+        found = settings.values(System(), root, target)
+    except (OSError, settings.SettingsError):
+        return None
+    if found is None:
         return None
     values = {}
     for key in PROD_KEYS:
-        match = re.search(r"""^%s=((?:'[^'\n]*'|"[^"\n]*"|\\.|\S)*)""" % key, text, re.M)
-        raw = match.group(1) if match else ""
-        try:
-            value = "".join(shlex.split(raw))
-        except ValueError:
-            value = raw.strip("'\"")
+        value = found.get(key[len("PROD_"):], "")
         values[key] = "" if value.startswith("@") else value
     return values
 
@@ -2338,6 +2354,7 @@ class TermSession:
                 app.logger.exception("Could not save package update status for %s", self.update_root)
                 self.output_problem = True
         REMOTE_STATUS.clear()
+        keep_harbor_state()
         if getattr(self, "after", None):
             try:
                 with app.app_context():
@@ -3029,12 +3046,13 @@ def build_command(data):
             project = data.get("project") or service_name(site)
             if project == data.get("site"):
                 project = service_name(site)
-            publish = data.get("publish", "_publish")
+            # A new site is where development happens: Development, published to _development
+            publish = data.get("publish", "_development")
             if not isinstance(publish, str):
                 abort(400, "Invalid publish folder")
             publish = publish.strip() or "."
             build = data.get("build") or "Debug"
-            environment = data.get("environment") or ("Production" if build == "Release" else "Test")
+            environment = data.get("environment") or ("Production" if build == "Release" else "Development")
             if environment not in ("Development", "Test", "Staging", "Production"):
                 abort(400, "Invalid environment")
             version = version.strip()

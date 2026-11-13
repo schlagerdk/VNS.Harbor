@@ -33,8 +33,36 @@ HANDLERS = {"content": "ContentHandler", "media": "MediaHandler"}
 ID_RE = re.compile(r"main|[a-z0-9][a-z0-9-]{0,62}")
 
 
+HARBOR_STATE = Path("/var/lib/harbor/sites")
+
+
+def mirror(site_root, relative, data):
+    """The same in Harbor's copy (harbor/state), where there is one. Not there or not writable: the next
+    harbor state sync makes it equal, so nothing stops for it."""
+    if not HARBOR_STATE.is_dir():
+        return
+    target = HARBOR_STATE / Path(site_root).name / relative
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        descriptor, temporary = tempfile.mkstemp(dir=target.parent, prefix=".mirror-", suffix=".json")
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump(data, stream, indent=2, sort_keys=True, ensure_ascii=False)
+            stream.write("\n")
+        os.chmod(temporary, 0o644)
+        os.replace(temporary, target)
+    except OSError:
+        pass
+
+
 def config_path(site_root):
     return Path(site_root) / "scripts" / "data_sync.json"
+
+
+def read_path(site_root):
+    """Where the settings are read: the site folder while they are there, else Harbor's copy (harbor/state)"""
+    path = config_path(site_root)
+    copy = HARBOR_STATE / Path(site_root).name / "data_sync.json"
+    return copy if not path.exists() and copy.is_file() else path
 
 
 def clean(settings, site_id=""):
@@ -47,14 +75,15 @@ def clean(settings, site_id=""):
 
 
 def load(site_root):
+    path = read_path(site_root)
     try:
-        data = json.loads(config_path(site_root).read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return {}
     except (OSError, ValueError) as exc:
-        raise ValueError(f"Could not read {config_path(site_root)}: {exc}") from exc
+        raise ValueError(f"Could not read {path}: {exc}") from exc
     if not isinstance(data, dict):
-        raise ValueError(f"{config_path(site_root)} is not a settings object")
+        raise ValueError(f"{path} is not a settings object")
     return {key: clean(value, key) for key, value in data.items() if isinstance(key, str) and ID_RE.fullmatch(key)}
 
 
@@ -70,6 +99,7 @@ def save(site_root, site_id, settings):
         stream.write("\n")
     os.chmod(temporary, 0o644)
     os.replace(temporary, path)
+    mirror(site_root, "data_sync.json", data)
     return data[site_id]
 
 

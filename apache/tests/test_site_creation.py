@@ -244,7 +244,7 @@ class CreateCommandTests(unittest.TestCase):
     def test_custom_template_is_a_separate_argument(self):
         args = self.command(template="webapi", version="18.3.1")
         self.assertEqual(args[2:], ["example.test", "csharp", "empty", "",
-                                   "example.test", "example.test", "_publish", "Debug", "n", "webapi", "Test"])
+                                   "example.test", "example.test", "_development", "Debug", "n", "webapi", "Development"])
 
     def test_blank_template_preserves_default(self):
         self.assertEqual(self.command(template="  ")[-2], "")
@@ -252,7 +252,8 @@ class CreateCommandTests(unittest.TestCase):
     def test_blank_publish_folder_means_site_root(self):
         for value in ("", " ", "."):
             self.assertEqual(self.command(publish=value)[8], ".")
-        self.assertEqual(self.command()[8], "_publish")
+        # A new site is published to _development unless another folder is given
+        self.assertEqual(self.command()[8], "_development")
         with self.assertRaises(BadRequest):
             self.command(publish="../other")
 
@@ -278,7 +279,7 @@ class CreateCommandTests(unittest.TestCase):
         self.assertEqual(self.command(template="umbraco", version=" ")[5], "18.3.1")
         args = self.command(template="custom", version="2.0.0")
         self.assertEqual(args[4:6], ["empty", "2.0.0"])
-        self.assertEqual(args[-3:], ["custom", "Test", "Custom.Templates"])
+        self.assertEqual(args[-3:], ["custom", "Development", "Custom.Templates"])
         with self.assertRaisesRegex(BadRequest, "SDK templates"):
             self.command(template="web", version="2.0.0")
         with self.assertRaises(BadRequest):
