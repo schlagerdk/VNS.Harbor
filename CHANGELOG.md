@@ -2,6 +2,12 @@
 
 All notable changes to VNS.Linux are listed here, newest first.
 
+## [1.1.16] - 2026-11-13
+
+### Features
+
+- Administrators see the server's internal and external address in the header, and a click copies one
+
 ## [1.1.15] - 2026-11-13
 
 ### Features
