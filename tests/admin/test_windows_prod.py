@@ -272,7 +272,7 @@ class WindowsPublishTests(ScriptTestCase):
         self.assertEqual(module.get("arguments"), ".\\App.dll")
         self.assertIn('value="Staging"', (self.server / "web.config").read_text())
         copy = calls[self.index("copy /")]
-        self.assertIn("--exclude /web.config", copy)
+        self.assertTrue(left_out("/web.config", copy), copy)
         self.assertNotIn("appsettings*.json", copy)
         self.assertIn("--runtime win-x64", calls[self.index("dotnet publish")])
         self.assertIn("https://prod.test", calls[self.index("curl ")])
@@ -294,7 +294,10 @@ class WindowsPublishTests(ScriptTestCase):
         self.assertFalse(any(call.startswith("copyto /") and call.endswith("/web.config") for call in self.calls()))
         copy = self.calls()[self.index("copy /")]
         for rule in ("/web.config", "appsettings*.json", "/umbraco/**", "/uSync/**", "/Views/**", "/wwwroot/**", "/App_Data/**"):
-            self.assertIn("--exclude " + rule, copy)
+            self.assertTrue(left_out(rule, copy), (rule, copy))
+        if "--filter" in copy:
+            # Harbor: the packages' own code in wwwroot/App_Plugins goes along, before the rest of wwwroot is left out
+            self.assertLess(copy.index("--filter + /wwwroot/App_Plugins/**"), copy.index("--filter - /wwwroot/**"))
         self.assertIn("--ignore-case", copy)
         self.assertFalse(any(call.startswith("sync ") for call in self.calls()))
 
@@ -594,6 +597,11 @@ class TemplateTests(unittest.TestCase):
             self.assertIn("PROD_TARGET:-} == windows", (legacy if legacy.exists() else ROOT_DIR / script).read_text())
         self.assertIn("PROD_TARGET:-} != windows", (ROOT_DIR / "tests/legacy/remote_site.sh").read_text())
         self.assertIn('_prodTarget} == windows', (ROOT_DIR / "tests/legacy/delete_site.sh").read_text())
+
+
+def left_out(rule, copy):
+    """A path rclone copies around: --exclude as the script wrote it, a --filter rule as harbor does"""
+    return f"--exclude {rule}" in copy or f"--filter - {rule}" in copy
 
 
 SUDO_REMOVING_ITSELF = r"""#!/bin/bash

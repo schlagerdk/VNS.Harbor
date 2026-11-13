@@ -83,10 +83,12 @@ def publish_windows(system, site, environment, project, local_publish, dry_run=F
 
         # copy, never sync: sync would delete logs and uploaded media on the server. Once the site exists, its
         # settings and content are never overwritten by a publish.
-        options = ["--create-empty-src-dirs", "--modify-window", "2s", "--stats", "0", "-v", "--ignore-case", "--exclude", "/web.config"]
+        # wwwroot/App_Plugins is the packages' own code (their backoffice, such as VNS.Harbor's dashboard): it always goes along
+        options = ["--create-empty-src-dirs", "--modify-window", "2s", "--stats", "0", "-v", "--ignore-case", "--filter", "- /web.config"]
         if not first_publish:
+            options += ["--filter", "+ /wwwroot/App_Plugins/**"]
             options += [argument for pattern in ("appsettings*.json", "/umbraco/**", "/uSync/**", "/Views/**", "/wwwroot/**", "/App_Data/**")
-                        for argument in ("--exclude", pattern)]
+                        for argument in ("--filter", f"- {pattern}")]
 
         # An existing web.config is kept, but its HTTPS redirect follows the site: added when it answers on HTTPS
         update_web_config = False

@@ -425,11 +425,13 @@ class Publish:
                     destination = f"{self.host}:{self.root}/"
                     exists = self.remote(f"{self.sudo} test -f '{self.root}/appsettings.json'", check=False).ok
                 # Schema files are never uploaded. Once the site exists there, its content, settings and data are never
-                # overwritten or deleted by a publish (rsync keeps excluded paths when using --delete).
+                # overwritten or deleted by a publish (rsync keeps excluded paths when using --delete). wwwroot/App_Plugins
+                # is the packages' own code (their backoffice, such as VNS.Harbor's dashboard): it always goes along.
                 keep = ["--exclude", "appsettings-schema*.json", "--exclude", "umbraco-package-schema.json", "--exclude", "/scripts/",
                         "--exclude", "/.vns-publish/"]
                 if exists:
-                    keep += [argument for pattern in ("appsettings*.json", "/umbraco/", "/uSync/", "/Views/", "/wwwroot/", "/App_Data/", "/app_data/")
+                    keep += ["--include", "/wwwroot/", "--include", "/wwwroot/App_Plugins/***", "--exclude", "/wwwroot/*"]
+                    keep += [argument for pattern in ("appsettings*.json", "/umbraco/", "/uSync/", "/Views/", "/App_Data/", "/app_data/")
                              for argument in ("--exclude", pattern)]
                 self.rsync("-az", "--delete", *keep, f"{output}/", destination)
                 if exists:

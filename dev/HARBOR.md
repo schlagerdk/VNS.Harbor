@@ -350,6 +350,10 @@ In this order:
     a site folder closed to others (8b2) before it was built has the ACL group::r-x, and chmod g+w only changes the
     mask. lib/build_as.py now sets the group's own entry (setfacl -m g::rwx) before each build
     (tests/admin/test_build_as.py). test-01 was fixed by hand until this is released.
+  - [x] 4n Found 2026-11-13: a publish to an environment that exists left out all of wwwroot (its media), so the
+    packages' own code in wwwroot/App_Plugins (VNS.Harbor's dashboard, uSync and VNS.Umbraco updates) never reached it.
+    wwwroot/App_Plugins now always goes along (rsync, and rclone for Windows); the rest of wwwroot stays as it is.
+    On linux-01: mhs's staging, production and test got the dashboard, their media untouched.
   - [ ] 4e REPOSITORY schlagerdk/VNS.Harbor, VERSION 1.0.0, CHANGELOG; tried with dev/deploy.sh and a real update on
     linux-02 from 1.3.0. Martin releases it.
 - [ ] 5 Martin deletes VNS.Linux on GitHub once every server has taken 1.3.0.
