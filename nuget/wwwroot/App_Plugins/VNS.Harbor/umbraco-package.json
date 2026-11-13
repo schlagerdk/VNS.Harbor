@@ -1,0 +1,17 @@
+{
+  "$schema": "../../umbraco-package-schema.json",
+  "name": "VNS.Harbor",
+  "version": "17.0.6",
+  "allowPublicAccess": false,
+  "extensions": [
+    {
+      "type": "dashboard",
+      "alias": "VNS.Harbor.Dashboard",
+      "name": "VNS Harbor",
+      "element": "/App_Plugins/VNS.Harbor/dashboard.js",
+      "weight": 5,
+      "meta": { "label": "VNS Harbor", "pathname": "vns-harbor" },
+      "conditions": [{ "alias": "Umb.Condition.SectionAlias", "match": "Umb.Section.Content" }]
+    }
+  ]
+}

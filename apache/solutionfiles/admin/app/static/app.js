@@ -992,6 +992,44 @@ function openLink(text, url, title, asButton) {
 const bindingLink = (binding, asButton) => binding
 	? openLink(binding, "https://" + binding + "/", "", asButton)
 	: el("span", { className: "muted", textContent: "no binding" });
+// The Backend button: with the VNS.Harbor package and a chosen Umbraco user it logs straight in with a one-time link
+// from Harbor; otherwise, or if that fails, it opens the backoffice's own login
+function backendButton(site, env, url, title) {
+	const link = openLink("Backend", url, title, true);
+	if (!currentUser.admin) return link;
+	link.onclick = (event) => {
+		event.stopPropagation();
+		event.preventDefault();
+		// Opened at once, so the browser does not take it for a popup
+		const opened = window.open("about:blank", "_blank");
+		const target = isTarget(env) ? env.target : "main";
+		fetch(`/api/sites/${encodeURIComponent(site.name)}/backoffice-login?target=${encodeURIComponent(target)}`, { headers: { Accept: "application/json" } })
+			.then((response) => response.ok ? response.json() : { url: null })
+			.catch(() => ({ url: null }))
+			.then((data) => {
+				if (opened) opened.location = data.url || url;
+				else window.open(data.url || url, "_blank", "noopener");
+			});
+	};
+	return link;
+}
+async function backofficeLoginDialog(site, env) {
+	const target = isTarget(env) ? env.target : "main";
+	const url = `/api/sites/${encodeURIComponent(site.name)}/backoffice-user?target=${encodeURIComponent(target)}`;
+	const current = await api(url);
+	const user = await ask({
+		title: "Backoffice login",
+		message: current.package
+			? `The Backend button of ${environmentLabel(site, env)} logs straight in as this Umbraco user, with a link that works once. Leave it empty to open the backoffice's own login.`
+			: `${siteLabel(site)} does not have the VNS.Harbor package yet. Add it to the project and publish, then the Backend button can log straight in as this Umbraco user.`,
+		value: current.user || "", placeholder: "name@example.com", ok: "Save",
+	});
+	if (user === null) return;
+	await run(async () => {
+		await api(url, { json: { user: user.trim() } });
+		toast(user.trim() ? "The Backend button logs in as " + user.trim() : "The Backend button opens the login");
+	});
+}
 const backofficeLink = (binding, asButton) => openLink(binding + "/umbraco", "https://" + binding + "/umbraco", "Umbraco backoffice", asButton);
 const siteLabel = (site) => site.display_name || site.name;
 const bindingLabel = (env) => env.display_binding || env.binding;
@@ -1108,7 +1146,7 @@ function compactEnvironmentRow(site, env, environment) {
 		frontend.classList.add("frontend");
 		const links = el("div", { className: "site-environment-links" }, frontend);
 		if (site.kind === "umbraco") {
-			const backend = openLink("Backend", address.url + "umbraco", environment + " backoffice: " + address.title, true);
+			const backend = backendButton(site, env, address.url + "umbraco", environment + " backoffice: " + address.title);
 			backend.classList.add("backend");
 			links.append(backend);
 		}
@@ -1154,7 +1192,7 @@ function siteCard(site) {
 		frontend.classList.add("frontend");
 		links.append(frontend);
 		if (site.kind === "umbraco") {
-			const backend = openLink("Backend", address.url + "umbraco", environment + " backoffice: " + address.title, true);
+			const backend = backendButton(site, env, address.url + "umbraco", environment + " backoffice: " + address.title);
 			backend.classList.add("backend");
 			links.append(backend);
 		}
@@ -1704,6 +1742,7 @@ function envPanel(site, env) {
 	// The main site: to a new folder here, without its environments, or with them to another server (administrators),
 	// where it can also be migrated
 	if (!isTarget(env) && !site.admin && !site.managed_by) addManage("Copy site", () => copySite(site, env));
+	if (currentUser.admin && site.kind === "umbraco" && (!isTarget(env) || env.mode === "local")) addManage("Backoffice login…", () => backofficeLoginDialog(site, env));
 	// An environment on Windows is only removed here: its IIS site and files stay on the server
 	if (hasProd(site) && !site.admin && env.mode === "windows") addManage("Remove environment", () => deleteSite(site, "prod", env), "push-right");
 	else if (hasProd(site) && !site.admin) addManage("Delete site", () => deleteSite(site, isTarget(env) ? "prod" : "test", env), "danger");
@@ -1761,7 +1800,7 @@ function envListRow(panel, key, site, env) {
 		frontend.classList.add("frontend");
 		links.append(frontend);
 		if (site.kind === "umbraco") {
-			const backend = openLink("Backend", address.url + "umbraco", "Backoffice: " + address.title, true);
+			const backend = backendButton(site, env, address.url + "umbraco", "Backoffice: " + address.title);
 			backend.classList.add("backend");
 			links.append(backend);
 		}

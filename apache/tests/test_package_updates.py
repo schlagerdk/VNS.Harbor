@@ -39,6 +39,10 @@ class PackageUpdateTests(unittest.TestCase):
         self.root = Path(self.temp.name).resolve()
         self.project = self.root / "Example.csproj"
         self.project.write_text("<Project />")
+        # NuGet is not asked: the newest version a project can use is the one dotnet named
+        nuget = patch.object(tracking, "compatible_latest", side_effect=lambda name, current, frameworks: {"example": "2.0"}.get(name.lower()))
+        nuget.start()
+        self.addCleanup(nuget.stop)
 
     def state(self):
         return tracking.updates_status(self.root, tracking.fingerprint(self.root))

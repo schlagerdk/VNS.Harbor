@@ -122,6 +122,8 @@ class KeptAfterCommandsTests(unittest.TestCase):
         self.assertEqual(touched_sites(parser().parse_args(["site", "create", "c.dk", "html"])), ["c.dk"])
         self.assertIsNone(touched_sites(parser().parse_args(["site", "receive", "/var/lib/vns-incoming/x"])))
         self.assertEqual(touched_sites(parser().parse_args(["sql", "list-databases"])), [])
+        self.assertEqual(touched_sites(parser().parse_args(["env", "create", "shop.dk", "local"])), ["shop.dk"])
+        self.assertEqual(touched_sites(parser().parse_args(["env", "publish", "shop.dk"])), ["shop.dk"])
 
 
 if __name__ == "__main__":

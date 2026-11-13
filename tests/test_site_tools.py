@@ -113,7 +113,9 @@ class TemplateTests(unittest.TestCase):
             template = (APACHE / "solutionfiles" / path.relative_to(TEMPLATES)).read_text()
             with self.subTest(template=path.name):
                 self.assertIn('"@APACHE_DIR@/../bin/harbor"', template)
-                self.assertNotIn("PROD_PASSWORD", template)
+                if path.name != "publish_prod.sh":
+                    # publish_prod.sh keeps the environment's settings, which the admin and create_prod.sh read
+                    self.assertNotIn("PROD_PASSWORD", template)
 
     def test_an_environment_finds_its_site_and_id_from_where_it_is(self):
         folder = Path(tempfile.mkdtemp())

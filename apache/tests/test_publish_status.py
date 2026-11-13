@@ -207,7 +207,7 @@ assert.equal(publishBadge({}), null);
         for scope, template in (
             # As it was before it called harbor (harbor site publish is compared with it in tests/test_site_tools.py)
             ("test", APACHE.parent / "tests/legacy/solutionfiles/csharp/scripts/publish.sh"),
-            ("prod", APACHE / "solutionfiles/csharp/prod-scripts/publish_prod.sh"),
+            ("prod", APACHE.parent / "tests/legacy/solutionfiles/csharp/prod-scripts/publish_prod.sh"),
         ):
             text = template.read_text()
             self.assertIn("VNS_PUBLISH_TRACKED:-} != " + ('"${_scope}"' if scope == "prod" else scope), text)
@@ -218,7 +218,7 @@ assert.equal(publishBadge({}), null);
             ["/bin/bash", "-c",
              'source "$1"; perl -pe \'s/\\@([A-Z_]+)\\@/exists $ENV{"R_$1"} ? $ENV{"R_$1"} : "\\@$1\\@"/ge\' "$2"',
              "render-prod", str(APACHE / "lib/common.sh"),
-             str(APACHE / "solutionfiles/csharp/prod-scripts/publish_prod.sh")],
+             str(APACHE.parent / "tests/legacy/solutionfiles/csharp/prod-scripts/publish_prod.sh")],
             check=True, capture_output=True, text=True)
         self.assertNotIn("@APACHE_DIR@", result.stdout)
         self.assertIn('"' + str(HELPER) + '" run', result.stdout)

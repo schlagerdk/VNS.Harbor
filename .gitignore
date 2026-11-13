@@ -10,3 +10,6 @@ __pycache__/
 
 # The admin's activity log is the server's own, and a run from the repository writes one beside the app
 apache/solutionfiles/admin/app/audit.log
+# The VNS.Harbor package's build output
+nuget/bin/
+nuget/obj/

@@ -163,6 +163,41 @@ def _clear_environment_logs(args, system):
     clear_environment_logs(system, args.site, target())
 
 
+def _publish_environment(args, system):
+    from harbor.environments.publish import publish_environment
+    publish_environment(system, args.site, target(), args.project, args.local_publish, dry_run=args.dry_run)
+
+
+def _create_environment(args, system):
+    from harbor.core.templates import Site
+    from harbor.environments import settings
+    from harbor.environments.create import Main, create_environment
+    from harbor.sites.actions import site_named
+    site = site_named(system, args.site)
+    if args.site_root:
+        main = Main(site.name, args.site_root, args.binding, args.project, args.publish_folder, args.admin_mail, args.kind)
+    else:
+        # Not rendered for it: the site's own values, as the admin renders them
+        found = settings.load_main_site(system, site)
+        main = Main(site.name, site.site_root, found.binding, found.project_name, found.publish_folder, found.admin_mail, found.csharp_kind)
+    create_environment(system, main, args.target)
+
+
+def _connect(args, system):
+    from harbor.umbraco import backoffice
+    backoffice.connect(system, args.site, args.environment, args.harbor_url)
+
+
+def _backoffice_user(args, system):
+    from harbor.umbraco import backoffice
+    backoffice.set_backoffice_user(system, args.site, args.user, args.environment)
+
+
+def _backoffice_link(args, system):
+    from harbor.umbraco import backoffice
+    system.say(backoffice.login_link(system, args.site, args.environment, args.who))
+
+
 def _environment_binding(args, system):
     from harbor.environments.bindings import change_binding
     change_binding(system, args.site, args.binding, args.aliases, yes=args.confirm == "--yes" or args.yes, target=target())
@@ -261,6 +296,22 @@ def parser():
             command.add_argument("--folder", default="", help="the publish folder, when not the one the service runs from")
             command.add_argument("--environment-name", default="", help="-p:EnvironmentName for the build, as a very old script had")
         command.set_defaults(handler=_site_tool)
+    # VNS.Harbor in Umbraco (phase 9)
+    command = site.add_parser("connect", help="write vns-harbor.json where the site runs, for the VNS.Harbor package")
+    command.add_argument("site")
+    command.add_argument("--environment", default="main", help="main, or an environment on this server")
+    command.add_argument("--harbor-url", default="", help="Harbor's address, as the site reaches it")
+    command.set_defaults(handler=_connect)
+    command = site.add_parser("backoffice-user", help="the Umbraco user the Backend button logs in as (empty: the login)")
+    command.add_argument("site")
+    command.add_argument("user", nargs="?", default="")
+    command.add_argument("--environment", default="main")
+    command.set_defaults(handler=_backoffice_user)
+    command = site.add_parser("backoffice-link", help="a one-time backoffice login link (VNS.Harbor package)")
+    command.add_argument("site")
+    command.add_argument("--environment", default="main")
+    command.add_argument("--who", default="", help="who asked for it, for the log")
+    command.set_defaults(handler=_backoffice_link)
     command = site.add_parser("binding", help="change the binding and aliases of the site here (was change_binding.sh)")
     command.add_argument("site", nargs="?", default="")
     command.add_argument("binding", nargs="?", default="", help="the new binding, or * to answer any name")
@@ -339,6 +390,18 @@ def parser():
     command = environment.add_parser("clear-logs", help="Umbraco's logs where the environment is (was clear_logs_prod.sh)")
     command.add_argument("site")
     command.set_defaults(handler=_clear_environment_logs)
+    command = environment.add_parser("publish", help="publish the site to the environment in VNS_TARGET (was publish_prod.sh)")
+    command.add_argument("site")
+    command.add_argument("--project", default="", help="the project's name, as the environment was made with")
+    command.add_argument("--local-publish", default="", help="the site's own publish folder, where a first publish takes its appsettings from")
+    command.add_argument("--dry-run", action="store_true", help="Windows: build, and show what would change on the server")
+    command.set_defaults(handler=_publish_environment)
+    command = environment.add_parser("create", help="add an environment, from the admin's dialog (VNS_PROD_MODAL, VNS_PROD_*) or asked for (was create_prod.sh)")
+    command.add_argument("site")
+    command.add_argument("target", nargs="?", default="", help="remote, local or windows")
+    for option in ("site-root", "binding", "project", "publish-folder", "admin-mail", "kind"):
+        command.add_argument(f"--{option}", default="", help="as create_prod.sh was rendered with")
+    command.set_defaults(handler=_create_environment)
     command = environment.add_parser("binding", help="change the binding and aliases where the environment is (was change_binding_prod.sh)")
     command.add_argument("site", nargs="?", default="")
     command.add_argument("binding", nargs="?", default="")
@@ -363,8 +426,12 @@ def touched_sites(args):
         return []
     if args.command == "receive":
         return None
-    names = [getattr(args, key, "") for key in ("site", "source", "target", "main")]
-    if args.command == "create" and args.arguments:
+    names = [getattr(args, key, "") for key in ("site", "source", "main")]
+    if args.command == "copy":
+        # The new site's folder; env create's target is remote, local or windows
+        names.append(args.target)
+    if getattr(args, "arguments", None):
+        # site create: the folder is its first argument
         names.append(args.arguments[0])
     return [name for name in names if isinstance(name, str) and name]
 
@@ -372,6 +439,9 @@ def touched_sites(args):
 def keep_state(system, args):
     """Harbor's copy of the sites' state stays equal to the site folders after a command (harbor/state)"""
     from harbor.state import store
+    if os.environ.get("VNS_WEB_ROOT"):
+        # Sites in a folder of their own (a test): the server's copy is not theirs
+        return
     names = touched_sites(args)
     if names == []:
         return

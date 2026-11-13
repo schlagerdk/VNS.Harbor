@@ -67,7 +67,7 @@ and reads through one API. When the scripts are gone (2d, removed in phase 6) th
   (harbor's main syncs the sites a command touched, all of them after `site receive`; the admin syncs all after each task,
   as root only; lib/data_sync.py and lib/publish_status.py write the copy as they write the site folder. Sync reads the
   site folder only, never its own copy. Tried on linux-01: a changed setting is in the copy at once.)
-- [ ] 2d The site scripts' work into harbor commands (publish, sync, clear logs, change environment, service tools), so
+- [x] 2d The site scripts' work into harbor commands (publish, sync, clear logs, change environment, service tools), so
   nothing needs the files in the site folder. The scripts there then only call harbor; phase 6 removes them.
   - [x] The tools: check/restart/edit service, edit conf, restart Apache, clear logs, update packages and app permissions
     (Python), issue the certificate again, outdated, change environment, publish (`harbor site …`), and an environment's
@@ -75,10 +75,40 @@ and reads through one API. When the scripts are gone (2d, removed in phase 6) th
     site baked in (tests/test_site_tools.py against the templates as they were, tests/legacy/solutionfiles).
     update_admin_site.sh leaves a script that calls harbor alone, and upgrades a very old publish.sh to the wrapper
     with its folder and EnvironmentName. A real publish through harbor on linux-01 worked (12 s, status recorded).
-  - [ ] publish_prod.sh (Linux, 466 lines) and the Windows one (196): the settings block stays, the work is harbor's
-  - [ ] create_prod.sh (316 lines)
+  - [x] publish_prod.sh (Linux and Windows) → `harbor env publish` (tests/test_env_publish.py; the Windows publish tests in
+    apache/tests/test_windows_prod.py run against the old script and harbor). The settings block stays in the script,
+    which only calls harbor. A real publish to linux-01's production environment through harbor worked.
+  - [x] create_prod.sh → `harbor env create` (CreateProdTests in apache/tests/test_windows_prod.py run against the old
+    script and harbor). A real one on linux-01: a local Test environment made, published and synced in 15 s, then deleted.
 
 - New site defaults (asked 2026-11-13): environment Development and publish folder `_development` (dialog, admin, `harbor site create`).
+
+## Order after phase 2 (2026-11-13)
+Phase 9 comes before phases 3–8: it depends only on phase 2, and Martin asked to have it tested on mhs.linux-01.vns.dk.
+Phases 3–8 change how servers are installed and updated; they are done with Martin at hand.
+
+## Phase 9 steps (NuGet package VNS.Harbor, Umbraco 17+)
+- The package (`nuget/`): App_Plugins/VNS.Harbor (umbraco-package.json, a dashboard as a plain ES module on the
+  backoffice's own import map, no build step) and controllers. Who may use it: members of the Umbraco user group
+  "VNS Harbor" (alias vnsHarbor), made empty by the package; administrators add who should.
+- The site's connection: `vns-harbor.json` in the folder the site runs from (root:www-data 0640), written by Harbor when
+  it publishes: Harbor's address, the site and environment, a token for Harbor's API and a key for backoffice logins.
+  Never in appsettings or the repository. The token and key are kept in /etc/harbor/secrets/sites/<site>/harbor.json.
+- [x] 9a Automatic backoffice login: the admin's Backend button asks Harbor for a link; Harbor signs a one-time token
+  (HMAC-SHA256 with the site's login key: site, environment, the Umbraco user chosen for it, expiry 60 s, a nonce) and
+  the package's /umbraco/vns-harbor/login checks it, signs the user in with Umbraco's own sign-in and opens /umbraco.
+  Each login is logged in Harbor (who, when, as whom).
+- [x] 9b The dashboard "VNS Harbor": it asks Harbor (with the site's token) which environments it may sync settings
+  and data to, starts a sync, and shows its steps as they come. Without access to Harbor it says that access to Harbor's
+  address over HTTPS is needed, and the buttons stay off.
+- [x] 9c Harbor's side: the token API (destinations, start, follow), `harbor site connect` writing vns-harbor.json
+  (here; other servers later), the Umbraco user per environment in the admin.
+- Done and tried on mhs.linux-01.vns.dk (package 17.0.2 from a local feed /srv/vns-nuget, nuget.config in the site):
+  the Backend login, the dashboard without and with access, a settings sync to one and to all environments through the
+  token API. Environments are always in the order main, Development, Test, Staging, Production (also the sync's steps).
+  Only administrators get the automatic login for now (Martin decides whether more should).
+- [ ] 9d Environments on other servers and Windows: vns-harbor.json written there at publish (now: the site and its
+  environments on this server); the package on nuget.org.
 
 ## Kept as files that can be changed by hand (asked 2026-11-13)
 - `apache/solutionfiles/csharp/umbraco/project` (the Umbraco site a new site starts from: Program.cs, the csproj,

@@ -103,7 +103,7 @@ class SqlStartupTests(unittest.TestCase):
         self.assertLess(creation.index("sql_startup.py"), creation.index('systemctl restart'))
         publish = (apache.parent / "tests/legacy/solutionfiles/csharp/scripts/publish.sh").read_text()
         self.assertLess(publish.index("sql_startup.py"), publish.rindex("\nstart_service\n"))
-        production = (apache / "solutionfiles/csharp/prod-scripts/publish_prod.sh").read_text()
+        production = (apache.parent / "tests/legacy/solutionfiles/csharp/prod-scripts/publish_prod.sh").read_text()
         self.assertLess(production.index("sql_startup.py"), production.index("systemctl start"))
 
     def test_local_host_variants(self):

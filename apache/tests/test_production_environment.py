@@ -48,7 +48,7 @@ class ProductionEnvironmentTests(unittest.TestCase):
                     ns["production_setup_env"](data | {"environment": "invalid"}, "example.test")
 
     def test_rendered_publish_script_preserves_selected_environment(self):
-        create = (APACHE / "solutionfiles/csharp/scripts/create_prod.sh").read_text()
+        create = (APACHE.parent / "tests/legacy/solutionfiles/csharp/scripts/create_prod.sh").read_text()
         self.assertIn("R_PROD_ENVIRONMENT=\"${_prodEnvironment}\"", create)
         template = APACHE / "solutionfiles/csharp/prod-scripts/publish_prod.sh"
         for environment in ("Development", "Test", "Staging", "Production"):
@@ -57,9 +57,6 @@ class ProductionEnvironmentTests(unittest.TestCase):
                  str(template)], env=os.environ | {"R_PROD_ENVIRONMENT": environment},
                 capture_output=True, text=True, check=True)
             self.assertIn('PROD_ENVIRONMENT="' + environment + '"', result.stdout)
-            self.assertIn("ENVIRONMENT='${PROD_ENVIRONMENT}'", result.stdout)
-            self.assertIn("Environment=ASPNETCORE_ENVIRONMENT=${ENVIRONMENT}", result.stdout)
-            self.assertIn("Environment=DOTNET_ENVIRONMENT=${ENVIRONMENT}", result.stdout)
 
 
 if __name__ == "__main__":

@@ -84,7 +84,7 @@ class DatabaseInfoTests(unittest.TestCase):
         source = (APACHE.parent / "tests/legacy/remote_site.sh").read_text()
         script = source.split("python3 - <<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
         script = script.replace('Path("/var/www", site)', 'Path(ROOT)')
-        script = script.replace('Path("/etc/systemd/system", site + ".service")', 'Path(ROOT) / "service"')
+        script = script.replace('Path("/etc/systemd/system", unit + ".service")', 'Path(ROOT) / "service"')
         script = script.replace('Path("/etc/apache2/sites-available", site + ".conf")', 'Path(ROOT) / "conf"')
         harness = '''
 import os
@@ -96,7 +96,7 @@ root = Path(ROOT)
 (root / "conf").write_text("ServerName prod.test")
 def run(argv, **kwargs):
     return SimpleNamespace(returncode=0, stdout='DOTNET_ENVIRONMENT=Production' if argv[1] == "show" else "active", stderr="")
-with patch.dict(os.environ, {"SITE":"prod.test", "DATABASE_CODE":HELPER}), patch("subprocess.run", run):
+with patch.dict(os.environ, {"SITE":"prod.test", "UNIT":"prod.test", "DATABASE_CODE":HELPER}), patch("subprocess.run", run):
     exec(SCRIPT)
 '''
         for connection, expected in (
@@ -187,13 +187,15 @@ with patch.dict(os.environ, {"SITE":"prod.test", "DATABASE_CODE":HELPER}), patch
         self.assertIn(".meta .aliases a { font-style: italic; }", styles)
         alias_row = detail[detail.index('if (env.aliases && env.aliases.length)'):
                            detail.index('\n\tif (site.kind === "umbraco"', detail.index('if (env.aliases && env.aliases.length)'))]
-        self.assertIn('openLink(alias, scheme + "://" + alias + "/")', alias_row)
+        # The link shows the alias as it is written (an international name in its own letters) and opens its DNS name
+        self.assertIn('openLink(aliasLabels(env)[index], scheme + "://" + alias + "/")', alias_row)
         start = detail.index('\tif (site.kind === "csharp" || site.kind === "umbraco")')
         row = detail[start:detail.index('\n\tif (env.port)', start)]
         harness = r"""
 const assert = require("node:assert/strict");
 const el = (tag, properties, ...children) => ({tag, ...properties, children});
 const openLink = (text, url) => ({tag: "a", textContent: text, href: url});
+const aliasLabels = (env) => env?.display_aliases || env?.aliases || [];
 const scheme = "https";
 const env = {aliases: ["www.example.com", "shop.example.com"]};
 const meta = {children: [], append(...items) {this.children.push(...items);}};
@@ -227,7 +229,7 @@ for (const kind of ["csharp", "umbraco", "python", "html"]) {
         source = (APACHE / "solutionfiles/admin/app/static/app.js").read_text()
         template = (APACHE / "solutionfiles/admin/app/templates/index.html").read_text()
         self.assertIn('extra: { label: "Aliases (one per line)"', source)
-        self.assertIn('value: (env?.aliases || []).join("\\n")', source)
+        self.assertIn('value: aliasLabels(env).join("\\n")', source)
         self.assertIn('kind: "change_binding", site: site.name, binding, aliases, scope', source)
         self.assertIn('id="prompt-extra-row" class="prompt-extra-row"', template)
         self.assertIn('<textarea id="prompt-extra" rows="4"', template)

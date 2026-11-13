@@ -162,6 +162,22 @@ class Sync:
         return settings.remote_exec(self.system, environment, f"test -d {shlex.quote(environment.root)}", check=False).returncode == 1
 
 
+ORDER = ("main", "development", "test", "staging", "production")
+
+
+def in_environment_order(system, site, ids):
+    """Environments in the order they follow: the main site, Development, Test, Staging, Production, then the rest"""
+    def rank(target_id):
+        if target_id == "main":
+            return 0, target_id
+        try:
+            environment = (settings.load(system, site.site_root, target_id).other.get("ENVIRONMENT") or "").lower()
+        except settings.SettingsError:
+            environment = ""
+        return (ORDER.index(environment) if environment in ORDER else len(ORDER)), target_id
+    return sorted(ids, key=rank)
+
+
 def sync_environments(system, name, source_id, to, data="", dry_run=False):
     if dry_run:
         system.say("DRY RUN: nothing is changed on the destinations.")
@@ -192,6 +208,7 @@ def sync_environments(system, name, source_id, to, data="", dry_run=False):
                     raise Stop(f"Unknown destination: {item}")
     if not destinations:
         raise Stop("No environment to sync to.")
+    destinations = in_environment_order(system, site, destinations)
 
     # Who may send and receive settings is set in Sync setup. With all, a site that may not is skipped. A site named on
     # its own that may not stops the sync before anything changes.

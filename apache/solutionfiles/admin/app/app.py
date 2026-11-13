@@ -162,6 +162,28 @@ def record_failure(ip):
         GLOBAL_FAILS.append(now)
 
 
+HARBOR_API = "/api/harbor/v1/"
+HARBOR_SECRETS = "/etc/harbor/secrets/sites"
+
+
+def harbor_token_site(header):
+    """(site, environment) of the site whose VNS.Harbor token this is (harbor/umbraco/backoffice.py), or None"""
+    if not header.startswith("Bearer ") or len(header) > 200:
+        return None
+    token = header[len("Bearer "):].strip()
+    if not re.fullmatch(r"[0-9a-f]{64}", token):
+        return None
+    for path in glob.glob(os.path.join(HARBOR_SECRETS, "*", "connection", "*.json")):
+        try:
+            with open(path, encoding="utf-8") as stream:
+                known = json.load(stream).get("token", "")
+        except (OSError, ValueError, AttributeError):
+            continue
+        if isinstance(known, str) and known and hmac.compare_digest(known, token):
+            return os.path.basename(os.path.dirname(os.path.dirname(path))), os.path.splitext(os.path.basename(path))[0]
+    return None
+
+
 def csrf_token():
     if "csrf" not in session:
         session["csrf"] = secrets.token_hex(16)
@@ -170,6 +192,12 @@ def csrf_token():
 
 @app.before_request
 def protect():
+    # The VNS.Harbor package in a site: its own token, no session (harbor_api below)
+    if request.path.startswith("/api/harbor/v1/"):
+        g.harbor_site = harbor_token_site(request.headers.get("Authorization", ""))
+        if g.harbor_site is None:
+            return jsonify(error="Not a site Harbor knows"), 401
+        return None
     if request.method not in ("GET", "HEAD", "OPTIONS"):
         sent = request.headers.get("X-CSRF-Token") or request.form.get("csrf", "")
         if not hmac.compare_digest(sent, session.get("csrf", "")):
@@ -1902,6 +1930,154 @@ def harbor_modules():
     from harbor.environments import settings as harbor_settings
     from harbor.sites import service as harbor_service
     return System, harbor_settings, harbor_service
+
+
+def backoffice_environment(site):
+    """main, or the id of an environment of the site; the backoffice login is for a site on this server"""
+    target = request.values.get("target") or "main"
+    return "main" if target == "main" else target_arg(site, {"target": target})
+
+
+# ---- The VNS.Harbor package's API (phase 9b): a site asks with its own token, and only about itself
+def harbor_api_destinations(site, source):
+    """Where the site may sync to: its other environments, with what Sync setup lets it send each"""
+    root = os.path.join(WEB_ROOT, site)
+    config = _data_sync_module.load(root)
+    found = []
+    for destination in ["main", *target_ids(root)]:
+        if destination == source:
+            continue
+        try:
+            kinds = _data_sync_module.kinds(config, source, destination)
+        except ValueError:
+            kinds = []
+        try:
+            _data_sync_module.settings_allowed(config, source, destination)
+            settings_allowed = destination != "main"
+        except ValueError:
+            settings_allowed = False
+        if kinds or settings_allowed:
+            prod = parse_prod(root, destination) or {} if destination != "main" else {}
+            binding = prod.get("PROD_BINDING") or (conf_binding(site) if destination == "main" else "")
+            if destination == "main":
+                secure = https_status(site)["scheme"] == "https"
+            else:
+                secure = prod.get("PROD_HTTPS") != "n"
+            found.append({"id": destination, "environment": prod.get("PROD_ENVIRONMENT") or ("Main" if destination == "main" else destination),
+                          "binding": binding, "url": f"{'https' if secure else 'http'}://{binding}/" if binding else "",
+                          "settings": settings_allowed, "data": kinds})
+    # Always in the order the environments follow: the main site, Development, Test, Staging, Production
+    order = ["main", "development", "test", "staging", "production"]
+    found.sort(key=lambda item: (order.index(item["environment"].lower()) if item["environment"].lower() in order else len(order), item["id"]))
+    return found
+
+
+@app.route(HARBOR_API + "site")
+def harbor_api_site():
+    site, source = g.harbor_site
+    if not os.path.isdir(os.path.join(WEB_ROOT, site)):
+        return error("The site is not on this server", 404)
+    return jsonify(site=site, environment=source, destinations=harbor_api_destinations(site, source))
+
+
+@app.route(HARBOR_API + "sync", methods=["POST"])
+def harbor_api_sync():
+    """Settings or data from this site to one of its environments: the same task as the admin's Sync"""
+    site, source = g.harbor_site
+    data = request.get_json(silent=True) or {}
+    destination, what = data.get("destination"), data.get("what")
+    allowed = {item["id"]: item for item in harbor_api_destinations(site, source)}
+    if what not in ("settings", "data"):
+        return error("Choose settings or data.", 400)
+    # all: every environment that may receive it from this site
+    names = [item for item, found in allowed.items() if found["settings" if what == "settings" else "data"]] if destination == "all" else [destination]
+    if not names or any(name not in allowed or not allowed[name]["settings" if what == "settings" else "data"] for name in names):
+        return error("This site may not sync that there. Sync setup in Harbor decides.", 403)
+    payload = ({"kind": "sync_env", "site": site, "source": source, "destination": ",".join(names)} if what == "settings"
+               else {"kind": "data_sync", "site": site, "source": source, "destination": ",".join(names)})
+    title, argv, cwd = build_command(payload)
+    with SESSIONS_LOCK:
+        if sum(1 for s in SESSIONS.values() if s.running) >= MAX_SESSIONS:
+            return error("Harbor is busy. Try again in a moment.", 503)
+        session_obj = TermSession(title + " (from Umbraco)", argv, cwd, None, auto_close=True, sites=terminal_activity_sites(payload),
+                                  scope=terminal_scope(payload), targets=terminal_targets(payload), owner=access.ROOT, locked=True)
+        session_obj.process = True
+        session_obj.harbor_site = (site, source)
+        SESSIONS[session_obj.id] = session_obj
+    audit(f"Started from Umbraco ({site}, {source}): {title}")
+    return jsonify(task=session_obj.id)
+
+
+HARBOR_EVENT = re.compile(rb"\x1b\]7777;harbor;(\{.*?\})\x07")
+
+
+@app.route(HARBOR_API + "task/<sid>")
+def harbor_api_task(sid):
+    """A sync the site started: its steps so far, and how it ended"""
+    with SESSIONS_LOCK:
+        task = SESSIONS.get(sid)
+    if task is None or getattr(task, "harbor_site", None) != g.harbor_site:
+        return error("Unknown task", 404)
+    with task.lock:
+        output = bytes(task.buffer)
+    steps = []
+    for match in HARBOR_EVENT.finditer(output):
+        try:
+            event = json.loads(match.group(1))
+        except ValueError:
+            continue
+        if isinstance(event, dict) and isinstance(event.get("text"), str):
+            steps.append({"type": event.get("type", "step"), "text": event["text"]})
+    return jsonify(running=task.running, exit=task.exit, steps=steps[-200:])
+
+
+@app.route("/api/sites/<name>/backoffice-login")
+def api_backoffice_login(name):
+    """A one-time link that logs in to the site's backoffice as its chosen Umbraco user (the VNS.Harbor package), or
+    no link when the site has none chosen: the Backend button then opens the backoffice's own login"""
+    require_admin()
+    site = site_arg({"site": name})
+    environment = backoffice_environment(site)
+    System, _, _ = harbor_modules()
+    from harbor.core.system import Stop
+    from harbor.umbraco import backoffice
+    system = System()
+    if not backoffice.backoffice_user(system, site, environment) or not backoffice.uses_package(system, _harbor_site(site)):
+        return jsonify(url=None)
+    try:
+        return jsonify(url=backoffice.login_link(system, site, environment, who=me().get("name") or me().get("id") or ""))
+    except Stop as stop:
+        return error(str(stop) or "No login link could be made", 400)
+
+
+def _harbor_site(name):
+    harbor_modules()
+    from harbor.core.templates import Site
+    return Site(name)
+
+
+@app.route("/api/sites/<name>/backoffice-user", methods=["GET", "POST"])
+def api_backoffice_user(name):
+    """The Umbraco user the Backend button logs in as. Saving it also connects the site to Harbor (vns-harbor.json)."""
+    require_admin()
+    site = site_arg({"site": name})
+    environment = backoffice_environment(site)
+    System, _, _ = harbor_modules()
+    from harbor.core.system import Stop
+    from harbor.umbraco import backoffice
+    system = System()
+    if request.method == "GET":
+        return jsonify(user=backoffice.backoffice_user(system, site, environment), package=backoffice.uses_package(system, _harbor_site(site)))
+    user = (request.get_json(silent=True) or {}).get("user", "")
+    if not isinstance(user, str):
+        abort(400, "Invalid user")
+    try:
+        backoffice.set_backoffice_user(system, site, user.strip(), environment)
+        if user.strip() and backoffice.uses_package(system, _harbor_site(site)):
+            backoffice.connect(system, site, environment, request.host_url.rstrip("/"))
+    except Stop as stop:
+        return error(str(stop) or "Could not save", 400)
+    return jsonify(ok=True)
 
 
 @app.route("/api/sites/<name>/service")

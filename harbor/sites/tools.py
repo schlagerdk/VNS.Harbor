@@ -196,6 +196,7 @@ def publish(system, name, configuration="", folder="", environment_name=""):
         # Always bring the site back up, also if the publish fails
         if stopped:
             system.run("systemctl", "start", unit, check=False)
+    keep_connection(system, site, "main")
     system.sleep(2)
     system.run("systemctl", "status", unit, "--no-pager", check=False)
     if system.run("systemctl", "is-active", "--quiet", unit, check=False).ok:
@@ -204,6 +205,17 @@ def publish(system, name, configuration="", folder="", environment_name=""):
         system.say(f"FAILED: {unit} is not running. Last log lines:")
         system.run("journalctl", "-u", unit, "-n", "20", "--no-pager", check=False)
         raise Stop("", 1)
+
+
+def keep_connection(system, site, environment):
+    """A site with the VNS.Harbor package gets its connection to Harbor again where it runs (vns-harbor.json, root:www-data)"""
+    from harbor.umbraco import backoffice
+    if not backoffice.uses_package(system, site):
+        return
+    try:
+        backoffice.connect(system, site.name, environment)
+    except (Stop, OSError) as error:
+        system.warn(f"The site's connection to Harbor was not written: {error}")
 
 
 # ---- an environment's logs

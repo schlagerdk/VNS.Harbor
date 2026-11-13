@@ -22,10 +22,13 @@ from apache.tests.app_targets import add_target_helpers
 
 APACHE = Path(__file__).resolve().parents[1]
 WINDOWS_TEMPLATES = APACHE / "solutionfiles/csharp/windows-prod-scripts"
+# As it was before it called harbor (WindowsPublishTests run against both)
+LEGACY_WINDOWS_TEMPLATES = APACHE.parent / "tests/legacy/solutionfiles/csharp/windows-prod-scripts"
 UMBRACO_TEMPLATES = APACHE / "solutionfiles/csharp/umbraco/windows-prod-scripts"
 # clear_logs_prod.sh as it was before it called harbor: harbor env clear-logs is compared with it in tests/
 LEGACY_UMBRACO_TEMPLATES = APACHE.parent / "tests/legacy/solutionfiles/csharp/umbraco/windows-prod-scripts"
-LINUX_TEMPLATE = APACHE / "solutionfiles/csharp/prod-scripts/publish_prod.sh"
+# As it was before it called harbor: harbor env publish is compared with it in tests/test_env_publish.py
+LINUX_TEMPLATE = APACHE.parent / "tests/legacy/solutionfiles/csharp/prod-scripts/publish_prod.sh"
 BASH = shutil.which("bash")
 BASH_MAJOR = int(subprocess.run([BASH, "-c", "echo ${BASH_VERSINFO[0]}"], capture_output=True, text=True).stdout)
 NEEDS_BASH_4 = unittest.skipIf(BASH_MAJOR < 4, "Needs bash 4 or newer, as on the servers")
@@ -226,8 +229,11 @@ class ScriptTestCase(unittest.TestCase):
 
 
 class WindowsPublishTests(ScriptTestCase):
+    """The script as it was; HarborWindowsPublishTests runs the same tests against the template that calls harbor"""
+    templates = LEGACY_WINDOWS_TEMPLATES
+
     def publish(self, *args, **env):
-        return self.run_script(self.script("publish_prod.sh", WINDOWS_TEMPLATES), *args, **env)
+        return self.run_script(self.script("publish_prod.sh", self.templates), *args, **env)
 
     def test_first_publish_creates_web_config_inside_the_offline_window(self):
         result = self.publish()
@@ -292,13 +298,13 @@ class WindowsPublishTests(ScriptTestCase):
 
     def test_wrong_folder_stops_before_the_build(self):
         result = self.run_script(self.script(
-            "publish_prod.sh", WINDOWS_TEMPLATES, PROD_WINDOWS_SHARE=shlex.quote("//10.0.0.1/share$/typo")))
+            "publish_prod.sh", self.templates, PROD_WINDOWS_SHARE=shlex.quote("//10.0.0.1/share$/typo")))
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Could not open", result.stderr)
         self.assertFalse(any(call.startswith("dotnet") for call in self.calls()))
 
     def test_dry_run_changes_nothing_and_is_not_recorded(self):
-        path = self.script("publish_prod.sh", WINDOWS_TEMPLATES)
+        path = self.script("publish_prod.sh", self.templates)
         result = self.run_script(path, "--dry-run", VNS_PUBLISH_TRACKED="")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("--dry-run", self.calls()[self.index("copy /")])
@@ -327,15 +333,24 @@ class WindowsPublishTests(ScriptTestCase):
 
     def test_http_umbraco_site_only_gets_the_rewrites(self):
         (self.site / "App.csproj").write_text('<Project><PackageReference Include="Umbraco.Cms" /></Project>\n')
-        result = self.run_script(self.script("publish_prod.sh", WINDOWS_TEMPLATES, PROD_HTTPS="n"))
+        result = self.run_script(self.script("publish_prod.sh", self.templates, PROD_HTTPS="n"))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.server_rules(), ["Rewrite to Sitemap.xml", "Rewrite to Robots.txt"])
 
     def test_http_site_is_checked_on_http(self):
-        result = self.run_script(self.script("publish_prod.sh", WINDOWS_TEMPLATES, PROD_HTTPS="n"))
+        result = self.run_script(self.script("publish_prod.sh", self.templates, PROD_HTTPS="n"))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("http://prod.test", self.calls()[self.index("curl ")])
 
+
+
+class HarborWindowsPublishTests(WindowsPublishTests):
+    """The same publishes through the template as it is now: it calls harbor env publish, which reads the environment's
+    settings in the template (the site is in the test's folder: VNS_WEB_ROOT)"""
+    templates = WINDOWS_TEMPLATES
+
+    def run_script(self, path, *args, **env):
+        return super().run_script(path, *args, **{"VNS_WEB_ROOT": str(self.root), **env})
 
 class WindowsContentTests(ScriptTestCase):
     def test_clear_logs_takes_the_site_offline_and_back(self):
@@ -535,7 +550,7 @@ class ProductionSetupTests(unittest.TestCase):
 
 class TemplateTests(unittest.TestCase):
     def test_every_placeholder_is_filled_by_create_prod(self):
-        create = (APACHE / "solutionfiles/csharp/scripts/create_prod.sh").read_text()
+        create = (APACHE.parent / "tests/legacy/solutionfiles/csharp/scripts/create_prod.sh").read_text()
         templates = [LINUX_TEMPLATE, *WINDOWS_TEMPLATES.glob("*.sh"), *UMBRACO_TEMPLATES.glob("*.sh")]
         for template in templates:
             for name in set(re.findall(r"@([A-Z_]+)@", template.read_text())) - {"APACHE_DIR"}:
@@ -545,7 +560,8 @@ class TemplateTests(unittest.TestCase):
     def test_windows_scripts_have_the_names_the_admin_buttons_use(self):
         self.assertEqual({path.name for path in WINDOWS_TEMPLATES.glob("*.sh")}, {"publish_prod.sh"})
         self.assertEqual({path.name for path in UMBRACO_TEMPLATES.glob("*.sh")}, {"sync_prod.sh", "clear_logs_prod.sh"})
-        self.assertIn('VNS_PUBLISH_TRACKED:-} != "${_scope}"', (WINDOWS_TEMPLATES / "publish_prod.sh").read_text())
+        # The publish, its tracking too, is harbor's
+        self.assertIn('env publish "${_siteFolder##*/}"', (WINDOWS_TEMPLATES / "publish_prod.sh").read_text())
 
     def test_actions_without_ssh_are_refused_for_windows(self):
         self.assertIn("PROD_TARGET:-} == windows", (APACHE / "lib/prod.sh").read_text())
@@ -579,8 +595,11 @@ class CreateProdTests(ScriptTestCase):
         for folder in ("uSync", "Views"):
             (self.site / "_publish" / folder).mkdir(parents=True)
 
+    # create_prod.sh as it was; HarborCreateProdTests runs the same tests through the template that calls harbor
+    create_template = APACHE.parent / "tests/legacy/solutionfiles/csharp/scripts/create_prod.sh"
+
     def create(self, kind="umbraco", apache=APACHE, **env):
-        text = (APACHE / "solutionfiles/csharp/scripts/create_prod.sh").read_text()
+        text = self.create_template.read_text()
         values = {"APACHE_DIR": str(apache), "SITE": "example.test", "BINDING": "example.test", "PROJECT_NAME": "App",
                   "SITE_ROOT": str(self.site), "PUBLISH_FOLDER": "_publish", "ADMIN_MAIL": "admin@example.test", "CSHARP_KIND": kind}
         for key, value in values.items():
@@ -700,11 +719,20 @@ class CreateProdTests(ScriptTestCase):
         self.assertEqual(self.setting("PROD_HTTPS"), "n")
         text = (self.scripts / "targets/staging/publish_prod.sh").read_text()
         self.assertNotIn("PROD_TARGET=windows", text)
-        self.assertIn("HTTPS='${PROD_HTTPS}'", text)
+        # The protocol is a setting of the environment; harbor env publish reads it
+        self.assertIn('env publish "${_siteFolder##*/}"', text)
         self.assertIn("sync_env.sh", (self.scripts / "targets/staging/sync_prod.sh").read_text())
 
 
 @NEEDS_BASH_4
+class HarborCreateProdTests(CreateProdTests):
+    """The same environments made through create_prod.sh as it is now: it calls harbor env create"""
+    create_template = APACHE / "solutionfiles/csharp/scripts/create_prod.sh"
+
+    def test_a_remote_folder_with_a_site_is_adopted(self):
+        self.skipTest("harbor adopts it with harbor env register itself, not register_env.sh: tests/test_env_register.py")
+
+
 class WindowsActionTests(ScriptTestCase):
     """Run the actions from a copy of the apache folder, with its site folder in a temporary folder."""
 
@@ -926,6 +954,10 @@ class AdoptSiteTests(unittest.TestCase):
         script.write_text(script.read_text().replace('[[ $EUID -eq 0 ]] || exec sudo "$0" "$@"\n', ""))
         common = self.apache / "lib/common.sh"
         common.write_text(common.read_text().replace("_rootPath=${VNS_WEB_ROOT:-/var/www}", f"_rootPath={self.www}").replace('"/etc/', f'"{self.etc}/'))
+        # The old scripts run create_prod.sh, and the templates it renders, as they were (they now call harbor)
+        for template in ("scripts/create_prod.sh", "prod-scripts/publish_prod.sh", "windows-prod-scripts/publish_prod.sh",
+                         "umbraco/prod-scripts/clear_logs_prod.sh", "umbraco/windows-prod-scripts/clear_logs_prod.sh"):
+            shutil.copy(APACHE.parent / "tests/legacy/solutionfiles/csharp" / template, self.apache / "solutionfiles/csharp" / template)
         create = self.apache / "solutionfiles/csharp/scripts/create_prod.sh"
         create.write_text(re.sub(r"(?ms)^if \[\[ \$EUID -ne 0 \]\]; then.*?^fi\n", "", create.read_text(), count=1))
         executable(self.bin / "dotnet", '#!/bin/bash\necho DOTNET >>"$FAKE_LOG"\n')
@@ -1045,6 +1077,8 @@ class MoveEnvironmentTests(AdoptSiteTests):
         move = (APACHE.parent / "tests/legacy/move_env.sh").read_text().replace('[[ $EUID -eq 0 ]] || exec sudo "$0" "$@"\n', "")
         move = move.replace("/etc/", f"{self.etc}/").replace("_rootsFolder=/var/lib/vns-roots", f"_rootsFolder={self.root}/roots")
         (self.apache / "move_env.sh").write_text(move)
+        # The old move_env.sh publishes with the Windows script as it was (the template now calls harbor)
+        shutil.copy(LEGACY_WINDOWS_TEMPLATES / "publish_prod.sh", self.apache / "solutionfiles/csharp/windows-prod-scripts/publish_prod.sh")
         (self.root / "server").mkdir()
         for command in ("systemctl", "a2ensite", "a2dissite", "a2enmod"):
             executable(self.bin / command, f'#!/bin/bash\necho "{command} $*" >>"$FAKE_LOG"\n')

@@ -28,6 +28,7 @@ const editorValue = () => shown;
 const ask = async options => {prompts.push(options); return confirmation;};
 const toast = message => notices.push(message);
 const loadSites = async () => {};
+const refreshSnippetMenu = () => {};
 const api = async (url, options) => {
     calls.push({url, options});
     if (!options) return url.includes("encoding=")
@@ -54,7 +55,7 @@ const api = async (url, options) => {
     assert.equal(calls[2].options.json.content, "Decoded text");
     assert.equal(configurationEditor.encoding, "utf-8");
     assert.equal(prompts[1].ok, "Save as UTF-8");
-    calls = []; shown = null; selection = null;
+    calls = []; shown = null; selection = null; notices = [];
     await editConfiguration(site, env, "service");
     assert.equal(calls.length, 1);
     assert.equal(shown, null);

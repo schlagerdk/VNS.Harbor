@@ -91,7 +91,8 @@ console.log(JSON.stringify(sortedEnvironments(input).map((env) => env.binding)))
         self.assertIn(".env-head .publish-status { flex-basis: auto; }", (APP / "static/style.css").read_text())
         row = source[source.index("function compactEnvironmentRow"):source.index("function siteCard(")]
         self.assertIn("openLink(bindingLabel(env) || address.hostname, address.url", row)
-        self.assertIn('openLink("Backend", address.url + "umbraco"', row)
+        # The Backend button logs straight in when the site has the VNS.Harbor package and a chosen user
+        self.assertIn('backendButton(site, env, address.url + "umbraco"', row)
 
     def test_add_is_on_the_left_and_publish_and_sync_on_the_right(self):
         page = (APP / "templates/index.html").read_text()
@@ -141,7 +142,7 @@ console.log(JSON.stringify([
         page = (APP / "templates/index.html").read_text()
         self.assertNotIn('id="prod-existing-toggle"', page)
         self.assertNotIn('value: "existing"', (APP / "static/app.js").read_text())
-        script = (APACHE / "solutionfiles/csharp/scripts/create_prod.sh").read_text()
+        script = (APACHE.parent / "tests/legacy/solutionfiles/csharp/scripts/create_prod.sh").read_text()
         self.assertIn('bash "@APACHE_DIR@/register_env.sh" "${_site}"', script)
         self.assertIn('windows_prod.py" describe', script)
 

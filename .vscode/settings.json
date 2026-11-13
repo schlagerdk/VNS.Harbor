@@ -1,6 +1,7 @@
 {
-	// The only .csproj here is a template with placeholders (DotNetVersion ...), used by create_site.sh.
-	// It is not a project to build, so the C# extension does not load or restore it.
-	"dotnet.defaultSolution": "disable",
+	// The C# extension loads only the VNS.Harbor package, so its .cs files are formatted by .editorconfig (formatting
+	// rules only apply in a loaded project). The template .csproj with placeholders (DotNetVersion ...), used by
+	// harbor site create, is not a project to build or restore, and is not in this solution.
+	"dotnet.defaultSolution": "nuget/VNS.Harbor.sln",
 	"dotnet.automaticallyCreateSolutionInWorkspace": false
 }
