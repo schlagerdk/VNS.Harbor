@@ -1,0 +1,162 @@
+import importlib.util
+from pathlib import Path
+import re
+import subprocess
+import tempfile
+import unittest
+
+
+APACHE = Path(__file__).resolve().parents[1]
+spec = importlib.util.spec_from_file_location("move_site", APACHE / "lib/move_site.py")
+move_site = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(move_site)
+
+HTTPS_CONF = """<VirtualHost *:80>
+  ServerAdmin mhs@vns.dk
+  ServerName site.example.test
+  DocumentRoot /var/www/site/_publish/wwwroot
+
+  RewriteEngine On
+  RewriteCond %{REQUEST_URI} !^/\\.well-known/acme-challenge/
+  RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]
+
+  ErrorLog /var/log/apache2/site-rewrite-error.log
+</VirtualHost>
+
+<VirtualHost *:443>
+  ServerAdmin mhs@vns.dk
+  ServerName site.example.test
+  ServerAlias www.site.example.test
+  DocumentRoot /var/www/site/_publish/wwwroot
+
+  RewriteEngine On
+  RewriteCond %{HTTP:Upgrade} =websocket [NC]
+  RewriteRule /(.*) ws://127.0.0.1:4003/$1 [P,L]
+
+  ProxyPreserveHost On
+  ProxyRequests Off
+  RequestHeader set X-Forwarded-Proto "https"
+  Header always set Strict-Transport-Security "max-age=31536000"
+
+  # VNS snippet: allowed IPs
+  <Location />
+    Require ip 10.0.0.0/8
+  </Location>
+
+  ProxyPass /vns-offline/ !
+  ProxyPass / http://127.0.0.1:4003/ nocanon
+  ProxyPassReverse / http://127.0.0.1:4003/
+
+  SSLEngine On
+
+  SSLCertificateFile /etc/ssl/certs/site_ecc/fullchain.cer
+  SSLCertificateKeyFile /etc/ssl/certs/site_ecc/site.key
+
+  ErrorLog /var/log/apache2/site-443-error.log
+</VirtualHost>
+"""
+
+
+class HttpConfTests(unittest.TestCase):
+    def test_https_site_answers_on_port_80_without_a_certificate(self):
+        text = move_site.http_conf(HTTPS_CONF)
+        self.assertEqual(text.count("<VirtualHost"), 1)
+        self.assertIn("<VirtualHost *:80>", text)
+        self.assertNotIn("443", text)
+        self.assertNotRegex(text, r"(?m)^\s*SSL")
+        self.assertNotIn("Strict-Transport-Security", text)
+        self.assertNotIn("https://", text)
+        self.assertIn('X-Forwarded-Proto "http"', text)
+        self.assertIn("ErrorLog /var/log/apache2/site-80-error.log", text)
+        self.assertEqual(text.count("ProxyPass /.well-known/acme-challenge/ !"), 1)
+        self.assertLess(text.index("ProxyRequests Off"), text.index("acme-challenge"))
+
+    def test_aliases_and_snippets_are_kept(self):
+        text = move_site.http_conf(HTTPS_CONF)
+        self.assertIn("ServerAlias www.site.example.test", text)
+        self.assertIn("Require ip 10.0.0.0/8", text)
+        self.assertIn("ProxyPass /vns-offline/ !", text)
+
+    def test_twice_changes_nothing_more(self):
+        once = move_site.http_conf(HTTPS_CONF)
+        self.assertEqual(move_site.http_conf(once), once)
+
+    def test_http_site_is_left_alone(self):
+        conf = "<VirtualHost *:80>\n  ServerName site.test\n  ProxyPass / http://127.0.0.1:4000/\n</VirtualHost>\n"
+        self.assertEqual(move_site.http_conf(conf), conf)
+
+    def test_redirect_made_by_issue_certificate_goes_too(self):
+        conf = ('<VirtualHost *:80>\n  ServerName site.test\n  RewriteEngine On\n  RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]\n</VirtualHost>\n\n'
+                '<VirtualHost *:443>\n  ServerName site.test\n  ProxyRequests Off\n  ProxyPass / http://127.0.0.1:4000/\n  SSLEngine On\n</VirtualHost>\n')
+        text = move_site.http_conf(conf)
+        self.assertTrue(text.startswith("<VirtualHost *:80>\n  ServerName site.test\n  ProxyRequests Off"), text)
+
+
+class PortTests(unittest.TestCase):
+    def test_local_ports_change_and_apache_ports_do_not(self):
+        text = move_site.set_port(HTTPS_CONF, "4100")
+        self.assertNotIn("4003", text)
+        self.assertEqual(text.count("127.0.0.1:4100"), 3)
+        self.assertIn("<VirtualHost *:443>", text)
+        service = 'ExecStart=/usr/lib/dotnet/dotnet /var/www/site/_publish/App.dll --urls "http://localhost:4003"\n'
+        self.assertIn("localhost:4100", move_site.set_port(service, "4100"))
+
+
+class HttpSettingsTests(unittest.TestCase):
+    def test_umbraco_url_and_use_https_change_and_the_rest_is_kept(self):
+        with tempfile.TemporaryDirectory() as folder:
+            settings = Path(folder) / "appsettings.json"
+            settings.write_text('{\n  // a comment\n  "Umbraco": { "CMS": {\n    "Global": { "UseHttps": true },\n'
+                                '    "WebRouting": { "UmbracoApplicationUrl": "https://site.example.test" } } }\n}\n')
+            other = Path(folder) / "appsettings.Production.json"
+            other.write_text('{ "Logging": { "UseHttps": true } }\n')
+            self.assertEqual(move_site.http_settings(folder, "site.example.test"), 1)
+            text = settings.read_text()
+            self.assertIn('"UmbracoApplicationUrl": "http://site.example.test"', text)
+            self.assertIn('"UseHttps": false', text)
+            self.assertIn("// a comment", text)
+            self.assertIn('"UseHttps": true', other.read_text())
+
+
+class ScriptTests(unittest.TestCase):
+    script = (APACHE / "move_site.sh").read_text()
+
+    def test_script_is_valid_bash(self):
+        subprocess.run(["bash", "-n", str(APACHE / "move_site.sh")], check=True)
+
+    def test_new_server_gets_http_and_its_own_port(self):
+        receive = self.script[self.script.index("receive() {"):self.script.index("if [[ ${1:-} == --receive ]]")]
+        self.assertIn("lib/move_site.py http-conf", receive)
+        self.assertIn("allocate_ports", receive)
+        self.assertIn("PROD_HTTPS='n'", receive)
+        self.assertNotIn("issue_certificate", self.script)
+
+    def test_nothing_is_stopped_before_the_new_server_is_checked(self):
+        self.assertLess(self.script.index('on_new_server "bash -c $(printf %q "${_check}")"'), self.script.index('systemctl stop "${_unit}"'))
+
+    def test_failure_starts_the_sites_again_and_cleans_up_the_new_server(self):
+        undo = self.script[self.script.index("undo() {"):self.script.index("trap undo EXIT")]
+        self.assertIn('systemctl start "${_unit}"', undo)
+        self.assertIn('rm -rf $(printf %q "${_folder}")', undo)
+
+
+class AdminTests(unittest.TestCase):
+    source = (APACHE / "solutionfiles/admin/app/static/app.js").read_text()
+    app = (APACHE / "solutionfiles/admin/app/app.py").read_text()
+
+    def test_main_site_offers_migrate_and_copy_to_another_server(self):
+        self.assertIn('if (movableSite) addManage("Migrate…", () => openMoveSiteDialog(site));', self.source)
+        self.assertIn('if (movableSite) addManage("Copy to server…", () => openMoveSiteDialog(site, true));', self.source)
+        self.assertIn("!site.admin && !site.managed_by", self.source)
+
+    def test_move_site_is_for_administrators_and_runs_the_script(self):
+        self.assertRegex(self.app, r'ADMIN_TASKS = \{[^}]*"move_site"')
+        self.assertIn('os.path.join(APACHE_DIR, "move_site.sh"), site]', self.app)
+
+    def test_environment_to_another_server_starts_with_http(self):
+        self.assertIn('extra_env["VNS_PROD_HTTPS"] = "n"', self.app)
+        self.assertIn("const otherServer = moving && !release && !same", self.source)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -1643,15 +1643,17 @@ function envPanel(site, env) {
 		}
 		extraTools = tools;
 	}
+	// The whole site, with its environments on this server, can go to another server
+	const movableSite = !isTarget(env) && !site.admin && !site.managed_by && (env.unit || env.apache);
+	if (movableSite) addManage("Migrate…", () => openMoveSiteDialog(site));
 	if (isTarget(env) && (env.mode === "local" && env.exists !== false || env.mode === "remote" && !missing)) addManage("Migrate…", () => openCreateProdDialog(site, env));
 	if (isTarget(env) && (env.mode === "local" && env.exists !== false || env.mode === "windows" || env.mode === "remote" && !missing)) addManage("Copy site", () => openCreateProdDialog(site, env, true));
+	if (!hasProd(site) && !site.admin && !site.managed_by) addManage("Copy site", () => copySite(site));
+	if (movableSite) addManage("Copy to server…", () => openMoveSiteDialog(site, true));
 	// An environment on Windows is only removed here: its IIS site and files stay on the server
 	if (hasProd(site) && !site.admin && env.mode === "windows") addManage("Remove environment", () => deleteSite(site, "prod", env), "push-right");
 	else if (hasProd(site) && !site.admin) addManage("Delete site", () => deleteSite(site, isTarget(env) ? "prod" : "test", env), "danger");
-	if (!hasProd(site) && !site.admin) {
-		if (!site.managed_by) addManage("Copy site", () => copySite(site));
-		addManage("Delete site", () => deleteSite(site, "all"), "danger");
-	}
+	if (!hasProd(site) && !site.admin) addManage("Delete site", () => deleteSite(site, "all"), "danger");
 
 	const panel = el("section", { className: "env " + (isTarget(env) ? "prod" : "") }, heading, meta);
 	panel.dataset.env = envKeyOf(env);
@@ -2258,8 +2260,18 @@ function syncProdForm() {
 	$("#prod-windows-path").textContent = `IIS site folder: ${share || "//server/share"}${share && share.split("/").pop().toLowerCase() === folderName.toLowerCase() ? "" : "/" + (folderName || "…")}`;
 	$("#prod-binding-row").hidden = noSettings && !sameServerMove;
 	$("#prod-environment-row").hidden = noSettings;
-	$("#prod-protocol-row").hidden = noSettings;
+	// To another server it starts with HTTP, as DNS may not point there yet. Issue certificate turns HTTPS on.
+	const otherServer = moving && !release && !same && !(local && prodForm.dataset.moveMode === "local");
+	if (otherServer && !prodForm.dataset.httpsChoice) {
+		prodForm.dataset.httpsChoice = prodForm.elements.https.value;
+		prodForm.elements.https.value = "n";
+	} else if (!otherServer && prodForm.dataset.httpsChoice) {
+		prodForm.elements.https.value = prodForm.dataset.httpsChoice;
+		delete prodForm.dataset.httpsChoice;
+	}
+	$("#prod-protocol-row").hidden = noSettings || otherServer;
 	$("#prod-protocol-hint").hidden = noSettings;
+	if (otherServer) $("#prod-protocol-hint").textContent = "It is set up with HTTP on the new server, as DNS may not point there yet. Use Issue certificate on the environment when it does.";
 	prodForm.folder.required = !(moving && local) && !noSettings;
 	prodForm.binding.required = !release;
 	const fromWindows = prodForm.dataset.moveMode === "windows";
@@ -2276,7 +2288,7 @@ function syncProdForm() {
 		? "Settings and content are copied, and the project is built for Windows. A connection to the source's own SQL Server is changed to its address, which must accept connections from the new server. With a Windows target, the IIS site and its folder must already exist."
 		: fromWindows
 			? "Settings and content are copied from Windows while its site runs, and the project is built for the destination. A connection to the Windows server's own SQL Server is changed to its address."
-			: `${copying ? "The whole folder is copied" : "The site is stopped while the whole folder is copied"}, including its build, media, logs and a SQLite database, so it runs the same version. A connection to the source's own SQL Server is changed to its address, which must accept connections from the new server. With HTTPS, DNS must already point to the new server.`;
+			: `${copying ? "The whole folder is copied" : "The site is stopped while the whole folder is copied"}, including its build, media, logs and a SQLite database, so it runs the same version. A connection to the source's own SQL Server is changed to its address, which must accept connections from the new server.`;
 	const destinationServer = same ? prodForm.dataset.moveHost : target === "remote" ? prodForm.host.value.trim() || "…" : "";
 	const destinationPath = windows ? prodForm.smb_share.value.trim() || "…"
 		: local ? prodForm.local_path.value.trim() || "…"
@@ -2305,6 +2317,7 @@ function syncProdForm() {
 }
 function openCreateProdDialog(site, moveEnv, copying = false) {
 	prodForm.reset();
+	delete prodForm.dataset.httpsChoice;
 	delete prodForm.dataset.copy;
 	if (copying) prodForm.dataset.copy = "1";
 	delete prodForm.dataset.moveDatabase;
@@ -2535,6 +2548,51 @@ setupSiteForm.onsubmit = (event) => {
 		await openTask({ kind: "setup_site", site: setupSiteForm.dataset.site, binding: data.binding.trim(), certificate: data.certificate,
 			environment: $("#setup-site-environment-row").hidden ? "" : data.environment });
 		setupSiteDialog.close();
+	});
+};
+
+// A whole site to another Linux server: the site and its environments on this server go, the others stay where they are
+const moveSiteDialog = $("#dlg-move-site");
+const moveSiteForm = $("#form-move-site");
+function openMoveSiteDialog(site, copying = false) {
+	moveSiteForm.reset();
+	moveSiteForm.dataset.site = site.name;
+	moveSiteForm.dataset.copy = copying ? "1" : "";
+	$("#move-site-title").textContent = `${copying ? "Copy" : "Migrate"} ${siteLabel(site)}`;
+	$("#move-site-description").textContent = copying
+		? "Copy the site to another Linux server. It stays here as it is."
+		: "Move the site to another Linux server. Everything on this server goes with it.";
+	const going = copying ? "Copied" : "Moves";
+	const items = sortedEnvironments(site.environments).map((env) => {
+		const here = !isTarget(env) || env.mode === "local";
+		const where = here ? going : env.mode === "windows" ? "Stays on Windows" : `Stays on ${env.host || "its server"}`;
+		return el("li", { className: here ? "goes" : "stays" },
+			el("span", { className: "move-site-name", textContent: bindingLabel(env) || env.folder || siteLabel(site) }),
+			el("span", { className: `sync-env-name env-${environmentLabel(site, env).toLowerCase()}`, textContent: environmentLabel(site, env) }),
+			el("span", { className: "move-site-where", textContent: where }));
+	});
+	$("#move-site-list").replaceChildren(...items);
+	const kept = site.environments.some((env) => isTarget(env) && env.mode !== "local");
+	$("#move-site-hint").textContent = `${copying ? "The whole folders are copied" : "The sites here are stopped while the whole folders are copied"}, including builds, media, logs and SQLite databases, so they run the same version and nothing is built. A database in SQL Server stays where it is: connections to this server's own SQL Server are pointed at its address, and it must accept connections from the new server.`
+		+ (kept ? ` Environments on other servers are not touched: the site keeps publishing to them${copying ? ", from both servers" : " from the new server"}.` : "")
+		+ " The new server needs the same VNS version and CPU architecture, and none of the sites. If a step fails, the sites here run as before.";
+	$("#move-site-delete-row").hidden = copying;
+	$("#move-site-stop-row").hidden = !copying;
+	$("#move-site-submit").textContent = copying ? "Copy" : "Migrate";
+	moveSiteDialog.showModal();
+}
+$("#move-site-cancel").onclick = () => moveSiteDialog.close();
+moveSiteForm.onsubmit = (event) => {
+	event.preventDefault();
+	const form = moveSiteForm.elements;
+	const copying = Boolean(moveSiteForm.dataset.copy);
+	const data = { kind: "move_site", site: moveSiteForm.dataset.site, host: form.host.value.trim(), ssh_port: form.ssh_port.value,
+		user: form.user.value.trim(), password: form.password.value, copy: copying,
+		delete_local: !copying && form.delete_local.checked ? "y" : "n", stop_source: copying && form.stop_source.checked };
+	run(async () => {
+		await openTask(data);
+		moveSiteForm.reset();
+		moveSiteDialog.close();
 	});
 };
 

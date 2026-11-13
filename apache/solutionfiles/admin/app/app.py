@@ -1250,6 +1250,15 @@ def file_env(full):
     return found
 
 
+# Folders a user never reaches, so they are not shown either: what is in scripts/ runs as root
+USER_HIDDEN_FOLDERS = ("scripts", ".vns-publish")
+
+
+def hidden_from_user(path):
+    """Whether a path, relative to an environment's folder, is in a folder only administrators see"""
+    return not is_admin() and (path or "").replace("\\", "/").strip("/").split("/")[0] in USER_HIDDEN_FOLDERS
+
+
 def file_access(site, env, action, path):
     """A user's file action on an environment: Files there, or appsettings*.json alone with Edit appsettings.
     scripts/ is never theirs: what is there runs as root."""
@@ -1258,7 +1267,7 @@ def file_access(site, env, action, path):
     if is_admin():
         return
     path = (path or "").replace("\\", "/").strip("/")
-    if path.split("/")[0] in ("scripts", ".vns-publish") or ".." in path.split("/"):
+    if hidden_from_user(path) or ".." in path.split("/"):
         abort(403, "You do not have access to this folder.")
     if access.can(me(), site, env, "files"):
         return
@@ -2166,6 +2175,8 @@ def terminal_scope(payload):
         return "all"
     if kind == "bulk":
         return "prod" if payload.get("action") in ("prod", "clear_logs_prod") else "main"
+    if kind == "move_site":
+        return "all"
     if payload.get("scope") in ("all", "prod", "test", "main"):
         return "main" if payload["scope"] == "test" else payload["scope"]
     if kind in ("remote_tool", "create_prod", "sync_env", "move_env", "register_env", "data_sync", "data_sync_settings"):
@@ -2179,7 +2190,7 @@ def terminal_scope(payload):
 
 def terminal_auto_close(payload):
     kind = payload.get("kind")
-    if kind in ("shell", "create_site", "setup_site", "copy_site", "register_env", "create_prod", "sync_env", "data_sync", "data_sync_settings", "move_env", "adopt_site", "release_site", "delete_site", "change_binding", "prod_action", "dotnet_package", "fix_permissions", "publish_both", "bulk", "update_package", "sql_action", "install_sql_tools"):
+    if kind in ("shell", "create_site", "setup_site", "copy_site", "register_env", "create_prod", "sync_env", "data_sync", "data_sync_settings", "move_env", "move_site", "adopt_site", "release_site", "delete_site", "change_binding", "prod_action", "dotnet_package", "fix_permissions", "publish_both", "bulk", "update_package", "sql_action", "install_sql_tools"):
         return True
     if kind == "remote_tool":
         return payload.get("tool") == "shell"
@@ -2465,18 +2476,7 @@ def production_setup_env(data, site, moving=False):
             "VNS_PROD_SMB_DOMAIN": domain,
         })
     else:
-        host = data.get("host", "")
-        user = data.get("user", "")
-        password = data.get("password", "")
-        port = str(data.get("ssh_port", ""))
-        if not isinstance(host, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]{0,252}", host):
-            abort(400, "Invalid remote host")
-        if not isinstance(user, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.-]{0,63}", user):
-            abort(400, "Invalid SSH username")
-        if not isinstance(password, str) or len(password) > 4096:
-            abort(400, "Invalid SSH password")
-        if not port.isdecimal() or not 1 <= int(port) <= 65535:
-            abort(400, "Invalid SSH port")
+        host, user, password, port = ssh_login(data)
         values.update({
             "VNS_PROD_IP": host,
             "VNS_PROD_USER": user,
@@ -2484,6 +2484,23 @@ def production_setup_env(data, site, moving=False):
             "VNS_PROD_SSH_PORT": port,
         })
     return values
+
+
+def ssh_login(data):
+    """The server, username, password (empty: an SSH key) and port of a Linux server, as entered in a dialog"""
+    host = data.get("host", "")
+    user = data.get("user", "")
+    password = data.get("password", "")
+    port = str(data.get("ssh_port", ""))
+    if not isinstance(host, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]{0,252}", host):
+        abort(400, "Invalid remote host")
+    if not isinstance(user, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.-]{0,63}", user):
+        abort(400, "Invalid SSH username")
+    if not isinstance(password, str) or len(password) > 4096:
+        abort(400, "Invalid SSH password")
+    if not port.isdecimal() or not 1 <= int(port) <= 65535:
+        abort(400, "Invalid SSH port")
+    return host, user, password, port
 
 
 def render_create_prod_script(site):
@@ -2784,6 +2801,13 @@ def build_command(data):
         if prod.get("PROD_TARGET") == "windows" and not data.get("copy"):
             abort(400, "An environment on a Windows server cannot be migrated")
         return ("Copy" if data.get("copy") else "Migrate") + " environment: " + site, [bash, os.path.join(APACHE_DIR, "move_env.sh"), site, target], APACHE_DIR
+    if kind == "move_site":
+        site = site_arg(data)
+        if site == ADMIN_SITE:
+            abort(400, "The admin site cannot be moved")
+        if managed_by(site):
+            abort(400, "This site is an environment of a main site on another server. Move it from there.")
+        return ("Copy" if data.get("copy") else "Migrate") + " site: " + site, [bash, os.path.join(APACHE_DIR, "move_site.sh"), site], APACHE_DIR
     if kind == "adopt_site":
         site = site_arg(data)
         main = data.get("main", "")
@@ -3082,7 +3106,7 @@ def sees_session(s):
 
 
 # Tasks that run as root by choice, or open a shell: only for administrators
-ADMIN_TASKS = {"install_sql_tools", "update_system", "remote_tool", "shell", "move_env", "adopt_site", "release_site",
+ADMIN_TASKS = {"install_sql_tools", "update_system", "remote_tool", "shell", "move_env", "move_site", "adopt_site", "release_site",
                "setup_site", "unit_tool", "apache", "register_env"}
 
 
@@ -3235,6 +3259,10 @@ def api_term():
         extra_env = production_setup_env(payload, payload.get("site", ""))
     if payload.get("kind") == "move_env":
         extra_env = production_setup_env(payload, payload.get("site", ""), moving=True)
+        # On another server DNS may not point there yet, so it starts with HTTP. Issue certificate turns HTTPS on.
+        source = parse_prod(os.path.join(WEB_ROOT, payload["site"]), target_arg(payload["site"], {"target": payload.get("environment_id")})) or {}
+        if not (extra_env["VNS_PROD_TARGET"] == "same" or extra_env["VNS_PROD_TARGET"] == "local" and source.get("PROD_LOCAL_PATH")):
+            extra_env["VNS_PROD_HTTPS"] = "n"
         extra_env["VNS_MOVE_DELETE_LOCAL"] = "y" if payload.get("delete_local") == "y" else "n"
         if payload.get("copy"):
             extra_env["VNS_ENV_COPY"] = "1"
@@ -3246,6 +3274,12 @@ def api_term():
                                for value in connection.values())):
                     abort(400, "Enter SQL server, database, username and password.")
                 extra_env["VNS_COPY_SQL"] = json.dumps(connection)
+    if payload.get("kind") == "move_site":
+        host, user, password, port = ssh_login(payload)
+        extra_env = {"VNS_MOVE_IP": host, "VNS_MOVE_USER": user, "VNS_MOVE_PASSWORD": password, "VNS_MOVE_SSH_PORT": port,
+                     "VNS_MOVE_COPY": "1" if payload.get("copy") else "",
+                     "VNS_MOVE_DELETE_LOCAL": "y" if not payload.get("copy") and payload.get("delete_local") == "y" else "n",
+                     "VNS_COPY_STOP": "y" if payload.get("copy") and payload.get("stop_source") else "n"}
     if payload.get("kind") == "sql_action" and payload.get("login") is not None:
         extra_env = {"VNS_SQL_LOGIN_PASSWORD": payload["login_password"]}
     if payload.get("kind") == "copy_site" and payload.get("connection") is not None:
@@ -3473,6 +3507,9 @@ def remote_fs(site, action):
     if action == "download":
         return send_file(io.BytesIO(base64.b64decode(response["content"])), as_attachment=True,
                          download_name=os.path.basename(data["path"]))
+    if action == "list" and isinstance(response.get("items"), list):
+        folder = str(data.get("path") or "").replace("\\", "/").strip("/")
+        response["items"] = [item for item in response["items"] if not hidden_from_user(folder + "/" + str(item.get("name", "")))]
     return jsonify(response)
 
 
@@ -3484,7 +3521,10 @@ def fs_list(root=None):
     if not os.path.isdir(full):
         return error("Not a folder", 404)
     items = []
+    site, env = (None, None) if server_files() or is_admin() else file_env(full)
     for entry in os.scandir(full):
+        if site and hidden_from_user(os.path.relpath(entry.path, file_env_root(site, env))):
+            continue
         try:
             info = entry.stat(follow_symlinks=False)
         except OSError:

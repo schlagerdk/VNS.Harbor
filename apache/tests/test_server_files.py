@@ -61,6 +61,23 @@ class ServerFilesTests(unittest.TestCase):
         return self.client.post("/api/server-fs/" + action, json=data,
                                 headers={"X-CSRF-Token": "test-csrf"})
 
+    def test_user_does_not_see_the_folders_only_administrators_reach(self):
+        site = self.web / "example.test"
+        for folder in ("scripts", ".vns-publish", "wwwroot"):
+            (site / folder).mkdir(parents=True)
+        (site / "scripts/publish.sh").write_text("runs as root")
+        names = {"hidden_from_user", "file_access", "file_env", "file_env_root"}
+        nodes = [node for node in ast.parse((APP / "app.py").read_text()).body
+                 if isinstance(node, ast.FunctionDef) and node.name in names
+                 or isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "USER_HIDDEN_FOLDERS"]
+        self.ns.update(is_admin=lambda: False, site_dirs=lambda: ["example.test"], target_ids=lambda root: [])
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), str(APP / "app.py"), "exec"), self.ns)
+        response = self.client.get("/api/site-fs/example.test/list")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual([item["name"] for item in response.json["items"]], ["wwwroot"])
+        response = self.client.get("/api/site-fs/example.test/read", query_string={"path": "scripts/publish.sh"})
+        self.assertEqual(response.status_code, 403)
+
     def test_site_browser_is_confined_to_its_root_for_all_operations(self):
         site = self.web / "example.test"
         site.mkdir()

@@ -517,6 +517,29 @@
   </form>
 </dialog>
 
+<dialog id="dlg-move-site" class="newsite" aria-labelledby="move-site-title">
+  <form method="dialog" id="form-move-site">
+    <header class="ns-head">
+      <span class="ns-icon" aria-hidden="true">↗</span>
+      <div><h2 id="move-site-title">Migrate site</h2><p id="move-site-description"></p></div>
+    </header>
+    <div class="ns-section">New server</div>
+    <div class="ns-grid">
+      <label>Server host <input name="host" required autocomplete="url" spellcheck="false" placeholder="server.example.com"></label>
+      <label>SSH port <input name="ssh_port" type="number" min="1" max="65535" value="22" required></label>
+      <label>SSH username <input name="user" required autocomplete="username" value="root"></label>
+      <label>SSH password <input name="password" type="password" autocomplete="new-password" placeholder="Leave empty to use an SSH key"></label>
+    </div>
+    <div class="ns-section">What goes</div>
+    <ul id="move-site-list" class="move-site-list"></ul>
+    <p class="hint move-site-http"><strong>Set up with HTTP.</strong> DNS may not point to the new server yet, so no certificates are issued there. When it does, use Issue certificate on each site.</p>
+    <p class="hint" id="move-site-hint"></p>
+    <label class="copy-connection-toggle" id="move-site-delete-row"><input type="checkbox" name="delete_local" value="y"><span>Delete the old files after a successful migration</span></label>
+    <label class="copy-connection-toggle" id="move-site-stop-row"><input type="checkbox" name="stop_source"><span>Stop the sites here while copying, so a SQLite database stays consistent</span></label>
+    <menu><button type="button" id="move-site-cancel" class="cancel-link">Cancel</button><button type="submit" class="primary" id="move-site-submit">Migrate</button></menu>
+  </form>
+</dialog>
+
 <dialog id="dlg-adopt" class="newsite" aria-labelledby="adopt-title">
   <form method="dialog" id="form-adopt">
     <header class="ns-head">
@@ -627,7 +650,7 @@
   </div>
   <div class="users-toolbar"><span id="users-count" class="muted"></span><button type="button" id="users-add" class="primary">＋ Add user</button></div>
   <div id="users-list" class="users-list"></div>
-  <menu><button type="button" id="users-close" class="primary">Close</button></menu>
+  <menu><button type="button" id="users-close">Close</button></menu>
 </dialog>
 
 <dialog id="dlg-user" class="newsite user-dialog" aria-labelledby="user-title">
@@ -678,7 +701,7 @@
   <h2 id="audit-title">Activity log</h2>
   <div class="logs-toolbar"><input id="audit-search" type="search" placeholder="Filter…" autocomplete="off" spellcheck="false" aria-label="Filter"></div>
   <div id="audit-list" class="logs-list audit-list"></div>
-  <menu><span id="audit-count" class="muted logs-count"></span><button type="button" id="audit-clear" hidden>Clear log</button><button type="button" id="audit-close" class="primary">Close</button></menu>
+  <menu><span id="audit-count" class="muted logs-count"></span><button type="button" id="audit-clear" hidden>Clear log</button><button type="button" id="audit-close">Close</button></menu>
 </dialog>
 
 <dialog id="dlg-preferences" class="newsite environment-dialog" aria-labelledby="preferences-title">
@@ -817,7 +840,7 @@
   </div>
   <div id="logs-text" class="logs-list" aria-live="polite"></div>
   <pre id="logs-raw-text" class="logs-raw-text" hidden></pre>
-  <menu><span id="logs-count" class="muted logs-count"></span><button type="button" id="logs-refresh">Refresh</button><button type="button" id="logs-close" class="primary">Close</button></menu>
+  <menu><span id="logs-count" class="muted logs-count"></span><button type="button" id="logs-refresh">Refresh</button><button type="button" id="logs-close">Close</button></menu>
 </dialog>
 
 <script src="/static/vendor/xterm.js"></script>
