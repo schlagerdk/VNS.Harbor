@@ -598,6 +598,34 @@ def keep_harbor_state():
         app.logger.warning("harbor state sync could not run: %s", exc)
 
 
+# What each script in /vns/apache did, as the harbor command it ran (they were wrappers; they go with the cutover)
+HARBOR_WRAPPERS = {
+    "adopt_site.sh": ["site", "adopt"],
+    "adopt_site.sh --release": ["site", "release"],
+    "change_binding.sh": ["site", "binding"],
+    "change_binding_prod.sh": ["env", "binding"],
+    "copy_site.sh": ["site", "copy"],
+    "create_site.sh": ["site", "create"],
+    "data_sync.sh": ["env", "data-sync"],
+    "delete_site.sh": ["site", "delete"],
+    "fix_permissions.sh": ["site", "fix-permissions"],
+    "move_env.sh": ["env", "move"],
+    "move_site.sh": ["site", "move"],
+    "prod_action.sh": ["env", "action"],
+    "register_env.sh": ["env", "register"],
+    "remote_site.sh": ["env", "remote"],
+    "setup_site.sh": ["site", "setup"],
+    "sync_env.sh": ["env", "sync"],
+    "test_action.sh": ["site", "action"],
+    "windows_files.sh": ["env", "windows-files"],
+}
+
+
+def harbor_argv(script):
+    """The harbor command a wrapper in /vns/apache ran, to be run with that wrapper's arguments"""
+    return ["/usr/bin/python3", HARBOR_COMMAND, *HARBOR_WRAPPERS[script]]
+
+
 HARBOR_SITES = "/var/lib/harbor/sites"
 # What each system script did, as the harbor command its wrapper calls (a migrated site has no scripts, phase 6)
 HARBOR_SCRIPTS = {
@@ -821,7 +849,7 @@ def remote_command(site, action, timeout=60, target="prod", **kwargs):
         kwargs["env"] = {**os.environ, "VNS_TARGET": target}
     try:
         result = subprocess.run(
-            ["/bin/bash", os.path.join(APACHE_DIR, "remote_site.sh"), site, action],
+            [*harbor_argv("remote_site.sh"), site, action],
             capture_output=True, timeout=timeout, **kwargs)
     except (OSError, subprocess.TimeoutExpired) as exc:
         app.logger.error("Remote %s failed for %s: %s", action, site, exc)
@@ -1597,7 +1625,17 @@ def api_run_system_update():
         return jsonify(state)
 
 
-GITHUB_REPO = "schlagerdk/VNS.Linux"
+def _update_source():
+    """Where updates come from, and where the installed code came from (harbor/install/update.py): an installation
+    from another repository (VNS 1.x) takes any release there as newer, as VNS Harbor starts its own versions"""
+    try:
+        from harbor.install import update as harbor_update
+        return harbor_update.REPOSITORY, harbor_update.installed_repository(os.path.dirname(APACHE_DIR))
+    except (ImportError, OSError):
+        return "schlagerdk/VNS.Linux", "schlagerdk/VNS.Linux"
+
+
+GITHUB_REPO, INSTALLED_FROM = _update_source()
 UPDATE_DETAILS = {}
 
 
@@ -1713,20 +1751,14 @@ def api_system_update():
             installed = path.read_text().strip() if path.exists() else ""
             if installed and not re.fullmatch(r"[0-9a-f]{40}", installed):
                 raise ValueError("Invalid installed version marker")
-            result = subprocess.run(
-                ["git", "ls-remote", "https://github.com/schlagerdk/VNS.Linux.git", "HEAD"],
-                capture_output=True, text=True, timeout=15, check=True)
-            fields = result.stdout.strip().split()
-            if len(fields) != 2 or fields[1] != "HEAD" or not re.fullmatch(r"[0-9a-f]{40}", fields[0]):
-                raise ValueError("GitHub returned an invalid version")
-            latest = fields[0]
             version = installed_version()
             versions = release_versions()
             if versions:
                 # The tags decide which release an update installs. The notes come from GitHub's API, which may be
                 # out of reach (it allows few calls without a login): then the versions are shown without them.
                 newest = versions[0]
-                newer_versions = [item for item in versions if not version or version_key(item) > version_key(version)]
+                newer_versions = [item for item in versions if not version or INSTALLED_FROM != GITHUB_REPO
+                                  or version_key(item) > version_key(version)]
                 notes = {release["version"]: release for release in (github_releases() or [])}
                 releases = [notes.get(item) or {"version": item, "name": "v" + item, "notes": "", "url": f"https://github.com/{GITHUB_REPO}/releases/tag/v{item}", "date": ""}
                             for item in newer_versions[:10]]
@@ -1735,7 +1767,19 @@ def api_system_update():
                             "notes_unavailable": bool(newer_versions) and not any(item in notes for item in newer_versions),
                             "compare_url": f"https://github.com/{GITHUB_REPO}/compare/v{version}...v{newest}" if version and newer_versions
                             else f"https://github.com/{GITHUB_REPO}/releases/tag/v{newest}"}
+            elif INSTALLED_FROM != GITHUB_REPO:
+                # The new repository has no release yet: there is nothing to update to (never its branch)
+                response = {"status": "current", "mode": "release", "installed": installed, "installed_version": version,
+                            "latest_version": version, "releases": []}
             else:
+                # Before the first release: the newest commit on main (only in the repository it was installed from)
+                result = subprocess.run(
+                    ["git", "ls-remote", f"https://github.com/{GITHUB_REPO}.git", "HEAD"],
+                    capture_output=True, text=True, timeout=15, check=True)
+                fields = result.stdout.strip().split()
+                if len(fields) != 2 or fields[1] != "HEAD" or not re.fullmatch(r"[0-9a-f]{40}", fields[0]):
+                    raise ValueError("GitHub returned an invalid version")
+                latest = fields[0]
                 response = {"status": "unknown" if not installed else "available" if installed != latest else "current",
                             "mode": "commit", "installed": installed, "latest": latest, "installed_version": version}
                 if response["status"] != "current":
@@ -3138,10 +3182,9 @@ def build_command(data):
         title, argv, _ = server_tool_command(data)
         return title, argv, "/"
     if kind == "install_sql_tools":
-        script = os.path.join(os.path.dirname(APACHE_DIR), "sql", "install_tools.sh")
-        if not os.path.isfile(script):
-            abort(500, "SQL tools installer is missing. Update VNS.Linux first.")
-        return "Install SQL tools", [bash, script], os.path.dirname(script)
+        if not os.path.isfile(HARBOR_COMMAND):
+            abort(500, "Harbor is missing. Update VNS first.")
+        return "Install SQL tools", ["/usr/bin/python3", HARBOR_COMMAND, "sql", "install-sql-tools"], "/"
     if kind == "sql_action":
         identifier = data.get("connection")
         if not isinstance(identifier, str):
@@ -3166,16 +3209,13 @@ def build_command(data):
     if kind == "update_system":
         if not ADMIN_SITE:
             abort(400, "The admin site is not configured")
-        updater = os.path.join(os.path.dirname(APACHE_DIR), "update.sh")
-        admin_updater = os.path.join(APACHE_DIR, "update_admin_site.sh")
-        if not os.path.isfile(updater) or not os.path.isfile(admin_updater):
-            abort(400, "VNS update scripts are missing")
-        # The newest release, or main before the first one
+        if not os.path.isfile(HARBOR_COMMAND):
+            abort(400, "Harbor is missing: run /vns/update.sh on the server")
+        # The newest release; the release that is fetched installs itself, the admin site too (harbor self update)
         target = update_target()
-        return "Update VNS and admin site" + (" to " + target if target else ""), [
-            "/usr/bin/env", "VNS_UPDATE_REF=" + target, bash, "-c", '/bin/bash "$1" && /bin/bash "$2" "$3"',
-            "vns-update", updater, admin_updater, ADMIN_SITE,
-        ], "/"
+        if not target:
+            abort(400, "There is no release to update to yet.")
+        return "Update to " + target, ["/usr/bin/python3", HARBOR_COMMAND, "self", "update", "--ref", target], "/"
     if kind == "update_package":
         site = site_arg(data)
         info = site_info(site, {})
@@ -3286,7 +3326,7 @@ def build_command(data):
         if tool not in ("check_service", "edit_service", "edit_conf", "shell"):
             abort(400, "Unknown remote tool")
         REMOTE_STATUS.pop(remote_key(site, target), None)
-        return "Remote %s: %s" % (tool.replace("_", " "), site), with_target([bash, os.path.join(APACHE_DIR, "remote_site.sh"), site, tool], target), WEB_ROOT
+        return "Remote %s: %s" % (tool.replace("_", " "), site), with_target([*harbor_argv("remote_site.sh"), site, tool], target), WEB_ROOT
     if kind == "shell":
         site = data.get("site") or ""
         if site:
@@ -3397,23 +3437,23 @@ def build_command(data):
         prod = parse_prod(os.path.join(WEB_ROOT, site), target) or {}
         if prod.get("PROD_TARGET") == "windows" and not data.get("copy"):
             abort(400, "An environment on a Windows server cannot be migrated")
-        return ("Copy" if data.get("copy") else "Migrate") + " environment: " + site, [bash, os.path.join(APACHE_DIR, "move_env.sh"), site, target], APACHE_DIR
+        return ("Copy" if data.get("copy") else "Migrate") + " environment: " + site, [*harbor_argv("move_env.sh"), site, target], APACHE_DIR
     if kind == "move_site":
         site = site_arg(data)
         if site == ADMIN_SITE:
             abort(400, "The admin site cannot be moved")
         if managed_by(site):
             abort(400, "This site is an environment of a main site on another server. Move it from there.")
-        return ("Copy" if data.get("copy") else "Migrate") + " site: " + site, [bash, os.path.join(APACHE_DIR, "move_site.sh"), site], APACHE_DIR
+        return ("Copy" if data.get("copy") else "Migrate") + " site: " + site, [*harbor_argv("move_site.sh"), site], APACHE_DIR
     if kind == "adopt_site":
         site = site_arg(data)
         main = data.get("main", "")
         if not isinstance(main, str) or main not in site_dirs() or main == site:
             abort(400, "Unknown main site")
-        return "Move under %s: %s" % (main, site), [bash, os.path.join(APACHE_DIR, "adopt_site.sh"), site, main], APACHE_DIR
+        return "Move under %s: %s" % (main, site), [*harbor_argv("adopt_site.sh"), site, main], APACHE_DIR
     if kind == "release_site":
         site = site_arg(data)
-        return "Move out: " + site, [bash, os.path.join(APACHE_DIR, "adopt_site.sh"), "--release", site, target_arg(site, data)], APACHE_DIR
+        return "Move out: " + site, [*harbor_argv("adopt_site.sh --release"), site, target_arg(site, data)], APACHE_DIR
     if kind == "setup_site":
         site = site_arg(data)
         certificate = data.get("certificate", "y")
@@ -3431,11 +3471,11 @@ def build_command(data):
         environment = data.get("environment", "")
         if environment not in ("", "Development", "Test", "Staging", "Production"):
             abort(400, "Invalid environment")
-        return "Set up site: " + site, [bash, os.path.join(APACHE_DIR, "setup_site.sh"), site, binding, certificate, environment], APACHE_DIR
+        return "Set up site: " + site, [*harbor_argv("setup_site.sh"), site, binding, certificate, environment], APACHE_DIR
     if kind == "data_sync_settings":
         site = site_arg(data)
         site_id = data_sync_id(site, data.get("id"))
-        return "Sync setup: " + site, [bash, os.path.join(APACHE_DIR, "data_sync.sh"), site, "settings", site_id], APACHE_DIR
+        return "Sync setup: " + site, [*harbor_argv("data_sync.sh"), site, "settings", site_id], APACHE_DIR
     if kind == "data_sync":
         site = site_arg(data)
         source = data_sync_id(site, data.get("source"))
@@ -3447,7 +3487,7 @@ def build_command(data):
                 _data_sync_module.kinds(config, source, destination)
             except ValueError as exc:
                 abort(400, str(exc))
-        return "Sync data: " + site, [bash, os.path.join(APACHE_DIR, "data_sync.sh"), site, "sync", source, ",".join(destinations)], APACHE_DIR
+        return "Sync data: " + site, [*harbor_argv("data_sync.sh"), site, "sync", source, ",".join(destinations)], APACHE_DIR
     if kind == "sync_env":
         site = site_arg(data)
         source = data.get("source", "")
@@ -3466,7 +3506,7 @@ def build_command(data):
                 except ValueError as exc:
                     abort(400, str(exc) + ". Change it in Sync setup.")
             destination = ",".join(destinations)
-        return "Sync: " + site, [bash, os.path.join(APACHE_DIR, "sync_env.sh"), site, source, destination], APACHE_DIR
+        return "Sync: " + site, [*harbor_argv("sync_env.sh"), site, source, destination], APACHE_DIR
     if kind == "unit_tool":
         site = site_arg(data)
         unit = data.get("unit", "")
@@ -3494,7 +3534,7 @@ def build_command(data):
             return "Apache config test", [bash, "-c", "clear; apache2ctl configtest"], WEB_ROOT
         abort(400, "Unknown tool")
     if kind == "register_env":
-        return "Add existing site: " + site_arg(data), [bash, os.path.join(APACHE_DIR, "register_env.sh"), site_arg(data)], APACHE_DIR
+        return "Add existing site: " + site_arg(data), [*harbor_argv("register_env.sh"), site_arg(data)], APACHE_DIR
     if kind == "copy_site":
         source = site_arg(data)
         if managed_by(source):
@@ -3517,7 +3557,7 @@ def build_command(data):
                 if not isinstance(value, str) or not value.strip() or len(value) > (128 if key == "database" else 4096) or any(
                         char in value for char in "\0\r\n"):
                     abort(400, "Invalid SQL connection field: " + key)
-        argv = [bash, os.path.join(APACHE_DIR, "copy_site.sh"), source, target, binding]
+        argv = [*harbor_argv("copy_site.sh"), source, target, binding]
         project = data.get("project", "")
         if project:
             if not isinstance(project, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", project):
@@ -3624,13 +3664,13 @@ def build_command(data):
             args = [site, site_type, csharp, version, project, binding, publish, build, certificate, template, environment]
             if package:
                 args.append(package)
-        return "Create: " + site, [bash, os.path.join(APACHE_DIR, "create_site.sh"), *args], APACHE_DIR
+        return "Create: " + site, [*harbor_argv("create_site.sh"), *args], APACHE_DIR
     if kind == "fix_permissions":
         site = site_arg(data)
         scope = data.get("scope", "test")
         if scope not in ("test", "prod") or site == ADMIN_SITE:
             abort(400, "Invalid permissions target")
-        argv = [bash, os.path.join(APACHE_DIR, "fix_permissions.sh"), site, scope]
+        argv = [*harbor_argv("fix_permissions.sh"), site, scope]
         if scope == "prod":
             argv = with_target(argv, target_arg(site, data))
         return "Fix permissions: " + site, argv, APACHE_DIR
@@ -3647,7 +3687,7 @@ def build_command(data):
             binding = "*"
         else:
             binding = dns_name(binding, "binding", short=True)
-        argv = [bash, os.path.join(APACHE_DIR, "change_binding.sh"), site, binding]
+        argv = [*harbor_argv("change_binding.sh"), site, binding]
         if "aliases" in data:
             aliases = data["aliases"]
             if not isinstance(aliases, str) or len(aliases) > 4096:
@@ -3665,7 +3705,7 @@ def build_command(data):
             argv.append(aliases)
             argv.append("--yes")
         if data.get("scope") == "prod":
-            argv[1] = os.path.join(APACHE_DIR, "change_binding_prod.sh")
+            argv[2:4] = HARBOR_WRAPPERS["change_binding_prod.sh"]
             return "Prod bindings: " + site, with_target(argv, target_arg(site, data)), APACHE_DIR
         return "Bindings: " + site, argv, APACHE_DIR
     if kind == "prod_action":
@@ -3685,8 +3725,8 @@ def build_command(data):
         if data.get("scope") == "test":
             if not os.path.isdir(os.path.join(WEB_ROOT, site)):
                 abort(404, "Unknown site")
-            return "Test %s: %s" % (action.replace("_", " "), site), [bash, os.path.join(APACHE_DIR, "test_action.sh"), site, action, *args], APACHE_DIR
-        return "Prod %s: %s" % (action.replace("_", " "), site), with_target([bash, os.path.join(APACHE_DIR, "prod_action.sh"), site, action, *args], target_arg(site, data)), APACHE_DIR
+            return "Test %s: %s" % (action.replace("_", " "), site), [*harbor_argv("test_action.sh"), site, action, *args], APACHE_DIR
+        return "Prod %s: %s" % (action.replace("_", " "), site), with_target([*harbor_argv("prod_action.sh"), site, action, *args], target_arg(site, data)), APACHE_DIR
     if kind == "delete_site":
         site = site_arg(data)
         if site == ADMIN_SITE:
@@ -3695,7 +3735,7 @@ def build_command(data):
         scope = data.get("scope") or "all"
         if scope not in ("all", "test", "prod"):
             abort(400, "Invalid scope")
-        argv = [bash, os.path.join(APACHE_DIR, "delete_site.sh"), site, certificates, scope]
+        argv = [*harbor_argv("delete_site.sh"), site, certificates, scope]
         if scope == "prod":
             argv = with_target(argv, target_arg(site, data))
         return "Delete " + scope + ": " + site, argv, APACHE_DIR
@@ -4094,7 +4134,7 @@ def managed_config(site, kind):
 def windows_files(site, target, data):
     """A file operation on an environment on a Windows server, over SMB, answered like a remote Linux one"""
     try:
-        result = subprocess.run(["/bin/bash", os.path.join(APACHE_DIR, "windows_files.sh"), site],
+        result = subprocess.run([*harbor_argv("windows_files.sh"), site],
                                 input=json.dumps(data).encode("utf-8"), capture_output=True, timeout=150,
                                 env={**os.environ, "VNS_TARGET": target})
     except (OSError, subprocess.TimeoutExpired) as exc:

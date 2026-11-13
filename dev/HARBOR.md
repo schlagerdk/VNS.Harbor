@@ -272,6 +272,26 @@ In this order:
 4. Release VNS Harbor 1.0.0 from there. Every server then runs Harbor 1.0.0.
 5. Only then is VNS.Linux deleted on GitHub (by Martin), once every server has taken the bridge release.
 
+## Cutover steps (agreed 2026-11-13, after every server ran 1.2.2)
+- [x] 2a The sa password in Harbor (/etc/harbor/secrets/sql.json, root only): harbor reads it when no wrapper passes it,
+  `harbor sql import-sa-password` takes it from sql/ once, Set sa password and the install write it too. The backup and
+  log shrink jobs are harbor commands (`harbor server cron upgrade`: same times and logs; custom jobs stay). The admin
+  updater runs both. (tests/test_server_tools.py; on linux-01 the password is used from Harbor with no wrapper)
+- [x] 2b The admin calls harbor directly, never /vns/apache/*.sh: HARBOR_WRAPPERS in app.py names the harbor command
+  each wrapper ran (harbor_argv); Install SQL tools is `harbor sql install-sql-tools`. Left for 2c/2d: the updater
+  (update.sh, update_admin_site.sh) and a fallback that reads the default Umbraco version from create_site.sh.
+- [x] 2c `harbor self update [--ref vX]` (harbor/install/update.py) fetches a release from VNS.Harbor and runs
+  `harbor self finish-update` from the fetched copy, so a release always installs itself (an older one, without it, is
+  installed as its update.sh did). REPOSITORY in a copy names where it came from: installed from VNS.Linux, any release
+  on VNS.Harbor is newer (Harbor starts its own versions); none there, nothing to update to, never a branch. The
+  admin's Update and its check, and update.sh without a source, use it. (tests/test_self_update.py,
+  apache/tests/test_system_update.py; on linux-02 `harbor self update --ref v1.2.2` from VNS.Linux worked.)
+  VERSION 1.3.0 with its CHANGELOG: Martin releases it, the last VNS.Linux release.
+- [ ] 3 Martin renames the folder to VNS.Harbor and links it to https://github.com/schlagerdk/VNS.Harbor.
+- [ ] 2d + 4 The old code goes (wrappers, script templates, tests/legacy, update.sh/init.sh); Harbor and the admin run
+  from /opt/harbor (3b, 3c); Harbor 1.0.0 released from VNS.Harbor.
+- [ ] 5 Martin deletes VNS.Linux on GitHub once every server has taken 1.3.0.
+
 ## Phase 1 steps
 - [x] Package skeleton: `harbor/`, `bin/harbor`, `harbor/core/system.py` (System, RecordingSystem), `harbor/cli.py`
 - [x] Tests on Linux: `dev/test.sh` (linux-01, user vns-test), `.github/workflows/tests.yml`

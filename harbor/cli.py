@@ -137,7 +137,7 @@ def _sql(args, system):
     from harbor.sql import databases, server
     name = args.command.replace("-", "_")
     module = server if name in ("install_server", "update_server", "uninstall_server", "install_sql_tools", "uninstall_sql_tools",
-                                "set_sa_password") else databases
+                                "set_sa_password", "import_sa_password") else databases
     words = {"copy": 2, "drop": 2, "create": 1, "restore": 1}.get(name, 0)
     # The answers the admin gives as options (each is asked in the terminal when it is not given)
     options = {key: getattr(args, key) for key in ("edition", "with_tools", "assume_yes", "delete_data")
@@ -222,8 +222,11 @@ def _server_status(args, system):
 
 
 def _server_cron(args, system):
-    from harbor.server.tools import cron
-    cron(system, args.state == "on")
+    from harbor.server.tools import cron, cron_upgrade
+    if args.state == "upgrade":
+        cron_upgrade(system)
+    else:
+        cron(system, args.state == "on")
 
 
 def _server_dotnet(args, system):
@@ -303,6 +306,16 @@ def _self(args, system):
         release.rollback(system)
     elif args.command == "use":
         release.use(system, args.release)
+    elif args.command == "update":
+        from harbor.install import update
+        update.update(system, args.ref)
+    elif args.command == "finish-update":
+        from harbor.install import update
+        update.finish_update(system, args.source)
+    elif args.command == "check":
+        import json
+        from harbor.install import update
+        print(json.dumps(update.check(system), indent=2))
     elif args.command == "releases":
         for item in release.releases(system):
             system.say(f"{'*' if item['current'] else ' '} {item['name']}  {item['installed']}")
@@ -341,8 +354,8 @@ def parser():
     command.set_defaults(handler=_tls_policy)
     command = server.add_parser("status", help="SQL Server, sqlcmd, the sa password, cron jobs, .NET and Node.js here, as JSON")
     command.set_defaults(handler=_server_status)
-    command = server.add_parser("cron", help="the backup and log shrink jobs in root's crontab, on or off")
-    command.add_argument("state", choices=("on", "off"))
+    command = server.add_parser("cron", help="the backup and log shrink jobs in root's crontab: on, off, or upgrade (from /vns/sql/cron to harbor)")
+    command.add_argument("state", choices=("on", "off", "upgrade"))
     command.set_defaults(handler=_server_cron)
     command = server.add_parser("dotnet", help="install a .NET channel (SDK and ASP.NET Core runtime), or update it to its newest patch")
     command.add_argument("action", choices=("install", "update"))
@@ -461,7 +474,8 @@ def parser():
             ("uninstall-server", 0, "SQL Server removed, and sqlcmd if wanted (was uninstall_server.sh)"),
             ("install-sql-tools", 0, "sqlcmd without SQL Server (was install_tools.sh)"),
             ("uninstall-sql-tools", 0, "sqlcmd removed (was uninstall_tools.sh)"),
-            ("set-sa-password", 0, "the sa password in the scripts in sql/ (was set_sa_password.sh)")):
+            ("set-sa-password", 0, "the sa password in the scripts in sql/ (was set_sa_password.sh)"),
+            ("import-sa-password", 0, "the sa password from the scripts in sql/ into Harbor's secrets, once")):
         command = sql.add_parser(name, help=text)
         if name in ("install-server", "update-server", "uninstall-server", "uninstall-sql-tools", "set-sa-password"):
             command.add_argument("--yes", dest="assume_yes", action="store_const", const=True, default=None,
@@ -525,6 +539,14 @@ def parser():
     command.set_defaults(handler=_users_sftp)
 
     own = groups.add_parser("self", help="Harbor itself: its releases in /opt/harbor").add_subparsers(dest="command", required=True, metavar="<command>")
+    command = own.add_parser("update", help="update to the newest release on GitHub (or --ref vX.Y.Z); the release installs itself")
+    command.add_argument("--ref", default="")
+    command.set_defaults(handler=_self)
+    command = own.add_parser("finish-update", help="install this copy of a release (run by self update from the copy it fetched)")
+    command.add_argument("source")
+    command.set_defaults(handler=_self)
+    command = own.add_parser("check", help="the installed version, and the releases on GitHub that are newer, as JSON")
+    command.set_defaults(handler=_self)
     command = own.add_parser("use", help="use a release that is in /opt/harbor/releases (one copied here from another server)")
     command.add_argument("release")
     command.set_defaults(handler=_self)

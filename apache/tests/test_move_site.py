@@ -171,7 +171,7 @@ class AdminTests(unittest.TestCase):
 
     def test_move_site_is_for_administrators_and_runs_the_script(self):
         self.assertRegex(self.app, r'ADMIN_TASKS = \{[^}]*"move_site"')
-        self.assertIn('os.path.join(APACHE_DIR, "move_site.sh"), site]', self.app)
+        self.assertIn('[*harbor_argv("move_site.sh"), site]', self.app)
 
     def test_environment_to_another_server_gets_https_once_it_runs_there(self):
         self.assertIn('extra_env["VNS_MOVE_HTTPS"] = extra_env["VNS_PROD_HTTPS"]', self.app)

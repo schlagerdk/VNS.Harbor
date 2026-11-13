@@ -181,7 +181,7 @@ class RemoteApiTests(unittest.TestCase):
     def test_remote_tools_are_allowlisted(self):
         for tool in ("shell", "check_service", "edit_service", "edit_conf"):
             _, argv, _ = self.ns["build_command"]({"kind": "remote_tool", "tool": tool})
-            self.assertEqual(argv, ["/bin/bash", str(APACHE / "remote_site.sh"), "example.test", tool])
+            self.assertEqual(argv, ["/usr/bin/python3", "/vns/bin/harbor", "env", "remote", "example.test", tool])
         with self.assertRaises(HTTPException):
             self.ns["build_command"]({"kind": "remote_tool", "tool": "anything"})
 

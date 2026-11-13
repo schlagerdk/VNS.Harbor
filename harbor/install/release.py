@@ -23,7 +23,7 @@ CURRENT = f"{ROOT}/current"
 COMMAND = "/usr/local/bin/harbor"
 KEEP = 3
 # What Harbor runs; the rest of a repository (tests, dev tools, the NuGet package) is not part of a release
-PARTS = ("bin", "harbor", "apache", "sql", "VERSION")
+PARTS = ("bin", "harbor", "apache", "sql", "VERSION", "REPOSITORY")
 LEFT_OUT = ("tests", "__pycache__", "*.pyc", ".DS_Store")
 
 

@@ -22,18 +22,27 @@ PLACEHOLDER = "@SA_PASSWORD@"
 LINE = "-------------------------------------------------------------------------------"
 
 
-def sa_password():
-    """The sa password the wrapper passes on, as set by set_sa_password.sh"""
+SA_SECRET = "/etc/harbor/secrets/sql.json"
+
+
+def sa_password(system=None):
+    """The sa password: the one a wrapper in sql/ passes on (set_sa_password.sh set it there), else Harbor's own
+    (/etc/harbor/secrets/sql.json, root only), which is all there is once the wrappers are gone"""
     password = os.environ.get("SQLCMDPASSWORD", "")
-    if not password or password == PLACEHOLDER:
-        raise Stop(f"The sa password is not set in {SQL_DIR}: run {SQL_DIR}/set_sa_password.sh")
-    return password
+    if password and password != PLACEHOLDER:
+        return password
+    if system is not None:
+        from harbor.state.store import read_json
+        saved = read_json(system.path(SA_SECRET))
+        if isinstance(saved, dict) and saved.get("sa_password"):
+            return saved["sa_password"]
+    raise Stop(f"The sa password is not set in {SQL_DIR}: run {SQL_DIR}/set_sa_password.sh, or set it under Server tools in the admin")
 
 
 def sqlcmd(system, sql, *options, stop_on_error=True, capture=False):
     """sqlcmd against the local SQL Server as sa; -b stops at the first error, as the scripts that used it"""
     return system.run(SQLCMD, *(["-b"] if stop_on_error else []), "-C", "-S", "LOCALHOST", "-U", "sa", *options, "-i", str(sql),
-                      env={"SQLCMDPASSWORD": sa_password()}, check=stop_on_error, capture=capture)
+                      env={"SQLCMDPASSWORD": sa_password(system)}, check=stop_on_error, capture=capture)
 
 
 def database_name(system, given, prompt="Enter db name: ", missing="No database name given", wait=False):

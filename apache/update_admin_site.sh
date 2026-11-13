@@ -281,6 +281,9 @@ if [[ -f ${_harbor} ]]; then
 	sudo python3 "${_harbor}" state sync || echo "Harbor's copy of the sites' state was not updated." >&2
 	sudo python3 "${_harbor}" self install "$(cd "${_apacheDir}/.." && pwd)" || echo "Harbor was not installed in /opt/harbor." >&2
 	sudo python3 "${_harbor}" migrate || echo "Not every site was migrated: sudo harbor migrate --dry-run tells why." >&2
+	# Before the scripts in /vns/sql go (the cutover): the sa password in Harbor, the backup jobs as harbor commands
+	sudo python3 "${_harbor}" sql import-sa-password || echo "The sa password was not kept in Harbor." >&2
+	sudo python3 "${_harbor}" server cron upgrade || echo "The backup jobs were not changed to harbor commands." >&2
 fi
 
 echo "Restart the admin site"

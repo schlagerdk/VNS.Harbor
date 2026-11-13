@@ -228,7 +228,10 @@ class CreateCommandTests(unittest.TestCase):
                          type="csharp", csharp="empty", certificate="n")
 
     def command(self, **changes):
-        return self.ns["build_command"](self.data | changes)[1]
+        argv = self.ns["build_command"](self.data | changes)[1]
+        # harbor site create: its first four words stand for create_site.sh's two, so the positions below are as they were
+        self.assertEqual(argv[:4], ["/usr/bin/python3", "/vns/bin/harbor", "site", "create"])
+        return ["harbor", "site create", *argv[4:]]
 
     def test_https_needs_a_binding_that_points_here(self):
         self.assertEqual(self.command(certificate="y")[10], "y")
@@ -260,7 +263,7 @@ class CreateCommandTests(unittest.TestCase):
     def test_copy_command_is_allowlisted_and_takes_a_site_with_environments(self):
         self.ns.update(site_arg=lambda data: "source.test", ADMIN_SITE="admin.test", WEB_ROOT="/var/www")
         payload = {"kind": "copy_site", "site": "source.test", "target": "æøå.test", "binding": "æøå.example.test"}
-        expected = [str(APACHE / "copy_site.sh"), "source.test", "æøå.test", "xn--5cab8c.example.test"]
+        expected = ["/vns/bin/harbor", "site", "copy", "source.test", "æøå.test", "xn--5cab8c.example.test"]
         with patch.object(os.path, "isfile", return_value=False):
             self.assertEqual(self.ns["build_command"](payload)[1][1:], expected)
         # The copy is a site of its own: its environments stay with the source

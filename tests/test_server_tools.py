@@ -50,7 +50,7 @@ class StatusTests(Server):
         (sql / "cron").mkdir(parents=True)
         (sql / "drop_db.sh").write_text("sa -U sa -P 'secret1!' -i scripts/drop_db.sql\n")
         (sql / "cron/shrink_logs.sh").write_text("sa -U sa -P 'secret1!' -i scripts/shrink_logs.sql\n")
-        self.crontab = tools.CRON[1] + "\n" + CUSTOM + "\n"
+        self.crontab = tools.JOBS["backup_everything"] + "\n" + CUSTOM + "\n"
         system = self.system(**{"dpkg -s mssql-tools18": Result(0), "dpkg -s mssql-server": Result(0),
                                 "dpkg-query -W -f=${Version} mssql-server": "16.0.4185.3-1", "dpkg-query -W -f=${Version} mssql-tools18": "18.4.1.1-1",
                                 "systemctl is-active mssql-server": "active", "node --version": "v22.11.0", "npm --version": "10.9.0",
@@ -85,18 +85,33 @@ class StatusTests(Server):
 
 class CronTests(Server):
     def test_on_adds_each_job_once_and_off_leaves_the_others(self):
-        self.crontab = CUSTOM + "\n" + tools.CRON[0] + "\n"
+        self.crontab = CUSTOM + "\n" + tools.JOBS["shrink_logs"] + "\n"
         self.assertEqual(main(["server", "cron", "on"], self.system()), 0)
-        self.assertEqual(self.crontab, CUSTOM + "\n" + tools.CRON[0] + "\n" + tools.CRON[1] + "\n")
+        self.assertEqual(self.crontab, CUSTOM + "\n" + tools.JOBS["shrink_logs"] + "\n" + tools.JOBS["backup_everything"] + "\n")
         system = self.system()
         main(["server", "cron", "on"], system)
         self.assertNotIn("crontab -", system.commands, "nothing to add")
         main(["server", "cron", "off"], self.system())
         self.assertEqual(self.crontab, CUSTOM + "\n")
 
+    def test_old_jobs_are_upgraded_to_harbor(self):
+        from harbor.sql.databases import CRON as OLD
+        self.crontab = OLD[0] + "\n" + CUSTOM + "\n" + OLD[1] + "\n"
+        main(["server", "cron", "upgrade"], self.system())
+        self.assertEqual(self.crontab.splitlines(), [
+            "0 */4 * * * /usr/local/bin/harbor sql shrink-logs >> /var/log/sql_shrink_logs.log 2>&1", CUSTOM,
+            "15 */4 * * * /usr/local/bin/harbor sql backup-everything >> /var/log/sql_backup_everything.log 2>&1"])
+        # Seen as on, and only once
+        system = self.system()
+        main(["server", "cron", "on"], system)
+        self.assertNotIn("crontab -", system.commands)
+        system = self.system()
+        main(["server", "cron", "upgrade"], system)
+        self.assertNotIn("crontab -", system.commands)
+
     def test_on_with_no_crontab(self):
         main(["server", "cron", "on"], self.system())
-        self.assertEqual(self.crontab, "".join(line + "\n" for line in tools.CRON))
+        self.assertEqual(self.crontab, "".join(line + "\n" for line in tools.JOBS.values()))
 
 
 class DotnetTests(Server):
@@ -207,6 +222,29 @@ class SqlWithoutQuestionsTests(Server):
             server.set_sa_password(accepted, sql)
         self.assertEqual(accepted.asked, [])
         self.assertIn("-P 'Secret-123'", (sql / "drop_db.sh").read_text())
+
+
+class SaSecretTests(Server):
+    def test_the_password_moves_into_harbor_and_is_used_from_there(self):
+        import stat
+        from harbor.sql import databases
+        sql = self.root / "sql"
+        (sql / "cron").mkdir(parents=True)
+        (sql / "drop_db.sh").write_text("sa -U sa -P 'it'\\''s secret' -i scripts/drop_db.sql\n")
+        with mock.patch.object(server, "SQL_DIR", sql):
+            system = self.system()
+            self.assertEqual(main(["sql", "import-sa-password"], system), 0, system.said)
+        secret = self.root / "etc/harbor/secrets/sql.json"
+        self.assertEqual(json.loads(secret.read_text()), {"sa_password": "it's secret"})
+        self.assertEqual(stat.S_IMODE(secret.stat().st_mode), 0o600)
+        # Without a wrapper (no SQLCMDPASSWORD) sqlcmd gets it from Harbor, in its environment
+        (self.root / "var/opt/mssql/backup").mkdir(parents=True)
+        with mock.patch.dict(os.environ, {"SQLCMDPASSWORD": ""}), mock.patch.object(databases, "prepare_backup_permissions"):
+            system = self.system()
+            self.assertEqual(main(["sql", "backup-everything"], system), 0, system.said)
+        run = next(index for index, command in enumerate(system.commands) if command.startswith("/opt/mssql-tools18/bin/sqlcmd"))
+        self.assertEqual(system.environments[run]["SQLCMDPASSWORD"], "it's secret")
+        self.assertNotIn("secret", system.commands[run])
 
 
 if __name__ == "__main__":

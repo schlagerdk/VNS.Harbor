@@ -97,7 +97,7 @@ class SitePermissionsTests(unittest.TestCase):
                 (self.root / "scripts").mkdir()
                 (self.root / "scripts/publish_prod.sh").touch()
             _, argv, _ = command({"kind": "fix_permissions", "site": "example.test", "scope": scope})
-            self.assertEqual(argv, ["/bin/bash", str(APACHE / "fix_permissions.sh"), "example.test", scope])
+            self.assertEqual(argv, ["/usr/bin/python3", "/vns/bin/harbor", "site", "fix-permissions", "example.test", scope])
         for site, scope in (("admin.test", "test"), ("example.test", "all")):
             with self.assertRaises(BadRequest):
                 command({"kind": "fix_permissions", "site": site, "scope": scope})
@@ -118,12 +118,12 @@ class SitePermissionsTests(unittest.TestCase):
         (self.root / "scripts").mkdir()
         (self.root / "scripts/publish_prod.sh").touch()
         command = namespace["build_command"]
-        for scope, script in (("test", "change_binding.sh"), ("prod", "change_binding_prod.sh")):
+        for scope, words in (("test", ["site", "binding"]), ("prod", ["env", "binding"])):
             title, argv, cwd = command({
                 "kind": "change_binding", "site": "example.test", "binding": "example.test",
                 "aliases": "WWW.example.test, api.example.test www.example.test", "scope": scope,
             })
-            self.assertEqual(argv, ["/bin/bash", str(APACHE / script), "example.test",
+            self.assertEqual(argv, ["/usr/bin/python3", "/vns/bin/harbor", *words, "example.test",
                                     "example.test", "www.example.test api.example.test", "--yes"])
             self.assertIn("bindings", title.lower())
             self.assertEqual(cwd, str(APACHE))
@@ -131,19 +131,19 @@ class SitePermissionsTests(unittest.TestCase):
                 "kind": "change_binding", "site": "example.test", "binding": "example.test",
                 "scope": scope,
             })
-            self.assertEqual(legacy_argv, argv[:4])
+            self.assertEqual(legacy_argv, argv[:6])
             _, idn_argv, _ = command({
                 "kind": "change_binding", "site": "example.test", "binding": "ÆØÅ.dk",
                 "aliases": "www.æøå.dk, www.xn--5cab8c.dk æøå.dk", "scope": scope,
             })
-            self.assertEqual(idn_argv[3:], ["xn--5cab8c.dk", "www.xn--5cab8c.dk", "--yes"])
+            self.assertEqual(idn_argv[5:], ["xn--5cab8c.dk", "www.xn--5cab8c.dk", "--yes"])
         # A name without a dot passes here: change_binding.sh refuses it for a site with a certificate
         _, short_argv, _ = command({"kind": "change_binding", "site": "example.test", "binding": "example.test",
                                     "aliases": "SQL-01", "scope": "test"})
-        self.assertEqual(short_argv[4:], ["sql-01", "--yes"])
+        self.assertEqual(short_argv[6:], ["sql-01", "--yes"])
         # An empty binding makes the site answer any name; an environment needs one
         _, any_argv, _ = command({"kind": "change_binding", "site": "example.test", "binding": "", "aliases": "", "scope": "test"})
-        self.assertEqual(any_argv[3], "*")
+        self.assertEqual(any_argv[5], "*")
         with self.assertRaisesRegex(BadRequest, "needs a binding"):
             command({"kind": "change_binding", "site": "example.test", "binding": "", "scope": "prod"})
         for aliases in ("not_a_domain", "*.example.test", "https://example.test", "a" * 254 + ".test"):

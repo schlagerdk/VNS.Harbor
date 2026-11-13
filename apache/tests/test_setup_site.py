@@ -44,7 +44,7 @@ class SetupSiteTests(unittest.TestCase):
     def test_the_admin_marks_folders_that_are_not_set_up(self):
         source = APP.read_text()
         self.assertIn('"not_set_up": not_set_up,', source)
-        self.assertIn('[bash, os.path.join(APACHE_DIR, "setup_site.sh"), site, binding, certificate, environment]', source)
+        self.assertIn('[*harbor_argv("setup_site.sh"), site, binding, certificate, environment]', source)
         page = (ROOT / "solutionfiles/admin/app/templates/index.html").read_text()
         self.assertIn('id="dlg-setup-site"', page)
 

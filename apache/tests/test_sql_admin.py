@@ -670,8 +670,8 @@ class SqlApiTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 409)
                 self.assertIn("Install SQL", response.json["error"])
             _, argv, cwd = self.ns["build_command"]({"kind": "install_sql_tools"})
-            self.assertEqual(argv, ["/bin/bash", str(ROOT / "sql/install_tools.sh")])
-            self.assertEqual(cwd, str(ROOT / "sql"))
+            self.assertEqual(argv, ["/usr/bin/python3", "/vns/bin/harbor", "sql", "install-sql-tools"])
+            self.assertEqual(cwd, "/")
 
     def test_tools_installer_is_client_only_and_shared_with_server_setup(self):
         installer = frozen(ROOT / "sql/install_tools.sh").read_text()

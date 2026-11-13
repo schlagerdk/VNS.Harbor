@@ -7,6 +7,7 @@ where updates find it and keep it (sql/lib/sa_password.sh). Only that value chan
 """
 from pathlib import Path
 import re
+import shlex
 import shutil
 import tempfile
 
@@ -128,6 +129,40 @@ def sa_apply(password, folder=None):
                 path.write_text(changed, errors="surrogateescape")
 
 
+def save_sa_password(system, password):
+    """The sa password in Harbor's secrets (root only): what the backups and database commands use once the scripts in
+    sql/ that held it are gone"""
+    from harbor.sql.databases import SA_SECRET
+    from harbor.state.store import write_json
+    path = system.path(SA_SECRET)
+    write_json(path, {"sa_password": password}, private=True)
+    for place in (system.path("/etc/harbor/secrets"), path.parent):
+        place.chmod(0o700)
+
+
+def import_sa_password(system, folder=None):
+    """The sa password from the scripts in sql/ (where set_sa_password.sh put it) into Harbor's secrets, once"""
+    from harbor.sql.databases import SA_SECRET
+    from harbor.state.store import read_json
+    if (read_json(system.path(SA_SECRET)) or {}).get("sa_password"):
+        system.say("Harbor has the sa password.")
+        return
+    for path in sa_scripts(system, folder):
+        match = SA_LINE.search(path.read_text(errors="replace"))
+        if not match:
+            continue
+        quoted = match[0][len(match[1]):]
+        try:
+            password = shlex.split(quoted)[0]
+        except (ValueError, IndexError):
+            continue
+        if password and password != "@SA_PASSWORD@":
+            save_sa_password(system, password)
+            system.say("The sa password is in Harbor now.")
+            return
+    system.say("No sa password is set in the scripts: there is none to keep.")
+
+
 def given_sa_password():
     import os
     password = os.environ.get(SA_VARIABLE, "")
@@ -174,6 +209,7 @@ def set_sa_password(system, folder=None, assume_yes=None):
     else:
         system.say("sqlcmd is not installed, so the password is not checked against the server.")
     sa_apply(password, folder)
+    save_sa_password(system, password)
     # The scripts now hold the password: only their owner and group may read them
     for path in scripts:
         path.chmod(path.stat().st_mode & ~0o007)
@@ -245,7 +281,9 @@ def install_server(system, edition="", with_tools=None, assume_yes=None):
 
     placeholder = any("'@SA_PASSWORD@'" in path.read_text(errors="replace") for path in SQL_DIR.rglob("*.sh") if path.is_file())
     if server_installed or placeholder:
-        sa_apply(sa_prompt(system))
+        password = sa_prompt(system)
+        sa_apply(password)
+        save_sa_password(system, password)
 
     if confirm(system, "Install SQL command-line tools (sqlcmd)? [y/N]: ", with_tools):
         if installed(system, "mssql-tools18"):

@@ -13,8 +13,8 @@ FUNCTIONS = {"fs_full_path", "target_folder", "target_ids", "target_scope", "tar
              "adopted_sites", "service_dll", "project_assembly", "adoption_candidates", "managed_by", "publishable_targets", "sync_prod_binding",
              # A migrated site (phase 6)
              "site_migrated", "migrated_site_json", "custom_scripts_dir", "migrated_scripts", "target_scripts",
-             "harbor_script_command", "publish_entry", "save_migrated_setting"}
-CONSTANTS = {"TARGET_RE", "TARGET_SCRIPTS", "MANAGED_DIR", "HARBOR_SCRIPTS", "HARBOR_TARGET_SCRIPTS"}
+             "harbor_script_command", "publish_entry", "save_migrated_setting", "harbor_argv"}
+CONSTANTS = {"TARGET_RE", "TARGET_SCRIPTS", "MANAGED_DIR", "HARBOR_SCRIPTS", "HARBOR_TARGET_SCRIPTS", "HARBOR_WRAPPERS"}
 
 
 import importlib.util

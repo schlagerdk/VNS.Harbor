@@ -14,6 +14,11 @@ main() {
     local tmp=""
     local revision=""
 
+    if [ -z "$src" ] && [ -f "$TARGET/bin/harbor" ] && sudo python3 "$TARGET/bin/harbor" self check >/dev/null 2>&1; then
+        # Since 1.3.0 Harbor updates itself from its own releases (github.com/schlagerdk/VNS.Harbor): the release that is
+        # fetched installs itself. VNS_UPDATE_REF=v1.2.3 installs that release.
+        exec sudo python3 "$TARGET/bin/harbor" self update ${VNS_UPDATE_REF:+--ref "$VNS_UPDATE_REF"}
+    fi
     if [ -z "$src" ]; then
         tmp="$(mktemp -d)"
         trap "rm -rf '$tmp'" EXIT

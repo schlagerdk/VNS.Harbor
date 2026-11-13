@@ -292,31 +292,24 @@ class ServerFilesTests(unittest.TestCase):
         self.assertEqual(self.ns["build_command"]({"kind": "shell", "site": "example.test"})[2],
                          str(self.web / "example.test"))
 
-    def test_settings_update_runs_scripts_in_order_and_stops_after_failure(self):
-        apache = self.root / "vns/apache"
-        apache.mkdir(parents=True)
-        calls = self.root / "update-calls"
-        updater = apache.parent / "update.sh"
-        admin_updater = apache / "update_admin_site.sh"
-        admin_updater.write_text(f'printf "admin:%s\\n" "$1" >> "{calls}"\n')
-        self.ns.update(APACHE_DIR=str(apache), ADMIN_SITE="admin.example.test", update_target=lambda: "")
-        for code in (0, 7):
-            with self.subTest(code=code):
-                updater.write_text(f'echo vns >> "{calls}"\nexit {code}\n')
-                if calls.exists():
-                    calls.unlink()
-                title, argv, cwd = self.ns["build_command"]({
-                    "kind": "update_system", "site": "ignored.test",
-                })
-                self.assertEqual(cwd, "/")
-                result = subprocess.run(argv, cwd=cwd, capture_output=True, text=True)
-                self.assertEqual(result.returncode, code, result.stderr)
-                self.assertEqual(calls.read_text().splitlines(),
-                                 ["vns", "admin:admin.example.test"] if code == 0 else ["vns"])
-        updater.unlink()
+    def test_settings_update_runs_harbor_self_update(self):
+        """The release that is fetched installs itself (harbor self update); its order is tested in tests/test_self_update.py"""
+        harbor = self.root / "vns/bin/harbor"
+        harbor.parent.mkdir(parents=True)
+        harbor.write_text("")
+        self.ns.update(APACHE_DIR=str(self.root / "vns/apache"), ADMIN_SITE="admin.example.test", HARBOR_COMMAND=str(harbor),
+                       update_target=lambda: "v1.3.0")
+        title, argv, cwd = self.ns["build_command"]({"kind": "update_system", "site": "ignored.test"})
+        self.assertEqual((argv, cwd), (["/usr/bin/python3", str(harbor), "self", "update", "--ref", "v1.3.0"], "/"))
+        self.assertIn("v1.3.0", title)
+        # Nothing to update to, or no Harbor: refused
+        self.ns.update(update_target=lambda: "")
         with self.app.test_request_context(), self.assertRaises(BadRequest):
             self.ns["build_command"]({"kind": "update_system"})
-
+        harbor.unlink()
+        self.ns.update(update_target=lambda: "v1.3.0")
+        with self.app.test_request_context(), self.assertRaises(BadRequest):
+            self.ns["build_command"]({"kind": "update_system"})
 
 if __name__ == "__main__":
     unittest.main()

@@ -7,12 +7,16 @@ import tempfile
 
 from harbor.core.dotnet import DOTNET_DIR, ensure_channel
 from harbor.core.system import Stop
-from harbor.sql.databases import CRON, PLACEHOLDER, SQL_DIR, SQLCMD
+from harbor.state.store import read_json
+from harbor.sql.databases import PLACEHOLDER, SA_SECRET, SQL_DIR, SQLCMD
 from harbor.sql.server import installed, os_release, sa_scripts
 
 NODESOURCE = "https://deb.nodesource.com/setup_{}.x"
-# The jobs Harbor adds; others in root's crontab (such as the custom cron/delete_old_2dm_data.sh) are left alone
-JOBS = {"shrink_logs": CRON[0], "backup_everything": CRON[1]}
+HARBOR = "/usr/local/bin/harbor"
+# The jobs Harbor adds, as harbor commands (they were /vns/sql/cron/*.sh, which go with the cutover); others in root's
+# crontab (such as the custom cron/delete_old_2dm_data.sh) are left alone
+JOBS = {"shrink_logs": f"0 */4 * * * {HARBOR} sql shrink-logs >> /var/log/sql_shrink_logs.log 2>&1",
+        "backup_everything": f"15 */4 * * * {HARBOR} sql backup-everything >> /var/log/sql_backup_everything.log 2>&1"}
 
 
 def package_version(system, package):
@@ -25,7 +29,10 @@ def crontab(system):
 
 
 def job_lines(text, name):
-    return [line for line in text.splitlines() if not line.lstrip().startswith("#") and f"/sql/cron/{name}.sh" in line]
+    """A job's lines: the harbor command, or the script in /vns/sql/cron it was"""
+    command = f"harbor sql {name.replace('_', '-')}"
+    return [line for line in text.splitlines() if not line.lstrip().startswith("#")
+            and (f"/sql/cron/{name}.sh" in line or re.search(rf"(^|[\s/]){re.escape(command)}(\s|$)", line))]
 
 
 def dotnet(system):
@@ -55,9 +62,8 @@ def status(system, sql_folder=SQL_DIR):
         release = {}
     scripts = sa_scripts(system, sql_folder) if sql_folder.is_dir() else []
     table = crontab(system)
-    ours = {line.split()[5] for line in CRON}
-    others = [line for line in table.splitlines() if line.strip() and not line.lstrip().startswith("#")
-              and not any(program in line for program in ours)]
+    mine = {line for name in JOBS for line in job_lines(table, name)}
+    others = [line for line in table.splitlines() if line.strip() and not line.lstrip().startswith("#") and line not in mine]
     node = system.output("node", "--version", check=False) if system.which("node") else ""
     return {
         "os": {"name": release.get("PRETTY_NAME", ""), "id": release.get("ID", ""), "version": release.get("VERSION_ID", "")},
@@ -65,7 +71,8 @@ def status(system, sql_folder=SQL_DIR):
                        "running": system.output("systemctl", "is-active", "mssql-server", check=False) == "active"},
         "sql_tools": {"installed": system.path(SQLCMD).is_file(), "version": package_version(system, "mssql-tools18")},
         "sa_password": {"scripts": len(scripts),
-                        "set": bool(scripts) and not any(f"'{PLACEHOLDER}'" in path.read_text(errors="replace") for path in scripts)},
+                        "set": bool((read_json(system.path(SA_SECRET)) or {}).get("sa_password"))
+                        or (bool(scripts) and not any(f"'{PLACEHOLDER}'" in path.read_text(errors="replace") for path in scripts))},
         "cron": {"jobs": {name: bool(job_lines(table, name)) for name in JOBS}, "others": others},
         "dotnet": dotnet(system),
         "node": {"version": node.lstrip("v"), "npm": system.output("npm", "--version", check=False) if node else ""},
@@ -96,6 +103,25 @@ def cron(system, on):
 
 
 # ---- .NET
+def cron_upgrade(system):
+    """The backup and log shrink jobs as harbor commands, where they still run a script in /vns/sql/cron: the same
+    times and log files. Other jobs, such as the custom ones, stay as they are."""
+    table = crontab(system)
+    lines = table.splitlines()
+    changed = []
+    for index, line in enumerate(lines):
+        for name in JOBS:
+            if not line.lstrip().startswith("#") and f"/sql/cron/{name}.sh" in line:
+                lines[index] = re.sub(rf"\S*/sql/cron/{name}\.sh", f"{HARBOR} sql {name.replace('_', '-')}", line)
+                changed.append(name)
+    if not changed:
+        system.say("The backup and log shrink jobs run harbor already, or are not there.")
+        return
+    system.step("Let the backup and log shrink jobs run harbor")
+    system.run("crontab", "-", input="".join(line + "\n" for line in lines))
+    system.say(f"{', '.join(changed)} run harbor now.")
+
+
 def channel_of(text):
     if not re.fullmatch(r"[0-9]{1,2}\.0", text or "") or int(text.split(".")[0]) < 8:
         raise Stop(f"Not a .NET channel: {text} (such as 10.0, 8.0 or newer)")
