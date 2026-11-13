@@ -84,7 +84,7 @@ class DataSyncTests(unittest.TestCase):
         self.assertNotIn("ExportAtStartup", untouched["uSync"]["Settings"])
 
     def test_a_sync_without_written_content_stops_and_says_why(self):
-        script = (ROOT / "data_sync.sh").read_text()
+        script = (ROOT.parent / "tests/legacy/data_sync.sh").read_text()
         self.assertIn('if ((_wantsContent)) && ! has_exported_content "${_from}"; then', script)
         self.assertLess(script.index("has_exported_content \"${_from}\""), script.index("sync_one \"${_id}\""))
 
@@ -102,7 +102,7 @@ class DataSyncTests(unittest.TestCase):
             self.assertEqual(result.stdout.strip(), "content")
 
     def test_data_is_merged_and_settings_are_mirrored(self):
-        script = (ROOT / "sync_env.sh").read_text()
+        script = (ROOT.parent / "tests/legacy/sync_env.sh").read_text()
         self.assertIn("_rcloneMode=copy", script)
         self.assertIn("_rsyncDelete=()", script)
         self.assertIn("_versionFolders+=(Content Dictionary)", script)

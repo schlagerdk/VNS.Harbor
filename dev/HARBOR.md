@@ -36,6 +36,16 @@ Where the work stands, so it can go on from here after any interruption.
      at its address over HTTPS to sync from here, and the sync buttons stay off.
    - Depends on phase 2 (settings and the token out of the site folder). Not on phase 5.
 
+## The cutover, when everything is done and works (asked 2026-11-13)
+In this order:
+1. Bump VNS.Linux to its next version and release it. That release is the bridge: when an existing server runs its
+   update, it installs Harbor, updates every site, removes the system scripts from each site's `scripts` folder (the
+   site's own custom scripts stay), and deletes the `scripts` folder when it is then empty.
+2. Delete everything old from the repository (the scripts, `/vns` wrappers and what only they used).
+3. Rename this folder from VNS.Linux to VNS.Harbor and link it to https://github.com/schlagerdk/VNS.Harbor.
+4. Release VNS Harbor 1.0.0 from there. Every server then runs Harbor 1.0.0.
+5. Only then is VNS.Linux deleted on GitHub (by Martin), once every server has taken the bridge release.
+
 ## Phase 1 steps
 - [x] Package skeleton: `harbor/`, `bin/harbor`, `harbor/core/system.py` (System, RecordingSystem), `harbor/cli.py`
 - [x] Tests on Linux: `dev/test.sh` (linux-01, user vns-test), `.github/workflows/tests.yml`
@@ -61,7 +71,12 @@ Where the work stands, so it can go on from here after any interruption.
 - [x] Design: the Protocol select in Add environment is the HTTPS option card; Environment is four choices in its colours (New site, Add environment, Set up site)
 - [x] Copy site on this server can move: Remove it here afterwards (+ Also delete the old folder) and Stop the site here while copying, as for another server; `harbor site copy --remove-source config|all --stop-source`; only a site without environments can be moved, and only by a user who may delete it
 - [ ] Design: other native selects (Build Debug/Release and the like) the same way, when they come up
-- [ ] 1d register_env, remote_site, adopt_site, carry_snippets, sync_env, data_sync, move_env, move_site
+- [x] 1d register_env → `harbor env register` (tests/test_env_register.py); create_prod.sh (a site template) still writes the settings, run as before
+- [x] 1d remote_site → `harbor env remote` (tests/test_env_remote.py); values sent are quoted for any POSIX shell (shlex) instead of bash's %q, compared word by word
+- [x] 1d adopt_site → `harbor site adopt` / `harbor site release`, carry_snippets → `harbor env carry-snippets` (tests/test_sites_adopt.py)
+- [x] 1d sync_env → `harbor env sync` (tests/test_env_sync.py, rsync run for real on both sides); `Site` honours VNS_WEB_ROOT as common.sh does (a test hook)
+- [x] 1d data_sync → `harbor env data-sync` (tests/test_env_data.py); it uses apache/lib/data_sync.py's functions directly and runs the settings and data syncs in-process
+- [ ] 1d move_env, move_site
 - [ ] 1e sql/*
 
 ## How a script is moved

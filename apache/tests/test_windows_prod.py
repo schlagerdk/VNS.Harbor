@@ -551,7 +551,7 @@ class TemplateTests(unittest.TestCase):
             # A script that runs harbor now is read as it was; harbor is compared with it in tests/
             legacy = APACHE.parent / "tests/legacy" / script
             self.assertIn("PROD_TARGET:-} == windows", (legacy if legacy.exists() else APACHE / script).read_text())
-        self.assertIn("PROD_TARGET:-} != windows", (APACHE / "remote_site.sh").read_text())
+        self.assertIn("PROD_TARGET:-} != windows", (APACHE.parent / "tests/legacy/remote_site.sh").read_text())
         self.assertIn('_prodTarget} == windows', (APACHE.parent / "tests/legacy/delete_site.sh").read_text())
 
 
@@ -917,7 +917,8 @@ class AdoptSiteTests(unittest.TestCase):
         (self.apache / "lib/domain_names.py").symlink_to(APACHE / "lib/domain_names.py")
         shutil.copytree(APACHE / "solutionfiles/csharp", self.apache / "solutionfiles/csharp",
                         ignore=lambda folder, names: ["project"] if "project" in names else [])
-        shutil.copy(APACHE / "adopt_site.sh", self.apache)
+        # As it was before it ran harbor (tests/legacy): harbor is compared with it in tests/test_sites_adopt.py
+        shutil.copy(APACHE.parent / "tests/legacy/adopt_site.sh", self.apache)
         script = self.apache / "adopt_site.sh"
         script.write_text(script.read_text().replace('[[ $EUID -eq 0 ]] || exec sudo "$0" "$@"\n', ""))
         common = self.apache / "lib/common.sh"
@@ -1246,7 +1247,9 @@ class RemoteEnvironmentTests(AdoptSiteTests):
     def setUp(self):
         super().setUp()
         for script in ("register_env.sh", "sync_env.sh"):
-            text = (APACHE / script).read_text()
+            # As it was before it ran harbor (tests/legacy): harbor is compared with it in tests/
+            legacy = APACHE.parent / "tests/legacy" / script
+            text = (legacy if legacy.exists() else APACHE / script).read_text()
             (self.apache / script).write_text(re.sub(r"(?m)^\[\[ \$EUID -eq 0 \]\] \|\| exec sudo .*$", "", text))
         adopt = self.apache / "adopt_site.sh"
         executable(self.bin / "ssh", FAKE_SSH)
@@ -1609,7 +1612,7 @@ class ManagedSiteTests(unittest.TestCase):
         self.assertIn('!site.managed_by) addManage("Copy site"', (APACHE / "solutionfiles/admin/app/static/app.js").read_text())
 
     def test_status_writes_the_note_and_delete_removes_it(self):
-        self.assertIn('Path("/var/lib/vns-managed", site)', (APACHE / "remote_site.sh").read_text())
+        self.assertIn('Path("/var/lib/vns-managed", site)', (APACHE.parent / "tests/legacy/remote_site.sh").read_text())
         self.assertEqual((APACHE.parent / "tests/legacy/delete_site.sh").read_text().count("/var/lib/vns-managed/"), 2)
 
 

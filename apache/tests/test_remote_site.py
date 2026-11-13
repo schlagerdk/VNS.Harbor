@@ -286,7 +286,7 @@ class RemoteApiTests(unittest.TestCase):
 class RemoteStatusTests(unittest.TestCase):
     def test_https_is_read_from_remote_configuration(self):
         helper = (APACHE / "lib/database_info.py").read_text().replace("from pathlib import Path", "")
-        source = (APACHE / "remote_site.sh").read_text().split("python3 - <<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+        source = (APACHE.parent / "tests/legacy/remote_site.sh").read_text().split("python3 - <<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
         tree = ast.parse(source)
         tree.body = [node for node in tree.body if not isinstance(node, ast.ImportFrom)]
         with tempfile.TemporaryDirectory() as directory:
@@ -341,7 +341,7 @@ class RemoteTransportTests(unittest.TestCase):
             (root / "lib").mkdir()
             (root / "bin").mkdir()
             (root / "sites/example.test/scripts").mkdir(parents=True)
-            (root / "remote_site.sh").write_text((APACHE / "remote_site.sh").read_text())
+            (root / "remote_site.sh").write_text((APACHE.parent / "tests/legacy/remote_site.sh").read_text())
             (root / "lib/common.sh").write_text((APACHE / "lib/common.sh").read_text()
                                                    + '\n_rootPath="' + str(root / "sites") + '"\n')
             for name in ("prod.sh", "remote_files.py", "managed_config.py", "database_info.py"):

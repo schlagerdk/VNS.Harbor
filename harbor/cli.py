@@ -83,6 +83,41 @@ def _create_site(args, system):
     create_site(system, args.arguments)
 
 
+def _register_environment(args, system):
+    from harbor.environments.register import register_environment
+    register_environment(system, args.site)
+
+
+def _remote_action(args, system):
+    from harbor.environments.remote import remote_action
+    remote_action(system, args.site, args.action, target())
+
+
+def _adopt_site(args, system):
+    from harbor.sites.adopt import adopt_site
+    adopt_site(system, args.site, args.main)
+
+
+def _release_site(args, system):
+    from harbor.sites.adopt import release_site
+    release_site(system, args.main, args.environment)
+
+
+def _carry_snippets(args, system):
+    from harbor.environments.snippets import carry_snippets
+    carry_snippets(system, args.site, target())
+
+
+def _sync_environments(args, system):
+    from harbor.environments.sync import sync_environments
+    sync_environments(system, args.site, args.source, args.destination, args.data or "", args.dry_run)
+
+
+def _data_sync(args, system):
+    from harbor.environments.data import data_sync
+    data_sync(system, args.site, args.action, args.source, args.destinations, args.option[0] if args.option else "")
+
+
 def _environment_binding(args, system):
     from harbor.environments.bindings import change_binding
     change_binding(system, args.site, args.binding, args.aliases, yes=args.confirm == "--yes" or args.yes, target=target())
@@ -145,6 +180,14 @@ def parser():
     command.add_argument("arguments", nargs="*", help="folder, html|python|csharp, umbraco|empty, template version, project, binding, "
                          "publish folder, Debug|Release, y|n certificate, template, environment, template package; asked for when not given")
     command.set_defaults(handler=_create_site)
+    command = site.add_parser("adopt", help="make a published site an environment of its main site (was adopt_site.sh)")
+    command.add_argument("site")
+    command.add_argument("main")
+    command.set_defaults(handler=_adopt_site)
+    command = site.add_parser("release", help="make an environment a separate site again (was adopt_site.sh --release)")
+    command.add_argument("main")
+    command.add_argument("environment", nargs="?", default="")
+    command.set_defaults(handler=_release_site)
     command = site.add_parser("binding", help="change the binding and aliases of the site here (was change_binding.sh)")
     command.add_argument("site", nargs="?", default="")
     command.add_argument("binding", nargs="?", default="", help="the new binding, or * to answer any name")
@@ -160,6 +203,33 @@ def parser():
     command.add_argument("argument", nargs="?", default="", help="the environment for change_env, or --yes")
     command.add_argument("--yes", action="store_true", help="no question before a certificate")
     command.set_defaults(handler=_environment_action)
+    command = environment.add_parser("register", help="make a site on another Linux server an environment of a site here, "
+                                     "with VNS_PROD_IP, _USER, _PASSWORD, _SSH_PORT and _FOLDER (was register_env.sh)")
+    command.add_argument("site")
+    command.set_defaults(handler=_register_environment)
+    command = environment.add_parser("remote", help="status, start, stop, restart, logs, check_service, edit_service, edit_conf, "
+                                     "shell, files or config of an environment on another Linux server (was remote_site.sh)")
+    command.add_argument("site")
+    command.add_argument("action", nargs="?", default="")
+    command.set_defaults(handler=_remote_action)
+    command = environment.add_parser("carry-snippets", help="make an environment's Apache config carry the main site's config snippets (was carry_snippets.sh)")
+    command.add_argument("site")
+    command.set_defaults(handler=_carry_snippets)
+    command = environment.add_parser("sync", help="sync settings to environments, or data to one site (was sync_env.sh)")
+    command.add_argument("site")
+    command.add_argument("source", help="main or an environment")
+    command.add_argument("destination", help="environments separated by commas, or all; with --data one site, main too")
+    command.add_argument("--data", help="content, media or content,media instead of settings")
+    command.add_argument("--dry-run", action="store_true", help="show what would change, change nothing")
+    command.set_defaults(handler=_sync_environments)
+    command = environment.add_parser("data-sync", help="settings <site>: set uSync by Sync setup; sync <from> <to>: sync data (was data_sync.sh)")
+    command.add_argument("site")
+    command.add_argument("action", choices=("settings", "sync"))
+    command.add_argument("source", nargs="?", default="")
+    command.add_argument("destinations", nargs="?", default="")
+    # --dry-run, or anything else, which is refused as the script refused it
+    command.add_argument("option", nargs=argparse.REMAINDER, help="--dry-run")
+    command.set_defaults(handler=_data_sync)
     command = environment.add_parser("binding", help="change the binding and aliases where the environment is (was change_binding_prod.sh)")
     command.add_argument("site", nargs="?", default="")
     command.add_argument("binding", nargs="?", default="")

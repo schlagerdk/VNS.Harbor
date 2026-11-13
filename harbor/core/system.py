@@ -6,6 +6,7 @@ tested with the files it writes and the programs it runs, and the server it runs
 """
 from dataclasses import dataclass, field
 import json
+import inspect
 import os
 from pathlib import Path
 import shutil
@@ -144,7 +145,8 @@ class RecordingSystem(System):
         starts = sorted((start for start in self.answers if line == start or line.startswith(start + " ")), key=len, reverse=True)
         answer = self.answers[starts[0]] if starts else ""
         if callable(answer):
-            answer = answer(argv)
+            # An answer that takes two arguments gets what came on stdin too
+            answer = answer(argv, input) if len(inspect.signature(answer).parameters) == 2 else answer(argv)
         result = answer if isinstance(answer, Result) else Result(0, answer + ("\n" if answer else ""), "")
         if check and not result.ok:
             raise CommandFailed(argv, result)

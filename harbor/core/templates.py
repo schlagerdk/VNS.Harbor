@@ -1,5 +1,6 @@
 """A site's names and paths, and the templates rendered with them. From lib/common.sh: set_site_vars and render."""
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+import os
 from pathlib import Path
 
 from harbor.core.names import normalize_dns_name
@@ -13,7 +14,8 @@ class Site:
     name: str
     binding: str = ""
     project_name: str = ""
-    root_path: str = "/var/www"
+    # Where the sites are: VNS_WEB_ROOT, as common.sh reads it (tests run sites from a folder of their own)
+    root_path: str = field(default_factory=lambda: os.environ.get("VNS_WEB_ROOT") or "/var/www")
     publish_folder: str = "_publish"
     doc_root: str = ""
     port_http: str = ""

@@ -81,7 +81,7 @@ class DatabaseInfoTests(unittest.TestCase):
                 database.database_type(self.root)
 
     def test_remote_status_uses_same_helper_at_site_root(self):
-        source = (APACHE / "remote_site.sh").read_text()
+        source = (APACHE.parent / "tests/legacy/remote_site.sh").read_text()
         script = source.split("python3 - <<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
         script = script.replace('Path("/var/www", site)', 'Path(ROOT)')
         script = script.replace('Path("/etc/systemd/system", site + ".service")', 'Path(ROOT) / "service"')
