@@ -142,6 +142,8 @@ def _sql(args, system):
     # The answers the admin gives as options (each is asked in the terminal when it is not given)
     options = {key: getattr(args, key) for key in ("edition", "with_tools", "assume_yes", "delete_data")
                if getattr(args, key, None) not in (None, "")}
+    if getattr(args, "older_ubuntu", False):
+        options["older_ubuntu"] = True
     getattr(module, name)(system, *getattr(args, "names", [])[:words], **options)
 
 
@@ -230,8 +232,24 @@ def _server_cron(args, system):
 
 
 def _server_dotnet(args, system):
-    from harbor.server.tools import dotnet_install
-    dotnet_install(system, args.channel, update=args.action == "update")
+    from harbor.server.tools import dotnet_install, dotnet_remove
+    if args.action == "remove":
+        dotnet_remove(system, args.channel)
+    else:
+        dotnet_install(system, args.channel, update=args.action == "update")
+
+
+def _server_crontab(args, system):
+    import json
+    from harbor.server.tools import crontab_entries, crontab_save
+    if args.action == "list":
+        print(json.dumps(crontab_entries(system), indent=2))
+    else:
+        try:
+            entries = json.loads(sys.stdin.read())
+        except ValueError:
+            raise Stop("The crontab comes as JSON on stdin.") from None
+        crontab_save(system, entries if isinstance(entries, list) else [])
 
 
 def _server_node(args, system):
@@ -317,7 +335,10 @@ def _admin(args, system):
 
 def _self(args, system):
     from harbor.install import release
-    if args.command == "after-update":
+    if args.command == "uninstall":
+        from harbor.install.uninstall import uninstall
+        uninstall(system, assume_yes=args.yes)
+    elif args.command == "after-update":
         from harbor.install import update
         update.after_update(system)
     elif args.command == "install":
@@ -379,10 +400,13 @@ def parser():
     command = server.add_parser("cron", help="the backup and log shrink jobs in root's crontab: on, off, or upgrade (older jobs to harbor commands)")
     command.add_argument("state", choices=("on", "off", "upgrade"))
     command.set_defaults(handler=_server_cron)
-    command = server.add_parser("dotnet", help="install a .NET channel (SDK and ASP.NET Core runtime), or update it to its newest patch")
-    command.add_argument("action", choices=("install", "update"))
+    command = server.add_parser("dotnet", help="install a .NET channel (SDK and ASP.NET Core runtime), update it to its newest patch, or remove it")
+    command.add_argument("action", choices=("install", "update", "remove"))
     command.add_argument("channel", help="such as 10.0")
     command.set_defaults(handler=_server_dotnet)
+    command = server.add_parser("crontab", help="root's crontab: its lines as JSON (list), or saved from JSON on stdin (save)")
+    command.add_argument("action", choices=("list", "save"))
+    command.set_defaults(handler=_server_crontab)
     command = server.add_parser("node", help="install Node.js of a major version (NodeSource), or remove it")
     command.add_argument("action", choices=("install", "remove"))
     command.add_argument("major", nargs="?", default="", help="such as 22")
@@ -507,6 +531,8 @@ def parser():
                                  "without questions, the sa password from HARBOR_SA_PASSWORD")
             command.add_argument("--with-tools", dest="with_tools", action="store_const", const=True, default=None)
             command.add_argument("--without-tools", dest="with_tools", action="store_const", const=False)
+            command.add_argument("--older-ubuntu", action="store_true", help="where Microsoft has no SQL Server for this Ubuntu: "
+                                 "install the one for an older Ubuntu (not supported by Microsoft)")
         if name == "uninstall-server":
             command.add_argument("--with-tools", dest="with_tools", action="store_const", const=True, default=None, help="remove sqlcmd too")
             command.add_argument("--without-tools", dest="with_tools", action="store_const", const=False, help="keep sqlcmd")
@@ -585,6 +611,9 @@ def parser():
     command.set_defaults(handler=_self)
     command = own.add_parser("finish-update", help="install this copy of a release (run by self update from the copy it fetched)")
     command.add_argument("source")
+    command.set_defaults(handler=_self)
+    command = own.add_parser("uninstall", help="take Harbor off this server; the sites go on running (its state and secrets kept in an archive)")
+    command.add_argument("--yes", action="store_true", help="without typing the server's name to confirm")
     command.set_defaults(handler=_self)
     command = own.add_parser("after-update", help="bring the server up to the release in use (run by finish-update)")
     command.set_defaults(handler=_self)
@@ -706,13 +735,14 @@ def keep_site_rights(system, args):
 
 def keep_state(system, args):
     """Harbor's copy of the sites' state stays equal to the site folders after a command (harbor/state)"""
-    from harbor.state import store
     if os.environ.get("VNS_WEB_ROOT"):
         # Sites in a folder of their own (a test): the server's copy is not theirs
         return
     names = touched_sites(args)
     if names == []:
+        # Loaded only now: a command on Harbor itself (self update, self uninstall) can have replaced or removed its code
         return
+    from harbor.state import store
     try:
         problems = store.sync_all(system) if names is None else [problem for name in names for problem in store.sync(system, name)]
     except (OSError, ValueError) as error:

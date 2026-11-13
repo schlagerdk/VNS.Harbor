@@ -3,13 +3,14 @@ password in sql/, the backup and log shrink cron jobs, .NET and Node.js. The adm
 and runs the rest as tasks.
 """
 import re
+import shutil
 import tempfile
 
 from harbor.core.dotnet import DOTNET_DIR, ensure_channel
 from harbor.core.system import Stop
 from harbor.state.store import read_json
 from harbor.sql.databases import PLACEHOLDER, SA_SECRET, SQL_DIR, SQLCMD
-from harbor.sql.server import installed, os_release, sa_scripts
+from harbor.sql.server import FALLBACK_UBUNTU, SUPPORTED_UBUNTU, installed, os_release, sa_scripts
 
 NODESOURCE = "https://deb.nodesource.com/setup_{}.x"
 HARBOR = "/usr/local/bin/harbor"
@@ -68,7 +69,9 @@ def status(system, sql_folder=SQL_DIR):
     return {
         "os": {"name": release.get("PRETTY_NAME", ""), "id": release.get("ID", ""), "version": release.get("VERSION_ID", "")},
         "sql_server": {"installed": installed(system, "mssql-server"), "version": package_version(system, "mssql-server"),
-                       "running": system.output("systemctl", "is-active", "mssql-server", check=False) == "active"},
+                       "running": system.output("systemctl", "is-active", "mssql-server", check=False) == "active",
+                       # Microsoft publishes SQL Server for some Ubuntu versions only: on another it is installed from these
+                       "packages_for": "" if release.get("VERSION_ID", "") in SUPPORTED_UBUNTU else FALLBACK_UBUNTU},
         "sql_tools": {"installed": system.path(SQLCMD).is_file(), "version": package_version(system, "mssql-tools18")},
         "sa_password": {"scripts": len(scripts),
                         "set": bool((read_json(system.path(SA_SECRET)) or {}).get("sa_password"))
@@ -148,6 +151,113 @@ def dotnet_install(system, channel, update=False):
         system.say(f".NET {channel} is up to date (SDK {after['sdk']}, runtime {after['runtime']}).")
     else:
         system.say(f".NET {channel}: SDK {after['sdk']}, runtime {after['runtime']}. Sites start on the new runtime when they restart.")
+
+
+def sites_using(system, channel):
+    """The sites here that build or run on a .NET channel: their project (TargetFramework, an SDK pinned in global.json)
+    or what they publish (runtimeconfig.json)"""
+    major = channel.split(".")[0]
+    framework = re.compile(rf"<TargetFrameworks?>[^<]*\bnet{major}\.0\b")
+    runtime = re.compile(rf'"(?:tfm|version)"\s*:\s*"(?:net)?{major}\.0[\.\d]*"')
+    web = system.path("/var/www")
+    found = []
+    for site in sorted(web.iterdir()) if web.is_dir() else []:
+        if not site.is_dir() or site.is_symlink():
+            continue
+        files = [*site.glob("*.csproj"), *site.glob("global.json"), *site.glob("*.runtimeconfig.json"), *site.glob("*/*.runtimeconfig.json")]
+        for path in files:
+            try:
+                text = path.read_text(errors="replace")
+            except OSError:
+                continue
+            if (framework if path.suffix == ".csproj" else runtime).search(text) or (path.name == "global.json" and f'"{major}.0.' in text):
+                found.append(site.name)
+                break
+    return found
+
+
+def dotnet_remove(system, channel):
+    """A channel's SDKs and runtimes taken out of /usr/lib/dotnet. Never the newest (its host runs the others), and never
+    one a site here uses."""
+    channel = channel_of(channel)
+    installed_channels = [item["channel"] for item in dotnet(system)]
+    if channel not in installed_channels:
+        raise Stop(f".NET {channel} is not installed.")
+    newest = max(installed_channels, key=lambda item: int(item.split(".")[0]))
+    if channel == newest:
+        raise Stop(f".NET {channel} is the newest here: its host runs the other versions, so it stays.")
+    using = sites_using(system, channel)
+    if using:
+        raise Stop(f".NET {channel} is used by {', '.join(using)}: move them to another version first.")
+    system.step(f"Remove .NET {channel}")
+    root = system.path(DOTNET_DIR)
+    prefix = channel.split(".")[0] + ".0."
+    removed = 0
+    for parent in ("sdk", "sdk-manifests", "templates", "host/fxr", "shared/Microsoft.NETCore.App", "shared/Microsoft.AspNetCore.App",
+                   "packs/Microsoft.NETCore.App.Ref", "packs/Microsoft.AspNetCore.App.Ref", "packs/Microsoft.NETCore.App.Host.linux-x64",
+                   "packs/Microsoft.NETCore.App.Host.linux-arm64"):
+        folder = root / parent
+        for path in sorted(folder.glob(prefix + "*")) if folder.is_dir() else []:
+            if path.is_dir() and not path.is_symlink():
+                shutil.rmtree(path)
+                removed += 1
+    system.say(f".NET {channel} is removed ({removed} folders). The other versions stay.")
+
+
+# ---- cron: root's crontab, line by line
+SPECIAL = ("@reboot", "@yearly", "@annually", "@monthly", "@weekly", "@daily", "@midnight", "@hourly")
+FIELD = re.compile(r"[0-9A-Za-z*/,\-]+")
+
+
+def job_parts(line):
+    """(schedule, command) of a crontab line that runs something, or None (a comment, a variable, empty)"""
+    text = line.strip()
+    if not text or text.startswith("#") or re.match(r"[A-Za-z_][A-Za-z0-9_]*\s*=", text):
+        return None
+    words = text.split(None, 1 if text.startswith("@") else 5)
+    if text.startswith("@"):
+        return (words[0], words[1]) if len(words) == 2 and words[0] in SPECIAL else None
+    if len(words) == 6 and all(FIELD.fullmatch(word) for word in words[:5]):
+        return " ".join(words[:5]), words[5]
+    return None
+
+
+def crontab_entries(system):
+    """Root's crontab as its lines: each job with its schedule and command (and which of Harbor's jobs it is), and the
+    other lines (variables, comments) as they are"""
+    entries = []
+    for line in crontab(system).splitlines():
+        parts = job_parts(line)
+        if parts:
+            harbor = next((name for name in JOBS if job_lines(line, name)), "")
+            entries.append({"kind": "job", "schedule": parts[0], "command": parts[1], "harbor": harbor})
+        elif line.strip():
+            entries.append({"kind": "other", "line": line})
+    return entries
+
+
+def crontab_save(system, entries):
+    """Root's crontab made of these entries: jobs ({schedule, command}) checked, the other lines kept as they are"""
+    lines = []
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise Stop("Not a crontab entry.")
+        if entry.get("kind") == "other":
+            line = str(entry.get("line", ""))
+            if "\n" in line or (job_parts(line) and True):
+                raise Stop("A line that is not a job must stay as it was.")
+            lines.append(line)
+            continue
+        schedule = " ".join(str(entry.get("schedule", "")).split())
+        command = str(entry.get("command", "")).strip()
+        if not command or "\n" in command or "\r" in command:
+            raise Stop("A job needs a command on one line.")
+        if not job_parts(f"{schedule} {command}"):
+            raise Stop(f"Not a schedule: {schedule} (five fields, such as 15 */4 * * *, or @daily, @reboot)")
+        lines.append(f"{schedule} {command}")
+    system.step("Save root's crontab")
+    system.run("crontab", "-", input="".join(line + "\n" for line in lines))
+    system.say(f"Root's crontab has {sum(1 for entry in entries if entry.get('kind') != 'other')} jobs.")
 
 
 # ---- Node.js

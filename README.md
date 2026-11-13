@@ -11,6 +11,23 @@ Production) on this server, other Linux servers or IIS on Windows.
 It is one command, `harbor`, and a web admin that runs it. Harbor runs as root; the sites run as `www-data`, each in a
 sandbox of its own, and builds run as the unprivileged user `vns-build`.
 
+## Screenshots
+
+<p align="center">
+  <img src="assets/screenshots/overview.jpg" alt="The sites on a server" width="49%" />
+  <img src="assets/screenshots/site.jpg" alt="An Umbraco site with its environments" width="49%" />
+</p>
+
+<p align="center">
+  <img src="assets/screenshots/server-tools.jpg" alt="Server tools: SQL Server, backups, scheduled jobs, .NET and Node.js" width="49%" />
+  <img src="assets/screenshots/scheduled-jobs.jpg" alt="Scheduled jobs: root's crontab, a job at a time" width="49%" />
+</p>
+
+<p align="center">
+  <img src="assets/screenshots/user.jpg" alt="A user: the sites, environments and actions they may use, SFTP and SQL Server" width="49%" />
+  <img src="assets/screenshots/login.jpg" alt="The admin's login" width="49%" />
+</p>
+
 ## Installation
 
 On a new Ubuntu server, as root:
@@ -55,6 +72,31 @@ date (`harbor self after-update`):
 - Harbor's copy of the sites' state
 - the sa password and the backup jobs
 - the admin site
+
+## Uninstalling
+
+In a terminal on the server (not the admin's own: the admin goes first):
+
+```bash
+sudo harbor self uninstall
+```
+
+It asks for the server's name to confirm (`--yes` does without). Then it takes off:
+
+- the admin site
+- the Linux users Harbor made, with their site groups, ACLs and SFTP
+- Harbor's jobs: the backups, the log shrinks and keep-alive
+- its state (`/var/lib/harbor`) and secrets (`/etc/harbor`)
+- `/opt/harbor` and the `harbor` command
+
+**The sites go on running as they are:** their folders, services, Apache configs and certificates stay, and so do
+SQL Server, .NET and Apache's server-wide configs (the TLS policy and the offline page).
+
+Before anything goes, Harbor's state and secrets are kept in `/root/harbor-<time>.tar.gz` (root only). They are the
+sites' settings, environments and logins, so keep the archive safe or delete it.
+
+To take Harbor off another server it manages: Servers → **Remove**, with **Uninstall Harbor there**. That removes only
+`/opt/harbor` and the command there.
 
 ## On the server
 

@@ -2106,6 +2106,34 @@ def servers_command(data):
     abort(400, "Unknown action")
 
 
+@app.route("/api/server/crontab", methods=["GET", "POST"])
+def api_server_crontab():
+    """Root's crontab, line by line (harbor server crontab): read, or saved from the editor"""
+    require_admin()
+    if not os.path.isfile(HARBOR_COMMAND):
+        return error("Harbor is missing.", 500)
+    if request.method == "GET":
+        try:
+            result = subprocess.run(["/usr/bin/python3", HARBOR_COMMAND, "server", "crontab", "list"], capture_output=True, text=True, timeout=30)
+            return jsonify(entries=json.loads(result.stdout))
+        except (OSError, subprocess.SubprocessError, ValueError) as exc:
+            app.logger.error("harbor server crontab list: %s", exc)
+            return error("Root's crontab could not be read.", 502)
+    entries = (request.get_json(silent=True) or {}).get("entries")
+    if not isinstance(entries, list) or len(entries) > 500:
+        return error("No crontab to save.")
+    try:
+        result = subprocess.run(["/usr/bin/python3", HARBOR_COMMAND, "server", "crontab", "save"], input=json.dumps(entries),
+                                capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError) as exc:
+        app.logger.error("harbor server crontab save: %s", exc)
+        return error("Root's crontab could not be saved.", 502)
+    if result.returncode:
+        return error((result.stderr or result.stdout).strip().splitlines()[-1] if (result.stderr or result.stdout).strip() else "Root's crontab could not be saved.")
+    audit("Saved root's crontab")
+    return jsonify(ok=True)
+
+
 @app.route("/api/server/tools")
 def api_server_tools():
     """What the server has for the sites: SQL Server, sqlcmd, the sa password, cron jobs, .NET, Node.js (harbor server status)"""
@@ -2134,7 +2162,9 @@ def server_tool_command(data):
     if tool == "sql_install":
         if data.get("edition") not in SQL_EDITIONS:
             abort(400, "Choose an edition")
-        return "Install SQL Server", harbor + ["sql", "install-server", "--edition", data["edition"], tools_flag], env
+        # Where Microsoft has no SQL Server for this Ubuntu, the dialog says so and the one for an older Ubuntu is installed
+        older = ["--older-ubuntu"] if data.get("older_ubuntu") is True else []
+        return "Install SQL Server", harbor + ["sql", "install-server", "--edition", data["edition"], tools_flag, *older], env
     if tool == "sa_password":
         return "Set the sa password", harbor + ["sql", "set-sa-password"], env
     if tool == "sql_update":
@@ -2150,7 +2180,7 @@ def server_tool_command(data):
         return "Remove SQL tools", harbor + ["sql", "uninstall-sql-tools", "--yes"], env
     if tool in ("cron_on", "cron_off"):
         return ("Turn on" if tool == "cron_on" else "Turn off") + " SQL backups", harbor + ["server", "cron", tool[5:]], env
-    if tool in ("dotnet_install", "dotnet_update"):
+    if tool in ("dotnet_install", "dotnet_update", "dotnet_remove"):
         channel = data.get("channel")
         if not isinstance(channel, str) or not re.fullmatch(r"[0-9]{1,2}\.0", channel) or int(channel.split(".")[0]) < 8:
             abort(400, "Choose a .NET version")

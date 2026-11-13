@@ -31,6 +31,9 @@ label:has(input[type="checkbox"]), input[type="checkbox"] { cursor: pointer; }
 button:hover { background: var(--hover); border-color: var(--muted); }
 button.primary { background: #238636; border-color: #2ea043; color: #fff; font-weight: 600; }
 button.primary:hover { background: #2ea043; }
+/* A button that cannot be used yet: grey and quiet, whatever colour it has when it can (as the confirmations' OK) */
+button:disabled, button:disabled:hover, button.primary:disabled, button.primary[data-tone]:disabled, button.primary.danger-primary:disabled,
+button.danger:disabled { opacity: .45; cursor: not-allowed; background: var(--panel2); border-color: var(--line); color: var(--muted); box-shadow: none; }
 button.danger { color: var(--red); }
 button.danger:hover { background: rgba(248, 81, 73, .15); border-color: var(--red); }
 button.ghost { background: rgba(255, 255, 255, .12); border-color: rgba(255, 255, 255, .3); color: #fff; }
@@ -429,7 +432,7 @@ dialog.newsite .copy-connection-toggle + .hint { margin-top: 12px; }
 .site-targets-head .actions { margin: 0; padding: 0; border: 0; }
 .env-targets { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 @media (max-width: 1000px) { .site-layout.with-packages { grid-template-columns: minmax(0, 1fr); } .site-layout.with-packages .package-panel { contain: none; } .env-targets { grid-template-columns: minmax(0, 1fr); } }
-.env .actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 14px; }
+.env .actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 10px; padding-top: 10px; }
 
 #dock { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; background: rgba(1, 4, 9, .72); backdrop-filter: blur(3px); }
 .dock-window { display: flex; flex-direction: column; width: min(1200px, 94vw); height: min(720px, 86vh); background: #000; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; box-shadow: 0 24px 60px rgba(0, 0, 0, .7); }
@@ -490,6 +493,7 @@ dialog.files-dialog { padding: 18px; }
 .script-menu-chevron { width: 9px; height: 9px; margin: -4px 2px 0 4px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; color: var(--muted); transform: rotate(45deg); transition: transform .15s; }
 .script-menu-trigger[aria-expanded="true"] .script-menu-chevron { margin-top: 5px; transform: rotate(225deg); }
 .script-menu-panel { position: absolute; top: calc(100% + 8px); left: 0; z-index: 30; width: min(360px, calc(100vw - 40px)); max-height: min(460px, 65vh); overflow: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; padding: 8px; border: 1px solid rgba(88, 166, 255, .28); border-radius: 12px; background: linear-gradient(145deg, rgba(88, 166, 255, .08), transparent 48%), var(--panel); box-shadow: 0 18px 48px rgba(0, 0, 0, .55), 0 0 0 1px rgba(255, 255, 255, .025); }
+.script-menu.push-right .script-menu-panel { right: 0; left: auto; }
 .script-menu-header { position: sticky; top: -8px; z-index: 1; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 12px; margin: -8px -8px 4px; padding: 13px 14px 11px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--panel) 94%, #20334a); }
 .script-menu-eyebrow { grid-column: 1 / -1; color: var(--blue); font-size: 9px; font-weight: 700; letter-spacing: .13em; }
 .script-menu-header strong { font-size: 13px; }
@@ -576,8 +580,8 @@ dialog.newsite .copy-connection-toggle { flex-direction: row; align-items: cente
 #copy-sql-fields label, #sql-database-login label, #sql-restore-login label, #sql-restore-overwrite label { min-width: 0; }
 dialog.newsite select { appearance: none; -webkit-appearance: none; padding-right: 34px; cursor: pointer; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238b949e' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E"); background-repeat: no-repeat; background-position: right 12px center; }
 dialog.newsite select option { background: var(--panel2); color: var(--text); }
-.actions > button.push-right { margin-left: auto; }
-.actions > button.push-right + button.danger { margin-left: 0; }
+.actions > .push-right { margin-left: auto; }
+.actions > .push-right + button.danger { margin-left: 0; }
 .env-binding { display: flex; gap: 8px; align-items: baseline; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .env-tags { display: flex; gap: 6px; align-items: center; }
 .badge.env-development { background: rgba(88, 166, 255, .2); color: var(--blue); }
@@ -623,7 +627,7 @@ a.btn-link .ico { width: 13px; height: 13px; flex: none; }
 	.site-environment-links { margin-left: auto; }
 }
 .https-lock { display: inline-flex; align-items: center; flex: none; }
-.confirmation-copy { display: inline; padding: 0; border: 0; border-radius: 2px; background: transparent; color: inherit; font: inherit; overflow-wrap: anywhere; }
+.confirmation-copy { display: inline; padding: 0; border: 0; border-radius: 2px; background: transparent; color: inherit; font: inherit; overflow-wrap: anywhere; cursor: pointer; }
 .confirmation-copy:hover { background: transparent; text-decoration: underline; text-decoration-color: var(--muted); text-underline-offset: 3px; }
 #form-prompt menu { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; list-style: none; }
 #prompt-copy-status { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
@@ -677,8 +681,7 @@ a.btn-link .ico { width: 13px; height: 13px; flex: none; }
 
 /* The rows of an environment card, each named by its group at the left; wrapped buttons line up under the first */
 .env .actions[data-group] { position: relative; padding-left: 72px; }
-.env .actions[data-group]::before { content: attr(data-group); position: absolute; left: 0; top: 7px; height: 26px; display: flex; align-items: center; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; opacity: .75; }
-.env > .actions:last-child:not(.quick)[data-group]::before { top: 13px; }
+.env .actions[data-group]::before { content: attr(data-group); position: absolute; left: 0; top: 10px; height: 26px; display: flex; align-items: center; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; opacity: .75; }
 @media (max-width: 700px) {
 	.env .actions[data-group] { padding-left: 0; }
 	.env .actions[data-group]::before { position: static; flex-basis: 100%; height: auto; }
@@ -706,9 +709,8 @@ a.btn-link .ico { width: 13px; height: 13px; flex: none; }
 dialog.newsite .sync-options ~ .hint { margin-top: 12px; }
 dialog.newsite .data-sync-options ~ .hint { margin-top: 22px; }
 /* With a Manage row, the Site row above it starts the bottom block of the card */
-.env > .actions:not(.quick):has(+ .actions:last-child:not(.quick)) { margin-top: auto; padding-top: 12px; }
-.env > .actions:not(.quick):has(+ .actions:last-child:not(.quick))[data-group]::before { top: 13px; }
-.env > .actions:not(.quick) + .actions:last-child:not(.quick) { margin-top: 14px; padding-top: 12px; }
+.env > .actions:not(.quick):has(+ .actions:last-child:not(.quick)) { margin-top: auto; padding-top: 10px; }
+.env > .actions:not(.quick) + .actions:last-child:not(.quick) { margin-top: 10px; padding-top: 10px; }
 .remote-icon { gap: 5px; }
 .remote-icon .os-logo { display: inline-flex; }
 .remote-icon .os-logo svg { width: 16px; height: 16px; }
@@ -1079,6 +1081,8 @@ body[data-role="user"] #settings-menu, body[data-role="user"] #btn-multi, body[d
 .grant-chip { display: inline-flex; align-items: center; gap: 7px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 999px; background: rgba(0, 0, 0, .15); font-size: 12.5px; cursor: pointer; }
 .grant-chip:has(input:checked) { border-color: rgba(88, 166, 255, .5); background: rgba(88, 166, 255, .12); }
 .grant-chip.main:has(input:checked) { border-color: rgba(163, 113, 247, .55); background: rgba(163, 113, 247, .14); }
+.grant-chip.later { border-style: dashed; color: var(--muted); }
+.grant-chip.later:has(input:checked) { border-color: rgba(88, 166, 255, .45); background: transparent; color: var(--text); }
 .grant-databases { display: grid; gap: 6px; font-size: 12.5px; color: var(--muted); }
 .audit-list .audit-row { grid-template-columns: 150px minmax(0, 160px) 1fr; }
 @media (max-width: 640px) { .user-roles { grid-template-columns: 1fr; } .grant-body { padding-left: 12px; } }
@@ -1145,6 +1149,9 @@ dialog.newsite > form > .ns-head, dialog.newsite > .ns-head { position: sticky; 
 #dlg-user .option-row:hover { border-color: rgba(88, 166, 255, .3); }
 #dlg-user .grant-area > .option-row { position: relative; margin: -2px 0 4px 26px; }
 #dlg-user .grant-area > .option-row::before { content: ""; position: absolute; left: -17px; top: -12px; width: 12px; height: 32px; border-left: 1px solid var(--line); border-bottom: 1px solid var(--line); border-bottom-left-radius: 8px; }
+/* SFTP is the user's, for all their sites: a row of its own after the list, not hanging on its last site */
+#dlg-user .grant-area > .option-row.sftp-row { margin: 12px 0 0; }
+#dlg-user .grant-area > .option-row.sftp-row::before { content: none; }
 #dlg-user .option-row:has(.switch:checked) { border-color: rgba(88, 166, 255, .45); background: rgba(88, 166, 255, .07); }
 #dlg-user .user-locked { margin: 12px 0 2px; }
 #dlg-user .user-locked:has(.switch:checked) { border-color: rgba(248, 81, 73, .5); background: rgba(248, 81, 73, .08); }
@@ -1519,3 +1526,49 @@ dialog.newsite .server-address-row { grid-template-columns: minmax(0, 3fr) minma
 .xterm .xterm-viewport::-webkit-scrollbar-track { background: transparent; }
 .xterm .xterm-viewport::-webkit-scrollbar-thumb { background: rgba(139, 148, 158, .3); border: 3px solid transparent; border-radius: 10px; background-clip: padding-box; }
 .xterm .xterm-viewport::-webkit-scrollbar-thumb:hover { background-color: rgba(139, 148, 158, .55); }
+
+/* Server tools: Update and Remove side by side on a .NET row; a note the SQL install dialog shows */
+.tool-row .tool-row-actions { display: inline-flex; flex: none; gap: 6px; margin-left: auto; }
+.server-action-note { margin: 0 0 14px; padding: 10px 12px; border: 1px solid rgba(210, 153, 34, .4); border-radius: 9px; background: rgba(210, 153, 34, .08); color: #e3c27a; font-size: 13px; line-height: 1.5; }
+
+/* Scheduled jobs (root's crontab) */
+.crontab-dialog .crontab-list, .crontab-dialog .crontab-form { margin: 12px 24px 0; }
+.crontab-list { display: grid; gap: 8px; min-height: 80px; padding: 0; list-style: none; }
+.crontab-row { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.crontab-icon { display: grid; flex: none; place-items: center; width: 34px; height: 34px; border-radius: 9px; background: rgba(57, 197, 187, .12); color: #39c5bb; }
+.crontab-icon svg { width: 18px; height: 18px; }
+.crontab-text { display: grid; flex: 1; gap: 4px; min-width: 0; }
+.crontab-when { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.crontab-when strong { font-size: 14px; }
+.crontab-when code { color: var(--muted); font-size: 12px; }
+.crontab-command { overflow: hidden; color: var(--text); font-size: 12.5px; text-overflow: ellipsis; white-space: nowrap; opacity: .85; }
+.crontab-actions { display: flex; flex: none; gap: 6px; }
+.crontab-actions button { padding: 4px 10px; font-size: 12.5px; }
+.crontab-form { display: grid; gap: 10px; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.crontab-form h3 { margin: 0 0 4px; font-size: 15px; }
+.crontab-form label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
+.crontab-form input.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; color: var(--text); }
+.crontab-presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.crontab-presets .chip { padding: 4px 10px; font-size: 12px; }
+.crontab-said { margin: 0; color: #8ff0b4; }
+.crontab-form-actions { display: flex; justify-content: flex-end; align-items: center; gap: 12px; margin-top: 4px; }
+.crontab-form-actions .cancel-link { margin-right: auto; }
+@media (max-width: 720px) { .crontab-row { flex-wrap: wrap; } .crontab-actions { width: 100%; justify-content: flex-end; } }
+
+/* A tool that cannot be used yet (the backups without SQL Server and the SQL tools): dimmed, its buttons still there */
+.tool-card.unavailable .tool-head, .tool-card.unavailable .tool-rows { opacity: .5; }
+.tool-card.unavailable .tool-text { color: var(--muted); }
+.server-action-confirm { margin: 0 0 8px; color: var(--muted); font-size: 13px; }
+.server-action-confirm .confirmation-copy { color: var(--text); font-weight: 700; text-decoration: underline dotted; cursor: pointer; }
+
+/* Server tools: one column of groups, each with its buttons beside its state and its rows the full width */
+#server-tools-list { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+#server-tools-list .tool-card { gap: 10px; padding: 12px 14px; }
+#server-tools-list .tool-head { flex-wrap: wrap; row-gap: 8px; }
+#server-tools-list .tool-head .tool-actions { flex: none; margin: 0; padding: 0; }
+#server-tools-list .tool-text { margin-left: 48px; }
+#server-tools-list .tool-rows { margin-left: 48px; }
+#server-tools-list .tool-row { padding: 8px 12px; }
+#server-tools-list .tool-row .tool-row-detail { white-space: normal; }
+#server-tools-list .tool-row .tool-row-action.tool-danger { color: var(--red); border-color: rgba(248, 81, 73, .35); }
+@media (max-width: 720px) { #server-tools-list .tool-text, #server-tools-list .tool-rows { margin-left: 0; } }

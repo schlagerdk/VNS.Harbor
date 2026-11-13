@@ -15,6 +15,21 @@ DOTNET_CHANNELS = ("11.0", "10.0", "8.0")
 INITIALIZED = "/var/lib/vns/apache-initialized"
 
 
+def remove_default_page(system):
+    """Ubuntu's own Apache page goes (000-default and /var/www/html), when that is all there is: in /var/www it would
+    look like a site. A page put there by hand stays."""
+    folder = system.path("/var/www/html")
+    files = sorted(path.name for path in folder.iterdir()) if folder.is_dir() else []
+    if files != ["index.html"] or "Apache2 Ubuntu Default Page" not in (folder / "index.html").read_text(errors="replace"):
+        return
+    system.say("Remove Ubuntu's default Apache page")
+    if system.path("/etc/apache2/sites-enabled/000-default.conf").exists():
+        system.run("a2dissite", "-q", "000-default")
+    (folder / "index.html").unlink()
+    folder.rmdir()
+    system.run("systemctl", "reload", "apache2", check=False)
+
+
 def init(system):
     from harbor.server.apache import install_apache_conf, install_tls_policy, set_servername
     system.step("Install the packages Harbor needs")
@@ -31,6 +46,7 @@ def init(system):
     set_servername(system)
     install_tls_policy(system, start_if_stopped=True)
     install_apache_conf(system)
+    remove_default_page(system)
 
     if not system.path(ACME).is_file():
         system.step("Install acme.sh")

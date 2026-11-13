@@ -2,6 +2,27 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.1] - 2026-11-14
+
+### Features
+
+- Scheduled jobs: root's crontab in the Server tools, one job at a time, with when it runs written out in words
+- Server tools in one column: SQL Server, the SQL tools and the sa password in one card; an older .NET can be removed when no site uses it
+- SQL Server can be installed on a newer Ubuntu than Microsoft supports, with the packages for 24.04, after a warning
+- harbor self uninstall takes Harbor off a server and leaves the sites running; its state and secrets are kept in an archive in /root
+- A new server's Ubuntu default page in /var/www/html is removed, so it does not look like a site
+- Screenshots in the README
+
+### Fixes
+
+- The old installation is removed after an update, also when a service file mentions it in a comment
+- An update started from the old installation no longer ends with an error
+- Backups are turned off when SQL Server or the SQL tools are removed, and cannot be turned on without them
+- A server added again after a reinstall is reached: its old host key is forgotten
+- Deleting the databases with SQL Server asks for DELETE as the other confirmations do; a disabled button looks disabled
+- The users window: SFTP stands on its own, and "Environments added later" is chosen beside the environments
+- An environment's rows: Run custom script stands at the right, and the space above and below the buttons is the same
+
 ## [1.0.0] - 2026-11-13
 
 The first release of VNS Harbor.

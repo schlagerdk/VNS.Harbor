@@ -16,7 +16,7 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=@SITE@
 
-# Protect: chroot - the site only sees system libraries and its own folder, not /root, /home, /vns or other sites
+# Protect: chroot - the site only sees system libraries and its own folder, not /root, /home or other sites
 ProtectSystem=strict
 ProtectHome=true
 PrivateTmp=true

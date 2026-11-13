@@ -733,6 +733,17 @@
   <menu><button type="button" id="servers-refresh" class="cancel-link">Refresh</button><button type="button" id="servers-close">Close</button></menu>
 </dialog>
 
+<dialog id="dlg-crontab" class="newsite server-tools-dialog crontab-dialog" aria-labelledby="crontab-title">
+  <div class="ns-head">
+    <span class="ns-icon" data-header-icon="clock" aria-hidden="true"></span>
+    <div><h2 id="crontab-title">Scheduled jobs</h2><p>What this server runs on a schedule (root's crontab)</p></div>
+  </div>
+  <div class="users-toolbar servers-toolbar"><span id="crontab-count" class="muted"></span><button type="button" id="crontab-add" class="primary">＋ Add job</button></div>
+  <ul id="crontab-list" class="crontab-list" aria-busy="true"></ul>
+  <form id="crontab-form" class="crontab-form" hidden></form>
+  <menu><button type="button" id="crontab-refresh" class="cancel-link">Refresh</button><button type="button" id="crontab-close">Close</button></menu>
+</dialog>
+
 <dialog id="dlg-server-action" class="newsite server-action-dialog" aria-labelledby="server-action-title">
   <form method="dialog" id="form-server-action">
     <header class="ns-head">
@@ -798,7 +809,7 @@
           <input name="create_sites" type="checkbox" class="switch small" aria-label="May create sites"></label>
         <p class="hint">Tick a site for all of it, also environments added later, or open it and choose environments. An environment alone shows only that, not the main site. The actions count for the chosen environments: a user publishes and syncs only to those.</p>
         <div id="user-sites" class="grant-list"></div>
-        <label class="option-row"><span class="option-icon" data-header-icon="upload" aria-hidden="true"></span>
+        <label class="option-row sftp-row"><span class="option-icon" data-header-icon="upload" aria-hidden="true"></span>
           <span class="option-text"><strong>SFTP</strong><small>Their sites' folders in an SFTP program, as their own Linux user</small></span>
           <input name="sftp" type="checkbox" class="switch small" aria-label="SFTP"></label>
         <div id="user-sftp" class="sftp-area">

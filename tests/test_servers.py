@@ -23,6 +23,9 @@ class ServerTests(unittest.TestCase):
         self.root = Path(folder.name)
 
     def keygen(self, argv):
+        if "-R" in argv:
+            # A host key forgotten (known_hosts)
+            return ""
         key = self.root / argv[argv.index("-f") + 1].lstrip("/")
         key.parent.mkdir(parents=True, exist_ok=True)
         key.write_text("private")
@@ -107,7 +110,7 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(main(["servers", "remove", "two", "--uninstall", "--revoke-key"], system), 0, system.said)
         uninstall = next(index for index, command in enumerate(system.commands) if command.endswith("sh -s"))
         self.assertIn("rm -rf /opt/harbor", system.inputs[uninstall])
-        self.assertNotIn("/vns", system.inputs[uninstall].replace("Sites and /vns are not touched", ""))
+        self.assertNotIn("/vns", system.inputs[uninstall])
         revoke = next(command for command in system.commands if "grep -vxF" in command)
         self.assertIn("ssh-ed25519 AAAAharbor harbor@one", revoke)
         self.assertLess(uninstall, system.commands.index(revoke), "the key goes last")
@@ -117,6 +120,26 @@ class ServerTests(unittest.TestCase):
         system = self.system(ssh=Result(255))
         self.assertEqual(main(["servers", "remove", "two", "--uninstall"], system), 1)
         self.assertIn("two", json.loads((self.root / "var/lib/harbor/servers.json").read_text()))
+
+    def test_a_servers_host_key_is_forgotten_with_it_and_for_a_new_address(self):
+        """A server set up again has a new host key: Harbor refused to log in to linux-02 after it was reinstalled"""
+        known = self.root / "etc/harbor/ssh/known_hosts"
+        known.parent.mkdir(parents=True)
+        known.write_text("10.0.0.2 ssh-ed25519 AAAAold\n")
+        forget = "ssh-keygen -f /etc/harbor/ssh/known_hosts -R 10.0.0.2"
+        system = self.system(ssh=lambda argv: "")
+        self.assertEqual(self.add(system), 0, system.said)
+        self.assertIn(forget, system.commands, "a new address: its old key goes before the first login")
+        system = self.system(ssh=lambda argv: "")
+        with mock.patch.dict(os.environ, {"HARBOR_SSH_PASSWORD": "pw 1"}):
+            self.assertEqual(main(["servers", "add", "three", "10.0.0.2"], system), 0, system.said)
+        self.assertNotIn(forget, system.commands, "a server here is at it: its key is kept")
+        system = self.system(ssh=lambda argv: "")
+        self.assertEqual(main(["servers", "remove", "three"], system), 0, system.said)
+        self.assertNotIn(forget, system.commands, "two is still at it")
+        system = self.system(ssh=lambda argv: "")
+        self.assertEqual(main(["servers", "remove", "two"], system), 0, system.said)
+        self.assertIn(forget, system.commands)
 
     def test_self_use(self):
         release = self.root / "opt/harbor/releases/1.2.0-abc"

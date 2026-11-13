@@ -1749,7 +1749,8 @@ function envPanel(site, env) {
 	// The main site: to a new folder here, without its environments, or with them to another server (administrators),
 	// where it can also be migrated
 	if (!isTarget(env) && !site.admin && !site.managed_by) addManage("Copy site", () => copySite(site, env));
-	if (currentUser.admin && site.kind === "umbraco" && (!isTarget(env) || env.mode === "local")) addManage("Backoffice login…", () => backofficeLoginDialog(site, env));
+	// Each environment has its own Umbraco users, also one on another server or on Windows (its connection is written there)
+	if (currentUser.admin && site.kind === "umbraco") addManage("Backoffice login…", () => backofficeLoginDialog(site, env));
 	// An environment on Windows is only removed here: its IIS site and files stay on the server
 	if (hasProd(site) && !site.admin && env.mode === "windows") addManage("Remove environment", () => deleteSite(site, "prod", env), "push-right");
 	else if (hasProd(site) && !site.admin) addManage("Delete site", () => deleteSite(site, isTarget(env) ? "prod" : "test", env), "danger");
@@ -1767,11 +1768,11 @@ function envPanel(site, env) {
 	if (extraTools) panel.append(extraTools);
 	if (actions.children.length) panel.append(actions);
 	if (manage.children.length) panel.append(manage);
-	// Tools that are rarely the point of the row stand to the right: clearing logs, editing files, the syncs,
+	// Tools that are rarely the point of the row stand to the right: clearing logs, editing files, the syncs, custom scripts,
 	// and logs, shell and files beside Stop and Restart. Only with something to their left, so a row of edit
 	// buttons alone (on Windows) stays at the left.
 	for (const row of [quick, sync, extraTools, actions]) {
-		const first = row && [...row.children].find((button) => /^(Clear logs|Sync settings…|Sync data…|Edit .*|Logs|Shell|Files)$/.test(button.textContent));
+		const first = row && [...row.children].find((node) => node.classList.contains("script-menu") || /^(Clear logs|Sync settings…|Sync data…|Edit .*|Logs|Shell|Files)$/.test(node.textContent));
 		if (first && first !== row.firstElementChild) first.classList.add("push-right");
 	}
 	// A phone keeps what is used on the go: publish, start or stop, restart, logs and delete.
@@ -5481,8 +5482,8 @@ function siteGrantRow(name, envKeys, grant) {
 	toggle.onclick = () => { body.hidden = !body.hidden; toggle.setAttribute("aria-expanded", String(!body.hidden)); };
 	body.append(
 		el("div", { className: "grant-label", textContent: "Environments" }),
-		el("div", { className: "grant-chips" }, ...envBoxes.map(([, , chip]) => chip)),
-		...(envKeys.length > 1 ? [el("label", { className: "grant-flag small" }, newEnvs, el("span", { textContent: "Also environments added later" }))] : []),
+		el("div", { className: "grant-chips" }, ...envBoxes.map(([, , chip]) => chip),
+			...(envKeys.length > 1 ? [el("label", { className: "grant-chip later", title: "Environments added to the site later are given too" }, newEnvs, el("span", { textContent: "Environments added later" }))] : [])),
 		el("div", { className: "grant-label", textContent: "May" }),
 		el("div", { className: "grant-chips" }, ...actionBoxes));
 	const row = el("div", { className: "grant-site" },
@@ -5742,51 +5743,77 @@ function toolRow(name, detail, { on = null, action = null, code = false } = {}) 
 function serverToolCards(status) {
 	const sql = status.sql_server, tools = status.sql_tools, sa = status.sa_password, cron = status.cron;
 	const cards = [];
-	cards.push(toolCard({
-		icon: "database", tone: "purple", title: "SQL Server", detail: sql.installed ? "Version " + sql.version : "Not installed",
+	// SQL Server, its tools and its sa password: one group, a row each with its own buttons
+	const rowActions = (...buttons) => el("span", { className: "tool-row-actions" }, ...buttons);
+	const sqlCard = toolCard({
+		icon: "database", tone: "purple", title: "SQL Server", detail: sql.installed ? "Version " + sql.version : "For the sites' databases, when they use one here",
 		state: sql.installed ? (sql.running ? "Running" : "Stopped") : "Not installed", stateClass: sql.installed ? (sql.running ? "ok" : "bad") : "",
-		text: sql.installed ? "The databases of the sites here. Update takes the newest patch of this version." : "Microsoft SQL Server for the sites' databases. Not needed when they use a SQL Server elsewhere.",
-		actions: sql.installed
-			? [toolButton("Update", () => confirmServerTool("Update SQL Server?", "Takes the newest update of this version. The service restarts, so take a backup first.", "Update", { tool: "sql_update" })),
-				toolButton("Remove…", () => askServerTool("sql_uninstall"), "tool-danger")]
-			: [toolButton("Install…", () => askServerTool("sql_install"), "primary")],
-	}));
-	cards.push(toolCard({
-		icon: "terminal", tone: "blue", title: "SQL tools", detail: tools.installed ? "sqlcmd " + (tools.version || "") : "sqlcmd is not installed",
-		state: tools.installed ? "Installed" : "Not installed", stateClass: tools.installed ? "ok" : "",
-		text: "sqlcmd runs the backups, the log shrinks and the database scripts. Needed for SQL connections on this server too.",
-		actions: tools.installed
-			? [toolButton("Remove", () => confirmServerTool("Remove the SQL tools?", "sqlcmd goes. SQL Server and its databases stay.", "Remove", { tool: "tools_uninstall" }, true), "tool-danger")]
-			: [toolButton("Install", () => runServerTool({ tool: "tools_install" }), "primary")],
-	}));
-	cards.push(toolCard({
-		icon: "key", tone: "amber", title: "sa password", detail: sa.scripts ? `Used by ${sa.scripts} script${sa.scripts === 1 ? "" : "s"} in sql/` : "No script uses it",
-		state: sa.set ? "Set" : "Not set", stateClass: sa.set ? "ok" : sql.installed ? "warn" : "",
-		text: sa.set ? "The backups and database scripts log in with it. Set it again when it was changed on the SQL Server."
-			: "The backups and database scripts need the sa password of the SQL Server here.",
-		actions: [toolButton(sa.set ? "Change…" : "Set…", () => askServerTool("sa_password"), sa.set ? "" : "primary")],
-	}));
+		rows: [
+			toolRow("SQL Server", sql.installed ? `Version ${sql.version}` + (sql.running ? "" : " · stopped") : "Not installed: not needed when the sites use a SQL Server elsewhere", {
+				on: sql.installed && sql.running,
+				action: rowActions(...(sql.installed
+					? [toolButton("Update", () => confirmServerTool("Update SQL Server?", "Takes the newest update of this version. The service restarts, so take a backup first.", "Update", { tool: "sql_update" }), "ghost tool-row-action"),
+						toolButton("Remove…", () => askServerTool("sql_uninstall"), "ghost tool-row-action tool-danger")]
+					: [toolButton("Install…", () => askServerTool("sql_install", { older: sql.packages_for, ubuntu: status.os.version }), "primary tool-row-action")])),
+			}),
+			toolRow("SQL tools", tools.installed ? "sqlcmd " + (tools.version || "") : "sqlcmd: runs the backups and database scripts, and SQL connections here", {
+				on: tools.installed,
+				action: rowActions(tools.installed
+					? toolButton("Remove", () => confirmServerTool("Remove the SQL tools?", "sqlcmd goes, and the backups stop. SQL Server and its databases stay.", "Remove", { tool: "tools_uninstall" }, true), "ghost tool-row-action tool-danger")
+					: toolButton("Install", () => runServerTool({ tool: "tools_install" }), "primary tool-row-action")),
+			}),
+			toolRow("sa password", sa.set ? "Set: the backups and database scripts log in with it" : "Not set: the backups and database scripts need it", {
+				on: sa.set,
+				action: rowActions(toolButton(sa.set ? "Change…" : "Set…", () => askServerTool("sa_password"), (sa.set ? "ghost" : "primary") + " tool-row-action")),
+			}),
+		],
+	});
+	cards.push(sqlCard);
 	const jobs = cron.jobs.backup_everything && cron.jobs.shrink_logs;
 	const someJobs = cron.jobs.backup_everything || cron.jobs.shrink_logs;
-	cards.push(toolCard({
-		icon: "clock", tone: "teal", title: "Backups", detail: "root's crontab",
-		state: jobs ? "On" : someJobs ? "Partly on" : "Off", stateClass: jobs ? "ok" : someJobs ? "warn" : "",
+	// The backups run sqlcmd against the SQL Server here: without both there is nothing for them to do
+	const canBackUp = sql.installed && tools.installed;
+	const turnOn = toolButton("Turn on", () => runServerTool({ tool: "cron_on" }), "primary");
+	turnOn.disabled = !canBackUp;
+	const backups = toolCard({
+		icon: "clock", tone: "teal", title: "Backups", detail: "Every database here, on a schedule",
+		state: !canBackUp ? (someJobs ? "Cannot run" : "Not available") : jobs ? "On" : someJobs ? "Partly on" : "Off",
+		stateClass: !canBackUp ? (someJobs ? "bad" : "") : jobs ? "ok" : someJobs ? "warn" : "",
+		text: canBackUp ? "" : someJobs ? "Its jobs are in cron, but SQL Server or the SQL tools are not here: turn them off."
+			: `Needs ${sql.installed ? "" : "SQL Server"}${sql.installed || tools.installed ? "" : " and "}${tools.installed ? "" : "the SQL tools"} on this server.`,
 		rows: [
 			toolRow("Backup", "Every database, every 4 hours at :15", { on: cron.jobs.backup_everything }),
 			toolRow("Log shrink", "Every log, every 4 hours", { on: cron.jobs.shrink_logs }),
-			...cron.others.map((line) => toolRow("Also", line, { code: true })),
 		],
-		actions: jobs
-			? [toolButton("Turn off", () => confirmServerTool("Turn off the backups?", "The backup and log shrink jobs leave root's crontab. Other jobs stay.", "Turn off", { tool: "cron_off" }, true))]
-			: [toolButton("Turn on", () => runServerTool({ tool: "cron_on" }), "primary")],
+		actions: [
+			someJobs
+				? toolButton("Turn off", () => confirmServerTool("Turn off the backups?", "The backup and log shrink jobs leave root's crontab. Other jobs stay.", "Turn off", { tool: "cron_off" }, true))
+				: turnOn,
+		],
+	});
+	// Not available until SQL Server and the SQL tools are both here
+	backups.classList.toggle("unavailable", !canBackUp);
+	cards.push(backups);
+	const scheduled = cron.others.filter((line) => !/^\s*[A-Za-z_][A-Za-z0-9_]*\s*=/.test(line)).length
+		+ (cron.jobs.backup_everything ? 1 : 0) + (cron.jobs.shrink_logs ? 1 : 0);
+	cards.push(toolCard({
+		icon: "clock", tone: "blue", title: "Scheduled jobs", detail: "root's crontab",
+		state: `${scheduled} job${scheduled === 1 ? "" : "s"}`, stateClass: scheduled ? "ok" : "",
+		text: "What this server runs on a schedule: the backups, certificate renewals and jobs of your own. Add, change or delete them.",
+		actions: [toolButton("Open…", openCrontab, "primary")],
 	}));
 	const installed = new Set(status.dotnet.map((item) => item.channel));
+	// The newest .NET is the host the others run on: it is never removed
+	const newestDotnet = status.dotnet.map((item) => item.channel).sort((a, b) => parseInt(b) - parseInt(a))[0];
 	const missing = DOTNET_CHANNELS.filter((channel) => !installed.has(channel));
 	cards.push(toolCard({
 		icon: "dotnet", tone: "pink", title: ".NET", detail: status.dotnet.length ? status.dotnet.map((item) => item.channel).join(" · ") : "Not installed",
 		state: status.dotnet.length ? `${status.dotnet.length} version${status.dotnet.length === 1 ? "" : "s"}` : "Not installed", stateClass: status.dotnet.length ? "ok" : "warn",
 		rows: status.dotnet.map((item) => toolRow(".NET " + item.channel, `SDK ${item.sdk || "—"} · runtime ${item.runtime || "—"}`, {
-			action: toolButton("Update", () => confirmServerTool(`Update .NET ${item.channel}?`, "Installs its newest SDK and ASP.NET Core runtime. Sites use the new runtime when they restart.", "Update", { tool: "dotnet_update", channel: item.channel }), "ghost tool-row-action"),
+			action: el("span", { className: "tool-row-actions" },
+				toolButton("Update", () => confirmServerTool(`Update .NET ${item.channel}?`, "Installs its newest SDK and ASP.NET Core runtime. Sites use the new runtime when they restart.", "Update", { tool: "dotnet_update", channel: item.channel }), "ghost tool-row-action"),
+				...(item.channel === newestDotnet ? [] : [toolButton("Remove", () => confirmServerTool(`Remove .NET ${item.channel}?`,
+					"Its SDKs and runtimes go from this server. It is refused while a site here builds or runs on it.", "Remove", { tool: "dotnet_remove", channel: item.channel }, true), "ghost tool-row-action tool-danger")])),
 		})),
 		actions: missing.length ? [toolButton("Add version…", () => askServerTool("dotnet_install", { channels: missing }))] : [],
 	}));
@@ -5800,6 +5827,11 @@ function serverToolCards(status) {
 				toolButton("Remove", () => confirmServerTool("Remove Node.js?", "node and npm go from this server.", "Remove", { tool: "node_remove" }, true), "tool-danger")]
 			: [toolButton("Install…", () => askServerTool("node_install"), "primary")],
 	}));
+	// One column of groups: each group's buttons beside its state, its rows the full width
+	for (const card of cards) {
+		const actions = card.querySelector(":scope > .tool-actions");
+		if (actions) card.querySelector(".tool-head").append(actions);
+	}
 	return cards;
 }
 
@@ -5837,12 +5869,141 @@ function checkOption(name, title, sub, checked, icon = "activity", tone = "blue"
 			el("span", { className: "sync-option-sub", textContent: sub })));
 }
 
+// ---- Scheduled jobs: root's crontab, a job at a time
+const crontabDialog = $("#dlg-crontab");
+let crontabEntries = [];
+const CRON_PRESETS = [["Every hour", "0 * * * *"], ["Every 4 hours", "0 */4 * * *"], ["Every day at 03:00", "0 3 * * *"],
+	["Every Sunday at 03:00", "0 3 * * 0"], ["The 1st of every month", "0 3 1 * *"], ["When the server starts", "@reboot"]];
+const CRON_DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const HARBOR_JOBS = { backup_everything: "Backup", shrink_logs: "Log shrink" };
+
+// A schedule in words, for the common ones; nothing for one of its own
+function describeCron(expression) {
+	const text = String(expression || "").trim().split(/\s+/).join(" ");
+	const special = { "@reboot": "When the server starts", "@hourly": "Every hour", "@daily": "Every day at 00:00", "@midnight": "Every day at 00:00",
+		"@weekly": "Every Sunday at 00:00", "@monthly": "The 1st of every month at 00:00", "@yearly": "Every 1 January at 00:00", "@annually": "Every 1 January at 00:00" };
+	if (special[text]) return special[text];
+	const fields = text.split(" ");
+	if (fields.length !== 5) return "";
+	const [minute, hour, day, month, weekday] = fields;
+	const number = (value) => /^\d{1,2}$/.test(value);
+	const every = (value) => (value.match(/^\*\/(\d+)$/) || [])[1];
+	const time = (h, m) => String(h).padStart(2, "0") + ":" + String(m).padStart(2, "0");
+	const past = (m) => m === "0" ? "" : ` at :${m.padStart(2, "0")}`;
+	const always = day === "*" && month === "*" && weekday === "*";
+	if (minute === "*" && hour === "*") return always ? "Every minute" : "";
+	if (every(minute) && hour === "*") return always ? `Every ${every(minute)} minutes` : "";
+	if (number(minute) && hour === "*") return always ? "Every hour" + past(minute) : "";
+	if (number(minute) && every(hour)) return always ? `Every ${every(hour)} hours` + past(minute) : "";
+	let at;
+	if (number(minute) && number(hour)) at = "at " + time(hour, minute);
+	else if (number(minute) && /^\d{1,2}(,\d{1,2})+$/.test(hour)) {
+		const times = hour.split(",").map((h) => time(h, minute));
+		at = `at ${times.slice(0, -1).join(", ")} and ${times.at(-1)}`;
+	} else return "";
+	if (always) return "Every day " + at;
+	if (day === "*" && month === "*" && number(weekday) && +weekday <= 7) return `Every ${CRON_DAYS[+weekday]} ` + at;
+	if (day === "*" && month === "*" && weekday === "1-5") return "Every weekday " + at;
+	if (number(day) && month === "*" && weekday === "*") return `Day ${day} of every month ` + at;
+	return "";
+}
+
+async function openCrontab() {
+	if (!crontabDialog.open) crontabDialog.showModal();
+	showCrontabList();
+	const list = $("#crontab-list");
+	list.setAttribute("aria-busy", "true");
+	try {
+		crontabEntries = (await api("/api/server/crontab")).entries || [];
+		renderCrontab();
+	} catch (error) {
+		list.replaceChildren(el("li", { className: "server-tools-loading", textContent: error.message }));
+	} finally {
+		list.removeAttribute("aria-busy");
+	}
+}
+
+function renderCrontab() {
+	const jobs = crontabEntries.map((entry, index) => [entry, index]).filter(([entry]) => entry.kind === "job");
+	const kept = crontabEntries.length - jobs.length;
+	$("#crontab-count").textContent = `${jobs.length} job${jobs.length === 1 ? "" : "s"}` + (kept ? ` · ${kept} other line${kept === 1 ? "" : "s"} (variables, comments) kept as they are` : "");
+	$("#crontab-list").replaceChildren(...(jobs.length ? jobs.map(([entry, index]) => el("li", { className: "crontab-row" },
+		el("span", { className: "crontab-icon" }, svgIcon(HARBOR_JOBS[entry.harbor] ? "database" : "clock")),
+		el("div", { className: "crontab-text" },
+			el("div", { className: "crontab-when" }, el("strong", { textContent: describeCron(entry.schedule) || "A schedule of its own" }),
+				el("code", { textContent: entry.schedule }),
+				...(HARBOR_JOBS[entry.harbor] ? [el("span", { className: "badge", textContent: HARBOR_JOBS[entry.harbor] })] : [])),
+			el("code", { className: "crontab-command", textContent: entry.command, title: entry.command })),
+		el("div", { className: "crontab-actions" },
+			toolButton("Edit", () => showCronForm(index), "ghost"),
+			toolButton("Delete", () => deleteCronJob(index), "ghost tool-danger"))))
+		: [el("li", { className: "server-tools-loading", textContent: "No scheduled jobs yet." })]));
+}
+
+function showCrontabList() {
+	$("#crontab-form").hidden = true;
+	$("#crontab-list").hidden = false;
+	$("#crontab-add").hidden = false;
+}
+
+async function saveCrontab(entries, message) {
+	await api("/api/server/crontab", { json: { entries } });
+	toast(message);
+	await openCrontab();
+}
+
+async function deleteCronJob(index) {
+	const entry = crontabEntries[index];
+	if (!await ask({ title: "Delete this job?", message: `${describeCron(entry.schedule) || entry.schedule}: ${entry.command}`, input: false, ok: "Delete", danger: true })) return;
+	await saveCrontab(crontabEntries.filter((_, other) => other !== index), "The job is deleted.");
+}
+
+function showCronForm(index = null) {
+	const entry = index === null ? { schedule: "0 3 * * *", command: "" } : crontabEntries[index];
+	const form = $("#crontab-form");
+	const when = el("input", { name: "schedule", value: entry.schedule, required: true, spellcheck: false, autocomplete: "off", className: "mono" });
+	const said = el("p", { className: "hint crontab-said" });
+	const describe = () => { said.textContent = describeCron(when.value) || "A schedule of its own: minute, hour, day of the month, month and day of the week, such as 15 */4 * * *"; };
+	when.oninput = describe;
+	describe();
+	const command = el("input", { name: "command", value: entry.command, required: true, spellcheck: false, autocomplete: "off", className: "mono",
+		placeholder: "/root/scripts/cleanup.sh >> /var/log/cleanup.log 2>&1" });
+	form.replaceChildren(
+		el("h3", { textContent: index === null ? "Add a job" : "Edit the job" }),
+		el("label", {}, "When", when),
+		el("div", { className: "crontab-presets" }, ...CRON_PRESETS.map(([label, value]) => el("button", { type: "button", className: "chip", textContent: label,
+			onclick: () => { when.value = value; describe(); when.focus(); } }))),
+		said,
+		el("label", {}, "Command", command),
+		el("div", { className: "crontab-form-actions" },
+			el("button", { type: "button", className: "cancel-link", textContent: "Cancel", onclick: showCrontabList }),
+			el("button", { type: "submit", className: "primary", textContent: index === null ? "Add job" : "Save" })));
+	form.onsubmit = (event) => {
+		event.preventDefault();
+		const job = { kind: "job", schedule: when.value.trim(), command: command.value.trim() };
+		const entries = [...crontabEntries];
+		if (index === null) entries.push(job); else entries[index] = job;
+		run(() => saveCrontab(entries, index === null ? "The job is added." : "The job is saved."));
+	};
+	$("#crontab-list").hidden = true;
+	$("#crontab-add").hidden = true;
+	form.hidden = false;
+	(index === null ? when : command).focus();
+}
+$("#crontab-add").onclick = () => showCronForm();
+$("#crontab-refresh").onclick = () => run(openCrontab);
+$("#crontab-close").onclick = () => crontabDialog.close();
+// The backups' state may have changed: Server tools shows it again
+crontabDialog.addEventListener("close", () => { if (serverToolsDialog.open) run(openServerTools); });
+
 // The dialog for an action that needs answers, then its task
 function askServerTool(tool, options = {}) {
 	const form = $("#form-server-action");
 	const fields = $("#server-action-fields");
 	const setup = {
 		sql_install: ["database", "Install SQL Server", "The newest SQL Server for this Ubuntu, set up without questions.", "Install", () => [
+			...(options.older ? [el("p", { className: "server-action-note", textContent: `Microsoft has no SQL Server for Ubuntu ${options.ubuntu || "this version"} yet. `
+				+ `It is installed from the packages for Ubuntu ${options.older}: SQL Server runs on this Ubuntu that way, but Microsoft does not support it.` })] : []),
 			choiceCards("edition", "Edition", SQL_EDITIONS, "Developer"),
 			...passwordFields(),
 			el("p", { className: "hint", textContent: "At least 8 characters, with three of: upper case, lower case, digits and symbols. The backups and database scripts use it too." }),
@@ -5852,7 +6013,14 @@ function askServerTool(tool, options = {}) {
 			checkOption("with_tools", "Remove the SQL tools (sqlcmd) too", "Keep them to reach SQL Servers elsewhere", false, "terminal", "amber"),
 			checkOption("delete_data", "Delete the databases, logs and backups", "Everything in /var/opt/mssql. Kept when not chosen.", false, "trash", "red"),
 			el("div", { className: "server-action-danger", hidden: true, id: "server-action-delete" },
-				el("label", {}, "Type DELETE to delete the databases", el("input", { name: "confirmation", autocomplete: "off", spellcheck: false }))),
+				el("p", { className: "server-action-confirm" }, "Type ", el("button", {
+					type: "button", className: "confirmation-copy", textContent: "DELETE", title: "Copy confirmation text", ariaLabel: "Copy confirmation text: DELETE",
+					onclick: async () => {
+						try { await copyText("DELETE", serverActionDialog); toast("Copied to clipboard."); } catch (error) { toast(error.message, "error"); }
+						form.elements.confirmation.focus({ preventScroll: true });
+					},
+				}), " to delete the databases, logs and backups"),
+				el("input", { name: "confirmation", autocomplete: "off", spellcheck: false, "aria-label": "Type DELETE to delete the databases" })),
 		]],
 		sa_password: ["key", "sa password", "The password of the sa login on this SQL Server, for the backups and database scripts. It is checked against the server first.", "Save password", passwordFields],
 		dotnet_install: ["dotnet", "Add .NET", "Its SDK and ASP.NET Core runtime, beside the versions there.", "Install", () => [
@@ -5873,10 +6041,18 @@ function askServerTool(tool, options = {}) {
 	button.classList.toggle("primary", tool !== "sql_uninstall");
 	fields.replaceChildren(...build());
 	const deleting = form.elements.delete_data;
-	if (deleting) deleting.onchange = () => {
-		$("#server-action-delete").hidden = !deleting.checked;
-		form.elements.confirmation.required = deleting.checked;
-	};
+	// As the other confirmations: the button stays off until the word is typed exactly
+	const confirmed = () => { button.disabled = Boolean(deleting && deleting.checked && form.elements.confirmation.value !== "DELETE"); };
+	button.disabled = false;
+	if (deleting) {
+		deleting.onchange = () => {
+			$("#server-action-delete").hidden = !deleting.checked;
+			form.elements.confirmation.required = deleting.checked;
+			confirmed();
+			if (deleting.checked) form.elements.confirmation.focus();
+		};
+		form.elements.confirmation.oninput = confirmed;
+	}
 	form.onsubmit = (event) => {
 		event.preventDefault();
 		const values = form.elements;
@@ -5895,6 +6071,7 @@ function askServerTool(tool, options = {}) {
 		const payload = { tool };
 		for (const name of ["edition", "channel", "major", "sa_password", "confirmation"]) if (values[name]) payload[name] = values[name].value;
 		for (const name of ["with_tools", "delete_data"]) if (values[name]) payload[name] = values[name].checked;
+		if (tool === "sql_install" && options.older) payload.older_ubuntu = true;
 		serverActionDialog.close();
 		run(() => runServerTool(payload));
 	};

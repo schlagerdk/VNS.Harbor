@@ -18,6 +18,8 @@ BASE_URL = "https://packages.microsoft.com"
 # Newest first. The first version with a repository for this Ubuntu version is used.
 SQL_VERSIONS = ("2025", "2022", "2019")
 FALLBACK_UBUNTU = "24.04"
+# The Ubuntu versions Microsoft publishes SQL Server for
+SUPPORTED_UBUNTU = ("22.04", "24.04")
 LIBLDAP = "https://deb.debian.org/debian/pool/main/o/openldap/libldap-2.5-0_2.5.13+dfsg-5_amd64.deb"
 # Microsoft signs newer repositories (e.g. Ubuntu 26.04) with a different key than older ones, so both are added to
 # the same keyring
@@ -95,6 +97,16 @@ def install_sql_tools(system):
     install_tools(system, version_id)
 
 
+def stop_backups(system, why):
+    """The backup and log shrink jobs out of root's crontab: they need SQL Server and sqlcmd here (Server tools turns
+    them on again once both are)"""
+    from harbor.server.tools import JOBS, crontab, job_lines
+    if any(job_lines(crontab(system), name) for name in JOBS):
+        system.say(f"The backups stop: {why}.")
+        from harbor.server.tools import cron
+        cron(system, False)
+
+
 def uninstall_sql_tools(system, assume_yes=None):
     """Remove SQL client tools without removing SQL Server or shared ODBC packages"""
     packages = [package for package in ("mssql-tools18", "mssql-tools") if installed(system, package)]
@@ -108,6 +120,7 @@ def uninstall_sql_tools(system, assume_yes=None):
     system.run("apt-get", "remove", "--purge", "-y", *packages)
     system.path("/etc/profile.d/mssql-tools.sh").unlink(missing_ok=True)
     system.say("SQL tools removed. SQL Server, shared ODBC packages and Microsoft repositories are unchanged.")
+    stop_backups(system, "the SQL tools are gone")
 
 
 # ---- the sa password in the scripts
@@ -226,7 +239,7 @@ def find_sql_version(system, ubuntu_version):
     return ""
 
 
-def install_server(system, edition="", with_tools=None, assume_yes=None):
+def install_server(system, edition="", with_tools=None, assume_yes=None, older_ubuntu=False):
     """The latest SQL Server available for this Ubuntu version, the sa password in the scripts, and sqlcmd if wanted.
     With an edition its setup asks nothing: the sa password comes from HARBOR_SA_PASSWORD (the admin)."""
     import os
@@ -249,8 +262,9 @@ def install_server(system, edition="", with_tools=None, assume_yes=None):
         if not version:
             system.warn(f"Microsoft has no SQL Server repository for Ubuntu {repository}.")
             system.warn("Supported: Ubuntu 22.04 and 24.04 LTS.")
+            # older_ubuntu: chosen in the admin, which says what it means
             if not confirm(system, f"Try the Ubuntu {FALLBACK_UBUNTU} repository instead (NOT supported by Microsoft, may fail)? [y/N]: ",
-                           assume_yes if assume_yes is not None else (False if edition else None)):
+                           True if older_ubuntu else assume_yes if assume_yes is not None else (False if edition else None)):
                 raise Stop("", 1)
             repository = FALLBACK_UBUNTU
             version = find_sql_version(system, repository)
@@ -353,6 +367,7 @@ def uninstall_server(system, assume_yes=None, delete_data=None, with_tools=None)
         else:
             system.say("/var/opt/mssql kept")
         system.say("SQL Server removed")
+        stop_backups(system, "SQL Server is gone")
     else:
         system.say("mssql-server is not installed")
     # with_tools: sqlcmd removed too (True) or kept (False); asked when not given

@@ -127,6 +127,8 @@ def after_update(system):
     harbor = str(BIN)
     worked = []
     system.step("Update the server-wide Apache configs")
+    # Apache's own name, so it does not warn that it cannot tell it (harbor server init sets it on a new server)
+    worked.append(attempt(system, "Apache's ServerName was not set.", "python3", harbor, "server", "set-servername"))
     worked.append(attempt(system, "The shared TLS policy was not installed.", "python3", harbor, "server", "install-tls-policy"))
     worked.append(attempt(system, "The server-wide Apache configs were not installed.", "python3", harbor, "server", "install-apache-conf"))
     if system.path("/etc/cron.d/vns-keep-alive").is_file() or system.path(INITIALIZED).is_file():
@@ -165,6 +167,11 @@ NAMED_IN = ("/etc/cron.d", "/etc/crontab", "/var/spool/cron/crontabs", "/etc/sys
 NAMES_VNS = re.compile(r"(?<![\w./-])/vns(?=/|\s|[\"']|$)", re.M)
 
 
+def without_comments(text):
+    """A config's lines without its comments: a comment that names /vns runs nothing"""
+    return "\n".join(line for line in text.splitlines() if not line.lstrip().startswith(("#", ";")))
+
+
 def names_vns(system):
     """What the server runs that still names /vns: files in NAMED_IN, and root's crontab"""
     found = []
@@ -172,14 +179,32 @@ def names_vns(system):
         top = system.path(place)
         for path in ([top] if top.is_file() else sorted(top.rglob("*")) if top.is_dir() else []):
             try:
-                if path.is_file() and NAMES_VNS.search(path.read_text(errors="replace")):
+                if path.is_file() and NAMES_VNS.search(without_comments(path.read_text(errors="replace"))):
                     found.append("/" + str(path.relative_to(system.path("/"))))
             except OSError:
                 continue
     table = system.run("crontab", "-l", check=False, capture=True)
-    if table.ok and NAMES_VNS.search(table.stdout):
+    if table.ok and NAMES_VNS.search(without_comments(table.stdout)):
         found.append("root's crontab")
     return found
+
+
+def started_from_vns(system):
+    """Whether this update was started by harbor in /vns (the admin of VNS 1.x): its process waits for the update to
+    finish, and needs its code until then"""
+    pid = os.getppid()
+    for _ in range(8):
+        if pid <= 1:
+            return False
+        try:
+            command = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace")
+            parent = next((line.split()[1] for line in Path(f"/proc/{pid}/status").read_text().splitlines() if line.startswith("PPid:")), "1")
+        except OSError:
+            return False
+        if re.search(r"(?<![\w./-])/vns/", command):
+            return True
+        pid = int(parent)
+    return False
 
 
 def remove_vns(system):
@@ -191,6 +216,9 @@ def remove_vns(system):
     from harbor.state.store import read_json
     folder = system.path(VNS)
     if not folder.is_dir() or folder.is_symlink():
+        return
+    if started_from_vns(system):
+        system.say(f"{VNS} goes at the next update: this one was started from it, which needs its code until it ends.")
         return
     found = names_vns(system)
     if found:

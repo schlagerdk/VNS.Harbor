@@ -58,7 +58,7 @@ class StatusTests(Server):
         system.programs.add("node")
         found = tools.status(system, sql)
         self.assertEqual(found["os"]["name"], "Ubuntu 24.04.1 LTS")
-        self.assertEqual(found["sql_server"], {"installed": True, "version": "16.0.4185.3-1", "running": True})
+        self.assertEqual(found["sql_server"], {"installed": True, "version": "16.0.4185.3-1", "running": True, "packages_for": ""})
         self.assertEqual(found["sql_tools"], {"installed": True, "version": "18.4.1.1-1"})
         self.assertEqual(found["sa_password"], {"scripts": 2, "set": True})
         self.assertEqual(found["cron"], {"jobs": {"shrink_logs": False, "backup_everything": True}, "others": [CUSTOM]})
@@ -251,3 +251,109 @@ class SaSecretTests(Server):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CrontabTests(Server):
+    ACME = '28 4,10,16,22 * * * "/etc/acmesh"/acme.sh --cron --home "/etc/acmesh" > /dev/null'
+
+    def test_the_lines_are_read_as_jobs_and_what_else_is_kept(self):
+        self.crontab = "MAILTO=\"\"\n# made by hand\n" + tools.JOBS["backup_everything"] + "\n" + self.ACME + "\n@reboot /usr/local/bin/x\n"
+        entries = tools.crontab_entries(self.system())
+        jobs = [entry for entry in entries if entry["kind"] == "job"]
+        self.assertEqual([(job["schedule"], job["harbor"]) for job in jobs],
+                         [("15 */4 * * *", "backup_everything"), ("28 4,10,16,22 * * *", ""), ("@reboot", "")])
+        self.assertEqual(jobs[1]["command"], '"/etc/acmesh"/acme.sh --cron --home "/etc/acmesh" > /dev/null')
+        self.assertEqual([entry["line"] for entry in entries if entry["kind"] == "other"], ['MAILTO=""', "# made by hand"])
+
+    def test_saved_as_given_with_the_other_lines_kept(self):
+        self.crontab = "MAILTO=\"\"\n" + self.ACME + "\n"
+        entries = tools.crontab_entries(self.system())
+        entries[1]["schedule"] = "0  3 * * *"
+        entries.append({"kind": "job", "schedule": "@daily", "command": "/usr/local/bin/harbor sql backup-everything"})
+        system = self.system()
+        self.assertEqual(main(["server", "crontab", "save"], system) if False else tools.crontab_save(system, entries), None)
+        self.assertEqual(self.crontab.splitlines(), ['MAILTO=""', '0 3 * * * "/etc/acmesh"/acme.sh --cron --home "/etc/acmesh" > /dev/null',
+                                                     "@daily /usr/local/bin/harbor sql backup-everything"])
+
+    def test_what_is_refused(self):
+        for entry in ({"kind": "job", "schedule": "every day", "command": "x"}, {"kind": "job", "schedule": "* * * *", "command": "x"},
+                      {"kind": "job", "schedule": "0 3 * * *", "command": ""}, {"kind": "job", "schedule": "0 3 * * *", "command": "x\nrm -rf /"},
+                      {"kind": "other", "line": "0 3 * * * a job dressed as another line"}):
+            with self.subTest(entry=entry):
+                self.crontab = "1 1 * * * kept\n"
+                with self.assertRaises(tools.Stop):
+                    tools.crontab_save(self.system(), [entry])
+                self.assertEqual(self.crontab, "1 1 * * * kept\n", "nothing is written")
+
+
+class DotnetRemoveTests(Server):
+    def make(self):
+        dotnet = self.root / "usr/lib/dotnet"
+        for folder in ("sdk/8.0.404", "sdk/10.0.103", "shared/Microsoft.NETCore.App/8.0.11", "shared/Microsoft.AspNetCore.App/8.0.11",
+                       "shared/Microsoft.AspNetCore.App/10.0.3", "host/fxr/8.0.11", "host/fxr/10.0.3", "packs/Microsoft.NETCore.App.Ref/8.0.11"):
+            (dotnet / folder).mkdir(parents=True, exist_ok=True)
+        (dotnet / "dotnet").write_text("")
+        (self.root / "var/www/shop.dk").mkdir(parents=True, exist_ok=True)
+        return self.system(**{"/usr/lib/dotnet/dotnet --list-sdks": SDKS, "/usr/lib/dotnet/dotnet --list-runtimes": RUNTIMES})
+
+    def test_a_channel_goes_and_the_others_stay(self):
+        system = self.make()
+        self.assertEqual(main(["server", "dotnet", "remove", "8.0"], system), 0, system.said)
+        dotnet = self.root / "usr/lib/dotnet"
+        self.assertEqual(sorted(path.name for path in dotnet.rglob("8.0.*")), [])
+        self.assertTrue((dotnet / "sdk/10.0.103").is_dir())
+        self.assertTrue((dotnet / "host/fxr/10.0.3").is_dir())
+
+    def test_not_the_newest_nor_one_a_site_uses(self):
+        system = self.make()
+        self.assertEqual(main(["server", "dotnet", "remove", "10.0"], system), 1)
+        self.assertIn("is the newest here", system.said[-1])
+        for name, text in (("Shop.csproj", "<Project><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>"),
+                           ("global.json", '{"sdk":{"version":"8.0.100"}}')):
+            with self.subTest(name=name):
+                for path in (self.root / "var/www/shop.dk").iterdir():
+                    path.unlink()
+                (self.root / "var/www/shop.dk" / name).write_text(text)
+                system = self.make()
+                self.assertEqual(main(["server", "dotnet", "remove", "8.0"], system), 1)
+                self.assertIn("used by shop.dk", system.said[-1])
+                self.assertTrue((self.root / "usr/lib/dotnet/sdk/8.0.404").is_dir())
+
+
+class OlderUbuntuTests(Server):
+    def test_sql_server_from_the_packages_for_an_older_ubuntu_when_told(self):
+        (self.root / "etc/os-release").write_text('PRETTY_NAME="Ubuntu 26.04 LTS"\nID=ubuntu\nVERSION_ID="26.04"\n')
+        self.assertEqual(tools.status(self.system(**{"dpkg -s": Result(1)}), self.root / "none")["sql_server"]["packages_for"], "24.04")
+        listing = lambda argv: Result(0) if "/24.04/mssql-server-2025" in argv[-1] else Result(22)  # noqa: E731
+        answers = {"dpkg -s": Result(1), "curl -fsSI": listing, "curl -fsSL": "deb x", "apt-cache show libldap-2.5-0": Result(0)}
+        (self.root / "etc/apt/sources.list.d").mkdir(parents=True)
+        with mock.patch.object(server, "prepare_backup_permissions"), mock.patch.object(server, "install_tools"), \
+                mock.patch.object(server, "SQL_DIR", self.root / "none"), mock.patch.dict(os.environ, {"HARBOR_SA_PASSWORD": "Secret-123"}):
+            system = self.system(**answers)
+            system.programs.add("gpg")
+            self.assertEqual(main(["sql", "install-server", "--edition", "Developer", "--without-tools"], system), 1, "not without being told")
+            system = self.system(**answers)
+            system.programs.add("gpg")
+            self.assertEqual(main(["sql", "install-server", "--edition", "Developer", "--without-tools", "--older-ubuntu"], system), 0, system.said)
+        self.assertTrue((self.root / "etc/apt/sources.list.d/mssql-server-2025.list").is_file())
+        self.assertIn("using the Ubuntu 24.04 repository", " ".join(system.said))
+
+
+class DefaultPageTests(Server):
+    def test_ubuntus_page_goes_and_a_page_of_ones_own_stays(self):
+        from harbor.server.init import remove_default_page
+        html = self.root / "var/www/html"
+        html.mkdir(parents=True)
+        (html / "index.html").write_text("<title>Apache2 Ubuntu Default Page: It works</title>")
+        (self.root / "etc/apache2/sites-enabled").mkdir(parents=True)
+        (self.root / "etc/apache2/sites-enabled/000-default.conf").write_text("")
+        system = self.system()
+        remove_default_page(system)
+        self.assertFalse(html.exists())
+        self.assertIn("a2dissite -q 000-default", system.commands)
+        html.mkdir()
+        (html / "index.html").write_text("<h1>Our own page</h1>")
+        system = self.system()
+        remove_default_page(system)
+        self.assertTrue((html / "index.html").is_file())
+        self.assertEqual(system.commands, [])

@@ -94,6 +94,14 @@ def remote(system, entry, command, input=None, check=True, capture=True):
     return system.run(*ssh(entry), f"{entry['user']}@{entry['host']}", f"{sudo}{command}", input=input, check=check, capture=capture)
 
 
+def forget_host_key(system, host, port=22):
+    """The host key Harbor saw for a server, forgotten (ssh-keygen -R): it is learnt again at the next login"""
+    if not system.path(KNOWN_HOSTS).is_file():
+        return
+    for known in (host, f"[{host}]:{port}"):
+        system.run("ssh-keygen", "-f", KNOWN_HOSTS, "-R", known, check=False, capture=True)
+
+
 def add(system, name, host, user="root", port="22", password=""):
     if not NAME.fullmatch(name or ""):
         raise Stop("A server's name is lower case letters, digits and -, such as linux-02.")
@@ -102,6 +110,10 @@ def add(system, name, host, user="root", port="22", password=""):
     entry = {"host": host, "user": user, "port": int(port)}
     public = key(system)
     system.path(SSH_DIR).mkdir(parents=True, exist_ok=True)
+    # A server none of Harbor's servers is at: a key seen there before belongs to what was there then (a server set up
+    # again has a new one), and this one is learnt as it logs in now
+    if not any(other["host"] == host and int(other["port"]) == int(port) for other in servers(system).values()):
+        forget_host_key(system, host, port)
     if password:
         system.step(f"Put Harbor's key on {host}")
         command = ("umask 077; mkdir -p ~/.ssh && touch ~/.ssh/authorized_keys && "
@@ -120,13 +132,13 @@ def add(system, name, host, user="root", port="22", password=""):
     system.say(f"{name} ({user}@{host}) is added. Harbor reaches it with its own key; no password is kept.")
 
 
-# Only what Harbor installed: its releases and its command when it points there. Sites, /vns and the admin stay.
+# Only what Harbor installed: its releases and its command when it points there. The sites and the admin stay.
 UNINSTALL = """set -e
 rm -rf /opt/harbor
 if [ -L /usr/local/bin/harbor ] && [ "$(readlink /usr/local/bin/harbor)" = /opt/harbor/current/bin/harbor ]; then
 	rm -f /usr/local/bin/harbor
 fi
-echo "Harbor is uninstalled. Sites and /vns are not touched."
+echo "Harbor is uninstalled. The sites are not touched."
 """
 
 
@@ -152,6 +164,9 @@ def remove(system, name, uninstall=False, revoke_key=False):
         remote(system, entry, f"sh -c {shlex.quote(command)}")
     del found[name]
     write_json(system.path(SERVERS), found)
+    # Its host key goes too, unless another server here is at the same address
+    if not any(other["host"] == entry["host"] and int(other["port"]) == int(entry["port"]) for other in found.values()):
+        forget_host_key(system, entry["host"], entry["port"])
     left = [] if revoke_key else [f"Harbor's key stays in ~/.ssh/authorized_keys on {entry['host']}"]
     if not uninstall:
         left.append("Harbor stays installed there")

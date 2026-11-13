@@ -104,13 +104,21 @@ class AfterUpdateTests(unittest.TestCase):
     def test_every_step_and_the_admin_moved_to_the_release(self):
         system, moved = self.after_update()
         harbor = [command.split("bin/harbor ", 1)[1] for command in system.commands if "bin/harbor " in command]
-        self.assertEqual(harbor, ["server install-tls-policy", "server install-apache-conf", "state sync", "migrate",
+        self.assertEqual(harbor, ["server set-servername", "server install-tls-policy", "server install-apache-conf", "state sync", "migrate",
                                   "sql import-sa-password", "server cron upgrade"])
         moved.assert_called_once_with(system, "admin.example.test")
         # Nothing names /vns any more: backed up, then removed (phase 7)
         self.assertTrue(any(command.startswith("tar -czf /var/lib/harbor/backups/vns-") and command.endswith(" -C / vns")
                             for command in system.commands), system.commands)
         self.assertFalse((self.root / "vns").exists())
+
+    def test_vns_stays_while_the_update_was_started_from_it(self):
+        """The admin of VNS 1.x runs /vns/bin/harbor self update, which waits for the release to finish: removing /vns
+        under it ended that process with ModuleNotFoundError (sql-01)"""
+        with mock.patch.object(update, "started_from_vns", return_value=True):
+            system, _ = self.after_update()
+        self.assertTrue((self.root / "vns").is_dir())
+        self.assertTrue(any("goes at the next update" in line for line in system.said), system.said)
 
     def test_vns_stays_while_something_names_it(self):
         (self.root / "etc/cron.d").mkdir(parents=True)
@@ -134,6 +142,8 @@ class AfterUpdateTests(unittest.TestCase):
         (self.root / "etc/systemd/system/shop.dk.service").write_text("RootDirectory=/var/lib/vns-roots/shop.dk\nBindPaths=/var/lib/vns/x\n")
         (self.root / "etc/apache2/conf-available").mkdir(parents=True)
         (self.root / "etc/apache2/conf-available/vns-offline.conf").write_text("Alias /vns-offline/ /var/lib/vns/offline/\nErrorDocument 503 /vns-offline/x\n")
+        # A comment runs nothing (the services Harbor made said "not /root, /home, /vns or other sites")
+        (self.root / "etc/systemd/system/blog.dk.service").write_text("# Protect: not /root, /home, /vns or other sites\nExecStart=/usr/bin/x\n")
         system, _ = self.after_update()
         self.assertFalse((self.root / "vns").exists())
 
