@@ -327,9 +327,10 @@ In this order:
       left it: what import-sa-password reads), tests/legacy/wrappers (the 1.3.0 templates and apache wrappers), and
       the shell helpers. The tests of the wrappers themselves and of update.sh/init.sh/update_admin_site.sh went.
       851 tests pass on linux-01; on linux-01 a site made and deleted through harbor.
-  - [ ] 4f The NuGet package (nuget/) gets its own docs, README and icon, as VNS.Umbraco has them
-    (github.com/schlagerdk/VNS.Umbraco/tree/v18/docs): icon.png and license.md taken from there, a README.md of its own
-    (asked 2026-11-13).
+  - [x] 4f The NuGet package (nuget/) gets its own docs, README and icon, as VNS.Umbraco has them
+    (github.com/schlagerdk/VNS.Umbraco/tree/v18/docs): icon.png and LICENSE.md taken from there, a README.md of its own
+    (asked 2026-11-13). Done: nuget/docs, packed at the root of the .nupkg as VNS.Umbraco does. The package version is
+    still 17.0.6: a new one is needed before it goes to nuget.org (Martin).
   - [ ] 4e REPOSITORY schlagerdk/VNS.Harbor, VERSION 1.0.0, CHANGELOG; tried with dev/deploy.sh and a real update on
     linux-02 from 1.3.0. Martin releases it.
 - [ ] 5 Martin deletes VNS.Linux on GitHub once every server has taken 1.3.0.
