@@ -21,10 +21,6 @@ def run_shell(code):
 
 
 class ApacheReloadTests(unittest.TestCase):
-    def test_init_installs_tls_policy_and_starts_if_needed(self):
-        source = (APACHE / "init.sh").read_text()
-        self.assertIn('sudo bash "$(pwd)/install_tls_policy.sh" --start-if-stopped', source)
-
     def test_failed_configtest_stops_delete(self):
         delete = (APACHE.parent / "tests/legacy/delete_site.sh").read_text()  # as it was; harbor is compared with it in tests/
         blocks = [delete[delete.index('echo "Reload daemon"'):]]

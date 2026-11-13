@@ -3,7 +3,7 @@ import re
 import tempfile
 import unittest
 
-from tests.harness import Server, harbor_commands, without_temporary
+from tests.harness import Server, as_migrated, harbor_commands, without_temporary
 from tests.test_core_bindings import NEEDS_BASH_4
 from harbor.cli import main
 
@@ -41,7 +41,7 @@ class CreateSiteTests(unittest.TestCase):
         system = self.new.system(replies=replies or [])
         code = main(["site", "create", *args], system)
         self.assertEqual(code, result.returncode, (result.stdout[-2000:], result.stderr, system.said))
-        self.assertEqual(comparable(self.new.files()), comparable(self.old.files()))
+        self.assertEqual(*as_migrated(self, comparable(self.new.files()), comparable(self.old.files())))
         self.maxDiff = None
         # The script ran the .NET installer with bash, which the fake server does not record
         # VNS.Harbor is added to an Umbraco 17+ site by harbor, which the script did not (test_umbraco_gets_vns_harbor)
@@ -133,7 +133,7 @@ class CreateSiteTests(unittest.TestCase):
                 self.assertEqual(main(["site", "create", *args], system), result.returncode, result.stderr)
                 self.assertNotEqual(result.returncode, 0)
                 self.assertIn(system.said[-1], result.stderr)
-                self.assertEqual(comparable(self.new.files()), comparable(self.old.files()))
+                self.assertEqual(*as_migrated(self, comparable(self.new.files()), comparable(self.old.files())))
 
 
 @NEEDS_BASH_4
@@ -149,12 +149,6 @@ class NewSiteDefaultTests(unittest.TestCase):
         service = (server.root / "etc/systemd/system/shop.dk.service").read_text()
         self.assertIn("Environment=ASPNETCORE_ENVIRONMENT=Development", service)
         self.assertIn("/var/www/shop.dk/_development", service)
-
-
-class WrapperTests(unittest.TestCase):
-    def test_the_script_runs_harbor(self):
-        from tests.harness import APACHE
-        self.assertIn('/../bin/harbor" site create "$@"', (APACHE / "create_site.sh").read_text())
 
 
 if __name__ == "__main__":

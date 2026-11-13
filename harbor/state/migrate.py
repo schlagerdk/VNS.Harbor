@@ -33,10 +33,20 @@ BACKUPS = "/var/lib/harbor/backups"
 TARGET_SCRIPTS = ("publish_prod.sh", "sync_prod.sh", "clear_logs_prod.sh")
 
 
+# The tools a site's scripts folder had, by kind (the templates in apache/solutionfiles/*/scripts of VNS 1.x): a site
+# keeps their names in its site.json, and the admin shows them as its actions and runs the harbor command each called
+SITE_SCRIPTS = {
+    "common": ("edit_conf.sh", "issue_certificat.sh", "restart_apache.sh"),
+    "service": ("check_service.sh", "edit_service.sh", "restart_service.sh"),
+    "python": ("fix_permissions.sh", "update_packages.sh"),
+    "csharp": ("change_env.sh", "create_prod.sh", "outdated.sh", "publish.sh"),
+    "umbraco": ("clear_logs.sh",),
+}
+
+
 def system_script_names():
     """Every script name the site templates put in a site's scripts folder"""
-    root = Path(APACHE, "solutionfiles")
-    now = {path.name for path in root.glob("**/*.sh") if "project" not in path.relative_to(root).parts}
+    now = {name for names in SITE_SCRIPTS.values() for name in names} | set(TARGET_SCRIPTS) | {"set_password.sh"}
     # And the names they had before (publish_local.sh became publish.sh)
     return sorted(now | set(json.loads(Path(__file__).with_name("script_history.json").read_text())))
 

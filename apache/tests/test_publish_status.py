@@ -132,7 +132,7 @@ class PublishStatusTests(unittest.TestCase):
                         baseline.unlink()
                     result = subprocess.run(
                         ["/bin/bash", "-c",
-                         f'source "{APACHE / "lib/dotnet.sh"}"\nsudo() {{ "$@"; }}\n' + command],
+                         f'source "{APACHE.parent / "tests/legacy/lib/dotnet.sh"}"\nsudo() {{ "$@"; }}\n' + command],
                         cwd=self.root, capture_output=True, text=True,
                         env=os.environ | {
                             "PATH": str(bin_dir) + os.pathsep + os.environ["PATH"],

@@ -236,12 +236,5 @@ class MoveSiteTests(unittest.TestCase):
         self.assertTrue((here / "etc/systemd/system/shop.dk.service").is_file())
 
 
-class WrapperTests(unittest.TestCase):
-    def test_the_script_runs_harbor(self):
-        text = (APACHE / "move_site.sh").read_text()
-        self.assertIn('site receive "$@"', text)
-        self.assertIn('site move "$@"', text)
-
-
 if __name__ == "__main__":
     unittest.main()

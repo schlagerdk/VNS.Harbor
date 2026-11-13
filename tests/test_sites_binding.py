@@ -71,10 +71,5 @@ class ChangeBindingTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
 
 
-class WrapperTests(unittest.TestCase):
-    def test_the_script_runs_harbor(self):
-        self.assertIn('bin/harbor" site binding "$@"', (APACHE / "change_binding.sh").read_text())
-
-
 if __name__ == "__main__":
     unittest.main()

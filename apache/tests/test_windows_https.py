@@ -103,7 +103,7 @@ class OfflinePageTests(unittest.TestCase):
     def test_publish_shows_the_offline_page_which_needs_nothing_from_outside(self):
         lib = Path(__file__).resolve().parents[1] / "lib"
         page = (lib / "app_offline.htm").read_text()
-        self.assertIn('_design="$(dirname "${BASH_SOURCE[0]}")/app_offline.htm"', (lib / "windows_prod.sh").read_text())
+        self.assertIn('OFFLINE_PAGE = LIB / "app_offline.htm"', (lib.parents[1] / "harbor/environments/windows.py").read_text())
         # The site is down while it is shown, so nothing may be loaded from elsewhere
         self.assertNotRegex(page, r"(?i)(src|href)=[\"']?(https?:)?//")
         self.assertNotIn("@import", page)

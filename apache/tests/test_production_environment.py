@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -50,13 +51,13 @@ class ProductionEnvironmentTests(unittest.TestCase):
     def test_rendered_publish_script_preserves_selected_environment(self):
         create = (APACHE.parent / "tests/legacy/solutionfiles/csharp/scripts/create_prod.sh").read_text()
         self.assertIn("R_PROD_ENVIRONMENT=\"${_prodEnvironment}\"", create)
-        template = APACHE / "solutionfiles/csharp/prod-scripts/publish_prod.sh"
-        for environment in ("Development", "Test", "Staging", "Production"):
-            result = subprocess.run(
-                ["perl", "-pe", 's/\\@([A-Z_]+)\\@/exists $ENV{"R_$1"} ? $ENV{"R_$1"} : "\\@$1\\@"/ge',
-                 str(template)], env=os.environ | {"R_PROD_ENVIRONMENT": environment},
-                capture_output=True, text=True, check=True)
-            self.assertIn('PROD_ENVIRONMENT="' + environment + '"', result.stdout)
+        # harbor env create keeps the settings the script held (harbor/environments/create.py)
+        sys.path.insert(0, str(APACHE.parent))
+        from harbor.environments.create import LINUX_SETTINGS, WINDOWS_SETTINGS, render
+        from harbor.environments.settings import parse
+        for template in (LINUX_SETTINGS, WINDOWS_SETTINGS):
+            for environment in ("Development", "Test", "Staging", "Production"):
+                self.assertEqual(parse(render(template, {"PROD_ENVIRONMENT": environment}))["ENVIRONMENT"], environment)
 
 
 if __name__ == "__main__":

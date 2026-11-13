@@ -44,24 +44,11 @@ def ask(system, value, prompt, default=""):
     return system.ask(f"{prompt}: ").strip() or default
 
 
-def install_scripts(system, site, folder):
-    """The scripts of a kind of site, rendered for it (later folders overwrite earlier ones)"""
-    folder = Path(folder)
-    if not folder.is_dir():
-        return
-    from harbor.state.migrate import born_migrated, server_migrated
-    if server_migrated(system):
-        # A migrated server (phase 6): Harbor does the scripts' work; their names are kept for the admin's buttons
-        born_migrated(system, site, [template.name for template in folder.iterdir() if template.is_file() and template.suffix == ".sh"])
-        return
-    scripts = system.path(f"{site.site_root}/scripts")
-    scripts.mkdir(parents=True, exist_ok=True)
-    for template in sorted(folder.iterdir()):
-        if not template.is_file():
-            continue
-        target = scripts / template.name
-        target.write_text(render(template.read_text(), site))
-        target.chmod(target.stat().st_mode | 0o111)
+def install_scripts(system, site, *kinds):
+    """The tools of a kind of site (migrate.SITE_SCRIPTS): Harbor does their work, and their names are kept for the
+    admin's buttons. A site never gets a scripts folder of Harbor's."""
+    from harbor.state.migrate import SITE_SCRIPTS, born_migrated
+    born_migrated(system, site, [name for kind in kinds for name in SITE_SCRIPTS[kind]])
 
 
 def render_to(system, site, template, target):
@@ -181,7 +168,7 @@ class Creation:
         render_to(system, site, SOLUTION / "html/site/index.html", f"{site.doc_root}/index.html")
         self.https()
         install_apache_config(system, site, SOLUTION / "html/apache.conf.tpl", certificate=self.certificate == "y")
-        install_scripts(system, site, SOLUTION / "common/scripts")
+        install_scripts(system, site, "common")
 
     def create_python(self):
         system, site = self.system, self.site
@@ -196,8 +183,7 @@ class Creation:
         system.run("python3", "-m", "venv", f"{site.site_root}/venv")
         system.run(f"{site.site_root}/venv/bin/pip", "install", "-r", f"{site.site_root}/app/requirements.txt")
         system.run("chown", "-R", "www-data:www-data", f"{site.site_root}/app", f"{site.site_root}/venv")
-        for folder in ("common/scripts", "common/service-scripts", "python/scripts"):
-            install_scripts(system, site, SOLUTION / folder)
+        install_scripts(system, site, "common", "service", "python")
         install_apache_config(system, site, SOLUTION / "python/apache.conf.tpl", certificate=self.certificate == "y")
         install_service(system, site, SOLUTION / "python/service.tpl")
 
@@ -254,8 +240,7 @@ class Creation:
             system.path(folder).mkdir(parents=True, exist_ok=True)
         self.https()
         system.path(f"/var/lib/vns-roots/{self.name}").mkdir(parents=True, exist_ok=True)
-        for folder in (SOLUTION / "common/scripts", SOLUTION / "common/service-scripts", SOLUTION / "csharp/scripts", kind_folder / "scripts"):
-            install_scripts(system, site, folder)
+        install_scripts(system, site, "common", "service", "csharp", *(["umbraco"] if self.csharp_kind == "umbraco" else []))
 
         if self.csharp_kind == "umbraco":
             if self.dotnet_version == "net8.0":

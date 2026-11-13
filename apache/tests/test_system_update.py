@@ -172,43 +172,10 @@ class SystemUpdateTests(unittest.TestCase):
             self.assertEqual(state["id"], job)
             self.assertEqual(state["status"], expected)
         self.assertIn("code 1", state["error"])
-        updater = (ROOT / "apache/update_admin_site.sh").read_text()
+        # The job's state is kept with the admin's data, which an update never replaces (harbor/install/admin.py)
+        app = (APP / "app.py").read_text()
         for name in ("system-update.json", "system-update.log"):
-            self.assertIn("--exclude /" + name, updater)
-
-    def test_deployment_records_commit_only_on_success_and_for_clean_sources(self):
-        target = self.root / "deployed"
-        (target / "apache").mkdir(parents=True)
-        (target / "apache/install_tls_policy.sh").write_text("#!/bin/bash\nexit \"${FAIL_TLS:-0}\"\n")
-        source = self.root / "source"
-        source.mkdir()
-        binary = self.root / "bin"
-        binary.mkdir()
-        updater = self.root / "update.sh"
-        updater.write_text((ROOT / "update.sh").read_text().replace('TARGET="/vns"', f'TARGET="{target}"'))
-        for name, body in (
-                ("sudo", 'exec "$@"'),
-                ("git", 'case "$*" in\n'
-                 '*rev-parse\\ --is-inside-work-tree) echo true;;\n'
-                 f'*rev-parse\\ HEAD) echo {self.installed};;\n'
-                 '*status\\ --porcelain*) printf "%s" "${DIRTY:-}";;\n'
-                 'esac'),
-                ("rsync", 'exit "${FAIL_RSYNC:-0}"')):
-            path = binary / name
-            path.write_text("#!/bin/bash\n" + body + "\n")
-            path.chmod(0o700)
-        for dirty, failure, tls_failure, expected in (("", "0", "0", self.installed),
-                                                      (" M file", "0", "0", ""),
-                                                      ("", "7", "0", ""),
-                                                      ("", "0", "9", "")):
-            with self.subTest(dirty=dirty, failure=failure, tls_failure=tls_failure):
-                result = subprocess.run(["bash", str(updater), str(source)], capture_output=True, text=True,
-                                        env=os.environ | {"PATH": str(binary) + ":" + os.environ["PATH"],
-                                                          "DIRTY": dirty, "FAIL_RSYNC": failure,
-                                                          "FAIL_TLS": tls_failure})
-                self.assertEqual(result.returncode, int(failure) or int(tls_failure), result.stderr)
-                self.assertEqual((target / ".vns-version").read_text().strip(), expected)
-
+            self.assertIn(f'Path(DATA) / "{name}"', app)
 
 if __name__ == "__main__":
     unittest.main()

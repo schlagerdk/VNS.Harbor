@@ -159,13 +159,5 @@ esac
                 self.assertEqual((server.root / "remote/var/www/shop.dk/appsettings.json").read_text() == "{}", not first)
 
 
-class TemplateTests(unittest.TestCase):
-    def test_the_settings_stay_and_the_publish_is_harbors(self):
-        text = (APACHE / "solutionfiles/csharp/prod-scripts/publish_prod.sh").read_text()
-        for line in ("PROD_LOCAL_PATH=@PROD_LOCAL_PATH@", "PROD_PASSWORD=@PROD_PASSWORD@", "_projectName=@PROJECT_NAME@", "_localPublish=@PUBLISH_FOLDER@"):
-            self.assertIn(line, text)
-        self.assertIn('/bin/harbor" env publish "${_siteFolder##*/}"', text)
-
-
 if __name__ == "__main__":
     unittest.main()

@@ -106,10 +106,5 @@ class RemoteSiteTests(unittest.TestCase):
                 self.assertEqual(system.commands, [])
 
 
-class WrapperTests(unittest.TestCase):
-    def test_the_script_runs_harbor(self):
-        self.assertIn('/../bin/harbor" env remote "$@"', (ROOT / "apache/remote_site.sh").read_text())
-
-
 if __name__ == "__main__":
     unittest.main()

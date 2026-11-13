@@ -143,11 +143,5 @@ fi''',
         self.assertEqual(self.enabled.read_text(), "custom\n")
         self.assertFalse(self.available.exists())
 
-    def test_update_installs_before_success_marker(self):
-        update = (APACHE.parent / "update.sh").read_text()
-        self.assertLess(update.index('sudo bash "$TARGET/apache/install_tls_policy.sh"'),
-                        update.index('printf \'%s\\n\' "$revision"'))
-
-
 if __name__ == "__main__":
     unittest.main()

@@ -130,10 +130,5 @@ class SyncTests(Base):
                 self.assertNotEqual(result.returncode, 0)
 
 
-class WrapperTests(unittest.TestCase):
-    def test_the_script_runs_harbor(self):
-        self.assertIn('/../bin/harbor" env sync "$@"', (ROOT / "apache/sync_env.sh").read_text())
-
-
 if __name__ == "__main__":
     unittest.main()

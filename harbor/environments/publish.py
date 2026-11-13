@@ -128,7 +128,7 @@ fi
 # A site made before it was an environment can have its certificate in another folder: the config knows where
 configured_certificate=$(awk '$1 == "SSLCertificateFile" { print $2; exit }' "${conf}" 2>/dev/null || true)
 if [[ ${HTTPS} != n && ! -e ${certdir}/fullchain.cer && ! ( -n ${configured_certificate} && -e ${configured_certificate} ) ]]; then
-	[[ -x ${acme} ]] || { echo "acme.sh not found on prod (${acme}). Run apache/init.sh there first." >&2; exit 1; }
+	[[ -x ${acme} ]] || { echo "acme.sh not found on prod (${acme}). Run harbor server init there first." >&2; exit 1; }
 	certificate_domains=("${BINDING}" "${server_aliases[@]}")
 	certificate_args=()
 	for domain in "${certificate_domains[@]}"; do certificate_args+=(-d "${domain}"); done

@@ -31,7 +31,9 @@ def legacy_script(name, root, web_root):
     common = Path(root) / "common.sh"
     common.write_text((LEGACY / "lib/common.sh").read_text().replace("/etc/", f"{root}/etc/")
                       .replace("_rootPath=${VNS_WEB_ROOT:-/var/www}", f"_rootPath={web_root}")
-                      .replace('_apacheDir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"', f'_apacheDir="{APACHE}"'))
+                      .replace('_apacheDir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"', f'_apacheDir="{APACHE}"')
+                      # The site templates as they were (Harbor 1.0 has none)
+                      .replace('_solutionFolder="${_apacheDir}/solutionfiles"', f'_solutionFolder="{LEGACY}/solutionfiles"'))
     text = text.replace("source lib/common.sh", f"source {common}").replace("source lib/prod.sh", f"source {LEGACY}/lib/prod.sh")
     text = text.replace("source lib/windows_prod.sh", f"source {LEGACY}/lib/windows_prod.sh")
     return text
@@ -214,13 +216,6 @@ class WindowsFileTests(unittest.TestCase):
         self.assertTrue(system.said[-1].startswith('{"error": "Could not open //10.0.0.9/D$/WEB/shop.'))
         code, system = self.harbor(["env", "windows-files", "shop.dk"], target="linux")
         self.assertEqual(system.said[-1], '{"error": "This is not an environment on a Windows server."}')
-
-
-class WrapperTests(unittest.TestCase):
-    def test_the_scripts_run_harbor(self):
-        for script, command in (("test_action.sh", "site action"), ("prod_action.sh", "env action"),
-                                ("windows_file.sh", "env windows-file"), ("windows_files.sh", "env windows-files")):
-            self.assertIn(f'bin/harbor" {command} "$@"', (APACHE / script).read_text(), script)
 
 
 if __name__ == "__main__":

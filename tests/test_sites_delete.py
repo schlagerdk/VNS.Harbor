@@ -114,10 +114,5 @@ class DeleteSiteTests(unittest.TestCase):
         self.assertFalse((self.new.root / "etc/apache2/sites-available/000-default.conf").exists())
 
 
-class WrapperTests(unittest.TestCase):
-    def test_the_script_runs_harbor(self):
-        self.assertIn('bin/harbor" site delete "$@"', (APACHE / "delete_site.sh").read_text())
-
-
 if __name__ == "__main__":
     unittest.main()

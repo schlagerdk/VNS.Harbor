@@ -108,8 +108,6 @@ class DataSyncTests(unittest.TestCase):
         self.assertIn("_versionFolders+=(Content Dictionary)", script)
         self.assertIn("_versionFolders+=(Media)", script)
         self.assertNotIn("Domains", script.split("_versionFolders=(")[1].split("for _version")[0])
-        self.assertEqual(subprocess.run(["bash", "-n", str(ROOT / "sync_env.sh")]).returncode, 0)
-        self.assertEqual(subprocess.run(["bash", "-n", str(ROOT / "data_sync.sh")]).returncode, 0)
 
     def test_the_admin_offers_only_allowed_destinations(self):
         source = (APP / "static/app.js").read_text()

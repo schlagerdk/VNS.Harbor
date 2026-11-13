@@ -24,7 +24,7 @@ settings=${ROOT}/appsettings.json
 scheme=http
 if grep -Eq '^[[:space:]]*SSLEngine[[:space:]]+On([[:space:]]|$)' "${conf}"; then
 	scheme=https
-	[[ -x ${acme} ]] || { echo "acme.sh not found (${acme}). Run apache/init.sh there first." >&2; exit 1; }
+	[[ -x ${acme} ]] || { echo "acme.sh not found (${acme}). Run harbor server init there first." >&2; exit 1; }
 fi
 grep -qi "^[[:space:]]*ServerName[[:space:]]\+${OLD}[[:space:]]*$" "${conf}" || { echo "ServerName ${OLD} not found in ${conf}" >&2; exit 1; }
 

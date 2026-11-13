@@ -39,7 +39,7 @@ class RenderTests(unittest.TestCase):
         return values
 
     def test_every_template_renders_as_the_script_does(self):
-        self.assertGreater(len(TEMPLATES), 20)
+        self.assertGreater(len(TEMPLATES), 8)
         apache_dir = str(COMMON.parent.parent)
         for values in (self.FULL, dict(name="blog.dk"), dict(name="æblé.dk", publish_folder=".", port_http="4100")):
             site = Site(**values, apache_dir=apache_dir) if "apache_dir" not in values else Site(**{**values, "apache_dir": apache_dir})

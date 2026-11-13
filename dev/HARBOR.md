@@ -315,9 +315,21 @@ In this order:
     while they are there). dev/deploy.sh goes this way: on linux-01 every step ran. Left: a real update from 1.3.0 (4e).
   - [ ] 4d A new server: install.sh (apt basics, the newest release fetched, `harbor server init`, the admin) instead of
     init.sh + update.sh + apache/init.sh.
-  - [ ] 2d The old code goes: the wrappers in apache/ and sql/, the site script templates, tests/legacy and the parity
-    tests, update.sh, init.sh, update_admin_site.sh and the rest; every site is migrated, so the paths for a site with
-    scripts go too.
+  - [x] 2d The old code goes: the wrappers in apache/ and sql/, the site script templates, update.sh, init.sh,
+    install_nodejs.sh, the admin's shell installers and the shell helpers only they used. Done 2026-11-13:
+    - A new site records the names of the scripts it would have had (migrate.SITE_SCRIPTS) and never gets a scripts
+      folder; an environment's settings go straight into Harbor (env create); a site that still has its scripts is told
+      to run `harbor migrate` first. Reading a site's scripts stays, so `harbor migrate` can still move one over.
+    - The admin and run_create_prod run `harbor env create` with the site's values instead of a rendered create_prod.sh.
+    - The custom SQL scripts (clean_umbraco7_db, delete_old_2dm_data) moved to misc/custom-sql: not Harbor's, not shipped.
+    - Changed from the plan: **tests/legacy stays** (tests only, never in a release). Most tests compare harbor with
+      the frozen scripts; without them most coverage would go. Added there: tests/legacy/vns-sql (/vns/sql as 1.3.0
+      left it: what import-sa-password reads), tests/legacy/wrappers (the 1.3.0 templates and apache wrappers), and
+      the shell helpers. The tests of the wrappers themselves and of update.sh/init.sh/update_admin_site.sh went.
+      851 tests pass on linux-01; on linux-01 a site made and deleted through harbor.
+  - [ ] 4f The NuGet package (nuget/) gets its own docs, README and icon, as VNS.Umbraco has them
+    (github.com/schlagerdk/VNS.Umbraco/tree/v18/docs): icon.png and license.md taken from there, a README.md of its own
+    (asked 2026-11-13).
   - [ ] 4e REPOSITORY schlagerdk/VNS.Harbor, VERSION 1.0.0, CHANGELOG; tried with dev/deploy.sh and a real update on
     linux-02 from 1.3.0. Martin releases it.
 - [ ] 5 Martin deletes VNS.Linux on GitHub once every server has taken 1.3.0.

@@ -24,7 +24,7 @@ certdir=/etc/ssl/certs/${BINDING}_ecc
 source /opt/harbor/current/apache/lib/common.sh 2>/dev/null || source /vns/apache/lib/common.sh
 unit=$(normalize_dns_name "${SITE}" unit)
 conf=/etc/apache2/sites-available/${SITE}.conf
-[[ -x ${acme} ]] || { echo "acme.sh not found (${acme}). Run apache/init.sh there first." >&2; exit 1; }
+[[ -x ${acme} ]] || { echo "acme.sh not found (${acme}). Run harbor server init there first." >&2; exit 1; }
 [[ -f ${conf} ]] || { echo "Apache config for ${SITE} not found. Publish to production first." >&2; exit 1; }
 domains=("${BINDING}")
 while IFS= read -r alias; do

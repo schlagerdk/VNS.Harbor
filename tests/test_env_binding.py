@@ -117,11 +117,5 @@ class EnvironmentBindingTests(unittest.TestCase):
         self.assertIn("PROD_BINDING='Shop.DK'", (self.target / "publish_prod.sh").read_text())
 
 
-class WrapperTests(unittest.TestCase):
-    def test_the_script_runs_harbor(self):
-        text = (ROOT / "apache/change_binding_prod.sh").read_text()
-        self.assertIn('/../bin/harbor" env binding "$@"', text)
-
-
 if __name__ == "__main__":
     unittest.main()

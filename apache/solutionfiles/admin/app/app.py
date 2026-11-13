@@ -133,7 +133,7 @@ def api_keep_alive():
             _keep_alive_module.save(settings)
         return jsonify(**settings, installed=os.path.isfile("/etc/cron.d/vns-keep-alive"))
     except FileNotFoundError:
-        return error("Keep-alive is not installed. Run apache/init.sh on this server.", 503)
+        return error("Keep-alive is not installed. Run harbor server init on this server.", 503)
     except ValueError as exc:
         return error(str(exc), 400)
     except OSError:
@@ -3145,8 +3145,8 @@ def ssh_login(data):
     return host, user, password, port
 
 
-def render_create_prod_script(site):
-    """Render the current create_prod template from this site's installed metadata."""
+def create_prod_command(site):
+    """harbor env create for this site, with what its installed files tell (what create_prod.sh was rendered with)"""
     root = os.path.realpath(os.path.join(WEB_ROOT, site))
     projects = sorted(glob.glob(os.path.join(root, "*.csproj")))
     if not projects:
@@ -3166,31 +3166,10 @@ def render_create_prod_script(site):
         abort(400, "Could not determine this site's administrator email")
     umbraco = "umbraco" if "Umbraco.Cms" in project_text else "empty"
 
-    template = os.path.join(APACHE_DIR, "solutionfiles", "csharp", "scripts", "create_prod.sh")
-    text = read_text(template)
-    if not text:
-        abort(500, "Production setup template is missing")
-    replacements = {
-        "@APACHE_DIR@": APACHE_DIR,
-        "@SITE@": site,
-        "@BINDING@": binding,
-        "@PROJECT_NAME@": os.path.splitext(os.path.basename(projects[0]))[0],
-        "@SITE_ROOT@": root,
-        "@PUBLISH_FOLDER@": publish_folder,
-        "@ADMIN_MAIL@": admin_mail,
-        "@CSHARP_KIND@": umbraco,
-    }
-    for token, value in replacements.items():
-        text = text.replace(token, value)
-    fd, path = tempfile.mkstemp(prefix="vns-create-prod-", suffix=".sh")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as script:
-            script.write(text)
-        os.chmod(path, 0o700)
-    except Exception:
-        os.unlink(path)
-        raise
-    return path
+    # harbor env create with this site's values, as its create_prod.sh ran it
+    return ["/usr/bin/python3", HARBOR_COMMAND, "env", "create", site, "--site-root", root, "--binding", binding,
+            "--project", os.path.splitext(os.path.basename(projects[0]))[0], "--publish-folder", publish_folder,
+            "--admin-mail", admin_mail, "--kind", umbraco]
 
 
 def build_command(data):
@@ -3236,7 +3215,7 @@ def build_command(data):
         if not ADMIN_SITE:
             abort(400, "The admin site is not configured")
         if not os.path.isfile(HARBOR_COMMAND):
-            abort(400, "Harbor is missing: run /vns/update.sh on the server")
+            abort(400, "Harbor is missing: install it on the server")
         # The newest release; the release that is fetched installs itself, the admin site too (harbor self update)
         target = update_target()
         if not target:
@@ -3453,7 +3432,7 @@ def build_command(data):
         return title + " (" + site + ")", argv, os.path.dirname(projects[0])
     if kind == "create_prod":
         site = site_arg(data)
-        # api_term replaces the command with the rendered current template
+        # api_term replaces the command with harbor env create and this site's values
         scripts = os.path.join(WEB_ROOT, site, "scripts")
         # A migrated site has no scripts folder (phase 6): it runs in the site's folder
         return "Add environment: " + site, [bash], scripts if os.path.isdir(scripts) else os.path.join(WEB_ROOT, site)
@@ -3991,22 +3970,15 @@ def api_term():
     if payload.get("kind") == "copy_site" and payload.get("connection") is not None:
         extra_env = {"VNS_COPY_SQL": json.dumps(payload["connection"])}
     if payload.get("kind") == "create_prod":
-        argv = ["/bin/bash", render_create_prod_script(payload["site"])]
+        argv = create_prod_command(payload["site"])
     with SESSIONS_LOCK:
         if sum(1 for s in SESSIONS.values() if s.running) >= MAX_SESSIONS:
-            if payload.get("kind") == "create_prod":
-                os.unlink(argv[1])
             return error("Too many running terminals. Close some first.")
-        try:
-            update_root = os.path.join(WEB_ROOT, payload["site"]) if payload.get("kind") == "script" and payload.get("script") == "outdated.sh" and glob.glob(os.path.join(WEB_ROOT, payload["site"], "*.csproj")) else None
-            sites = terminal_activity_sites(payload)
-            session_obj = TermSession(title, argv, cwd, extra_env, auto_close=terminal_auto_close(payload), update_root=update_root, sites=sites, scope=terminal_scope(payload), targets=terminal_targets(payload),
-                                      # A user's tasks take no keys; their shell in a site does (it runs as their Linux user)
-                                      owner=me()["id"], locked=not is_admin() and payload.get("kind") != "shell", after=after)
-        except Exception:
-            if payload.get("kind") == "create_prod":
-                os.unlink(argv[1])
-            raise
+        update_root = os.path.join(WEB_ROOT, payload["site"]) if payload.get("kind") == "script" and payload.get("script") == "outdated.sh" and glob.glob(os.path.join(WEB_ROOT, payload["site"], "*.csproj")) else None
+        sites = terminal_activity_sites(payload)
+        session_obj = TermSession(title, argv, cwd, extra_env, auto_close=terminal_auto_close(payload), update_root=update_root, sites=sites, scope=terminal_scope(payload), targets=terminal_targets(payload),
+                                  # A user's tasks take no keys; their shell in a site does (it runs as their Linux user)
+                                  owner=me()["id"], locked=not is_admin() and payload.get("kind") != "shell", after=after)
         session_obj.process = terminal_process(payload)
         SESSIONS[session_obj.id] = session_obj
     audit("Started: " + title)

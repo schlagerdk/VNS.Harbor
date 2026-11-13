@@ -208,9 +208,9 @@ class MigratedMoveTests(unittest.TestCase):
 
 
 class BornMigratedTests(unittest.TestCase):
-    def test_a_new_site_on_a_migrated_server_has_no_scripts(self):
+    def test_a_new_site_has_no_scripts(self):
         from harbor.core.templates import Site
-        from harbor.sites.create import SOLUTION, install_scripts
+        from harbor.sites.create import install_scripts
         folder = tempfile.TemporaryDirectory()
         self.addCleanup(folder.cleanup)
         root = Path(folder.name)
@@ -218,13 +218,8 @@ class BornMigratedTests(unittest.TestCase):
         system = RecordingSystem(root=root)
         site = Site("new.dk")
         site.build_config = "Release"
-        install_scripts(system, site, SOLUTION / "common/scripts")
-        self.assertTrue((root / "var/www/new.dk/scripts").is_dir(), "before the server is migrated: as always")
-        (root / "var/www/new.dk/scripts").rename(root / "old-scripts")
-        (root / "var/lib/harbor").mkdir(parents=True)
-        (root / "var/lib/harbor/migrated.json").write_text("{}")
-        install_scripts(system, site, SOLUTION / "common/scripts")
-        install_scripts(system, site, SOLUTION / "csharp/scripts")
+        install_scripts(system, site, "common")
+        install_scripts(system, site, "csharp")
         self.assertFalse((root / "var/www/new.dk/scripts").exists())
         record = json.loads((root / "var/lib/harbor/sites/new.dk/site.json").read_text())
         self.assertIn("edit_conf.sh", record["scripts"])

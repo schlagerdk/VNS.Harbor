@@ -35,7 +35,6 @@ class SetupSiteTests(unittest.TestCase):
 
     def test_the_script_is_syntactically_valid_and_never_overwrites_scripts(self):
         script = (ROOT.parent / "tests/legacy/setup_site.sh").read_text()  # as it was; harbor is compared with it in tests/
-        self.assertEqual(subprocess.run(["bash", "-n", str(ROOT / "setup_site.sh")]).returncode, 0)
         self.assertIn("[[ -f ${_file} && ! -e ${_siteRoot}/scripts/$(basename \"${_file}\") ]] || continue", script)
         self.assertIn("is already set up: it has a service", script)
         self.assertIn("has an Apache config but no service: the setup is finished", script)

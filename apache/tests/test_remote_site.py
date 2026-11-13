@@ -345,7 +345,8 @@ class RemoteTransportTests(unittest.TestCase):
             (root / "lib/common.sh").write_text((APACHE / "lib/common.sh").read_text()
                                                    + '\n_rootPath="' + str(root / "sites") + '"\n')
             for name in ("prod.sh", "remote_files.py", "managed_config.py", "database_info.py"):
-                (root / "lib" / name).write_text((APACHE / "lib" / name).read_text())
+                frozen = APACHE.parent / "tests/legacy/lib" / name
+                (root / "lib" / name).write_text((frozen if frozen.exists() else APACHE / "lib" / name).read_text())
             # It runs the harbor package beside the real apache folder, as on a server
             (root / "lib/domain_names.py").symlink_to(APACHE / "lib/domain_names.py")
             # macOS Bash cannot source a process substitution; test transport with trusted fixture settings.

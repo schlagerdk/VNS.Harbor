@@ -188,12 +188,5 @@ class FixPermissionsTests(unittest.TestCase):
             self.assertEqual(system.commands, [])
 
 
-class WrapperTests(unittest.TestCase):
-    def test_the_scripts_run_harbor(self):
-        for script, command in (("install_apache_conf.sh", "server install-apache-conf"), ("install_tls_policy.sh", "server install-tls-policy"),
-                                ("fix_permissions.sh", "site fix-permissions")):
-            self.assertIn(f'bin/harbor" {command} "$@"', (APACHE / script).read_text(), script)
-
-
 if __name__ == "__main__":
     unittest.main()

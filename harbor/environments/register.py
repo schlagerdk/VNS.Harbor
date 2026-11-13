@@ -53,17 +53,11 @@ def site_name(value):
 
 
 def run_create_prod(system, site, variables):
-    """The current create_prod.sh template, rendered for the site, run with the VNS_PROD_* settings (run_create_prod)"""
-    template = Path(site.apache_dir) / "solutionfiles/csharp/scripts/create_prod.sh"
-    with tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False) as script:
-        script.write(render(template.read_text(), site))
-    try:
-        # common.sh exported the apache folder, which the installed scripts render the current templates with
-        return system.run("bash", script.name, env={"R_APACHE_DIR": site.apache_dir, **variables}, check=False)
-    finally:
-        # Run from the admin (VNS_PROD_MODAL=1) the script removes itself, as the old one did
-        if os.path.exists(script.name):
-            os.unlink(script.name)
+    """harbor env create for the site, with the VNS_PROD_* settings (what its create_prod.sh ran)"""
+    from harbor.core.paths import BIN
+    return system.run("python3", str(BIN), "env", "create", site.name, "--site-root", site.site_root, "--binding", site.binding,
+                      "--project", site.project_name, "--publish-folder", site.publish_folder, "--admin-mail", site.admin_mail,
+                      "--kind", site.csharp_kind, env=variables, check=False)
 
 
 def register_environment(system, name):

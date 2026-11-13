@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from harbor.cli import main  # noqa: E402
+from harbor.core.paths import BIN  # noqa: E402
 from harbor.core.system import RecordingSystem, Result  # noqa: E402
 from tests.test_actions import legacy_script  # noqa: E402
 from tests.test_core_bindings import NEEDS_BASH_4  # noqa: E402
@@ -72,19 +73,19 @@ class Base(unittest.TestCase):
     def harbor(self, argv, answers=None, target=None):
         created = {}
 
-        def bash(argv):
-            created["text"] = Path(argv[1]).read_text()
+        def create_environment(argv):
+            created["argv"] = argv
             return Result(int(os.environ.get("FAIL_CREATE", "0")))
         saved = dict(os.environ)
         if target:
             os.environ["VNS_TARGET"] = target
         try:
-            system = RecordingSystem(root=self.folder, answers={"bash": bash, **(answers or {})})
+            system = RecordingSystem(root=self.folder, answers={f"python3 {BIN} env create": create_environment, **(answers or {})})
             code = main(argv, system)
         finally:
             os.environ.clear()
             os.environ.update(saved)
-        return code, system, created.get("text")
+        return code, system, created.get("argv")
 
     def files(self):
         return {str(path.relative_to(self.folder)): path.read_bytes() for path in sorted(self.web.rglob("*")) if path.is_file()}
@@ -103,9 +104,14 @@ class AdoptTests(Base):
         result, created, calls, _ = self.legacy("adopt_site.sh", *args)
         code, system, harbor_created = self.harbor(["site", "adopt", *args])
         self.assertEqual(code, result.returncode, (result.stderr, system.said))
-        self.assertEqual(harbor_created, created)
-        bash = [env for command, env in zip(system.commands, system.environments) if command.startswith("bash ")]
-        self.assertEqual(bash, [{key: value.replace(str(self.folder), "") for key, value in variables.items() if key != "SSHPASS"}
+        # The script ran create_prod.sh rendered with the site's values; harbor runs harbor env create with them
+        self.assertEqual(harbor_created is None, created is None)
+        if created:
+            values = harbor_created[harbor_created.index("create") + 1:]
+            for option in ("--site-root", "--binding", "--project", "--publish-folder", "--admin-mail", "--kind"):
+                self.assertIn(values[values.index(option) + 1].replace(str(self.folder), ""), created, option)
+        bash = [env for command, env in zip(system.commands, system.environments) if command.startswith(f"python3 {BIN} env create")]
+        self.assertEqual(bash, [{key: value.replace(str(self.folder), "") for key, value in variables.items() if key not in ("SSHPASS", "R_APACHE_DIR")}
                                 for name, _, variables in calls if name == "bash"])
         if result.returncode:
             self.assertEqual(system.said[-1], result.stderr.rstrip("\n"))
@@ -223,12 +229,6 @@ class CarrySnippetsTests(Base):
         (folder / "publish_prod.sh").write_text("PROD_TARGET=windows\nPROD_WINDOWS_SHARE='//h/s'\nPROD_FOLDER='s'\nPROD_BINDING='s.dk'\n")
         code, system, _ = self.harbor(["env", "carry-snippets", "shop.dk"], target="iis")
         self.assertEqual((code, system.commands), (0, []))
-
-
-class WrapperTests(unittest.TestCase):
-    def test_the_scripts_run_harbor(self):
-        self.assertIn('site release "$@"', (ROOT / "apache/adopt_site.sh").read_text())
-        self.assertIn('/../bin/harbor" env carry-snippets "$@"', (ROOT / "apache/carry_snippets.sh").read_text())
 
 
 if __name__ == "__main__":

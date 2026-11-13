@@ -21,15 +21,35 @@ from apache.lib import windows_prod
 from apache.tests.app_targets import add_target_helpers
 
 APACHE = Path(__file__).resolve().parents[1]
-WINDOWS_TEMPLATES = APACHE / "solutionfiles/csharp/windows-prod-scripts"
+# As VNS 1.3.0 left them, calling harbor (tests/legacy/wrappers): harbor runs as they ran it
+WRAPPERS = APACHE.parent / "tests/legacy/wrappers/solutionfiles"
+WINDOWS_TEMPLATES = WRAPPERS / "csharp/windows-prod-scripts"
 # As it was before it called harbor (WindowsPublishTests run against both)
 LEGACY_WINDOWS_TEMPLATES = APACHE.parent / "tests/legacy/solutionfiles/csharp/windows-prod-scripts"
-UMBRACO_TEMPLATES = APACHE / "solutionfiles/csharp/umbraco/windows-prod-scripts"
+UMBRACO_TEMPLATES = WRAPPERS / "csharp/umbraco/windows-prod-scripts"
 # clear_logs_prod.sh as it was before it called harbor: harbor env clear-logs is compared with it in tests/
 LEGACY_UMBRACO_TEMPLATES = APACHE.parent / "tests/legacy/solutionfiles/csharp/umbraco/windows-prod-scripts"
 # As it was before it called harbor: harbor env publish is compared with it in tests/test_env_publish.py
 LINUX_TEMPLATE = APACHE.parent / "tests/legacy/solutionfiles/csharp/prod-scripts/publish_prod.sh"
 BASH = shutil.which("bash")
+
+
+def old_apache(root):
+    """The apache folder as VNS 1.x had it, for the scripts of then: its lib with the shell helpers, the site templates
+    as VNS 1.3.0 left them (tests/legacy/wrappers), and harbor beside it. Harbor 1.0 has neither."""
+    apache = Path(root) / "vns/apache"
+    if not apache.exists():
+        shutil.copytree(APACHE / "lib", apache / "lib", ignore=shutil.ignore_patterns("__pycache__"))
+        for name in ("prod.sh", "windows_prod.sh", "dotnet.sh"):
+            shutil.copy(APACHE.parent / "tests/legacy/lib" / name, apache / "lib" / name)
+        (apache / "lib/domain_names.py").unlink()
+        (apache / "lib/domain_names.py").symlink_to(APACHE / "lib/domain_names.py")
+        shutil.copytree(APACHE.parent / "tests/legacy/wrappers/solutionfiles", apache / "solutionfiles")
+        for script in (APACHE.parent / "tests/legacy/wrappers/apache").glob("*.sh"):
+            shutil.copy(script, apache / script.name)
+        for name in ("bin", "harbor"):
+            (apache.parent / name).symlink_to(APACHE.parent / name)
+    return apache
 BASH_MAJOR = int(subprocess.run([BASH, "-c", "echo ${BASH_VERSINFO[0]}"], capture_output=True, text=True).stdout)
 NEEDS_BASH_4 = unittest.skipIf(BASH_MAJOR < 4, "Needs bash 4 or newer, as on the servers")
 
@@ -204,7 +224,7 @@ class ScriptTestCase(unittest.TestCase):
         executable(self.bin / "curl", FAKE_CURL)
         executable(self.bin / "sleep", "#!/bin/bash\n")
         self.values = {
-            "APACHE_DIR": str(APACHE), "PROD_WINDOWS_SHARE": shlex.quote("//10.0.0.1/share$/sites/prod.test"),
+            "APACHE_DIR": str(old_apache(self.root)), "PROD_WINDOWS_SHARE": shlex.quote("//10.0.0.1/share$/sites/prod.test"),
             "PROD_SMB_USER": "Administrator", "PROD_SMB_PASSWORD": shlex.quote("pa$$ 'word"), "PROD_SMB_DOMAIN": "VNS",
             "PROD_FOLDER": "prod.test", "PROD_BINDING": "prod.test", "PROD_HTTPS": "y", "PROD_ENVIRONMENT": "Staging",
             "PROJECT_NAME": "App", "PUBLISH_FOLDER": "_publish",
@@ -564,7 +584,7 @@ class TemplateTests(unittest.TestCase):
         self.assertIn('env publish "${_siteFolder##*/}"', (WINDOWS_TEMPLATES / "publish_prod.sh").read_text())
 
     def test_actions_without_ssh_are_refused_for_windows(self):
-        self.assertIn("PROD_TARGET:-} == windows", (APACHE / "lib/prod.sh").read_text())
+        self.assertIn("PROD_TARGET:-} == windows", (APACHE.parent / "tests/legacy/lib/prod.sh").read_text())
         for script in ("change_binding_prod.sh", "prod_action.sh"):
             # A script that runs harbor now is read as it was; harbor is compared with it in tests/
             legacy = APACHE.parent / "tests/legacy" / script
@@ -598,7 +618,8 @@ class CreateProdTests(ScriptTestCase):
     # create_prod.sh as it was; HarborCreateProdTests runs the same tests through the template that calls harbor
     create_template = APACHE.parent / "tests/legacy/solutionfiles/csharp/scripts/create_prod.sh"
 
-    def create(self, kind="umbraco", apache=APACHE, **env):
+    def create(self, kind="umbraco", apache=None, **env):
+        apache = apache or old_apache(self.root)
         text = self.create_template.read_text()
         values = {"APACHE_DIR": str(apache), "SITE": "example.test", "BINDING": "example.test", "PROJECT_NAME": "App",
                   "SITE_ROOT": str(self.site), "PUBLISH_FOLDER": "_publish", "ADMIN_MAIL": "admin@example.test", "CSHARP_KIND": kind}
@@ -691,7 +712,7 @@ class CreateProdTests(ScriptTestCase):
         # register_env.sh reads the site from the server; here it only records how it was called
         apache = self.root / "apache"
         apache.mkdir()
-        (apache / "lib").symlink_to(APACHE / "lib")
+        (apache / "lib").symlink_to(old_apache(self.root) / "lib")
         executable(apache / "register_env.sh",
                    '#!/bin/bash\necho "REGISTER $1 $VNS_PROD_IP $VNS_PROD_USER $VNS_PROD_SSH_PORT $VNS_PROD_FOLDER" >>"$FAKE_LOG"\n')
         result = self.create(apache=apache, VNS_PROD_TARGET="remote", VNS_PROD_IP="server.test", VNS_PROD_USER="root",
@@ -724,15 +745,6 @@ class CreateProdTests(ScriptTestCase):
         self.assertIn("sync_env.sh", (self.scripts / "targets/staging/sync_prod.sh").read_text())
 
 
-@NEEDS_BASH_4
-class HarborCreateProdTests(CreateProdTests):
-    """The same environments made through create_prod.sh as it is now: it calls harbor env create"""
-    create_template = APACHE / "solutionfiles/csharp/scripts/create_prod.sh"
-
-    def test_a_remote_folder_with_a_site_is_adopted(self):
-        self.skipTest("harbor adopts it with harbor env register itself, not register_env.sh: tests/test_env_register.py")
-
-
 class WindowsActionTests(ScriptTestCase):
     """Run the actions from a copy of the apache folder, with its site folder in a temporary folder."""
 
@@ -740,6 +752,9 @@ class WindowsActionTests(ScriptTestCase):
         super().setUp()
         self.apache = self.root / "apache"
         shutil.copytree(APACHE / "lib", self.apache / "lib", ignore=shutil.ignore_patterns("__pycache__"))
+        # The shell helpers the old scripts source, as they were (Harbor 1.0 has none)
+        for name in ("prod.sh", "windows_prod.sh", "dotnet.sh"):
+            shutil.copy(APACHE.parent / "tests/legacy/lib" / name, self.apache / "lib" / name)
         # It runs the harbor package beside the real apache folder, as on a server
         (self.apache / "lib/domain_names.py").unlink()
         (self.apache / "lib/domain_names.py").symlink_to(APACHE / "lib/domain_names.py")
@@ -943,11 +958,16 @@ class AdoptSiteTests(unittest.TestCase):
         (self.etc / "systemd/system").mkdir(parents=True)
         (self.etc / "apache2/sites-available").mkdir(parents=True)
         shutil.copytree(APACHE / "lib", self.apache / "lib", ignore=shutil.ignore_patterns("__pycache__"))
+        # The shell helpers the old scripts source, as they were (Harbor 1.0 has none)
+        for name in ("prod.sh", "windows_prod.sh", "dotnet.sh"):
+            shutil.copy(APACHE.parent / "tests/legacy/lib" / name, self.apache / "lib" / name)
         # It runs the harbor package beside the real apache folder, as on a server
         (self.apache / "lib/domain_names.py").unlink()
         (self.apache / "lib/domain_names.py").symlink_to(APACHE / "lib/domain_names.py")
         shutil.copytree(APACHE / "solutionfiles/csharp", self.apache / "solutionfiles/csharp",
                         ignore=lambda folder, names: ["project"] if "project" in names else [])
+        # The site templates as they were: Harbor 1.0 has none
+        shutil.copytree(APACHE.parent / "tests/legacy/wrappers/solutionfiles/csharp", self.apache / "solutionfiles/csharp", dirs_exist_ok=True)
         # As it was before it ran harbor (tests/legacy): harbor is compared with it in tests/test_sites_adopt.py
         shutil.copy(APACHE.parent / "tests/legacy/adopt_site.sh", self.apache)
         script = self.apache / "adopt_site.sh"
@@ -1794,59 +1814,6 @@ class TargetListingTests(unittest.TestCase):
         self.assertEqual(publish_status.script_scope("/s/scripts/publish_local.sh"), "test")
         self.assertEqual(publish_status.script_scope("/s/scripts/publish_prod.sh"), "prod")
         self.assertEqual(publish_status.script_scope("/s/scripts/targets/staging-2/publish_prod.sh"), "target-staging-2")
-
-
-class WindowsUpdaterTests(unittest.TestCase):
-    def test_script_updater_gives_windows_scripts_the_template_keeping_their_settings(self):
-        source = (APACHE / "update_admin_site.sh").read_text()
-        updater = re.search(r"<<'PY'\n(.*?)\nPY\n", source, re.S).group(1)
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / "apache/lib").mkdir(parents=True)
-            # It runs the harbor package beside the real apache folder, as on a server
-            (root / "apache/lib/domain_names.py").symlink_to(APACHE / "lib/domain_names.py")
-            scripts = root / "www/example.test/scripts"
-            scripts.mkdir(parents=True)
-            (scripts.parent / "App.csproj").write_text("<Project />\n")
-            template = root / "apache/solutionfiles/csharp/windows-prod-scripts/publish_prod.sh"
-            template.parent.mkdir(parents=True)
-            template.write_text((WINDOWS_TEMPLATES / "publish_prod.sh").read_text())
-            values = {"APACHE_DIR": str(root / "apache"), "PROD_WINDOWS_SHARE": "'//10.0.0.9/D$/web/x'", "PROD_SMB_USER": "'Admin'",
-                      "PROD_SMB_PASSWORD": "'pa$$'", "PROD_SMB_DOMAIN": "''", "PROD_FOLDER": "'x'", "PROD_BINDING": "'x.test'",
-                      "PROD_HTTPS": "y", "PROD_ENVIRONMENT": "Production", "PROJECT_NAME": "App", "PUBLISH_FOLDER": "/var/www/x/_publish"}
-            current = (WINDOWS_TEMPLATES / "publish_prod.sh").read_text()
-            for key, value in values.items():
-                current = current.replace("@" + key + "@", value)
-            (scripts / "publish_prod.sh").write_text(current)
-            (scripts / "targets/staging").mkdir(parents=True)
-            old = current.replace("PROD_SMB_USER='Admin'", "PROD_SMB_USER='Other'").replace("set-https", "old-step")
-            (scripts / "targets/staging/publish_prod.sh").write_text(old)
-            result = subprocess.run([sys.executable, "-c", updater, str(root / "www"), str(root / "apache")],
-                                    capture_output=True, text=True)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual((scripts / "publish_prod.sh").read_text(), current, "A current script is left as it is")
-            self.assertEqual((scripts / "targets/staging/publish_prod.sh").read_text(),
-                             current.replace("PROD_SMB_USER='Admin'", "PROD_SMB_USER='Other'"), "The code is new, the settings kept")
-
-    def test_script_updater_replaces_old_sync_scripts(self):
-        source = (APACHE / "update_admin_site.sh").read_text()
-        updater = re.search(r"<<'PY'\n(.*?)\nPY\n", source, re.S).group(1)
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            (root / "apache/lib").mkdir(parents=True)
-            # It runs the harbor package beside the real apache folder, as on a server
-            (root / "apache/lib/domain_names.py").symlink_to(APACHE / "lib/domain_names.py")
-            (root / "apache/solutionfiles/csharp/umbraco/prod-scripts").mkdir(parents=True)
-            shutil.copy(APACHE / "solutionfiles/csharp/umbraco/prod-scripts/sync_prod.sh", root / "apache/solutionfiles/csharp/umbraco/prod-scripts")
-            scripts = root / "www/example.test/scripts"
-            (scripts / "targets/staging").mkdir(parents=True)
-            (scripts.parent / "App.csproj").write_text("<Project />\n")
-            old = (scripts / "targets/staging/sync_prod.sh")
-            old.write_text("rsync -az --delete uSync/ x:/var/www/x/uSync/\n")
-            result = subprocess.run([sys.executable, "-c", updater, str(root / "www"), str(root / "apache")], capture_output=True, text=True)
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn(f'exec bash "{root / "apache"}/sync_env.sh"', old.read_text())
-            self.assertTrue(list((scripts / "targets/staging").glob("sync_prod.sh.vns-backup-*")))
 
 
 if __name__ == "__main__":

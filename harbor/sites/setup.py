@@ -24,24 +24,10 @@ from harbor.core.paths import APACHE
 SOLUTION = APACHE / "solutionfiles"
 
 
-def install_missing_scripts(system, site, folder):
-    """The scripts of a kind of site, rendered for it. A script that is in the folder already is kept as it is."""
-    folder = Path(folder)
-    if not folder.is_dir():
-        return
-    from harbor.state.migrate import born_migrated, server_migrated
-    if server_migrated(system):
-        # A migrated server (phase 6): Harbor does the scripts' work; their names are kept for the admin's buttons
-        born_migrated(system, site, [template.name for template in folder.iterdir() if template.is_file() and template.suffix == ".sh"])
-        return
-    scripts = system.path(f"{site.site_root}/scripts")
-    scripts.mkdir(parents=True, exist_ok=True)
-    for template in sorted(folder.iterdir()):
-        target = scripts / template.name
-        if not template.is_file() or target.exists():
-            continue
-        target.write_text(render(template.read_text(), site))
-        target.chmod(target.stat().st_mode | 0o111)
+def install_missing_scripts(system, site, *kinds):
+    """The tools of a kind of site: their names kept for the admin's buttons (migrate.SITE_SCRIPTS)"""
+    from harbor.sites.create import install_scripts
+    install_scripts(system, site, *kinds)
 
 
 def what_is_in(system, site):
@@ -157,7 +143,7 @@ def setup_site(system, name="", binding="", certificate="", environment=""):
                 system.step(f"Issue a certificate for {binding}")
                 issue_certificate(system, site, binding)
             install_apache_config(system, site, SOLUTION / "html/apache.conf.tpl", certificate=certificate == "y")
-            install_missing_scripts(system, site, SOLUTION / "common/scripts")
+            install_missing_scripts(system, site, "common")
         else:
             kind_folder = SOLUTION / ("csharp/umbraco" if kind == "umbraco" else "csharp")
             site.doc_root = f"{site.publish_root}/wwwroot"
@@ -169,11 +155,9 @@ def setup_site(system, name="", binding="", certificate="", environment=""):
             if certificate == "y":
                 system.step(f"Issue a certificate for {binding}")
                 issue_certificate(system, site, binding)
-            install_missing_scripts(system, site, SOLUTION / "common/scripts")
-            install_missing_scripts(system, site, SOLUTION / "common/service-scripts")
-            install_missing_scripts(system, site, kind_folder / "scripts")
+            install_missing_scripts(system, site, "common", "service", "umbraco" if kind == "umbraco" else "csharp")
             if kind_of_folder == "project":
-                install_missing_scripts(system, site, SOLUTION / "csharp/scripts")
+                install_missing_scripts(system, site, "csharp")
                 csproj = system.path(f"{site.site_root}/{project}.csproj")
                 if f"{publish}/**" not in csproj.read_text():
                     system.say(f"Exclude {publish} from the project's build")

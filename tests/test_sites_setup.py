@@ -2,7 +2,7 @@
 import tempfile
 import unittest
 
-from tests.harness import APACHE, Server, harbor_commands
+from tests.harness import APACHE, Server, as_migrated, harbor_commands
 from tests.test_core_bindings import NEEDS_BASH_4
 from harbor.cli import main
 
@@ -46,7 +46,7 @@ class SetupSiteTests(unittest.TestCase):
         system = self.new.system()
         code = main(["site", "setup", *args], system)
         self.assertEqual(code, result.returncode, (result.stdout, result.stderr, system.said))
-        self.assertEqual(self.new.files(), self.old.files())
+        self.assertEqual(*as_migrated(self, self.new.files(), self.old.files()))
         self.assertEqual(harbor_commands(system), self.old.commands())
         return result, system
 
@@ -82,11 +82,6 @@ class SetupSiteTests(unittest.TestCase):
         result, system = self.compare(with_service, "shop.dk", "shop.dk", "n")
         self.assertEqual(result.returncode, 1)
         self.assertEqual(system.said[-1], result.stderr.strip().splitlines()[-1])
-
-
-class WrapperTests(unittest.TestCase):
-    def test_the_script_runs_harbor(self):
-        self.assertIn('bin/harbor" site setup "$@"', (APACHE / "setup_site.sh").read_text())
 
 
 if __name__ == "__main__":

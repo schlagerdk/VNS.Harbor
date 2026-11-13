@@ -45,7 +45,7 @@ class ScheduledBackupTests(unittest.TestCase):
             "/opt/mssql-tools18/bin/sqlcmd", str(self.bin / "sqlcmd"))
         self.script = self.root / "backup.sh"
         (self.root / "lib").mkdir()
-        helper = (ROOT / "sql/lib/backup_permissions.sh").read_text().replace(
+        helper = (ROOT / "tests/legacy/sql/lib/backup_permissions.sh").read_text().replace(
             "/var/opt/mssql/backup", str(self.backups)).replace('[[ $EUID -eq 0 ]]', "true")
         (self.root / "lib/backup_permissions.sh").write_text(helper)
         self.script.write_text(source.replace("source ../lib/backup_permissions.sh", "source lib/backup_permissions.sh"))

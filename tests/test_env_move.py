@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from harbor.cli import main  # noqa: E402
+from harbor.core.paths import BIN  # noqa: E402
 from harbor.core.system import RecordingSystem, Result  # noqa: E402
 from tests.test_actions import legacy_script  # noqa: E402
 from tests.test_core_bindings import NEEDS_BASH_4  # noqa: E402
@@ -159,8 +160,16 @@ esac
             """A path harbor names on the server is under the fake server's folder"""
             argv = [re.sub(r"(?<![\w.-])(/var/www|/etc/|/var/lib/vns)", lambda match: f"{folder}{match[1]}", arg) for arg in argv]
             return real(argv, stdin, variables)
+        def create(argv, stdin=None, variables=None):
+            """harbor env create, played by the same fake as the create_prod.sh the script ran"""
+            with tempfile.NamedTemporaryFile("w", suffix=".sh", delete=False) as script:
+                pass
+            try:
+                return real(["bash", script.name], stdin, variables)
+            finally:
+                os.unlink(script.name)
         answers = {"rsync": real, "bash": real, "sshpass": real, "ssh": real, "uname": real, "hostname": real, "python3": on_server,
-                   "systemctl": real, "a2ensite": real, "a2dissite": real, "apache2ctl": real}
+                   f"python3 {BIN} env create": create, "systemctl": real, "a2ensite": real, "a2dissite": real, "apache2ctl": real}
         saved = dict(os.environ)
         os.environ.update(request | env)
         try:
@@ -221,11 +230,6 @@ esac
             with self.subTest(request=request):
                 result, system, folder = self.compare(request)
                 self.assertEqual(result.returncode, 1)
-
-
-class WrapperTests(unittest.TestCase):
-    def test_the_script_runs_harbor(self):
-        self.assertIn('/../bin/harbor" env move "$@"', (ROOT / "apache/move_env.sh").read_text())
 
 
 if __name__ == "__main__":

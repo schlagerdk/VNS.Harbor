@@ -23,6 +23,8 @@ from tests.test_core_bindings import NEEDS_BASH_4  # noqa: E402
 from tests.test_environments import Fake  # noqa: E402
 
 LEGACY = ROOT / "tests/legacy/sql"
+# /vns/sql as VNS 1.3.0 left it on the servers: the wrappers that hold the sa password, and the custom scripts
+VNS_SQL = ROOT / "tests/legacy/vns-sql"
 SQL = ROOT / "sql"
 PASSWORD = "s3cr'et pw"
 WRAPPED = ("create_db.sh", "copy_db.sh", "restore_db.sh", "drop_db.sh", "list_dbs.sh", "cron/backup_everything.sh", "cron/shrink_logs.sh")
@@ -45,7 +47,8 @@ class PasswordTests(unittest.TestCase):
 
     def copy(self, name):
         target = self.folder / name
-        shutil.copytree(SQL, target, ignore=shutil.ignore_patterns("__pycache__"))
+        shutil.copytree(VNS_SQL, target)
+        shutil.copytree(SQL / "scripts", target / "scripts")
         return target
 
     def test_the_password_set_the_old_way_reaches_sqlcmd(self):
@@ -100,7 +103,7 @@ class DatabaseTests(unittest.TestCase):
         self.sql = self.folder / "sql"
         shutil.copytree(LEGACY, self.sql)
         for name in ("lib", "scripts"):
-            shutil.copytree(SQL / name, self.sql / name, ignore=shutil.ignore_patterns("__pycache__"))
+            shutil.copytree(SQL / name, self.sql / name, ignore=shutil.ignore_patterns("__pycache__"), dirs_exist_ok=True)
         self.fake = Fake(self.folder, variables=("SQLCMDPASSWORD",))
         self.sent = self.folder / "sent.sql"
         self.fake.program("sqlcmd", f'while (($#)); do [[ $1 == -i ]] && cat "$2" >>"{self.sent}"; shift; done\n'

@@ -107,30 +107,5 @@ class SiteToolTests(unittest.TestCase):
         self.assertTrue(any("dotnet publish Shop.csproj -c Release -p:PublishDir=_publish" in line for line in system.commands))
 
 
-class TemplateTests(unittest.TestCase):
-    def test_the_templates_call_harbor(self):
-        for path in sorted(TEMPLATES.rglob("*.sh")):
-            template = (APACHE / "solutionfiles" / path.relative_to(TEMPLATES)).read_text()
-            with self.subTest(template=path.name):
-                self.assertIn('"@APACHE_DIR@/../bin/harbor"', template)
-                if path.name != "publish_prod.sh":
-                    # publish_prod.sh keeps the environment's settings, which the admin and create_prod.sh read
-                    self.assertNotIn("PROD_PASSWORD", template)
-
-    def test_an_environment_finds_its_site_and_id_from_where_it_is(self):
-        folder = Path(tempfile.mkdtemp())
-        target = folder / "var/www/shop.dk/scripts/targets/staging"
-        target.mkdir(parents=True)
-        (folder / "bin").mkdir()
-        (folder / "bin/harbor").write_text('#!/bin/bash\necho "$VNS_TARGET $*"\n')
-        (folder / "bin/harbor").chmod(0o755)
-        script = target / "clear_logs_prod.sh"
-        script.write_text((APACHE / "solutionfiles/csharp/umbraco/prod-scripts/clear_logs_prod.sh").read_text()
-                          .replace("@APACHE_DIR@", str(folder / "apache")).replace('[[ $EUID -eq 0 ]] || exec sudo "$0" "$@"', ""))
-        (folder / "apache").mkdir()
-        output = subprocess.run(["bash", str(script)], capture_output=True, text=True).stdout
-        self.assertEqual(output.strip(), "staging env clear-logs shop.dk")
-
-
 if __name__ == "__main__":
     unittest.main()

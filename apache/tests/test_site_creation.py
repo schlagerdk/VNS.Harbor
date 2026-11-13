@@ -46,7 +46,7 @@ class UnicodeScriptTests(unittest.TestCase):
                 self.assertIn(r"RewriteCond %{REQUEST_URI} !^/\.well-known/acme-challenge/",
                               template.read_text())
         for path in (APACHE / "lib/common.sh",
-                     APACHE / "solutionfiles/csharp/prod-scripts/publish_prod.sh"):
+                     APACHE.parent / "tests/legacy/solutionfiles/csharp/prod-scripts/publish_prod.sh"):
             self.assertNotIn("!^/.well-known/acme-challenge/", path.read_text())
         source = (APACHE / "lib/common.sh").read_text()
         line = next(line.strip() for line in source.splitlines()
@@ -485,9 +485,9 @@ class CreateScriptTests(unittest.TestCase):
             with self.subTest(site_type=site_type):
                 result = subprocess.run(
                     ["bash", "-c", prefix + '\nprintf "site=%s binding=%s project=%s\\n" '
-                     '"$_site" "$_binding" "$_projectName"', str(APACHE / "create_site.sh"),
+                     '"$_site" "$_binding" "$_projectName"', str(APACHE.parent / "tests/legacy/create_site.sh"),
                      "æøå.dk", site_type, "empty", "", "", "ÆØÅ.dk", "", "", "n"],
-                    cwd=APACHE, input="\n", capture_output=True, text=True)
+                    cwd=APACHE.parent / "tests/legacy", input="\n", capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertIn("site=æøå.dk binding=xn--5cab8c.dk", result.stdout)
                 if site_type == "csharp":
@@ -701,7 +701,7 @@ class DotnetInstallationTests(unittest.TestCase):
                             '--list-sdks) echo "8.0.100 [/sdk]" ;;\n'
                             '--list-runtimes) echo ' + shlex.quote(runtime) + ' ;;\nesac\n')
             host.chmod(0o700)
-            helper = (APACHE / "lib/dotnet.sh").read_text().replace(
+            helper = (APACHE.parent / "tests/legacy/lib/dotnet.sh").read_text().replace(
                 "_dir=/usr/lib/dotnet", "_dir=" + shlex.quote(directory))
             script = helper + """
 sudo() { printf 'sudo:'; printf ' <%s>' "$@"; printf '\\n'; }
@@ -725,7 +725,7 @@ ensure_dotnet_channel 8.0
 
 class ProjectRuntimeTests(unittest.TestCase):
     def test_net8_templates_install_and_select_net8(self):
-        helper = (APACHE / "lib/dotnet.sh").read_text()
+        helper = (APACHE.parent / "tests/legacy/lib/dotnet.sh").read_text()
         for framework in ("net8.0", "net10.0", "net11.0"):
             with self.subTest(framework=framework), tempfile.TemporaryDirectory() as directory:
                 root = Path(directory)
@@ -763,7 +763,7 @@ configure_project_dotnet "$1"
                 self.assertIn('linux_runtime_identifier)', text)
 
     def test_linux_runtime_identifier_maps_supported_architectures(self):
-        helper = APACHE / "lib/dotnet.sh"
+        helper = APACHE.parent / "tests/legacy/lib/dotnet.sh"
         for architecture, expected in (("x86_64", "linux-x64"), ("aarch64", "linux-arm64"), ("arm64", "linux-arm64")):
             result = subprocess.run(
                 ["bash", "-c", f'source "{helper}"; linux_runtime_identifier "$1"', "test", architecture],

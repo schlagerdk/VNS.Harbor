@@ -89,12 +89,5 @@ class SetServernameTests(unittest.TestCase):
         self.assertEqual(available.read_text(), "ServerName set.example.test\n")
 
 
-class WrapperTests(unittest.TestCase):
-    def test_the_script_runs_harbor(self):
-        text = (ROOT / "apache/set_servername.sh").read_text()
-        self.assertIn('bin/harbor" server set-servername "$@"', text)
-        self.assertTrue(os.access(ROOT / "bin/harbor", os.X_OK))
-
-
 if __name__ == "__main__":
     unittest.main()

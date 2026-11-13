@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from harbor.cli import main  # noqa: E402
+from harbor.core.paths import BIN  # noqa: E402
 from harbor.core.system import RecordingSystem, Result  # noqa: E402
 from tests.test_actions import legacy_script  # noqa: E402
 from tests.test_core_bindings import NEEDS_BASH_4  # noqa: E402
@@ -64,8 +65,8 @@ class RegisterEnvironmentTests(unittest.TestCase):
     def run_harbor(self, found, create=0):
         created = {}
 
-        def bash(argv):
-            created["text"] = Path(argv[1]).read_text()
+        def create_environment(argv):
+            created["argv"] = argv
             return Result(create)
 
         def ssh(argv):
@@ -73,28 +74,35 @@ class RegisterEnvironmentTests(unittest.TestCase):
         saved = dict(os.environ)
         os.environ.update(SETTINGS)
         try:
-            system = RecordingSystem(root=self.folder, answers={"sshpass": ssh, "bash": bash, "hostname -f": "admin.here.dk"})
+            system = RecordingSystem(root=self.folder, answers={"sshpass": ssh, f"python3 {BIN} env create": create_environment,
+                                                                      "hostname -f": "admin.here.dk"})
             code = main(["env", "register", "shop.dk"], system)
         finally:
             os.environ.clear()
             os.environ.update(saved)
-        return code, system, created.get("text")
+        return code, system, created.get("argv")
 
     def compare(self, found, create=0):
         result, calls, read, note, created = self.run_legacy(found, {"FAIL_CREATE": str(create)})
         code, system, harbor_created = self.run_harbor(found, create)
         self.assertEqual(code, result.returncode, (result.stderr, system.said))
         remote = [(command, env, input) for command, env, input in zip(system.commands, system.environments, system.inputs)
-                  if command.startswith(("sshpass", "bash"))]
+                  if command.startswith(("sshpass", f"python3 {BIN} env create"))]
         self.assertEqual(len(remote), len(calls), (system.commands, calls))
         for (command, env, input), (name, argv, variables) in zip(remote, calls):
-            if name == "bash":
-                self.assertEqual(env, {key: value for key, value in variables.items() if key != "SSHPASS"})
+            if command.startswith("python3"):
+                self.assertEqual(env, {key: value for key, value in variables.items() if key not in ("SSHPASS", "R_APACHE_DIR")})
             else:
                 self.assertEqual(command, " ".join(["sshpass", "-e", name, *argv]))
         self.assertEqual(next((input for command, _, input in remote if command.endswith("bash -s")), None), read)
         self.assertEqual(next((input for command, _, input in remote if "vns-managed" in command), None), note)
-        self.assertEqual(harbor_created, created)
+        # The script ran create_prod.sh rendered with the site's values; harbor runs harbor env create with them
+        self.assertEqual(harbor_created is None, created is None)
+        if created:
+            values = harbor_created[harbor_created.index("create") + 1:]
+            self.assertEqual(values[0], "shop.dk")
+            for option in ("--site-root", "--binding", "--project", "--publish-folder", "--admin-mail", "--kind"):
+                self.assertIn(values[values.index(option) + 1], created, option)
         return result, system
 
     def test_a_site_that_runs_the_same_dll(self):
@@ -118,25 +126,17 @@ class RegisterEnvironmentTests(unittest.TestCase):
         self.assertEqual(result.returncode, 3)
 
 
-class WrapperTests(unittest.TestCase):
-    def test_the_script_runs_harbor(self):
-        self.assertIn('/../bin/harbor" env register "$@"', (ROOT / "apache/register_env.sh").read_text())
-
-
-
 class RunCreateProdTests(unittest.TestCase):
-    def test_a_script_that_removes_itself(self):
-        """Run from the admin, create_prod.sh removes itself (rm -f "$0"); harbor does not remove it again"""
-        import os as _os
-        from harbor.core.system import RecordingSystem
+    def test_harbor_env_create_with_the_sites_values(self):
         from harbor.core.templates import Site
         from harbor.environments.register import run_create_prod
+        site = Site("shop.dk", binding="shop.dk", project_name="Shop", admin_mail="it@shop.dk", csharp_kind="umbraco")
+        system = RecordingSystem(root=Path("/"))
+        self.assertTrue(run_create_prod(system, site, {"VNS_PROD_MODAL": "1"}).ok)
+        self.assertEqual(system.commands, [f"python3 {BIN} env create shop.dk --site-root /var/www/shop.dk --binding shop.dk --project Shop "
+                                           "--publish-folder _publish --admin-mail it@shop.dk --kind umbraco"])
+        self.assertEqual(system.environments, [{"VNS_PROD_MODAL": "1"}])
 
-        def runs(argv):
-            _os.unlink(argv[1])
-            return ""
-        result = run_create_prod(RecordingSystem(root=Path("/"), answers={"bash": runs}), Site("shop.dk"), {"VNS_PROD_MODAL": "1"})
-        self.assertTrue(result.ok)
 
 if __name__ == "__main__":
     unittest.main()

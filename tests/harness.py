@@ -52,6 +52,8 @@ class Server:
         for frozen in (LEGACY / "lib").glob("*"):
             if frozen.is_file():
                 shutil.copy(frozen, copy / "lib" / frozen.name)
+        # The site templates as they were: Harbor 1.0 has no scripts of its own to put in a site
+        shutil.copytree(LEGACY / "solutionfiles", copy / "solutionfiles", dirs_exist_ok=True)
         # domain_names.py runs harbor from beside the apache folder
         (self.folder / "harbor").exists() or (self.folder / "harbor").symlink_to(ROOT / "harbor")
         (self.folder / "bin").exists() or (self.folder / "bin").symlink_to(ROOT / "bin")
@@ -158,12 +160,38 @@ def sent_today(script):
     """What a frozen script sent to another server, as harbor sends it now: common.sh from the Harbor release in use
     there, /vns only when it has none (a difference on purpose: /vns goes with the cutover)"""
     return script.replace("source /vns/apache/lib/common.sh",
-                          "source /opt/harbor/current/apache/lib/common.sh 2>/dev/null || source /vns/apache/lib/common.sh")
+                          "source /opt/harbor/current/apache/lib/common.sh 2>/dev/null || source /vns/apache/lib/common.sh") \
+        .replace("Run apache/init.sh there first.", "Run harbor server init there first.")
 
 
 def as_frozen(script):
     """What harbor sent to another server, as the frozen script sent it: the other way of sent_today, for a script
     whose commands are compared as they ran (the start of a publish also sources common.sh now, for _apacheDir)"""
     today = "source /opt/harbor/current/apache/lib/common.sh 2>/dev/null || source /vns/apache/lib/common.sh"
-    script = script.replace(today + "\ndir=${ROOT}\n", "dir=${ROOT}\n").replace(today, "source /vns/apache/lib/common.sh")
+    script = script.replace(today + "\ndir=${ROOT}\n", "dir=${ROOT}\n").replace(today, "source /vns/apache/lib/common.sh").replace("Run harbor server init there first.", "Run apache/init.sh there first.")
     return re.sub(r'python3 "\$\{_apacheDir\}/lib/([\w.]+)"', r"python3 /vns/apache/lib/\1", script)
+
+
+SCRIPTS = re.compile(r"var/www/([^/]+)/scripts/([^/]+\.sh)$")
+
+
+def as_migrated(test, new, old):
+    """A server's files after harbor, and after the frozen script, compared as Harbor 1.0 means them to differ: the
+    script wrote its scripts into the site's folder, harbor records their names in its state (site.json) instead, and
+    writes no scripts folder. Returns both without those, after checking that the names are the same."""
+    import json
+    written = {}
+    for name in old:
+        match = SCRIPTS.match(name)
+        if match:
+            written.setdefault(match[1], set()).add(match[2])
+    recorded = {}
+    for name, content in new.items():
+        match = re.fullmatch(r"var/lib/harbor/sites/([^/]+)/site\.json", name)
+        if match:
+            recorded[match[1]] = set(json.loads(content).get("scripts", []))
+    test.assertEqual(recorded, written, "the scripts the site would have had")
+    for site in recorded:
+        test.assertIn(f"var/lib/harbor/sites/{site}/migrated.json", new)
+    return ({name: content for name, content in new.items() if not name.startswith("var/lib/harbor/")},
+            {name: content for name, content in old.items() if not re.match(r"var/www/[^/]+/scripts(/|$)", name)})

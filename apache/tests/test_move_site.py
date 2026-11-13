@@ -121,9 +121,6 @@ class HttpSettingsTests(unittest.TestCase):
 class ScriptTests(unittest.TestCase):
     script = (APACHE.parent / "tests/legacy/move_site.sh").read_text()
 
-    def test_script_is_valid_bash(self):
-        subprocess.run(["bash", "-n", str(APACHE / "move_site.sh")], check=True)
-
     def test_new_server_gets_http_and_its_own_port(self):
         receive = self.script[self.script.index("receive() {"):self.script.index("if [[ ${1:-} == --receive ]]")]
         self.assertIn("lib/move_site.py http-conf", receive)

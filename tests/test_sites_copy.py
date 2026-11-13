@@ -79,12 +79,6 @@ class CopySiteTests(unittest.TestCase):
         self.assertIn("is an environment of the main site main.dk on admin.other.dk", system.said[0])
 
 
-class WrapperTests(unittest.TestCase):
-    def test_the_script_runs_harbor(self):
-        self.assertIn('bin/harbor" site copy "$@"', (APACHE / "copy_site.sh").read_text())
-
-
-
 class MoveHereTests(unittest.TestCase):
     """A copy that takes over: a new folder and binding for a site, which no longer runs under its old name"""
 

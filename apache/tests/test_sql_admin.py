@@ -675,7 +675,7 @@ class SqlApiTests(unittest.TestCase):
 
     def test_tools_installer_is_client_only_and_shared_with_server_setup(self):
         installer = frozen(ROOT / "sql/install_tools.sh").read_text()
-        shared = (ROOT / "sql/lib/install_tools.sh").read_text()
+        shared = (ROOT / "tests/legacy/sql/lib/install_tools.sh").read_text()
         server = frozen(ROOT / "sql/install_server.sh").read_text()
         self.assertIn('source "${_sqlDir}/lib/install_tools.sh"', installer)
         self.assertIn('source "${_sqlDir}/lib/install_tools.sh"', server)
@@ -718,11 +718,6 @@ class SqlApiTests(unittest.TestCase):
             response = self.client.get("/api/sql/missing")
         self.assertEqual(response.status_code, 502)
         self.assertIn("Unknown SQL connection", response.json["error"])
-
-    def test_admin_updater_preserves_connection_store(self):
-        updater = (ROOT / "apache/update_admin_site.sh").read_text()
-        self.assertIn("--exclude /sql-connections.json", updater)
-
 
 if __name__ == "__main__":
     unittest.main()

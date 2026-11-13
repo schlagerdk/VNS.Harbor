@@ -99,10 +99,5 @@ class DataSyncTests(SyncTests):
 del SyncTests
 
 
-class WrapperTests(unittest.TestCase):
-    def test_the_script_runs_harbor(self):
-        self.assertIn('/../bin/harbor" env data-sync "$@"', (ROOT / "apache/data_sync.sh").read_text())
-
-
 if __name__ == "__main__":
     unittest.main()

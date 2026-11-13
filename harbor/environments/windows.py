@@ -36,7 +36,7 @@ class Share:
         # rclone needs the password in its obscured form. This is encoding, not encryption.
         obscured = self.rclone("obscure", "-", capture=True, input=self.environment.SMB_PASSWORD, check=False)
         if obscured.returncode == 127:
-            raise RuntimeError("rclone is not installed. Run apache/init.sh, or see https://rclone.org/install/")
+            raise RuntimeError("rclone is not installed. Run harbor server init, or see https://rclone.org/install/")
         if not obscured.ok:
             raise RuntimeError("rclone could not encode the SMB password.")
         self.env["RCLONE_SMB_PASS"] = obscured.stdout.rstrip("\n")

@@ -1,12 +1,11 @@
 """Add an environment to a site: a remote Linux server (SSH), a local folder, or an IIS site on a Windows server (SMB).
-From the site template csharp/scripts/create_prod.sh (phase 2d).
+Was the site template csharp/scripts/create_prod.sh.
 
-The settings come from the admin's dialog (VNS_PROD_MODAL=1 and VNS_PROD_*), or are asked for. Then the first time
-publish.sh becomes publish_local.sh and clear_logs.sh clear_logs_local.sh, scripts/targets/<environment>/ gets
-publish_prod.sh, clear_logs_prod.sh and sync_prod.sh (Umbraco), and the environment is published and its content synced
-when that is possible. A remote or Windows destination that already holds a site is adopted as it is: its settings are
-read from the server, it must run the dll this site builds, and nothing is published, synced or changed there.
-VNS_PROD_NO_PUBLISH=1 (adopt_site, move_env, register_env) only makes the scripts.
+The settings come from the admin's dialog (VNS_PROD_MODAL=1 and VNS_PROD_*), or are asked for. They are saved in
+Harbor (its state, the passwords in its secrets), and the environment is published and its content synced when that
+is possible. A remote or Windows destination that already holds a site is adopted as it is: its settings are read
+from the server, it must run the dll this site builds, and nothing is published, synced or changed there.
+VNS_PROD_NO_PUBLISH=1 (adopt_site, move_env, register_env) only saves the settings.
 """
 import os
 from pathlib import Path
@@ -22,7 +21,30 @@ from harbor.environments import settings
 from harbor.sites.create import ask
 from harbor.core.paths import APACHE, BIN
 
-SOLUTION = APACHE / "solutionfiles"
+# The settings an environment has, as its publish_prod.sh held them: rendered with the values, then read as bash reads
+# them (settings.parse), so a value is quoted and kept exactly as before
+LINUX_SETTINGS = """PROD_LOCAL_PATH=@PROD_LOCAL_PATH@
+PROD_IP=@PROD_IP@
+PROD_USER=@PROD_USER@
+PROD_PASSWORD=@PROD_PASSWORD@
+PROD_SSH_PORT=@PROD_SSH_PORT@
+PROD_FOLDER=@PROD_FOLDER@
+PROD_BINDING=@PROD_BINDING@
+PROD_HTTPS=@PROD_HTTPS@
+PROD_ENVIRONMENT="@PROD_ENVIRONMENT@"
+PROD_ADMIN_MAIL="@ADMIN_MAIL@"
+"""
+WINDOWS_SETTINGS = """PROD_TARGET=windows
+PROD_WINDOWS_SHARE=@PROD_WINDOWS_SHARE@
+PROD_SMB_USER=@PROD_SMB_USER@
+PROD_SMB_PASSWORD=@PROD_SMB_PASSWORD@
+PROD_SMB_DOMAIN=@PROD_SMB_DOMAIN@
+PROD_FOLDER=@PROD_FOLDER@
+PROD_BINDING=@PROD_BINDING@
+PROD_HTTPS=@PROD_HTTPS@
+PROD_ENVIRONMENT="@PROD_ENVIRONMENT@"
+PROD_OFFLINE_WAIT=5
+"""
 ENVIRONMENTS = ("Development", "Test", "Staging", "Production")
 
 
@@ -112,10 +134,9 @@ class Main:
 
 def create_environment(system, main, target_arg=""):
     scripts = f"{main.site_root}/scripts"
-    # A migrated site (phase 6) keeps its environments' settings in Harbor's copy, with no scripts in its folder
-    migrated = settings.migrated(system, main.site_root)
-    if not migrated and not system.path(f"{scripts}/publish.sh").is_file() and not system.path(f"{scripts}/publish_local.sh").is_file():
-        raise Stop("This site has no publish.sh.")
+    # The environments' settings are in Harbor: a site that still has its scripts is migrated first
+    if not settings.migrated(system, main.site_root):
+        raise Stop(f"{main.name} still has its scripts: migrate it first with: harbor migrate {main.name}")
     request = Request(system, main, target_arg)
     no_publish = os.environ.get("VNS_PROD_NO_PUBLISH") == "1"
 
@@ -184,7 +205,6 @@ def create_environment(system, main, target_arg=""):
     while os.path.lexists(system.path(f"{scripts}/targets/{target_id}")) or target_id in taken:
         target_id = f"{request.environment.lower()}-{number}"
         number += 1
-    target_folder = f"{scripts}/targets/{target_id}"
 
     where = (f" ({request.user}@{request.ip}:{request.ssh_port})" if request.ip else "") + (f" ({request.local_path})" if request.local_path else "") \
         + (f" ({request.smb_user}@{request.smb_share})" if request.smb_share else "")
@@ -195,17 +215,15 @@ def create_environment(system, main, target_arg=""):
     system.say(f"Environment: {request.environment}")
     system.say(f"Protocol: {'HTTPS' if request.https == 'y' else 'HTTP'}")
     if os.environ.get("VNS_PROD_MODAL") != "1":
-        answer = system.ask("Create the production scripts? [Y/n]: ").strip() or "y"
+        answer = system.ask("Add the environment? [Y/n]: ").strip() or "y"
         if not answer.lower().startswith("y"):
             system.say("Cancelled.")
             raise Stop("", 1)
 
-    templates = [SOLUTION / "csharp/prod-scripts"] + ([SOLUTION / "csharp/umbraco/prod-scripts"] if main.kind == "umbraco" else [])
     # Whether the destination already holds a site, for instance an environment that was removed here but kept on its
     # server. Then it is only registered: publishing would overwrite its files.
     has_files = False
     if request.target == "windows":
-        templates = [SOLUTION / "csharp/windows-prod-scripts"] + ([SOLUTION / "csharp/umbraco/windows-prod-scripts"] if main.kind == "umbraco" else [])
         has_files, request.environment = adopt_windows(system, main, request, no_publish)
     elif request.target == "remote":
         environment = settings.Environment(IP=request.ip, USER=request.user, PASSWORD=request.password, SSH_PORT=request.ssh_port)
@@ -237,54 +255,12 @@ def create_environment(system, main, target_arg=""):
               "PROJECT_NAME": main.project, "PUBLISH_FOLDER": main.publish_folder, "SITE": main.name, "PROD_HTTPS": request.https,
               "PROD_WINDOWS_SHARE": quoted(request.smb_share), "PROD_SMB_USER": quoted(request.smb_user),
               "PROD_SMB_PASSWORD": quoted(request.smb_password), "PROD_SMB_DOMAIN": quoted(request.smb_domain),
-              "APACHE_DIR": os.environ.get("R_APACHE_DIR") or str(APACHE)}
-    # Render everything first, so a missing template fails before anything is renamed
-    rendered = {}
-    for folder in templates:
-        for template in sorted(folder.glob("*.sh")):
-            rendered[template.name] = render(template.read_text(), values)
-    if "publish_prod.sh" not in rendered:
-        raise Stop("Template publish_prod.sh not found.")
-
-    if migrated:
-        # Its settings into Harbor's copy, as the script would have held them; Harbor does the scripts' work
-        settings.write_copy(system, main.site_root, target_id, settings.parse(rendered["publish_prod.sh"]))
-        system.say(f"Environment {target_id} saved in Harbor.")
-        finish_migrated(system, main, request, target_id, no_publish, has_files)
-        return
-    for name in ("publish", "clear_logs"):
-        script = system.path(f"{scripts}/{name}.sh")
-        if script.is_file():
-            script.rename(script.with_name(f"{name}_local.sh"))
-    for folder in (f"{scripts}/targets", target_folder):
-        system.path(folder).mkdir(mode=0o700, exist_ok=True)
-        system.path(folder).chmod(0o700)
-    for name, text in rendered.items():
-        path = system.path(f"{target_folder}/{name}")
-        path.write_text(text)
-        path.chmod(0o700)
-    system.say(f"Created in {target_folder}:")
-    system.say("\n".join(f"  {name}" for name in sorted(path.name for path in system.path(target_folder).iterdir())))
-
-    # adopt_site, move_env and register_env do the rest themselves: nothing may be published yet
-    if no_publish:
-        return
-    if has_files:
-        system.say(f"Environment {target_id} is the site that was already on the server. Nothing was published.")
-        return
-    # The scripts are the environment's own: they run as they are, so a script changed by hand is used
-    for key in ("VNS_PROD_PASSWORD", "VNS_PROD_SMB_PASSWORD"):
-        os.environ.pop(key, None)
-    system.step(f"Publish to {request.environment}")
-    published = system.run("bash", f"{target_folder}/publish_prod.sh", check=False)
-    if not published.ok:
-        raise Stop("", published.returncode)
-    if system.path(f"{target_folder}/sync_prod.sh").is_file():
-        system.step(f"Sync content to {request.environment}")
-        synced = system.run("bash", f"{target_folder}/sync_prod.sh", check=False)
-        if not synced.ok:
-            raise Stop("", synced.returncode)
-    system.say(f"Environment {target_id} is ready.")
+              }
+    # Its settings into Harbor's copy, as the script held them; Harbor publishes and syncs
+    found = settings.parse(render(WINDOWS_SETTINGS if request.target == "windows" else LINUX_SETTINGS, values))
+    settings.write_copy(system, main.site_root, target_id, found)
+    system.say(f"Environment {target_id} saved in Harbor.")
+    finish_migrated(system, main, request, target_id, no_publish, has_files)
 
 
 def finish_migrated(system, main, request, target_id, no_publish, has_files):

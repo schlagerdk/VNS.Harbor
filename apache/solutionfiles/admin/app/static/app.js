@@ -3344,7 +3344,7 @@ async function openFiles(path, remoteSite = "", server = false) {
 	focusFilesPath();
 }
 
-// Monaco is downloaded into static/vendor by install/update_admin_site.sh; without it a plain textarea is used
+// Monaco is downloaded into static/vendor by harbor admin install/update; without it a plain textarea is used
 let monacoPromise = null;
 let monacoEditor = null;
 function loadMonaco() {
@@ -4958,7 +4958,7 @@ $("#menu-preferences").onclick = () => run(async () => {
 	syncKeepAliveInterval();
 	$("#preferences-keep-alive-hint").textContent = keepAlive.installed
 		? "From 1 to 1440 minutes. It does not restart services or prevent Boot failed."
-		: "The keep-alive cron job is missing. Run apache/init.sh on this server to install it.";
+		: "The keep-alive cron job is missing. Run harbor server init on this server to install it.";
 	preferencesDialog.showModal();
 	document.activeElement?.blur();
 });
