@@ -6,7 +6,7 @@ All notable changes to VNS.Linux are listed here, newest first.
 
 ### Fixes
 
-- The first update to this version already installs Harbor and moves the sites over: the update that runs is the one the server had, so an update from 1.1.x did not do it until the next one
+- 1.2.1: the first update from 1.1.x already installs Harbor and migrates the sites, as the admin's updater does it after the new code is in place (the update.sh that runs is the one the server had)
 
 ## [1.2.0] - 2026-11-13
 
