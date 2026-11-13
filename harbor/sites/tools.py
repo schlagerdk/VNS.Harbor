@@ -148,6 +148,14 @@ def publish(system, name, configuration="", folder="", environment_name=""):
     """The site built into its publish folder and started again; recorded as published when it worked. folder and
     environment_name are what a very old publish script had (update_admin_site.sh keeps them when it upgrades it)."""
     site = site_named(system, name)
+    # A migrated site (phase 6) has no publish script to hold them: what it held is in Harbor's state
+    from harbor.environments import settings
+    if settings.migrated(system, site.site_root):
+        from harbor.state.store import read_json
+        saved = read_json(system.path(f"{settings.STATE}/{site.name}/site.json")) or {}
+        configuration = configuration or saved.get("configuration", "")
+        folder = folder or saved.get("folder", "")
+        environment_name = environment_name or saved.get("environment_name", "")
     configuration = configuration or "Debug"
     if configuration not in ("Debug", "Release"):
         raise Stop("Usage: publish.sh [Debug|Release]")

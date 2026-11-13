@@ -2,6 +2,19 @@
 
 All notable changes to VNS.Linux are listed here, newest first.
 
+## [1.2.0] - 2026-11-13
+
+The bridge to VNS Harbor: this update installs Harbor and moves every site over to it.
+
+### Features
+
+- Harbor, the `harbor` command, does the work of every script; it is installed as releases in /opt/harbor that can be rolled back
+- Every site is migrated: Harbor holds its environments' settings, Sync setup and publish status, and Harbor's own scripts and .vns-publish leave the site folder after a backup; a site's own scripts stay where they are
+- Server tools: SQL Server, sqlcmd, the sa password, the backup jobs, .NET and Node.js, installed, updated and removed from the admin
+- Servers: other servers added once with a password and reached with Harbor's own key, with their versions, and Harbor installed, updated or removed there
+- Users get a Linux user of their own: Files and Terminal per site through a group per site, a terminal locked to their sites, and SFTP with a password or keys
+- The VNS.Harbor package for Umbraco 17+: the Backend button logs straight in, and a VNS Harbor dashboard syncs settings and data to the environments, also on other servers and Windows
+
 ## [1.1.16] - 2026-11-13
 
 ### Features

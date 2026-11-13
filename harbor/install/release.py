@@ -116,6 +116,16 @@ def install(system, source, keep=KEEP):
     return name
 
 
+def use(system, name, keep=KEEP):
+    """A release that is installed made the one in use (a release copied here from another server)"""
+    if not name or "/" in name or not system.path(f"{RELEASES}/{name}/bin/harbor").is_file():
+        raise Stop(f"No release {name} in {RELEASES}.")
+    link(system, CURRENT, f"releases/{name}")
+    link(system, COMMAND, f"{CURRENT}/bin/harbor")
+    system.say(f"Harbor {name} is in use ({CURRENT}).")
+    prune(system, keep)
+
+
 def prune(system, keep=KEEP):
     """Only the newest releases stay, and always the one in use"""
     for item in releases(system)[keep:]:

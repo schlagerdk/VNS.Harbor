@@ -32,7 +32,8 @@ from harbor.core.templates import Site
 from harbor.environments import settings
 from harbor.environments.register import bash_quote, run_create_prod, site_name
 from harbor.environments.windows import Share
-from harbor.core.paths import LIB
+from harbor.core.paths import BIN, LIB
+from harbor.state.store import STATE
 
 ROOTS = "/var/lib/vns-roots"
 REMOVE_REMOTE_SOURCE = r'''systemctl stop "${UNIT}" || true
@@ -158,7 +159,11 @@ class Move:
         backup = Path(tempfile.mkdtemp())
         shutil.copy(system.path(self.old_service), backup / "service")
         shutil.copy(system.path(self.old_conf), backup / "conf")
-        shutil.copytree(system.path(self.old_scripts), backup / "scripts", symlinks=True)
+        # A migrated site has no scripts: its settings are in Harbor's copy
+        has_scripts = system.path(self.old_scripts).is_dir()
+        if has_scripts:
+            shutil.copytree(system.path(self.old_scripts), backup / "scripts", symlinks=True)
+        before = settings.values(system, site.site_root, self.source.id)
 
         def quiet(*argv):
             system.run(*argv, check=False, capture=True)
@@ -176,7 +181,10 @@ class Move:
                 shutil.move(system.path(f"{ROOTS}/{new_name}"), system.path(f"{ROOTS}/{self.old_name}"))
             shutil.copy(backup / "service", system.path(self.old_service))
             shutil.copy(backup / "conf", system.path(self.old_conf))
-            shutil.copytree(backup / "scripts", system.path(self.old_scripts), symlinks=True, dirs_exist_ok=True)
+            if has_scripts:
+                shutil.copytree(backup / "scripts", system.path(self.old_scripts), symlinks=True, dirs_exist_ok=True)
+            elif before is not None:
+                settings.write_copy(system, site.site_root, self.source.id, before)
             quiet("systemctl", "daemon-reload")
             quiet("systemctl", "enable", self.old_unit)
             quiet("a2ensite", f"{self.old_name}.conf")
@@ -213,7 +221,9 @@ class Move:
             system.run("systemctl", "reload", "apache2")
             system.run("systemctl", "start", new_unit)
             system.step("Update the environment's settings")
-            for script in ("publish_prod.sh", "sync_prod.sh", "clear_logs_prod.sh"):
+            # Where its settings are: its script, or Harbor's copy once the site is migrated
+            settings.update(system, site.site_root, self.source.id, {"LOCAL_PATH": new_root, "FOLDER": new_name})
+            for script in ("sync_prod.sh", "clear_logs_prod.sh"):
                 path = system.path(f"{self.old_scripts}/{script}")
                 if not path.is_file():
                     continue
@@ -364,7 +374,6 @@ class Move:
         if os.environ.get("VNS_MOVE_HTTPS") != "y" or self.destination == "windows":
             return
         from harbor.environments.actions import issue_certificate
-        script = self.system.path(f"{self.site.site_root}/scripts/targets/{target_id}/publish_prod.sh")
         self.system.step(f"Issue a certificate for {self.request['BINDING'] or 'the binding'}")
         try:
             issue_certificate(self.system, self.site.name, target_id, yes=True)
@@ -374,12 +383,13 @@ class Move:
             self.system.warn(f"WARNING: no certificate yet, as DNS for {self.request['BINDING'] or 'the binding'} does not point to the new server. "
                              "It answers on HTTP: use Issue certificate on it when DNS points there.")
             return
-        script.write_text(re.sub(r"(?m)^PROD_HTTPS=\S*", "PROD_HTTPS='y'", script.read_text()))
+        settings.update(self.system, self.site.site_root, target_id, {"HTTPS": "y"})
 
     def new_id(self, number=2):
         name = (self.request["ENVIRONMENT"] or "production").lower()
         found = name
-        while os.path.lexists(self.system.path(f"{self.site.site_root}/scripts/targets/{found}")):
+        taken = set(settings.target_ids(self.system, self.site.site_root))
+        while os.path.lexists(self.system.path(f"{self.site.site_root}/scripts/targets/{found}")) or found in taken:
             found = f"{name}-{number}"
             number += 1
         return found
@@ -436,7 +446,6 @@ class Move:
                 system.step(f"Fetch {self.old_root}")
                 self.fetch_windows_source() if self.source_windows else self.fetch_source()
 
-            publish = f"{site.site_root}/scripts/targets/{moving}/publish_prod.sh"
             if self.destination == "windows":
                 # Windows runs another build, so only settings and content are copied
                 self.copy_content(moving)
@@ -445,7 +454,7 @@ class Move:
                     source_stopped = False
                     self.source_control("start")
                 system.step("Publish to the new server")
-                self.run("bash", publish, env=self.variables(VNS_MOVING="1"))
+                self.publish(moving, VNS_MOVING="1")
             else:
                 system.step("Copy everything to the destination")
                 self.copy_everything(moving)
@@ -460,13 +469,13 @@ class Move:
                     architecture = system.output("uname", "-m")
                 if self.source_windows:
                     system.step("A Windows build cannot run on Linux, so the project is built for it")
-                    self.run("bash", publish, env=self.variables(VNS_MOVING="1"))
+                    self.publish(moving, VNS_MOVING="1")
                 elif architecture == self.server_architecture(moving):
                     system.step("Create the service and Apache config")
-                    self.run("bash", publish, env=self.variables(VNS_PUBLISH_TRACKED=f"target-{moving}", VNS_MIGRATE_ONLY="1"))
+                    self.publish(moving, VNS_PUBLISH_TRACKED=f"target-{moving}", VNS_MIGRATE_ONLY="1")
                 else:
                     system.step("The destination has another CPU architecture, so the project is built for it")
-                    self.run("bash", publish, env=self.variables(VNS_MOVING="1"))
+                    self.publish(moving, VNS_MOVING="1")
             moved = True
         except BaseException as error:
             if not moved:
@@ -479,6 +488,9 @@ class Move:
                         pass
                 shutil.rmtree(system.path(new_scripts), ignore_errors=True)
                 system.path(f"{site.site_root}/.vns-publish/target-{moving}.json").unlink(missing_ok=True)
+                if settings.migrated(system, site.site_root):
+                    settings.remove(system, site.site_root, moving)
+                    system.path(f"{STATE}/{site.name}/publish/target-{moving}.json").unlink(missing_ok=True)
                 if source_stopped:
                     try:
                         self.source_control("start")
@@ -514,6 +526,21 @@ class Move:
             else:
                 system.say(f"The local files are kept in {self.old_root}.")
 
+        if settings.migrated(system, site.site_root):
+            # In Harbor's copy: the new environment takes the old one's id, with its publish status
+            settings.write_copy(system, site.site_root, final_id, settings.values(system, site.site_root, moving))
+            settings.remove(system, site.site_root, moving)
+            if final_id != self.old_id:
+                settings.remove(system, site.site_root, self.old_id)
+            status = system.path(f"{STATE}/{site.name}/publish/target-{moving}.json")
+            if status.is_file():
+                os.replace(status, system.path(f"{STATE}/{site.name}/publish/target-{final_id}.json"))
+            if fetch:
+                shutil.rmtree(fetch, ignore_errors=True)
+            self.issue_wanted_certificate(final_id)
+            system.say(f"{self.old_name} has moved. Point DNS for {self.request['BINDING'] or 'the binding'} to the new server if you have not done so.")
+            system.say("A certificate on this server for the old binding is not removed.")
+            return
         publishes = f"{site.site_root}/.vns-publish"
         if self.old_id == "prod":
             for script in ("publish_prod.sh", "sync_prod.sh", "clear_logs_prod.sh"):
@@ -530,6 +557,14 @@ class Move:
         self.issue_wanted_certificate(final_id)
         system.say(f"{self.old_name} has moved. Point DNS for {self.request['BINDING'] or 'the binding'} to the new server if you have not done so.")
         system.say("A certificate on this server for the old binding is not removed.")
+
+    def publish(self, target_id, **variables):
+        """The new environment published: by its script, or by harbor for a migrated site (the script only calls it)"""
+        site = self.site
+        if settings.migrated(self.system, site.site_root):
+            self.run("python3", str(BIN), "env", "publish", site.name, env=self.variables(VNS_TARGET=target_id, **variables))
+        else:
+            self.run("bash", f"{site.site_root}/scripts/targets/{target_id}/publish_prod.sh", env=self.variables(**variables))
 
     def remove_local_service(self):
         system = self.system

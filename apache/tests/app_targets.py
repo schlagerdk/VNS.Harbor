@@ -10,8 +10,11 @@ from flask import abort
 
 APP = Path(__file__).resolve().parents[1] / "solutionfiles/admin/app/app.py"
 FUNCTIONS = {"fs_full_path", "target_folder", "target_ids", "target_scope", "target_arg", "with_target", "remote_key",
-             "adopted_sites", "service_dll", "project_assembly", "adoption_candidates", "managed_by", "publishable_targets", "sync_prod_binding"}
-CONSTANTS = {"TARGET_RE", "TARGET_SCRIPTS", "MANAGED_DIR"}
+             "adopted_sites", "service_dll", "project_assembly", "adoption_candidates", "managed_by", "publishable_targets", "sync_prod_binding",
+             # A migrated site (phase 6)
+             "site_migrated", "migrated_site_json", "custom_scripts_dir", "migrated_scripts", "target_scripts",
+             "harbor_script_command", "publish_entry", "save_migrated_setting"}
+CONSTANTS = {"TARGET_RE", "TARGET_SCRIPTS", "MANAGED_DIR", "HARBOR_SCRIPTS", "HARBOR_TARGET_SCRIPTS"}
 
 
 import importlib.util
@@ -24,7 +27,11 @@ ROOT_USER = {"id": access.ROOT, "username": "admin", "role": "admin", "root": Tr
 
 def add_target_helpers(ns):
     """Also the access checks, as the root administrator: the tests of the rest do not test who may do it"""
-    for name, value in (("glob", glob), ("os", os), ("re", re), ("abort", abort),
+    import json
+    for name, value in (("glob", glob), ("os", os), ("re", re), ("abort", abort), ("json", json),
+                        ("HARBOR_COMMAND", "/vns/bin/harbor"), ("SCRIPT_RE", re.compile(r"^[A-Za-z0-9_.-]+\.sh$")),
+                        # Never the test server's own state: no site in a test is migrated unless the test says so
+                        ("HARBOR_SITES", "/nonexistent/harbor/sites"),
                         ("parse_prod", lambda root, target="prod": None), ("remote_status", lambda site, target="prod": {}),
                         ("access", access), ("g", flask.g),
                         # Logged in (a session with a user) is the root administrator, as before there were more users

@@ -26,7 +26,8 @@ from harbor.core.system import CommandFailed, Stop
 from harbor.core.templates import Site
 from harbor.environments import settings
 from harbor.environments.register import bash_quote, site_name
-from harbor.core.paths import LIB
+from harbor.core.paths import BIN, LIB
+from harbor.state.store import SECRETS, STATE
 
 ROOTS = "/var/lib/vns-roots"
 SYSTEMD = "/etc/systemd/system"
@@ -39,6 +40,43 @@ def server_name_of(text):
 
 
 # ---- on the new server: one <name>.conf, and <name>.service when it has one, for every site that arrives
+def receive_state(system, folder, root_path):
+    """A migrated site's state from the old server, under its name here: environments in its folder follow it"""
+    names = folder / "harbor-site"
+    if not names.is_file():
+        return
+    source, target = (names.read_text().splitlines() + ["", ""])[:2]
+    source, target = site_name(source), site_name(target)
+    state = system.path(f"{STATE}/{target}")
+    if state.exists():
+        raise Stop(f"Harbor already has a site {target} on this server.")
+    shutil.copytree(folder / "harbor-state", state)
+    for path in (state / "environments").glob("*.json"):
+        path.write_text(path.read_text().replace(f"{root_path}/{source}/", f"{root_path}/{target}/"))
+    if (folder / "harbor-secrets").is_dir():
+        secrets = system.path(f"{SECRETS}/{target}")
+        shutil.copytree(folder / "harbor-secrets", secrets)
+        for place in (system.path("/etc/harbor/secrets"), system.path(SECRETS), secrets):
+            place.chmod(0o700)
+        for path in secrets.glob("*.json"):
+            path.chmod(0o600)
+
+
+def reopen_folder(system, folder):
+    """A site folder that came closed to others (its server had users, harbor/server/users.py) without the ACL that let
+    www-data in: www-data must reach it here, so it is open to others again; closed again below when this server has users"""
+    root = system.path(folder)
+    if root.is_dir() and not root.is_symlink() and not root.stat().st_mode & 0o001:
+        root.chmod(root.stat().st_mode | 0o005)
+
+
+def close_folders_again(system):
+    """This server's own users (if any) see only their sites: the folders that came are closed as the others are here"""
+    from harbor.server.users import GROUP, keep_sites_closed, members
+    if members(system, GROUP):
+        keep_sites_closed(system, True)
+
+
 def receive(system, incoming, sql_server=""):
     root_path = Site("x").root_path
     folder = system.path(incoming) if incoming else None
@@ -72,6 +110,7 @@ def receive(system, incoming, sql_server=""):
         # A new project name has no build yet
         if project:
             build = target
+    receive_state(system, folder, root_path)
     units = []
     for conf in sorted(folder.glob("*.conf")):
         if not conf.is_file():
@@ -80,6 +119,7 @@ def receive(system, incoming, sql_server=""):
         site = Site(name)
         if os.path.lexists(system.path(site.config_path)) or os.path.lexists(system.path(site.service_path)):
             raise Stop(f"{name} is already set up on this server.")
+        reopen_folder(system, site.site_root)
         system.step(f"Set up {name} with HTTP")
         python(str(LIB / "move_site.py"), "http-conf", str(conf))
         binding = server_name_of(conf.read_text())
@@ -120,7 +160,9 @@ def receive(system, incoming, sql_server=""):
                     script = f"{site.site_root}/scripts/publish.sh"
                     if not system.path(script).is_file():
                         script = f"{site.site_root}/scripts/publish_local.sh"
-                    if not system.run("bash", script, check=False).ok:
+                    # A migrated site has no publish script: harbor publishes it, as the script would
+                    argv = ["bash", script] if system.path(script).is_file() else ["python3", str(BIN), "site", "publish", name]
+                    if not system.run(*argv, check=False).ok:
                         raise Stop(f"{name} could not be built on this server.")
                 else:
                     system.run("systemctl", "start", site.service_name)
@@ -132,9 +174,14 @@ def receive(system, incoming, sql_server=""):
     scripts = folder / "http-scripts"
     if scripts.is_file():
         for script in scripts.read_text().splitlines():
+            if script.startswith("environment:"):
+                main = (folder / "harbor-site").read_text().splitlines()[1]
+                settings.update(system, f"{root_path}/{main}", script[len("environment:"):], {"HTTPS": "n"})
+                continue
             path = system.path(script) if script.startswith("/") else None
             if path and path.is_file():
                 path.write_text(re.sub(r"(?m)^PROD_HTTPS=\S*", "PROD_HTTPS='n'", path.read_text()))
+    close_folders_again(system)
     system.run("apache2ctl", "configtest")
     system.run("systemctl", "reload", "apache2")
     for unit in units:
@@ -158,10 +205,8 @@ def receive(system, incoming, sql_server=""):
                 if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", site_id):
                     continue
                 system.step(f"Issue a certificate for the environment {site_id}")
-                script = system.path(f"{root_path}/{main}/scripts/targets/{site_id}/publish_prod.sh" if site_id != "prod"
-                                     else f"{root_path}/{main}/scripts/publish_prod.sh")
                 issue_for_environment(system, main, site_id, yes=True)
-                script.write_text(re.sub(r"(?m)^PROD_HTTPS=\S*", "PROD_HTTPS='y'", script.read_text()))
+                settings.update(system, f"{root_path}/{main}", site_id, {"HTTPS": "y"})
             except (Stop, CommandFailed) as error:
                 if isinstance(error, Stop) and str(error):
                     system.warn(str(error))
@@ -227,8 +272,13 @@ def move_site(system, name):
         if not environment.LOCAL_PATH:
             kept.append(f"{environment.BINDING} on {environment.IP}")
             continue
-        script = f"{Path(environment.script).parent}/publish_prod.sh"
-        http_scripts.append(f"{site.root_path}/{new_site}/{script[len(site.site_root) + 1:] if script.startswith(site.site_root + '/') else script}")
+        if settings.migrated(system, site.site_root):
+            # Its settings travel in Harbor's state: the receiving server sets HTTP there
+            http_scripts.append(f"environment:{target_id}")
+        else:
+            script = f"{Path(environment.script).parent}/publish_prod.sh"
+            http_scripts.append(
+                f"{site.root_path}/{new_site}/{script[len(site.site_root) + 1:] if script.startswith(site.site_root + '/') else script}")
         if system.path(f"{SITES}/{environment.FOLDER}.conf").is_file():
             names.append(environment.FOLDER)
             new_names.append(environment.FOLDER)
@@ -270,6 +320,9 @@ def move_site(system, name):
             check += f"; test -x /usr/lib/dotnet/dotnet || {{ echo '.NET is not installed on {host}.' >&2; exit 1; }}"
     for folder in new_folders:
         check += f"; ! test -e {bash_quote(folder)} || {{ echo {bash_quote(f'{folder} already exists on {host}.')} >&2; exit 1; }}"
+    if settings.migrated(system, site.site_root):
+        # A migrated site's settings are in Harbor: only a server with Harbor can take them
+        check += (f"; command -v harbor >/dev/null || {{ echo {bash_quote(f'{host} has no Harbor, which {site.name} needs: install it there under Server → Servers.')} >&2; exit 1; }}")
     try:
         on_new_server(f"bash -c {bash_quote(check)}")
     except CommandFailed as error:
@@ -293,6 +346,12 @@ def move_site(system, name):
             (staging / "http-scripts").write_text("".join(f"{line}\n" for line in http_scripts))
         if rename:
             (staging / "rename").write_text(f"{site.name}\n{new_site}\n{new_binding}\n{project}\n")
+        if settings.migrated(system, site.site_root):
+            # A migrated site (phase 6) has its settings in Harbor's state, not its folder: they go with it
+            (staging / "harbor-site").write_text(f"{site.name}\n{new_site}\n")
+            shutil.copytree(system.path(f"{STATE}/{site.name}"), staging / "harbor-state")
+            if system.path(f"{SECRETS}/{site.name}").is_dir():
+                shutil.copytree(system.path(f"{SECRETS}/{site.name}"), staging / "harbor-secrets")
         if os.environ.get("VNS_MOVE_HTTPS") == "y":
             (staging / "certificates").write_text("".join(f"{line}\n" for line in [new_site, *certificates]))
 
@@ -315,7 +374,11 @@ def move_site(system, name):
         on_new_server(f"mkdir -p {bash_quote(incoming)}")
         copy_to_new_server(f"{staging}/", f"{incoming}/")
         system.step(f"Set up the sites on {host}")
-        on_new_server(f"bash /vns/apache/move_site.sh --receive {bash_quote(incoming)} {bash_quote(sql_server)}")
+        if settings.migrated(system, site.site_root):
+            # Its settings came in Harbor's state: the new server's own harbor sets it up (it was checked to have one)
+            on_new_server(f"harbor site receive {bash_quote(incoming)} {bash_quote(sql_server)}")
+        else:
+            on_new_server(f"bash /vns/apache/move_site.sh --receive {bash_quote(incoming)} {bash_quote(sql_server)}")
         done = True
     except BaseException as error:
         if not done:
@@ -331,6 +394,9 @@ def move_site(system, name):
                     cleanup += f"rm -rf {bash_quote(f'{ROOTS}/{each}')}; "
                 for folder in new_folders:
                     cleanup += f"rm -rf {bash_quote(folder)}; "
+                if settings.migrated(system, site.site_root):
+                    # Its Harbor state there too, or another try finds the site there
+                    cleanup += f"rm -rf {bash_quote(f'{STATE}/{new_site}')} {bash_quote(f'{SECRETS}/{new_site}')}; "
                 cleanup += f"rm -rf {bash_quote(incoming)}; systemctl daemon-reload; apache2ctl configtest >/dev/null 2>&1 && systemctl reload apache2; true"
                 if not on_new_server(f"bash -c {bash_quote(cleanup)}", check=False).ok:
                     system.warn(f"Could not clean up {host}. Remove the sites there by hand.")

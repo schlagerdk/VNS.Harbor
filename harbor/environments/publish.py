@@ -461,10 +461,9 @@ class Publish:
                 system.warn("The config snippets were not carried. The publish goes on.")
 
             system.step("Start service")
-            if self.local:
-                # The connection is written before the site starts, as it reads it then (VNS.Harbor package)
-                from harbor.sites.tools import keep_connection
-                keep_connection(system, site, self.target)
+            # The connection is written before the site starts, as it reads it then (VNS.Harbor package): here, or over SSH
+            from harbor.sites.tools import keep_connection
+            keep_connection(system, site, self.target)
             self.run_script(variables, START)
             system.say("Delete schema files and bin")
             for name in (*SCHEMA_FILES, "App_Plugins", "bin"):

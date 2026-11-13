@@ -845,7 +845,7 @@ const buttonStyles = {
 	"Migrate…": ["server", "purple"],
 	"Check outdated": ["download", "amber"], "Restart": ["restart", "amber"], "Restart Apache": ["restart", "amber"],
 	"Stop": ["stop", "red"], "Clear logs": ["eraser", "gray"], "Logs": ["file", "gray"],
-	"SQL Server": ["server", "purple"], "Web server": ["globe", "blue"], "Preferences…": ["sliders", "purple"], "Server tools…": ["package", "purple"], "Files (/)": ["folder", "blue"],
+	"SQL Server": ["server", "purple"], "Web server": ["globe", "blue"], "Preferences…": ["sliders", "purple"], "Server tools…": ["package", "purple"], "Backoffice login…": ["key", "purple"], "Servers…": ["server", "blue"], "Files (/)": ["folder", "blue"],
 	"Test config": ["activity", "teal"], "Error logs": ["file", "teal"],
 	"Admin app log": ["file", "gray"], "Apache error logs": ["file", "teal"],
 	"Copy site": ["file", "blue"],
@@ -2291,6 +2291,7 @@ $("#search").oninput = (event) => {
 };
 $("#btn-server-shell").onclick = () => run(() => openTask({ kind: "shell" }));
 $("#settings-server-tools").onclick = () => { $("#settings-menu").hidden = true; openServerTools(); };
+$("#settings-servers").onclick = () => { $("#settings-menu").hidden = true; openServers(); };
 $("#btn-browse").onclick = () => run(() => openFiles("", "", true));
 $("#btn-check-updates").onclick = () => run(async () => {
 	// It asks NuGet about every project on the server, which takes a while: only on purpose
@@ -4494,6 +4495,8 @@ function connectTerminal(t) {
 	};
 }
 
+// Which terminals take keys, as the server says (describe in app.py)
+const terminalInput = {};
 function openTerminal(id, title, autoClose, sites = [], running = true, scope = "main", targets = []) {
 	if (terminals[id]) return activate(id);
 	const pane = el("div", { className: "pane", hidden: true });
@@ -4503,8 +4506,10 @@ function openTerminal(id, title, autoClose, sites = [], running = true, scope = 
 	$("#tabs").append(tab);
 	$("#panes").append(pane);
 
-	// A user's tasks take no keys: the server ignores them as well, so Ctrl+C cannot leave a task for a shell
-	const term = new Terminal({ cursorBlink: currentUser.admin, disableStdin: !currentUser.admin, fontSize: 14, scrollback: 5000, fontFamily: "ui-monospace, Menlo, Consolas, monospace", theme: { background: "#000000" } });
+	// A user's tasks take no keys: the server ignores them as well, so Ctrl+C cannot leave a task for a shell. Their
+	// shell in a site does: it runs as their own Linux user
+	const typing = currentUser.admin || terminalInput[id] === true;
+	const term = new Terminal({ cursorBlink: typing, disableStdin: !typing, fontSize: 14, scrollback: 5000, fontFamily: "ui-monospace, Menlo, Consolas, monospace", theme: { background: "#000000" } });
 	const fit = new FitAddon.FitAddon();
 	term.loadAddon(fit);
 	term.open(pane);
@@ -4523,9 +4528,9 @@ function openTerminal(id, title, autoClose, sites = [], running = true, scope = 
 	terminals[id] = t;
 	updateSiteActivity();
 
-	// Enter closes finished terminals, including failed processes.
+	// Enter or Escape closes finished terminals, including failed processes.
 	term.attachCustomKeyEventHandler((event) => {
-		if (t.exited && event.key === "Enter") {
+		if (t.exited && (event.key === "Enter" || event.key === "Escape")) {
 			if (event.type === "keydown") closeDock();
 			return false;
 		}
@@ -4561,6 +4566,7 @@ function openTerminal(id, title, autoClose, sites = [], running = true, scope = 
 
 async function openTask(payload) {
 	const data = await api("/api/term", { json: payload });
+	terminalInput[data.id] = data.input;
 	openTerminal(data.id, data.title, data.auto_close, data.sites, data.running, data.scope, data.targets);
 	// An action gets a window of its own; a shell, or a task that asks for input, stays a terminal
 	if (terminals[data.id] && data.process) {
@@ -4595,6 +4601,7 @@ function markProcess(t) {
 async function restoreTerminals() {
 	const { sessions } = await api("/api/term");
 	for (const s of sessions) {
+		terminalInput[s.id] = s.input;
 		openTerminal(s.id, s.title, s.auto_close, s.sites, s.running, s.scope, s.targets);
 		const t = terminals[s.id];
 		if (!t || !s.process) continue;
@@ -5559,6 +5566,17 @@ function openUserEditor(user = null) {
 	userForm.disabled.checked = Boolean(user?.disabled);
 	userForm.web.checked = user ? Boolean(user.web) : true;
 	userForm.create_sites.checked = Boolean(user?.create_sites);
+	userForm.sftp.checked = Boolean(user?.sftp);
+	userForm.sftp_password.placeholder = user?.sftp ? "Leave empty to keep it" : "At least 12 characters";
+	userForm.sftp_keys.dataset.loaded = "";
+	$("#user-sftp-address").textContent = user?.linux ? `sftp://${user.linux}@${location.hostname}` : "made when you save";
+	if (user?.sftp) {
+		api(`/api/users/${encodeURIComponent(user.id)}/sftp`).then((data) => {
+			userForm.sftp_keys.value = data.keys || "";
+			userForm.sftp_keys.dataset.loaded = data.keys || "";
+			if (data.linux) $("#user-sftp-address").textContent = `sftp://${data.linux}@${data.host}` + (data.port && data.port !== 22 ? `:${data.port}` : "");
+		}).catch(() => {});
+	}
 	userForm.sql.checked = Boolean(user?.sql);
 	userForm.manage_connections.checked = Boolean(user?.manage_connections);
 	$("#user-sites").replaceChildren(...Object.entries(usersData.sites).sort(([a], [b]) => a.localeCompare(b))
@@ -5575,8 +5593,9 @@ function showUserScope() {
 	$("#user-scope").hidden = admin;
 	$("#user-web").hidden = !userForm.web.checked;
 	$("#user-sql").hidden = !userForm.sql.checked;
+	$("#user-sftp").hidden = !userForm.sftp.checked;
 }
-userForm.onchange = (event) => { if (["role", "web", "sql"].includes(event.target.name)) showUserScope(); };
+userForm.onchange = (event) => { if (["role", "web", "sql", "sftp"].includes(event.target.name)) showUserScope(); };
 userForm.onsubmit = (event) => {
 	event.preventDefault();
 	run(async () => {
@@ -5594,12 +5613,19 @@ userForm.onsubmit = (event) => {
 		});
 		const body = { username: userForm.username.value.trim(), role: userForm.role.value, disabled: userForm.disabled.checked,
 			web: userForm.web.checked, create_sites: userForm.create_sites.checked, sql: userForm.sql.checked,
-			manage_connections: userForm.manage_connections.checked, sites, connections };
+			manage_connections: userForm.manage_connections.checked, sites, connections, sftp: userForm.sftp.checked };
 		if (userForm.password.value) body.password = userForm.password.value;
+		const sftp = {};
+		if (userForm.sftp.checked && userForm.sftp_password.value) sftp.password = userForm.sftp_password.value;
+		if (userForm.sftp.checked && userForm.sftp_keys.value.trim() !== (userForm.sftp_keys.dataset.loaded || "").trim()) sftp.keys = userForm.sftp_keys.value;
+		let saved;
 		try {
-			await api(id ? "/api/users/" + encodeURIComponent(id) : "/api/users", { method: id ? "PUT" : "POST", json: body });
+			saved = await api(id ? "/api/users/" + encodeURIComponent(id) : "/api/users", { method: id ? "PUT" : "POST", json: body });
+			// The SFTP password and keys belong to their Linux user: set after it is there
+			if (Object.keys(sftp).length) await api(`/api/users/${encodeURIComponent(saved.user.id)}/sftp`, { json: sftp });
 		} catch (error) {
 			$("#user-error").textContent = error.message;
+			if (saved && !id) userForm.dataset.id = saved.user.id;
 			return;
 		}
 		userDialog.close();
@@ -5800,9 +5826,13 @@ function choiceCards(name, legend, options, checked) {
 			el("span", { className: "tc-sub", textContent: sub }))));
 }
 
-function checkOption(name, title, sub, checked) {
-	return el("label", { className: "copy-connection-toggle" }, el("input", { type: "checkbox", name, checked }),
-		el("span", {}, el("strong", { textContent: title }), el("br"), el("span", { className: "muted", textContent: sub })));
+// An option as a card: its icon, what it does and what it means; chosen, it takes its colour (red for what deletes)
+function checkOption(name, title, sub, checked, icon = "activity", tone = "blue") {
+	return el("label", { className: "sync-option action-option tone-" + tone },
+		el("input", { type: "checkbox", name, checked }),
+		el("span", { className: "sync-option-icon" }, svgIcon(icon)),
+		el("span", { className: "sync-option-text" }, el("span", { className: "sync-option-title", textContent: title }),
+			el("span", { className: "sync-option-sub", textContent: sub })));
 }
 
 // The dialog for an action that needs answers, then its task
@@ -5814,11 +5844,11 @@ function askServerTool(tool, options = {}) {
 			choiceCards("edition", "Edition", SQL_EDITIONS, "Developer"),
 			...passwordFields(),
 			el("p", { className: "hint", textContent: "At least 8 characters, with three of: upper case, lower case, digits and symbols. The backups and database scripts use it too." }),
-			checkOption("with_tools", "Install the SQL tools (sqlcmd)", "Needed for backups and the database scripts", true),
+			checkOption("with_tools", "Install the SQL tools (sqlcmd)", "Needed for backups and the database scripts", true, "terminal", "blue"),
 		]],
 		sql_uninstall: ["database", "Remove SQL Server", "The service stops and SQL Server goes from this server.", "Remove SQL Server", () => [
-			checkOption("with_tools", "Remove the SQL tools (sqlcmd) too", "Keep them to reach SQL Servers elsewhere", false),
-			checkOption("delete_data", "Delete the databases, logs and backups", "Everything in /var/opt/mssql. Kept when not ticked.", false),
+			checkOption("with_tools", "Remove the SQL tools (sqlcmd) too", "Keep them to reach SQL Servers elsewhere", false, "terminal", "amber"),
+			checkOption("delete_data", "Delete the databases, logs and backups", "Everything in /var/opt/mssql. Kept when not chosen.", false, "trash", "red"),
 			el("div", { className: "server-action-danger", hidden: true, id: "server-action-delete" },
 				el("label", {}, "Type DELETE to delete the databases", el("input", { name: "confirmation", autocomplete: "off", spellcheck: false }))),
 		]],
@@ -5836,7 +5866,9 @@ function askServerTool(tool, options = {}) {
 	$("#server-action-text").textContent = text;
 	const button = $("#server-action-ok");
 	button.textContent = ok;
+	// A dangerous action is red, never also the green primary
 	button.classList.toggle("danger", tool === "sql_uninstall");
+	button.classList.toggle("primary", tool !== "sql_uninstall");
 	fields.replaceChildren(...build());
 	const deleting = form.elements.delete_data;
 	if (deleting) deleting.onchange = () => {
@@ -5865,6 +5897,137 @@ function askServerTool(tool, options = {}) {
 		run(() => runServerTool(payload));
 	};
 	serverActionDialog.showModal();
-	fields.querySelector("input:not([type=radio]):not([type=checkbox])")?.focus();
+	// A field to type in gets the focus; otherwise Cancel, so no option looks focused (or chosen) as it opens
+	const typed = [...fields.querySelectorAll("input:not([type=radio]):not([type=checkbox])")].find((input) => input.offsetParent !== null);
+	(typed || $("#server-action-cancel")).focus();
 }
 $("#server-action-cancel").onclick = () => serverActionDialog.close();
+
+
+// Enter or Escape closes the terminals when the one shown has ended, also for a terminal that takes no keys (a user's
+// task), where the terminal itself never sees them
+document.addEventListener("keydown", (event) => {
+	if (event.key !== "Enter" && event.key !== "Escape") return;
+	const t = terminals[activeTerminal];
+	if (!t || !t.exited || $("#dock").hidden || document.querySelector("dialog[open]")) return;
+	if (event.target instanceof HTMLElement && event.target.closest("input, textarea, select") && !event.target.closest(".xterm")) return;
+	event.preventDefault();
+	closeDock();
+});
+
+
+// ------------------------------------------------------------------ servers (harbor servers)
+// Other servers Harbor works with: added with a password once, then reached with Harbor's own key
+const serversDialog = $("#dlg-servers");
+
+async function openServers() {
+	if (!serversDialog.open) serversDialog.showModal();
+	const list = $("#servers-list");
+	list.setAttribute("aria-busy", "true");
+	if (!list.childElementCount) list.replaceChildren(el("div", { className: "server-tools-loading", textContent: "Asking the servers…" }));
+	try {
+		const data = await api("/api/servers");
+		$("#servers-release").textContent = data.release ? `This server runs Harbor ${data.release}` : "Other servers this Harbor works with";
+		const others = data.servers.filter((item) => !item.this).length;
+		$("#servers-count").textContent = `${others} other server${others === 1 ? "" : "s"}`;
+		list.replaceChildren(...data.servers.map((item) => serverCard(item, data.release)),
+			...(data.servers.some((item) => !item.this) ? [] : [el("div", { className: "server-tools-loading", textContent: "No other servers yet. Add one to install and update Harbor there from here." })]));
+	} catch (error) {
+		list.replaceChildren(el("div", { className: "server-tools-loading", textContent: error.message }));
+	} finally {
+		list.removeAttribute("aria-busy");
+	}
+}
+$("#servers-close").onclick = () => serversDialog.close();
+$("#servers-refresh").onclick = () => openServers();
+$("#servers-add").onclick = () => askAddServer();
+
+function serverCard(item, release) {
+	const harbor = item.harbor && item.harbor.name;
+	const current = harbor && harbor === release;
+	const state = !item.reachable ? ["Not reachable", "bad"] : !item.compatible ? ["Cannot run Harbor", "bad"]
+		: !harbor ? ["No Harbor", "warn"] : current ? ["Up to date", "ok"] : ["Update available", "warn"];
+	const rows = item.reachable ? [
+		toolRow("System", `${item.os || "—"} · Python ${item.python || "—"}`),
+		toolRow("Harbor", harbor || "Not installed", { on: Boolean(harbor) }),
+		...(item.vns ? [toolRow("VNS", item.vns + (item.admin ? ` · admin ${item.admin}` : ""))] : []),
+		...(item.problems || []).map((problem) => toolRow("Needs", problem)),
+	] : [toolRow("Error", (item.error || []).join(" ") || "No answer")];
+	if (item.this) {
+		return toolCard({ icon: "server", tone: "purple", title: item.name, detail: item.host || "Installs and updates the others",
+			state: "This server", stateClass: "ok", rows, actions: [] });
+	}
+	const actions = [];
+	if (item.reachable && item.compatible && release && !current) {
+		actions.push(toolButton(harbor ? `Update to ${release.split("-")[0]}` : "Install Harbor", () => runServers({ action: "install", name: item.name }), "primary"));
+	}
+	actions.push(toolButton("Remove…", () => askRemoveServer(item), "tool-danger"));
+	return toolCard({ icon: "server", tone: item.reachable ? "blue" : "amber", title: item.name, detail: `${item.user}@${item.host}${item.port !== 22 ? ":" + item.port : ""}`,
+		state: state[0], stateClass: state[1], rows, actions });
+}
+
+async function runServers(payload) {
+	serversDialog.close();
+	const t = await openTask({ kind: "servers", ...payload });
+	if (t) t.afterTask = openServers;
+}
+
+async function confirmServers(title, message, ok, payload) {
+	if (await ask({ title, message, input: false, ok, danger: true })) await runServers(payload);
+}
+
+function askRemoveServer(item) {
+	const form = $("#form-server-action");
+	$("#server-action-icon").replaceChildren(svgIcon("server"));
+	$("#server-action-title").textContent = `Remove ${item.name}`;
+	$("#server-action-text").textContent = `Harbor forgets ${item.name} here. Its sites, the old /vns and its admin are never touched.`;
+	const button = $("#server-action-ok");
+	button.textContent = "Remove server";
+	button.classList.add("danger");
+	button.classList.remove("primary");
+	const reachable = item.reachable;
+	$("#server-action-fields").replaceChildren(
+		checkOption("uninstall", "Uninstall Harbor there", item.harbor ? `Harbor ${item.harbor.name} goes: /opt/harbor and the harbor command` : "Harbor is not installed there", false, "trash", "red"),
+		checkOption("revoke_key", "Take Harbor's key off it", "This server can no longer log in there; adding it again needs its password", false, "key", "amber"),
+		...(reachable ? [] : [el("p", { className: "hint", textContent: `${item.name} does not answer now, so it can only be forgotten here.` })]));
+	for (const name of ["uninstall", "revoke_key"]) form.elements[name].disabled = !reachable || (name === "uninstall" && !item.harbor);
+	form.onsubmit = (event) => {
+		event.preventDefault();
+		const values = form.elements;
+		serverActionDialog.close();
+		run(() => runServers({ action: "remove", name: item.name, uninstall: values.uninstall.checked, revoke_key: values.revoke_key.checked }));
+	};
+	serverActionDialog.showModal();
+	$("#server-action-cancel").focus();
+}
+
+function askAddServer() {
+	const form = $("#form-server-action");
+	$("#server-action-icon").replaceChildren(svgIcon("server"));
+	$("#server-action-title").textContent = "Add server";
+	$("#server-action-text").textContent = "Harbor logs in once with the password and puts its own SSH key there. The password is not kept.";
+	const button = $("#server-action-ok");
+	button.textContent = "Add server";
+	button.classList.remove("danger");
+	button.classList.add("primary");
+	const field = (label, props) => el("label", {}, label, el("input", { autocomplete: "off", spellcheck: false, ...props }));
+	$("#server-action-fields").replaceChildren(
+		field("Name", { name: "name", required: true, pattern: "[a-z0-9][a-z0-9\\-]{0,62}", placeholder: "linux-02", maxLength: 63 }),
+		el("div", { className: "ns-grid server-address-row" },
+			field("Address", { name: "host", required: true, placeholder: "IP or host name", maxLength: 253 }),
+			field("SSH port", { name: "port", value: "22", required: true, inputMode: "numeric", pattern: "[0-9]{1,5}" })),
+		el("div", { className: "ns-grid" },
+			field("Login", { name: "user", value: "root", required: true, maxLength: 32 }),
+			field("Password", { name: "password", type: "password", autocomplete: "new-password", placeholder: "Used once, not kept", maxLength: 256 })),
+		el("p", { className: "hint", textContent: "Leave the password empty when Harbor's key is in ~/.ssh/authorized_keys there already. A login other than root needs passwordless sudo." }));
+	form.onsubmit = (event) => {
+		event.preventDefault();
+		const values = form.elements;
+		const payload = { action: "add" };
+		for (const name of ["name", "host", "user", "port", "password"]) payload[name] = values[name].value.trim();
+		serverActionDialog.close();
+		run(() => runServers(payload));
+	};
+	serverActionDialog.showModal();
+	form.elements.name.focus();
+}

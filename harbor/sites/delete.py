@@ -155,7 +155,7 @@ def delete_site(system, name="", delete_certificates="", scope="all", target="")
             targets = all_targets
         else:
             raise Stop(f"Choose an environment with VNS_TARGET: {' '.join(all_targets) or 'this site has none'}")
-        if not system.path(f"{scripts_of(site, targets[0])}/publish_prod.sh").is_file():
+        if targets[0] not in all_targets:
             raise Stop("This site has no such environment.")
 
     if not delete_certificates:
@@ -163,8 +163,11 @@ def delete_site(system, name="", delete_certificates="", scope="all", target="")
     deletion = Deletion(system, site, delete_certificates)
 
     def values(target_id):
-        path = system.path(f"{scripts_of(site, target_id)}/publish_prod.sh")
-        return settings.parse(path.read_text()) if path.is_file() else {}
+        # From its script, or Harbor's copy once the site is migrated
+        try:
+            return settings.values(system, site.site_root, target_id) or {}
+        except settings.SettingsError:
+            return {}
 
     # Folders of this site's local environments, kept when only the site itself is deleted
     keep = []
@@ -231,6 +234,10 @@ def delete_site(system, name="", delete_certificates="", scope="all", target="")
             else:
                 remove(system, f"{site.site_root}/scripts/targets/{target_id}")
                 remove(system, f"{site.site_root}/.vns-publish/target-{target_id}.json")
+            if settings.migrated(system, site.site_root):
+                # Harbor's copy is its truth: the environment goes from it, with its publish status
+                settings.remove(system, site.site_root, target_id)
+                remove(system, f"/var/lib/harbor/sites/{site.name}/publish/target-{target_id}.json")
             # With no environments left, the site is a site without environments again
             if not settings.target_ids(system, site.site_root):
                 for script in ("publish", "clear_logs"):

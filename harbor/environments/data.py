@@ -182,7 +182,7 @@ class DataSync:
 
 def data_sync(system, name, action, source="", destinations="", option=""):
     site = site_named(system, name)
-    if not system.path(f"{site.site_root}/scripts").is_dir():
+    if not system.path(f"{site.site_root}/scripts").is_dir() and not settings.migrated(system, site.site_root):
         raise Stop(f"Unknown site: {site.name}")
     data = DataSync(system, site)
     if action == "settings":

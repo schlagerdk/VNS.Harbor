@@ -63,6 +63,7 @@
         <button id="btn-server-shell" type="button">Server shell</button>
         <button id="btn-browse" type="button">Files (/)</button>
         <button id="settings-server-tools" type="button">Server tools…</button>
+        <button id="settings-servers" type="button">Servers…</button>
       </div>
       <div class="menu-group" role="group" aria-label="Apache">
         <div class="menu-group-title">Apache</div>
@@ -716,6 +717,16 @@
   <menu><button type="button" id="server-tools-refresh" class="cancel-link">Refresh</button><button type="button" id="server-tools-close">Close</button></menu>
 </dialog>
 
+<dialog id="dlg-servers" class="newsite server-tools-dialog" aria-labelledby="servers-title">
+  <div class="ns-head">
+    <span class="ns-icon" data-header-icon="server" aria-hidden="true"></span>
+    <div><h2 id="servers-title">Servers</h2><p id="servers-release">Other servers this Harbor works with</p></div>
+  </div>
+  <div class="users-toolbar servers-toolbar"><span id="servers-count" class="muted"></span><button type="button" id="servers-add" class="primary">＋ Add server</button></div>
+  <div id="servers-list" class="server-tools" aria-busy="true"></div>
+  <menu><button type="button" id="servers-refresh" class="cancel-link">Refresh</button><button type="button" id="servers-close">Close</button></menu>
+</dialog>
+
 <dialog id="dlg-server-action" class="newsite server-action-dialog" aria-labelledby="server-action-title">
   <form method="dialog" id="form-server-action">
     <header class="ns-head">
@@ -781,6 +792,16 @@
           <input name="create_sites" type="checkbox" class="switch small" aria-label="May create sites"></label>
         <p class="hint">Tick a site for all of it, also environments added later, or open it and choose environments. An environment alone shows only that, not the main site. The actions count for the chosen environments: a user publishes and syncs only to those.</p>
         <div id="user-sites" class="grant-list"></div>
+        <label class="option-row"><span class="option-icon" data-header-icon="upload" aria-hidden="true"></span>
+          <span class="option-text"><strong>SFTP</strong><small>Their sites' folders in an SFTP program, as their own Linux user</small></span>
+          <input name="sftp" type="checkbox" class="switch small" aria-label="SFTP"></label>
+        <div id="user-sftp" class="sftp-area">
+          <div class="sftp-address"><span class="muted">Connect to</span> <code id="user-sftp-address">—</code></div>
+          <label>SFTP password <input name="sftp_password" type="password" minlength="12" maxlength="128" autocomplete="new-password" placeholder="At least 12 characters"></label>
+          <label>Public SSH keys <span class="muted">(optional, one per line)</span>
+            <textarea name="sftp_keys" rows="3" spellcheck="false" placeholder="ssh-ed25519 AAAA… name@computer"></textarea></label>
+          <p class="hint">A folder for each site they have Files or Terminal on, nothing else. Turned off, the password and keys stop working at once.</p>
+        </div>
       </div>
       <label class="grant-card"><span class="grant-card-icon sql" data-header-icon="server" aria-hidden="true"></span>
         <span class="grant-card-text"><strong>SQL Server</strong><small>Connections and their databases</small></span>

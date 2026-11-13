@@ -20,7 +20,7 @@ from harbor.core.names import normalize_dns_name, normalize_site_name, service_n
 from harbor.core.system import CommandFailed, Stop
 from harbor.environments import settings
 from harbor.sites.create import ask
-from harbor.core.paths import APACHE
+from harbor.core.paths import APACHE, BIN
 
 SOLUTION = APACHE / "solutionfiles"
 ENVIRONMENTS = ("Development", "Test", "Staging", "Production")
@@ -112,7 +112,9 @@ class Main:
 
 def create_environment(system, main, target_arg=""):
     scripts = f"{main.site_root}/scripts"
-    if not system.path(f"{scripts}/publish.sh").is_file() and not system.path(f"{scripts}/publish_local.sh").is_file():
+    # A migrated site (phase 6) keeps its environments' settings in Harbor's copy, with no scripts in its folder
+    migrated = settings.migrated(system, main.site_root)
+    if not migrated and not system.path(f"{scripts}/publish.sh").is_file() and not system.path(f"{scripts}/publish_local.sh").is_file():
         raise Stop("This site has no publish.sh.")
     request = Request(system, main, target_arg)
     no_publish = os.environ.get("VNS_PROD_NO_PUBLISH") == "1"
@@ -165,11 +167,9 @@ def create_environment(system, main, target_arg=""):
 
     # The saved settings of the site's other environments, read without running their scripts
     if request.target == "local":
-        for path in [system.path(f"{scripts}/publish_prod.sh"), *sorted(system.path(f"{scripts}/targets").glob("*/publish_prod.sh"))]:
-            if not path.is_file():
-                continue
+        for other_id in settings.target_ids(system, main.site_root):
             try:
-                other = settings.parse(path.read_text())
+                other = settings.values(system, main.site_root, other_id) or {}
             except settings.SettingsError:
                 continue
             if not other.get("LOCAL_PATH"):
@@ -180,7 +180,8 @@ def create_environment(system, main, target_arg=""):
     # The folder is named after the environment: production, production-2, ...
     target_id = os.environ.get("VNS_PROD_ID") or request.environment.lower()
     number = 2
-    while os.path.lexists(system.path(f"{scripts}/targets/{target_id}")):
+    taken = set(settings.target_ids(system, main.site_root))
+    while os.path.lexists(system.path(f"{scripts}/targets/{target_id}")) or target_id in taken:
         target_id = f"{request.environment.lower()}-{number}"
         number += 1
     target_folder = f"{scripts}/targets/{target_id}"
@@ -245,6 +246,12 @@ def create_environment(system, main, target_arg=""):
     if "publish_prod.sh" not in rendered:
         raise Stop("Template publish_prod.sh not found.")
 
+    if migrated:
+        # Its settings into Harbor's copy, as the script would have held them; Harbor does the scripts' work
+        settings.write_copy(system, main.site_root, target_id, settings.parse(rendered["publish_prod.sh"]))
+        system.say(f"Environment {target_id} saved in Harbor.")
+        finish_migrated(system, main, request, target_id, no_publish, has_files)
+        return
     for name in ("publish", "clear_logs"):
         script = system.path(f"{scripts}/{name}.sh")
         if script.is_file():
@@ -275,6 +282,27 @@ def create_environment(system, main, target_arg=""):
     if system.path(f"{target_folder}/sync_prod.sh").is_file():
         system.step(f"Sync content to {request.environment}")
         synced = system.run("bash", f"{target_folder}/sync_prod.sh", check=False)
+        if not synced.ok:
+            raise Stop("", synced.returncode)
+    system.say(f"Environment {target_id} is ready.")
+
+
+def finish_migrated(system, main, request, target_id, no_publish, has_files):
+    """A new environment of a migrated site published and synced by harbor, as its scripts did for the others"""
+    if no_publish:
+        return
+    if has_files:
+        system.say(f"Environment {target_id} is the site that was already on the server. Nothing was published.")
+        return
+    for key in ("VNS_PROD_PASSWORD", "VNS_PROD_SMB_PASSWORD"):
+        os.environ.pop(key, None)
+    system.step(f"Publish to {request.environment}")
+    published = system.run("python3", str(BIN), "env", "publish", main.name, env={"VNS_TARGET": target_id}, check=False)
+    if not published.ok:
+        raise Stop("", published.returncode)
+    if main.kind == "umbraco":
+        system.step(f"Sync content to {request.environment}")
+        synced = system.run("python3", str(BIN), "env", "sync", main.name, "main", target_id, check=False)
         if not synced.ok:
             raise Stop("", synced.returncode)
     system.say(f"Environment {target_id} is ready.")

@@ -70,12 +70,87 @@ admin user has which Linux user is kept in /var/lib/harbor/users.json. Passwords
   given back when the last user goes. The admin's own folder is left alone. Tried on linux-01: every site answered 200
   closed and open.
 - [x] 8c **Terminal** is a grant per site (asked 2026-11-13): it gives Files too, and a shell in the site's folder as the
-  user's own Linux user (runuser, a clean environment), so it reaches what that user may: the site's files, deleting
-  them too, never another site, scripts/ or sudo. A shell on another server stays an administrator's (it is root there).
+  user's own Linux user, locked to their sites (asked 2026-11-13: "I must only be locked to my site"): a systemd
+  sandbox (systemd-run) where /var/www holds only the sites they have Terminal on, /home only their own, /etc only what a
+  shell, editors, git and dotnet need (never Apache, SSH, systemd, Harbor), /srv, /opt, /vns, /root hidden, the rest
+  read-only, other processes invisible, no sudo (NoNewPrivileges). It takes keys; their tasks still do not. A shell on another server stays an administrator's (it is root there).
   Tried on linux-01. Note for tests on a server: sync from the admin's config.json, never a list of your own (it
   removed the user "test" Martin had just made; made again at once).
-- [ ] 8d SFTP: internal-sftp for the group `harbor-sftp` (Match Group, ForceCommand internal-sftp, ChrootDirectory), a
-  folder per user with bind mounts of their sites, password or key set in the admin, on/off per user.
+- [x] 8d SFTP, on or off per user in the admin (`sftp` in the user's record):
+  - /etc/ssh/sshd_config.d/harbor-sftp.conf: every Harbor user only ever gets internal-sftp, locked in
+    /srv/harbor-sftp/<user> (root's, so the user cannot change it), no forwarding; password and key logins only for
+    those in `harbor-sftp`, never for the others. Checked with `sshd -t` before ssh is reloaded; a config that does not
+    pass is taken back.
+  - In their folder a folder per site they have Files on, a bind mount of the site's folder (the site's group and ACLs
+    decide what they may do there). harbor-sftp-mounts.service makes the mounts again after a restart.
+  - The password (chpasswd, never stored by Harbor) and public keys (~/.ssh/authorized_keys) are set in the admin;
+    turned off, the password is locked and the keys go.
+  - Done 2026-11-13 (tests/test_server_users.py). Tried on linux-01 with a temporary user added to a copy of the admin's
+    config: only their site's folder, upload and delete there, scripts/ not found, no shell, a user without SFTP cannot
+    log in; all of it gone again (config, mounts, service) when no user has SFTP.
+
+## Phase 6 steps (the migration)
+**The end state (2026-11-13): no site has `.vns-publish` or any of Harbor's scripts any more; a `scripts` folder is
+left only for the site's own scripts** (Martin: the site's own custom scripts stay where they are). Harbor's own copy
+is the truth:
+- System scripts (any version Harbor ever generated, recognised from git: harbor/state/script_history.json, made by
+  dev/script_history.py; old names too, such as publish_local.sh, a renamed publish.sh) go to the migration's backup.
+- System scripts changed by hand go to the backup too, and the migration lists them, so the change can be seen and, if
+  it is still needed, made a custom script.
+- The site's own scripts stay in the site's scripts folder, untouched; the admin's Run custom script runs them there.
+  The folder goes only when nothing of the site's own is left in it.
+- Settings (publish_prod.sh), Sync setup (data_sync.json) and publish status (.vns-publish) are in Harbor's copy already.
+Steps:
+- [x] 6a `harbor migrate --dry-run [site]`: what would go where, changing nothing; NOT ready when Harbor's copy differs
+  from the site folder. (Tried on linux-01: every site ready.)
+- [x] 6b Harbor's copy as the truth for a migrated site (`migrated.json` in its state): every reader and writer of
+  settings, Sync setup and publish status uses the copy.
+  - [x] Reading already falls back to the copy (2b). Writing: `settings.update/write_copy/remove`; harbor state sync
+    leaves a migrated site's copy alone; Sync setup and publish status write only the copy (an error there stops them).
+  - [x] Create, delete, release, move (here and to another server) and copy an environment or site without scripts;
+    keep-alive, data sync and the build helper too. `site.json` in the state holds what the publish script held
+    (configuration, folder, EnvironmentName): harbor site publish uses it. (tests/test_migrate.py; the env and site
+    tests on linux-01 still pass against the old scripts)
+  - [x] Moving a whole site to another server (harbor/sites/move.py) takes Harbor's state and secrets with it, under
+    its new name there, and builds through harbor.
+- [x] 6c The admin calls harbor, never a script in a site folder; custom scripts from Harbor's folder. For a migrated
+  site the admin shows the scripts it had (site.json, written by the migration) and runs the harbor command each
+  wrapper called (HARBOR_SCRIPTS in app.py); Publish all and the multi actions go through publish_status.py both with
+  harbor:<scope>; a changed binding or HTTPS goes into Harbor's copy. (apache/tests/test_migrated_scripts.py)
+  Custom scripts stay in the site's scripts folder and run from there.
+- [x] 6d `harbor migrate [site]`: check, backup (/var/lib/harbor/backups/<site>/<time>.tar.gz, root only), marker,
+  custom scripts moved, the folders removed. `harbor migrate --rollback <site>` puts it all back. (tests/test_migrate.py:
+  the folder byte for byte as it was after a rollback.) Tried on linux-01 with mig.linux-01.vns.dk (2026-11-13): migrated,
+  published through harbor, nothing written back into its folder; left migrated for Martin to try in the admin.
+- [x] 6f A new site on a migrated server (`harbor migrate` of every site writes /var/lib/harbor/migrated.json) is made
+  migrated: no scripts folder, the names of the scripts it would have had in site.json. (tests/test_migrate.py)
+- Tried between servers (2026-11-13): mhs's Production copied to linux-02 as production-2 (HTTPS, the VNS.Harbor
+  connection written over SSH, the Backend login there, its token reaches Harbor here); the migrated mig copied to
+  linux-02 as mig.linux-02.vns.dk (its Harbor state along, set up by linux-02's harbor, published there). Found and
+  fixed: create_prod.sh removes itself (harbor removed it again and stopped); a folder closed to others (users here)
+  came without its ACL, so www-data could not enter it there; a failed move left the Harbor state there.
+  Left: a server without the vns-build group shows the folder's group as a number (its build did not need it).
+- [x] 6e The bridge release migrates every site (the cutover, step 1): update.sh runs `harbor migrate` after Harbor is
+  installed (a site that is not ready is left and told); VERSION 1.2.0 with its CHANGELOG. Tried on linux-01
+  (2026-11-13): every site migrated, every one answers. Left: Martin commits, tags v1.2.0 and releases it.
+
+## Phase 5 steps (other servers)
+linux-02 (172.23.3.16) is the test server, reached from linux-01 (172.23.3.17) since 2026-11-13.
+Harbor reaches another server with an SSH key of its own (/etc/harbor/ssh/id_ed25519, root only); a password is used
+once to put the key there and is never stored.
+- [x] 5a `harbor servers add <name> <host> [--user root] [--port 22]` (the password once, from HARBOR_SSH_PASSWORD),
+  `harbor servers list|remove`: /var/lib/harbor/servers.json.
+- [x] 5b `harbor servers status [name]`: the version handshake: its Ubuntu, Python, and the Harbor release it runs (or
+  the old /vns), and whether this Harbor can work with it.
+- [x] 5c `harbor servers install <name> [--admin <host name>]`: this release copied there and made current (an agent:
+  the harbor command only), or also the admin site. Update is the same: the newest release here, made current there.
+  Done 2026-11-13 for an agent (tests/test_servers.py): linux-02 added from linux-01 with its password once, the
+  handshake (Ubuntu 26.04, Python 3.14, old VNS 1.1.16 with its admin), and Harbor installed there (`harbor self use`).
+  The admin site on another server is installed or updated with the cutover (its installer is still /vns's).
+- [x] 5d A Servers window in the admin (Server → Tools → Servers…): each server with its state and version, Add server
+  (the password in the task's environment, once), Install or Update to this server's release, Remove (with the
+  choice of uninstalling Harbor there and taking its key off; sites and /vns are never touched). This server is listed
+  first. Tried on linux-02: removed with both, added and installed again.
 
 ## Phase 4 steps (server tools in the admin)
 One "Server tools" window (Server menu) shows what the server has and does each action as a task with its steps. The
@@ -169,8 +244,10 @@ Phases 3–8 change how servers are installed and updated; they are done with Ma
   Only administrators get the automatic login for now (Martin decides whether more should).
 - [x] A new Umbraco 17+ site gets VNS.Harbor (Create site); one that cannot be added is told, and the site is made all the
   same. The connection names Harbor's own address: the admin site on the server.
-- [ ] 9d Environments on other servers and Windows: vns-harbor.json written there at publish (now: the site and its
-  environments on this server); the package on nuget.org.
+- [x] 9d Environments on other servers and Windows: vns-harbor.json written there at publish, over SSH (written whole,
+  root:www-data 0640, the token on stdin) or on the IIS site's share; the login link checks that the package runs
+  there. (tests/test_umbraco_backoffice.py; not tried on a real remote yet: linux-01 cannot reach linux-02 over SSH.)
+  Left: the package on nuget.org (Martin).
 
 ## Kept as files that can be changed by hand (asked 2026-11-13)
 - `apache/solutionfiles/csharp/umbraco/project` (the Umbraco site a new site starts from: Program.cs, the csproj,

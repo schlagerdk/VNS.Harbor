@@ -73,7 +73,9 @@ def prepare(project, account, keep):
     os.chown(project, 0, group)
     os.chmod(project, (project.stat().st_mode & 0o7777) | stat.S_ISVTX | stat.S_IRGRP | stat.S_IWGRP | stat.S_IXGRP)
     # Root's own records stay root's: made here first, so the build user cannot make them
-    (project / ".vns-publish").mkdir(mode=0o700, exist_ok=True)
+    # A migrated site (phase 6) keeps them in Harbor's copy, with no .vns-publish in its folder
+    if not (Path("/var/lib/harbor/sites") / project.name / "migrated.json").is_file():
+        (project / ".vns-publish").mkdir(mode=0o700, exist_ok=True)
     # Generated files root's builds left behind become the build user's, so the next build can write them again
     for pattern in GENERATED:
         for path in project.glob(pattern):

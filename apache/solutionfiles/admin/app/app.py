@@ -598,6 +598,88 @@ def keep_harbor_state():
         app.logger.warning("harbor state sync could not run: %s", exc)
 
 
+HARBOR_SITES = "/var/lib/harbor/sites"
+# What each system script did, as the harbor command its wrapper calls (a migrated site has no scripts, phase 6)
+HARBOR_SCRIPTS = {
+    "publish.sh": ["site", "publish"], "publish_local.sh": ["site", "publish"], "clear_logs.sh": ["site", "clear-logs"],
+    "clear_logs_local.sh": ["site", "clear-logs"], "check_service.sh": ["site", "check-service"], "edit_conf.sh": ["site", "edit-conf"],
+    "edit_service.sh": ["site", "edit-service"], "restart_service.sh": ["site", "restart-service"],
+    "issue_certificat.sh": ["site", "reissue-certificate"], "outdated.sh": ["site", "outdated"],
+    "update_packages.sh": ["site", "update-packages"], "fix_permissions.sh": ["site", "fix-app-permissions"],
+    "change_env.sh": ["site", "action", "@", "change_env"], "restart_apache.sh": ["server", "restart-apache"],
+}
+HARBOR_TARGET_SCRIPTS = {"publish_prod.sh": ["env", "publish"], "clear_logs_prod.sh": ["env", "clear-logs"], "sync_prod.sh": ["env", "sync"]}
+
+
+def site_migrated(site):
+    """Migrated (harbor migrate, phase 6): Harbor holds its settings and runs what its scripts did; its folder has none"""
+    return os.path.isfile(os.path.join(HARBOR_SITES, site, "migrated.json"))
+
+
+def migrated_site_json(site):
+    try:
+        with open(os.path.join(HARBOR_SITES, site, "site.json")) as handle:
+            found = json.load(handle)
+        return found if isinstance(found, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def custom_scripts_dir(site):
+    """A migrated site's own scripts: they stay in its scripts folder (Harbor's own scripts are gone from there)"""
+    return os.path.join(WEB_ROOT, site, "scripts")
+
+
+def migrated_scripts(site):
+    """The scripts a migrated site shows: the system scripts it had, and its own"""
+    own = custom_scripts_dir(site)
+    names = set(name for name in migrated_site_json(site).get("scripts", []) if isinstance(name, str) and SCRIPT_RE.match(name))
+    if os.path.isdir(own):
+        names |= {name for name in os.listdir(own) if SCRIPT_RE.match(name) and os.path.isfile(os.path.join(own, name))}
+    return sorted(names)
+
+
+def target_scripts(site, target, kind=""):
+    """The scripts an environment has: in its folder, or for a migrated site what it had (or, for a newer one, what an
+    environment of its kind gets)"""
+    root = os.path.join(WEB_ROOT, site)
+    if not site_migrated(site):
+        return [script for script in TARGET_SCRIPTS if os.path.isfile(os.path.join(target_folder(root, target), script))]
+    saved = (migrated_site_json(site).get("targets") or {}).get(target)
+    if isinstance(saved, list):
+        return [script for script in TARGET_SCRIPTS if script in saved]
+    return [script for script in TARGET_SCRIPTS if script == "publish_prod.sh" or kind == "umbraco"]
+
+
+def harbor_script_command(site, script, target="prod"):
+    """The command a script of a migrated site runs: the harbor command its wrapper called, or the site's own script"""
+    harbor = ["/usr/bin/python3", HARBOR_COMMAND]
+    if script in HARBOR_TARGET_SCRIPTS and target:
+        words = HARBOR_TARGET_SCRIPTS[script] + [site] + (["main", target] if script == "sync_prod.sh" else [])
+        return ["/usr/bin/env", "VNS_TARGET=" + target, *harbor, *words]
+    if script in HARBOR_SCRIPTS:
+        words = HARBOR_SCRIPTS[script]
+        return harbor + ([site if word == "@" else word for word in words] if "@" in words
+                         else words + ([site] if words[0] == "site" else []))
+    path = os.path.realpath(os.path.join(custom_scripts_dir(site), script))
+    if os.path.dirname(path) != os.path.realpath(custom_scripts_dir(site)) or not os.path.isfile(path):
+        abort(400, "Unknown script")
+    return ["/bin/bash", path]
+
+
+def publish_entry(site, target=None):
+    """What publish_status.py both runs for the site itself (target None) or an environment: its script, or harbor"""
+    root = os.path.join(WEB_ROOT, site)
+    scope = "test" if target is None else target_scope(target)
+    if site_migrated(site):
+        return "harbor:" + scope
+    if target is None:
+        folder = os.path.join(root, "scripts")
+        local = next((name for name in ("publish_local.sh", "publish.sh") if os.path.isfile(os.path.join(folder, name))), None)
+        return os.path.realpath(os.path.join(folder, local)) if local else None
+    return os.path.realpath(os.path.join(target_folder(root, target), "publish_prod.sh"))
+
+
 def target_ids(root):
     """The site's environments: from its folder while their scripts are there, else from Harbor's copy (harbor/state)"""
     from harbor.core.system import System
@@ -764,6 +846,9 @@ def sync_prod_binding(site, target, binding):
     """A binding changed on the server is saved here too, also in scripts made before publish read it from the server."""
     if not re.fullmatch(r"[A-Za-z0-9.-]{1,253}", binding):
         return
+    if site_migrated(site):
+        save_migrated_setting(site, target, "BINDING", binding)
+        return
     path = os.path.join(target_folder(os.path.join(WEB_ROOT, site), target), "publish_prod.sh")
     try:
         with open(path, encoding="utf-8") as stream:
@@ -814,6 +899,18 @@ def probe_url(url):
         return ("certificate" if isinstance(exc, ssl.SSLError) else "unreachable"), str(exc)
 
 
+def save_migrated_setting(site, target, key, value):
+    """A setting of a migrated site's environment, in Harbor's copy (its truth), when it differs"""
+    from harbor.core.system import System
+    from harbor.environments import settings
+    root = os.path.join(WEB_ROOT, site)
+    try:
+        if (settings.values(System(), root, target) or {}).get(key) != value:
+            settings.update(System(), root, target, {key: value})
+    except (OSError, settings.SettingsError) as exc:
+        app.logger.warning("Could not save %s of %s %s: %s", key, site, target, exc)
+
+
 def windows_probe(site, target, binding, saved):
     """Whether a Windows environment runs, and on HTTPS. IIS has no SSH, so its address is requested like a
     visitor would, at most once a minute: HTTPS with a valid certificate first, then HTTP. A clear answer
@@ -834,7 +931,9 @@ def windows_probe(site, target, binding, saved):
                       "error": plain_error}
     result["checked"] = int(time.time())
     WINDOWS_HTTPS[key] = (time.time(), result)
-    if result["https"] != saved:
+    if result["https"] != saved and site_migrated(site):
+        save_migrated_setting(site, target, "HTTPS", "y" if result["https"] else "n")
+    elif result["https"] != saved:
         path = os.path.join(target_folder(os.path.join(WEB_ROOT, site), target), "publish_prod.sh")
         try:
             with open(path, encoding="utf-8") as stream:
@@ -1089,7 +1188,9 @@ def site_info(name, states):
 
     scripts = []
     scripts_dir = os.path.join(root, "scripts")
-    if os.path.isdir(scripts_dir):
+    if site_migrated(name):
+        scripts = migrated_scripts(name)
+    elif os.path.isdir(scripts_dir):
         scripts = sorted(f for f in os.listdir(scripts_dir) if SCRIPT_RE.match(f) and os.path.isfile(os.path.join(scripts_dir, f)))
 
     first_label = "Test" if not aspnet or aspnet.group(1) != "Production" else "Production"
@@ -1103,7 +1204,7 @@ def site_info(name, states):
         if not prod:
             continue
         key = "prod" if target == "prod" else "target:" + target
-        target_files = [script for script in TARGET_SCRIPTS if os.path.isfile(os.path.join(target_folder(root, target), script))]
+        target_files = target_scripts(name, target, kind)
         scripts = sorted(set(scripts) | set(target_files))
         details = {"target": target, "scripts": target_files}
         local = prod["PROD_LOCAL_PATH"]
@@ -1897,6 +1998,45 @@ HARBOR_COMMAND = os.path.join(os.path.dirname(APACHE_DIR), "bin", "harbor")
 SQL_EDITIONS = ("Developer", "Express", "Evaluation", "Standard", "Enterprise")
 
 
+@app.route("/api/servers")
+def api_servers():
+    """The other servers and what each runs (harbor servers status), and the release this server would install"""
+    require_admin()
+    if not os.path.isfile(HARBOR_COMMAND):
+        return error("Harbor is missing. Update VNS first.", 500)
+    try:
+        result = subprocess.run(["/usr/bin/python3", HARBOR_COMMAND, "servers", "status"], capture_output=True, text=True, timeout=90)
+        found = json.loads(result.stdout or "[]")
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        app.logger.error("harbor servers status: %s", exc)
+        return error("The servers could not be read.", 502)
+    current = os.path.realpath("/opt/harbor/current")
+    return jsonify(servers=found, release=os.path.basename(current) if os.path.islink("/opt/harbor/current") else "")
+
+
+def servers_command(data):
+    """A Servers action as a harbor command, and its variables (the password never on the command line)"""
+    action, name = data.get("action"), data.get("name", "")
+    harbor = ["/usr/bin/python3", HARBOR_COMMAND, "servers"]
+    if not isinstance(name, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", name):
+        abort(400, "Give the server a name of lower case letters, digits and -")
+    if action == "add":
+        host, user, port, password = data.get("host", ""), data.get("user") or "root", str(data.get("port") or "22"), data.get("password", "")
+        if not isinstance(host, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.:-]{0,252}", host):
+            abort(400, "Give the server's address")
+        if not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", str(user)) or not port.isdigit():
+            abort(400, "Give the login and SSH port")
+        if not isinstance(password, str) or len(password) > 256:
+            abort(400, "Invalid password")
+        return f"Add server {name}", harbor + ["add", name, host, "--user", user, "--port", port], {"HARBOR_SSH_PASSWORD": password}
+    if action == "install":
+        return f"Install Harbor on {name}", harbor + ["install", name], {}
+    if action == "remove":
+        options = [*(["--uninstall"] if data.get("uninstall") is True else []), *(["--revoke-key"] if data.get("revoke_key") is True else [])]
+        return f"Remove server {name}", harbor + ["remove", name, *options], {}
+    abort(400, "Unknown action")
+
+
 @app.route("/api/server/tools")
 def api_server_tools():
     """What the server has for the sites: SQL Server, sqlcmd, the sa password, cron jobs, .NET, Node.js (harbor server status)"""
@@ -2376,19 +2516,87 @@ def linux_users_changed():
     threading.Thread(target=sync_linux_users, daemon=True).start()
 
 
+# What a user's shell sees of /etc: only what a shell, editors, git and dotnet need. Never Apache, SSH, systemd,
+# certificates' keys, Harbor or anything else of the server's.
+SHELL_ETC = ("passwd", "group", "nsswitch.conf", "profile", "profile.d", "bash.bashrc", "bash_completion", "bash_completion.d",
+             "ld.so.cache", "ld.so.conf", "ld.so.conf.d", "localtime", "timezone", "hosts", "host.conf", "resolv.conf", "inputrc",
+             "terminfo", "environment", "ssl/certs", "ca-certificates", "alternatives", "vim", "nanorc", "mime.types", "magic",
+             "locale.alias", "default/locale", "lsb-release", "os-release", "debian_version", "gitconfig")
+SHELL_HIDDEN = ("/srv", "/opt", "/vns", "/root", "/mnt", "/media", "/boot", "/snap")
+
+
 def user_shell(site, cwd):
-    """A shell as the user's own Linux user, in the site's folder: it reaches what their Linux user may (phase 8c)"""
+    """A shell as the user's own Linux user, locked to their sites (phase 8c): a systemd sandbox where /var/www holds
+    only the sites they have Terminal on, /home only their own, /etc only what a shell needs, the rest of the system
+    read-only, other processes invisible, and no way to become anyone else."""
     root = os.path.join(WEB_ROOT, site)
     inside = os.path.relpath(cwd, root)
     if inside.startswith("..") or inside.split(os.sep)[0] in ("scripts", ".vns-publish"):
         abort(403, "You do not have access to this folder.")
-    name = linux_names().get(me()["id"], "")
+    user = me()
+    name = linux_names().get(user["id"], "")
     if not name:
         # Made by the sync that runs after every change to the users; it may still be running
         linux_users_changed()
         abort(409, "Your Linux user is being made. Try again in a moment.")
-    return ["/usr/sbin/runuser", "-u", name, "--", "/usr/bin/env", "-i", "HOME=/home/" + name, "USER=" + name, "LOGNAME=" + name,
-            "SHELL=/bin/bash", "TERM=xterm-256color", "LANG=C.UTF-8", "PATH=/usr/local/bin:/usr/bin:/bin", "/bin/bash", "-l"]
+    sites = sorted(name_ for name_ in (user.get("sites") or {})
+                   if any(access.can(user, name_, env, "terminal") for env in ["main", *target_ids(os.path.join(WEB_ROOT, name_))])
+                   and os.path.isdir(os.path.join(WEB_ROOT, name_)))
+    if site not in sites:
+        abort(403, "You do not have access to do this.")
+    properties = ["NoNewPrivileges=yes", "ProtectSystem=strict", "ProtectHome=tmpfs", "PrivateTmp=yes", "PrivateDevices=yes",
+                  "ProtectProc=invisible", "ProtectKernelTunables=yes", "ProtectKernelLogs=yes", "ProtectKernelModules=yes",
+                  "ProtectControlGroups=yes", "ProtectHostname=yes", "RestrictSUIDSGID=yes", "LockPersonality=yes",
+                  "TemporaryFileSystem=/etc:ro", "TemporaryFileSystem=/var:ro",
+                  *("BindReadOnlyPaths=-/etc/" + item for item in SHELL_ETC),
+                  "BindPaths=/home/" + name, *("BindPaths=" + os.path.join(WEB_ROOT, item) for item in sites),
+                  *("InaccessiblePaths=-" + item for item in SHELL_HIDDEN), "WorkingDirectory=" + cwd]
+    argv = ["/usr/bin/systemd-run", "--quiet", "--pty", "--wait", "--collect", "--uid=" + name, "--gid=" + name]
+    for item in properties:
+        argv += ["-p", item]
+    for item in ("HOME=/home/" + name, "USER=" + name, "LOGNAME=" + name, "SHELL=/bin/bash", "TERM=xterm-256color", "LANG=C.UTF-8",
+                 "PATH=/usr/local/bin:/usr/bin:/bin", "DOTNET_ROOT=/usr/lib/dotnet", "DOTNET_CLI_TELEMETRY_OPTOUT=1"):
+        argv += ["-E", item]
+    return argv + ["/bin/bash", "-l"]
+
+
+@app.route("/api/users/<user_id>/sftp", methods=["GET", "POST"])
+def api_user_sftp(user_id):
+    """A user's SFTP address and public keys, and their password and keys set (harbor users sftp-password/-keys)"""
+    require_admin()
+    user = next((item for item in cfg.get("users", []) if item.get("id") == user_id), None)
+    if user is None:
+        return error("Unknown user.", 404)
+    if request.method == "GET":
+        name = linux_names().get(user_id, "")
+        keys = ""
+        if name:
+            try:
+                with open(f"/home/{name}/.ssh/authorized_keys") as handle:
+                    keys = handle.read()
+            except OSError:
+                pass
+        return jsonify(linux=name, keys=keys, host=request.host.split(":")[0], port=22)
+    data = request.get_json(silent=True) or {}
+    if not user.get("sftp"):
+        return error("Turn on SFTP for the user first.")
+    # Their Linux user and its SFTP rights first, as the sync after the save may still be running
+    sync_linux_users()
+    harbor = ["/usr/bin/python3", HARBOR_COMMAND, "users"]
+    steps = []
+    if isinstance(data.get("password"), str) and data["password"]:
+        steps.append((harbor + ["sftp-password", user_id], None, {"HARBOR_SFTP_PASSWORD": data["password"]}))
+    if isinstance(data.get("keys"), str):
+        steps.append((harbor + ["sftp-keys", user_id], data["keys"], {}))
+    for argv, given, env in steps:
+        try:
+            result = subprocess.run(argv, input=given or "", capture_output=True, text=True, timeout=60, env=os.environ | env)
+        except (OSError, subprocess.SubprocessError) as exc:
+            return error(f"SFTP could not be set: {exc}", 502)
+        if result.returncode:
+            return error((result.stderr or result.stdout).strip().splitlines()[-1] if (result.stderr or result.stdout).strip() else "SFTP could not be set.")
+    audit("Changed SFTP of " + user["username"])
+    return jsonify(ok=True)
 
 
 def linux_names():
@@ -2546,7 +2754,7 @@ def terminal_scope(payload):
 
 def terminal_auto_close(payload):
     kind = payload.get("kind")
-    if kind in ("shell", "create_site", "setup_site", "copy_site", "register_env", "create_prod", "sync_env", "data_sync", "data_sync_settings", "move_env", "move_site", "adopt_site", "release_site", "delete_site", "change_binding", "prod_action", "dotnet_package", "fix_permissions", "publish_both", "bulk", "update_package", "sql_action", "install_sql_tools", "server_tool"):
+    if kind in ("shell", "create_site", "setup_site", "copy_site", "register_env", "create_prod", "sync_env", "data_sync", "data_sync_settings", "move_env", "move_site", "adopt_site", "release_site", "delete_site", "change_binding", "prod_action", "dotnet_package", "fix_permissions", "publish_both", "bulk", "update_package", "sql_action", "install_sql_tools", "server_tool", "servers"):
         return True
     if kind == "remote_tool":
         return payload.get("tool") == "shell"
@@ -2919,6 +3127,11 @@ def build_command(data):
     """Validate a terminal request and return (title, argv, cwd). User input is never shell code."""
     kind = data.get("kind")
     bash = "/bin/bash"
+    if kind == "servers":
+        if not os.path.isfile(HARBOR_COMMAND):
+            abort(500, "Harbor is missing. Update VNS first.")
+        title, argv, _ = servers_command(data)
+        return title, argv, "/"
     if kind == "server_tool":
         if not os.path.isfile(HARBOR_COMMAND):
             abort(500, "Harbor is missing. Update VNS first.")
@@ -3018,7 +3231,7 @@ def build_command(data):
                 if action in ("clear_logs_prod", "clear_logs_all"):
                     root = os.path.join(WEB_ROOT, site)
                     for target in allowed_targets(site, publishable_targets(site, root), "clear_logs"):
-                        if not os.path.isfile(os.path.join(target_folder(root, target), "clear_logs_prod.sh")):
+                        if "clear_logs_prod.sh" not in target_scripts(site, target, info["kind"]):
                             continue
                         _, argv, cwd = build_command({"kind": "script", "site": site, "script": "clear_logs_prod.sh", "target": target})
                         tasks.append({"site": f"{site} · {target}", "argv": argv, "cwd": cwd})
@@ -3051,7 +3264,7 @@ def build_command(data):
                     continue
                 tasks.append({"site": site, "cwd": root, "argv": [
                     sys.executable, os.path.join(APACHE_DIR, "lib", "publish_status.py"), "both", root,
-                    *(os.path.realpath(os.path.join(target_folder(root, target), "publish_prod.sh")) for target in active)]})
+                    *(publish_entry(site, target) for target in active)]})
                 continue
             else:
                 if action == "prod" and not allowed_targets(site, ["prod"], "publish"):
@@ -3091,15 +3304,14 @@ def build_command(data):
         return "Shell: server", [bash, "-l"], "/"
     if kind == "publish_both":
         site = site_arg(data)
-        folder = os.path.join(WEB_ROOT, site, "scripts")
-        local = next((name for name in ("publish_local.sh", "publish.sh")
-                      if os.path.isfile(os.path.join(folder, name))), None)
+        local = publish_entry(site)
         # Publish all on the site page publishes the environments only. The multi action also publishes the main site.
         main_too = not data.get("environments_only")
         if main_too:
             if not local:
                 abort(400, "This site has no test publish script")
-            build_command({"kind": "script", "site": site, "script": local})
+            if not site_migrated(site):
+                build_command({"kind": "script", "site": site, "script": os.path.basename(local)})
         root = os.path.join(WEB_ROOT, site)
         targets = target_ids(root)
         if not targets:
@@ -3112,9 +3324,21 @@ def build_command(data):
             abort(400, "No environment to publish to: they no longer exist on their servers")
         return ("Publish all: " if main_too else "Publish environments: ") + site, [
             sys.executable, os.path.join(APACHE_DIR, "lib", "publish_status.py"),
-            "both", root, *([os.path.realpath(os.path.join(folder, local))] if main_too else []),
-            *(os.path.realpath(os.path.join(target_folder(root, target), "publish_prod.sh")) for target in active),
+            "both", root, *([local] if main_too else []),
+            *(publish_entry(site, target) for target in active),
         ], root
+    if kind == "script" and site_migrated(site_arg(data)):
+        site = site_arg(data)
+        script = data.get("script", "")
+        if not SCRIPT_RE.match(script):
+            abort(400, "Unknown script")
+        target = target_arg(site, data) if data.get("target") else ("prod" if script in HARBOR_TARGET_SCRIPTS else "")
+        argv = harbor_script_command(site, script, target)
+        root = os.path.join(WEB_ROOT, site)
+        if script in ("publish.sh", "publish_local.sh", "publish_prod.sh") and glob.glob(os.path.join(root, "*.csproj")):
+            argv = [sys.executable, os.path.join(APACHE_DIR, "lib", "publish_status.py"),
+                    "run", root, target_scope(target) if script == "publish_prod.sh" else "test", *argv]
+        return "%s: %s" % (site, script), argv, root
     if kind == "script":
         site = site_arg(data)
         script = data.get("script", "")
@@ -3164,7 +3388,9 @@ def build_command(data):
     if kind == "create_prod":
         site = site_arg(data)
         # api_term replaces the command with the rendered current template
-        return "Add environment: " + site, [bash], os.path.join(WEB_ROOT, site, "scripts")
+        scripts = os.path.join(WEB_ROOT, site, "scripts")
+        # A migrated site has no scripts folder (phase 6): it runs in the site's folder
+        return "Add environment: " + site, [bash], scripts if os.path.isdir(scripts) else os.path.join(WEB_ROOT, site)
     if kind == "move_env":
         site = site_arg(data)
         target = target_arg(site, {"target": data.get("environment_id")})
@@ -3487,7 +3713,7 @@ def sees_session(s):
 
 
 # Tasks that run as root by choice, or open a shell: only for administrators
-ADMIN_TASKS = {"server_tool", "install_sql_tools", "update_system", "remote_tool", "move_env", "move_site", "adopt_site", "release_site",
+ADMIN_TASKS = {"servers", "server_tool", "install_sql_tools", "update_system", "remote_tool", "move_env", "move_site", "adopt_site", "release_site",
                "setup_site", "unit_tool", "apache", "register_env"}
 
 
@@ -3630,7 +3856,8 @@ def grant(user_id, change):
 def describe(s):
     return {"id": s.id, "title": s.title, "running": s.running, "exit": s.exit,
             "auto_close": s.auto_close, "output_problem": s.output_problem, "sites": s.sites,
-            "scope": s.scope, "targets": getattr(s, "targets", []), "process": getattr(s, "process", False)}
+            "scope": s.scope, "targets": getattr(s, "targets", []), "process": getattr(s, "process", False),
+            "input": not getattr(s, "locked", False)}
 
 
 @app.route("/api/term", methods=["GET", "POST"])
@@ -3645,6 +3872,8 @@ def api_term():
     extra_env = production_setup_env(payload, payload.get("site", "")) if payload.get("kind") == "create_prod" else None
     if payload.get("kind") == "server_tool":
         extra_env = server_tool_command(payload)[2]
+    if payload.get("kind") == "servers":
+        extra_env = servers_command(payload)[2]
     if payload.get("kind") == "register_env":
         extra_env = production_setup_env(payload, payload.get("site", ""))
     if payload.get("kind") == "move_env":
@@ -3706,7 +3935,8 @@ def api_term():
             update_root = os.path.join(WEB_ROOT, payload["site"]) if payload.get("kind") == "script" and payload.get("script") == "outdated.sh" and glob.glob(os.path.join(WEB_ROOT, payload["site"], "*.csproj")) else None
             sites = terminal_activity_sites(payload)
             session_obj = TermSession(title, argv, cwd, extra_env, auto_close=terminal_auto_close(payload), update_root=update_root, sites=sites, scope=terminal_scope(payload), targets=terminal_targets(payload),
-                                      owner=me()["id"], locked=not is_admin(), after=after)
+                                      # A user's tasks take no keys; their shell in a site does (it runs as their Linux user)
+                                      owner=me()["id"], locked=not is_admin() and payload.get("kind") != "shell", after=after)
         except Exception:
             if payload.get("kind") == "create_prod":
                 os.unlink(argv[1])

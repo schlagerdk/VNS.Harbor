@@ -297,6 +297,16 @@ def environment_folders(site_root):
             match = re.search(r"""(?m)^PROD_LOCAL_PATH=['"]?([^'"\s]+)""", script.read_text())
             if match:
                 folders.append(Path(os.path.normpath(match[1])))
+    # A migrated site (phase 6) has its environments' settings in Harbor's copy only
+    copy = Path("/var/lib/harbor/sites") / Path(site_root).name
+    if (copy / "migrated.json").is_file():
+        for path in sorted((copy / "environments").glob("*.json")):
+            try:
+                local = json.loads(path.read_text()).get("LOCAL_PATH", "")
+            except (OSError, ValueError, AttributeError):
+                continue
+            if local:
+                folders.append(Path(os.path.normpath(local)))
     return folders
 
 

@@ -160,6 +160,55 @@ def _users_sync(args, system):
     sync(system, users)
 
 
+def _users_sftp(args, system):
+    from harbor.server import sftp
+    from harbor.server.users import linux_name, mapping
+    if args.command == "mounts":
+        sftp.remount(system)
+        return
+    name = linux_name(system, args.user) or (args.user if any(entry.get("linux") == args.user for entry in mapping(system).values()) else "")
+    if not name:
+        raise Stop(f"No Linux user for {args.user}.")
+    if args.command == "sftp-password":
+        sftp.set_password(system, name, os.environ.get("HARBOR_SFTP_PASSWORD", ""))
+    else:
+        sftp.set_keys(system, name, sys.stdin.read())
+
+
+def _migrate(args, system):
+    import json
+    from harbor.state import migrate
+    if args.rollback:
+        migrate.rollback(system, args.site or "")
+        return
+    if not args.dry_run:
+        migrate.migrate_all(system, args.site)
+        return
+    plans = migrate.dry_run(system, args.site) if not args.json else [migrate.plan(system, name) for name in ([args.site] if args.site else migrate.sites(system))]
+    if args.json:
+        print(json.dumps(plans, indent=2))
+    if not all(item["ready"] for item in plans):
+        raise Stop("", 2)
+
+
+def _servers(args, system):
+    import json
+    from harbor.server import servers
+    if args.command == "add":
+        servers.add(system, args.name, args.host, args.user, args.port, os.environ.get("HARBOR_SSH_PASSWORD", ""))
+    elif args.command == "remove":
+        servers.remove(system, args.name, uninstall=args.uninstall, revoke_key=args.revoke_key)
+    elif args.command == "list":
+        print(json.dumps(servers.servers(system), indent=2))
+    elif args.command == "install":
+        servers.install(system, args.name)
+    else:
+        names = [args.name] if args.name else sorted(servers.servers(system))
+        # Every server: this one first
+        found = ([] if args.name else [servers.here(system)]) + [servers.status(system, name) for name in names]
+        print(json.dumps(found, indent=2))
+
+
 def _users_list(args, system):
     import json
     from harbor.server.users import mapping
@@ -252,6 +301,8 @@ def _self(args, system):
         release.install(system, args.source)
     elif args.command == "rollback":
         release.rollback(system)
+    elif args.command == "use":
+        release.use(system, args.release)
     elif args.command == "releases":
         for item in release.releases(system):
             system.say(f"{'*' if item['current'] else ' '} {item['name']}  {item['installed']}")
@@ -430,14 +481,53 @@ def parser():
             command.add_argument("names", nargs="*", default=[])
         command.set_defaults(handler=_sql)
 
+    command = groups.add_parser("migrate", help="Harbor's copy as the truth, the generated scripts out of the site folders (phase 6)")
+    command.add_argument("site", nargs="?", default="", help="one site; every site when left out")
+    command.add_argument("--dry-run", action="store_true", help="tell what it would do, change nothing")
+    command.add_argument("--json", action="store_true", help="the plan as JSON")
+    command.add_argument("--rollback", action="store_true", help="put a migrated site's scripts back from its backup")
+    command.set_defaults(handler=_migrate, command="")
+    other = groups.add_parser("servers", help="other servers Harbor works with, reached with its own SSH key").add_subparsers(
+        dest="command", required=True, metavar="<command>")
+    command = other.add_parser("add", help="add a server: Harbor's key is put there with the password in HARBOR_SSH_PASSWORD, once")
+    command.add_argument("name", help="a name of its own, such as linux-02")
+    command.add_argument("host", help="its address")
+    command.add_argument("--user", default="root")
+    command.add_argument("--port", default="22")
+    command.set_defaults(handler=_servers)
+    command = other.add_parser("remove", help="forget a server here; Harbor stays there unless --uninstall, its key unless --revoke-key")
+    command.add_argument("name")
+    command.add_argument("--uninstall", action="store_true", help="also uninstall Harbor there (/opt/harbor and its command only)")
+    command.add_argument("--revoke-key", action="store_true", help="also take Harbor's key out of authorized_keys there")
+    command.set_defaults(handler=_servers)
+    command = other.add_parser("install", help="install this server's Harbor release there and use it (an agent); again updates it")
+    command.add_argument("name")
+    command.set_defaults(handler=_servers)
+    command = other.add_parser("list", help="the servers, as JSON")
+    command.set_defaults(handler=_servers)
+    command = other.add_parser("status", help="the version handshake with a server, or every server, as JSON")
+    command.add_argument("name", nargs="?", default="")
+    command.set_defaults(handler=_servers)
+
     users = groups.add_parser("users", help="a Linux user for each user of the admin").add_subparsers(dest="command", required=True, metavar="<command>")
     command = users.add_parser("sync", help="the Linux users equal to the admin's users (JSON on stdin, or --config)")
     command.add_argument("--config", default="", help="the admin's config.json")
     command.set_defaults(handler=_users_sync)
     command = users.add_parser("list", help="which admin user has which Linux user, as JSON")
     command.set_defaults(handler=_users_list)
+    command = users.add_parser("sftp-password", help="set a user's SFTP password (from HARBOR_SFTP_PASSWORD)")
+    command.add_argument("user", help="the admin user's id, or their Linux name")
+    command.set_defaults(handler=_users_sftp)
+    command = users.add_parser("sftp-keys", help="set a user's public SSH keys for SFTP (one per line on stdin; none removes them)")
+    command.add_argument("user", help="the admin user's id, or their Linux name")
+    command.set_defaults(handler=_users_sftp)
+    command = users.add_parser("mounts", help="the sites in the SFTP folders again, as after the last sync (at boot)")
+    command.set_defaults(handler=_users_sftp)
 
     own = groups.add_parser("self", help="Harbor itself: its releases in /opt/harbor").add_subparsers(dest="command", required=True, metavar="<command>")
+    command = own.add_parser("use", help="use a release that is in /opt/harbor/releases (one copied here from another server)")
+    command.add_argument("release")
+    command.set_defaults(handler=_self)
     command = own.add_parser("install", help="install a release from a copy of the repository and use it")
     command.add_argument("source")
     command.set_defaults(handler=_self)

@@ -79,6 +79,9 @@ def sync(system, name):
         shutil.rmtree(secrets, ignore_errors=True)
         return []
     problems = []
+    if (state / "migrated.json").is_file():
+        # Migrated (phase 6): the copy is the truth, there is nothing in the site folder to make it from
+        return []
     # Only what the site folder has: the copy is made from it, never from itself
     ids = settings.script_ids(system, site.site_root)
     kept = set()

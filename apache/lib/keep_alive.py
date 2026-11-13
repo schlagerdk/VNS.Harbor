@@ -125,6 +125,18 @@ def environment_urls(web_root=Path("/var/www")):
             # The environment's id: the older single environment in scripts/ is prod
             target = "prod" if script.parent.name == "scripts" else script.parent.name
             urls.append((f"{site.name}/{target}", f"{scheme}://{binding}/"))
+        # A migrated site (phase 6) has its environments' settings in Harbor's copy only
+        copy = Path("/var/lib/harbor/sites") / site.name
+        if (copy / "migrated.json").is_file():
+            for path in sorted((copy / "environments").glob("*.json")):
+                try:
+                    found = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    continue
+                binding = str(found.get("BINDING", ""))
+                if found.get("LOCAL_PATH") or not re.fullmatch(r"[A-Za-z0-9.-]{1,253}", binding):
+                    continue
+                urls.append((f"{site.name}/{path.stem}", f"{'http' if found.get('HTTPS') == 'n' else 'https'}://{binding}/"))
     return urls
 
 

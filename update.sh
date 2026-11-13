@@ -88,6 +88,9 @@ main() {
     printf '%s\n' "$revision" > "$TARGET/.vns-version"
     # Harbor as a release in /opt/harbor (phase 3): /vns keeps working whether or not this does
     sudo python3 "$TARGET/bin/harbor" self install "$TARGET" || echo "Harbor was not installed in /opt/harbor." >&2
+    # The bridge to Harbor (phase 6): Harbor holds every site's settings, and its own scripts and .vns-publish leave the
+    # site folders (backed up first; a site's own scripts stay). A site that is not ready is left as it is, and told.
+    sudo python3 "$TARGET/bin/harbor" migrate || echo "Not every site was migrated: sudo harbor migrate --dry-run tells why." >&2
     echo "VNS updated in $TARGET"
 }
 

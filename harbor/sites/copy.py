@@ -16,7 +16,7 @@ from harbor.core.site_config import issue_certificate
 from harbor.core.system import CommandFailed, Stop
 from harbor.core.templates import Site
 from harbor.environments import settings
-from harbor.core.paths import LIB
+from harbor.core.paths import BIN, LIB
 
 
 
@@ -28,6 +28,21 @@ def copy_module():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def carry_migrated_state(system, source_name, target_name):
+    """A copy of a migrated site (phase 6) is migrated too: it has no scripts folder either. It is a site of its own,
+    so it takes the source's publish options and Sync setup for the site itself, never its environments."""
+    from harbor.state.store import STATE, read_json, write_json
+    source, target = system.path(f"{STATE}/{source_name}"), system.path(f"{STATE}/{target_name}")
+    if not (source / "migrated.json").is_file():
+        return
+    write_json(target / "migrated.json", {**(read_json(source / "migrated.json") or {}), "copied_from": source_name})
+    if read_json(source / "site.json"):
+        write_json(target / "site.json", read_json(source / "site.json"))
+    setup = read_json(source / "data_sync.json")
+    if isinstance(setup, dict) and "main" in setup:
+        write_json(target / "data_sync.json", {"main": setup["main"]})
 
 
 def copy_site(system, source_name, target_name, binding, database="", project=None, connection=None, stop_source=False, remove_source=""):
@@ -113,6 +128,7 @@ def copy_files(system, site, source, source_name, target_name, binding, database
         except (OSError, ValueError) as error:
             raise Stop(f"Copy site failed: {error}") from None
         system.path(f"/var/lib/vns-roots/{target_name}").mkdir(parents=True, exist_ok=True)
+        carry_migrated_state(system, source_name, target_name)
         if https:
             config = system.path(site.config_path)
             final = config.read_text()
@@ -136,7 +152,10 @@ def copy_files(system, site, source, source_name, target_name, binding, database
                 script = system.path(f"{site.site_root}/scripts/publish.sh")
                 if not script.is_file():
                     script = system.path(f"{site.site_root}/scripts/publish_local.sh")
-                if not system.run("bash", f"{site.site_root}/scripts/{script.name}", check=False).ok:
+                # A migrated site has no publish script: harbor publishes it, as the script would
+                argv = (["bash", f"{site.site_root}/scripts/{script.name}"] if script.is_file()
+                        else ["python3", str(BIN), "site", "publish", target_name])
+                if not system.run(*argv, check=False).ok:
                     raise Stop(f"The copy could not be built. It is in {site.site_root}: fix the build and run its Publish.")
             else:
                 system.step(f"Start {target_name}")

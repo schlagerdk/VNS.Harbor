@@ -44,10 +44,16 @@ def fingerprint(root):
 HARBOR_STATE = Path("/var/lib/harbor/sites")
 
 
-def mirror(site_root, relative, data):
+def migrated(site_root):
+    """A site migrated (harbor migrate, phase 6): Harbor's copy is its truth, its folder has no scripts or .vns-publish"""
+    return (HARBOR_STATE / Path(site_root).name / "migrated.json").is_file()
+
+
+def mirror(site_root, relative, data, strict=False):
     """The same in Harbor's copy (harbor/state), where there is one. Not there or not writable: the next
-    harbor state sync makes it equal, so nothing stops for it."""
-    if not HARBOR_STATE.is_dir():
+    harbor state sync makes it equal, so nothing stops for it. Strict (a migrated site, where the copy is the truth):
+    an error stops it."""
+    if not HARBOR_STATE.is_dir() and not strict:
         return
     target = HARBOR_STATE / Path(site_root).name / relative
     try:
@@ -59,14 +65,15 @@ def mirror(site_root, relative, data):
         os.chmod(temporary, 0o644)
         os.replace(temporary, target)
     except OSError:
-        pass
+        if strict:
+            raise
 
 
 def status_path(root, name):
     """Where a status is read: the site folder while it is there, else Harbor's copy (harbor/state)"""
     path = Path(root) / ".vns-publish" / name
     copy = HARBOR_STATE / Path(root).name / "publish" / name
-    return copy if not path.exists() and copy.is_file() else path
+    return copy if migrated(root) or (not path.exists() and copy.is_file()) else path
 
 
 def status(root, scope, current):
@@ -81,6 +88,9 @@ def status(root, scope, current):
 
 
 def record(root, scope, value, **metadata):
+    if migrated(root):
+        mirror(root, f"publish/{scope}.json", {"fingerprint": value, **metadata}, strict=True)
+        return
     folder = Path(root) / ".vns-publish"
     folder.mkdir(mode=0o700, exist_ok=True)
     descriptor, temporary = tempfile.mkstemp(dir=folder, prefix=scope + "-", suffix=".tmp")
@@ -327,7 +337,19 @@ def main(args):
     if action == "both":
         # The scripts run one at a time, and the first failure stops the rest
         for script in args[2:]:
-            result = run_publish(root, script_scope(script), ["/bin/bash", script])
+            if script.startswith("harbor:"):
+                # A migrated site (phase 6) has no publish scripts: harbor publishes, as they would
+                scope = script[len("harbor:"):]
+                if not re.fullmatch(r"test|prod|target-[a-z0-9][a-z0-9-]{0,62}", scope):
+                    raise ValueError("Invalid publish scope")
+                harbor = str(Path(__file__).resolve().parents[2] / "bin/harbor")
+                site = Path(root).name
+                command = (["/usr/bin/python3", harbor, "site", "publish", site] if scope == "test" else
+                           ["/usr/bin/env", "VNS_TARGET=" + (scope[len("target-"):] if scope != "prod" else "prod"),
+                            "/usr/bin/python3", harbor, "env", "publish", site])
+                result = run_publish(root, scope, command)
+            else:
+                result = run_publish(root, script_scope(script), ["/bin/bash", script])
             if result:
                 return result
         return 0

@@ -16,6 +16,8 @@ GROUP = "harbor-users"
 MAPPING = "/var/lib/harbor/users.json"
 SITE_GROUPS = "/var/lib/harbor/site-groups.json"
 CLOSED = "/var/lib/harbor/closed-sites.json"
+# Sites whose folder had the sticky bit, taken off while they have a group (or the group could not delete root's files)
+STICKY = "/var/lib/harbor/site-sticky.json"
 WEB_ROOT = "/var/www"
 # Hold passwords until phase 6: a site's group never reaches them
 EXCLUDED = ("scripts", ".vns-publish")
@@ -99,6 +101,8 @@ def sync(system, users):
         write_json(system.path(MAPPING), known)
     sync_sites(system, users, names)
     keep_sites_closed(system, bool(members(system, GROUP)))
+    from harbor.server import sftp
+    sftp.sync(system, users, names, wanted_sites(system, users, names))
     return names
 
 
@@ -173,6 +177,11 @@ def grant_folder(system, site, group):
     """rwX for the site's group on the site's folder, and on what is made in it later; never on EXCLUDED"""
     root = f"{WEB_ROOT}/{site}"
     entry = f"g:{group}:rwX,m::rwX"
+    # In a folder with the sticky bit only a file's owner may delete or rename it: the site's group could only add
+    if system.path(root).stat().st_mode & 0o1000:
+        sticky = read_json(system.path(STICKY)) or []
+        system.run("chmod", "-t", root)
+        write_json(system.path(STICKY), sorted(set(sticky) | {site}))
     system.run("setfacl", "-R", "-P", "-m", entry, root)
     system.run("find", "-P", root, "-type", "d", "-exec", "setfacl", "-d", "-m", entry, "{}", "+")
     for name in EXCLUDED:
@@ -181,6 +190,11 @@ def grant_folder(system, site, group):
 
 
 def revoke_folder(system, folder, group):
+    sticky = read_json(system.path(STICKY)) or []
+    site = folder.rstrip("/").rsplit("/", 1)[-1]
+    if folder == f"{WEB_ROOT}/{site}" and site in sticky:
+        system.run("chmod", "+t", folder, check=False, capture=True)
+        write_json(system.path(STICKY), [name for name in sticky if name != site])
     system.run("setfacl", "-R", "-P", "-x", f"g:{group}", folder, check=False, capture=True)
     system.run("find", "-P", folder, "-type", "d", "-exec", "setfacl", "-d", "-x", f"g:{group}", "{}", "+", check=False, capture=True)
 
@@ -211,6 +225,11 @@ def sync_sites(system, users, names):
                 system.step(f"Give the group {group} the folder of {site}")
                 grant_folder(system, site, group)
                 groups[site] = group
+            elif system.path(f"{WEB_ROOT}/{site}").stat().st_mode & 0o1000:
+                # Given before the sticky bit was taken off, or set again by hand
+                sticky = read_json(system.path(STICKY)) or []
+                system.run("chmod", "-t", f"{WEB_ROOT}/{site}")
+                write_json(system.path(STICKY), sorted(set(sticky) | {site}))
             if names_here != members(system, group):
                 system.run("gpasswd", "-M", ",".join(sorted(names_here)), group, capture=True)
     finally:

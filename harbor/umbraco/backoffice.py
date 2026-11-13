@@ -16,6 +16,7 @@ import hmac
 import json
 import re
 import secrets
+import shlex
 import time
 
 from harbor.core.system import Stop
@@ -46,13 +47,49 @@ def connection(system, site, environment="main"):
 
 
 def running_folder(system, site, environment):
-    """Where the site of an environment runs, on this server: the site's own service folder, or a local environment's"""
+    """Where the site of an environment runs: the site's own service folder, or the environment's folder (here, on
+    another server, or the IIS site's share on Windows)"""
     if environment == "main":
         return working_folder(system, site)
+    return settings.load(system, site.site_root, environment).root
+
+
+def where(system, site, environment):
+    """The environment's settings when it is on another server (Linux or Windows), else None"""
+    if environment == "main":
+        return None
     found = settings.load(system, site.site_root, environment)
-    if not found.local:
-        raise Stop("Only a site on this server can be connected yet: its environment is on another server.")
-    return found.root
+    return None if found.local else found
+
+
+def read_remote(system, site, environment, name):
+    """A file where an environment runs, or "" when it is not there"""
+    found = where(system, site, environment)
+    folder = running_folder(system, site, environment)
+    if found is None:
+        path = system.path(f"{folder}/{name}")
+        return path.read_text(errors="replace") if path.is_file() else ""
+    if found.windows:
+        from harbor.environments.windows import Share
+        share = Share(system, found).connect()
+        result = share.rclone("cat", f"{share.target}/{name}", check=False, capture=True)
+        return result.stdout if result.ok else ""
+    result = settings.remote_exec(system, found, f"cat {shlex.quote(f'{folder}/{name}')} 2>/dev/null", check=False, capture=True)
+    return result.stdout if result.ok else ""
+
+
+def runs_package(system, site, environment):
+    """Whether the environment runs the VNS.Harbor package (it was published with it)"""
+    found = where(system, site, environment)
+    folder = running_folder(system, site, environment)
+    if found is None:
+        return system.path(f"{folder}/VNS.Harbor.dll").is_file()
+    if found.windows:
+        from harbor.environments.windows import Share
+        share = Share(system, found).connect()
+        listing = share.rclone("lsf", share.target, "--max-depth", "1", "--files-only", check=False, capture=True)
+        return any(line.lower() == "vns.harbor.dll" for line in listing.stdout.splitlines())
+    return settings.remote_exec(system, found, f"test -f {shlex.quote(f'{folder}/VNS.Harbor.dll')}", check=False, capture=True).ok
 
 
 def admin_url(system):
@@ -73,13 +110,35 @@ def connect(system, name, environment="main", harbor_url=""):
     """vns-harbor.json where the site runs, so the package knows its Harbor, its token and its login key"""
     site = site_named(system, name)
     keys = connection(system, site, environment)
-    path = system.path(f"{running_folder(system, site, environment)}/vns-harbor.json")
-    data = {"harbor": harbor_url or (read_json(path) or {}).get("harbor", "") or admin_url(system), "site": site.name, "environment": environment,
-            "token": keys["token"], "loginKey": keys["login_key"]}
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2) + "\n")
-    path.chmod(0o640)
-    system.run("chown", "root:www-data", str(path), check=False, capture=True)
+    folder = running_folder(system, site, environment)
+    found = where(system, site, environment)
+    try:
+        before = json.loads(read_remote(system, site, environment, "vns-harbor.json") or "{}")
+    except ValueError:
+        before = {}
+    data = {"harbor": harbor_url or (before if isinstance(before, dict) else {}).get("harbor", "") or admin_url(system), "site": site.name,
+            "environment": environment, "token": keys["token"], "loginKey": keys["login_key"]}
+    text = json.dumps(data, indent=2) + "\n"
+    if found is None:
+        path = system.path(f"{folder}/vns-harbor.json")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+        path.chmod(0o640)
+        system.run("chown", "root:www-data", str(path), check=False, capture=True)
+    elif found.windows:
+        # On the IIS site's share; the site reads it as the app pool's user, as its appsettings.json
+        from harbor.environments.windows import Share
+        import tempfile
+        share = Share(system, found).connect()
+        with tempfile.NamedTemporaryFile("w", suffix=".json") as local:
+            local.write(text)
+            local.flush()
+            share.rclone("copyto", local.name, f"{share.target}/vns-harbor.json")
+    else:
+        # Over SSH, written whole and only readable by root and the site (www-data); the token never in argv
+        target = shlex.quote(f"{folder}/vns-harbor.json")
+        command = f"umask 027; cat > {target}.new && chown root:www-data {target}.new && mv {target}.new {target}"
+        settings.remote_exec(system, found, f"sh -c {shlex.quote(command)}", input=text)
     system.say(f"{site.name} ({environment}) is connected to Harbor.")
 
 
@@ -131,14 +190,16 @@ def login_link(system, name, environment="main", who="", now=None):
     user = backoffice_user(system, site.name, environment)
     if not user:
         raise Stop("No Umbraco user is chosen for the Backend button of this site.")
-    # Where it runs on this server, it must run the package: published before the package was added, the login link
-    # would lead nowhere, and the Backend button opens the backoffice's own login instead
-    folder = running_folder(system, site, environment)
-    if not system.path(f"{folder}/VNS.Harbor.dll").is_file():
+    # Where it runs, it must run the package: published before the package was added, the login link would lead
+    # nowhere, and the Backend button opens the backoffice's own login instead
+    if not runs_package(system, site, environment):
         raise Stop(f"{site.name} ({environment}) does not run the VNS.Harbor package yet: publish it.")
     keys = connection(system, site, environment)
-    # The site where it runs must know the key: connected now when it is not yet (an environment on this server)
-    written = read_json(system.path(f"{running_folder(system, site, environment)}/vns-harbor.json")) or {}
+    # The site where it runs must know the key: connected now when it is not yet
+    try:
+        written = json.loads(read_remote(system, site, environment, "vns-harbor.json") or "{}")
+    except ValueError:
+        written = {}
     if written.get("loginKey") != keys["login_key"]:
         connect(system, site.name, environment)
     now = time.time() if now is None else now

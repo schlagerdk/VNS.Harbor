@@ -247,8 +247,8 @@ for (const exited of [false, true]) for (const exitCode of [0, 1, -9]) {
     Object.assign(t, {exited, exitCode});
     for (const key of ["Escape", "Enter", "a"]) {
         closed = 0;
-        // Enter closes a finished terminal; Escape is left to the programs in it (nano, vim)
-        const handled = exited && key === "Enter";
+        // Enter or Escape closes a finished terminal; while it runs, Escape is the programs' in it (nano, vim)
+        const handled = exited && (key === "Enter" || key === "Escape");
         assert.equal(callback({type:"keydown", key}), !handled);
         assert.equal(closed, handled ? 1 : 0);
         callback({type:"keyup", key});

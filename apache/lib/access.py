@@ -186,6 +186,8 @@ def clean(data, existing=None, sites=None, connections=None):
     user["password_hash"] = existing.get("password_hash", "")
     user["web"] = bool(data.get("web", existing.get("web", False)))
     user["create_sites"] = bool(data.get("create_sites", existing.get("create_sites", False)))
+    # SFTP to the sites they have Files on, as their own Linux user (harbor/server/sftp.py)
+    user["sftp"] = bool(data.get("sftp", existing.get("sftp", False)))
     user["sql"] = bool(data.get("sql", existing.get("sql", False)))
     user["manage_connections"] = bool(data.get("manage_connections", existing.get("manage_connections", False)))
     granted = data.get("sites", existing.get("sites", {})) or {}
@@ -223,6 +225,7 @@ def clean(data, existing=None, sites=None, connections=None):
     if role == "admin":
         for key in ("sites", "connections"):
             user[key] = {}
+        user["sftp"] = False
     return user
 
 

@@ -132,6 +132,9 @@ def publish_windows(system, site, environment, project, local_publish, dry_run=F
         else:
             system.say("Create web.config")
             share.rclone("copyto", str(web_config), f"{share.target}/web.config")
+        # The connection to Harbor (VNS.Harbor package), before the site starts again and reads it
+        from harbor.sites.tools import keep_connection
+        keep_connection(system, site, environment.id)
         # Every file is in place: the site may come back
         copying = False
         share.bring_online()

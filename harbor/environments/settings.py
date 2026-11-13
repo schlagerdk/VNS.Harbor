@@ -128,6 +128,65 @@ def site_name(site_root):
     return str(site_root).rstrip("/").rsplit("/", 1)[-1]
 
 
+def migrated(system, site_root):
+    """A site migrated (phase 6): Harbor's copy is its truth, its folder has no scripts or .vns-publish any more"""
+    return system.path(f"{STATE}/{site_name(site_root)}/migrated.json").is_file()
+
+
+SECRET_KEYS = ("PASSWORD", "SMB_PASSWORD")
+
+
+def quote(value):
+    return "'" + str(value).replace("'", "'\\''") + "'"
+
+
+def write_copy(system, site_root, target, found):
+    """An environment's settings into Harbor's copy: the passwords apart, only root may read them"""
+    from harbor.state.store import write_json
+    name = site_name(site_root)
+    write_json(system.path(f"{STATE}/{name}/environments/{target}.json"), {key: value for key, value in found.items() if key not in SECRET_KEYS})
+    hidden = {key: found[key] for key in SECRET_KEYS if found.get(key)}
+    secret = system.path(f"{SECRETS}/{name}/{target}.json")
+    if hidden:
+        write_json(secret, hidden, private=True)
+        for place in (system.path("/etc/harbor/secrets"), system.path(SECRETS), secret.parent):
+            place.chmod(0o700)
+    else:
+        secret.unlink(missing_ok=True)
+
+
+def update(system, site_root, target, changes):
+    """Some of an environment's settings changed, such as {"HTTPS": "y"}: in its script while the site folder has it,
+    else in Harbor's copy. A setting the script does not have yet is added after its other settings."""
+    if not TARGET.fullmatch(target):
+        raise SettingsError(f"Invalid environment: {target}")
+    path = system.path(settings_script(site_root, target))
+    if path.is_file():
+        text = path.read_text()
+        for key, value in changes.items():
+            line = f"PROD_{key}={quote(value)}"
+            pattern = re.compile(rf"(?m)^PROD_{re.escape(key)}=\S*")
+            if pattern.search(text):
+                text = pattern.sub(lambda match: line, text, count=1)
+            else:
+                last = list(re.finditer(r"(?m)^PROD_[A-Z_]+=.*$", text))
+                at = last[-1].end() if last else 0
+                text = text[:at] + ("\n" if at else "") + line + ("" if at else "\n") + text[at:]
+        path.write_text(text)
+        return
+    found = values(system, site_root, target)
+    if found is None:
+        raise SettingsError(f"No environment {target} in {site_name(site_root)}.")
+    write_copy(system, site_root, target, {**found, **{key: str(value) for key, value in changes.items()}})
+
+
+def remove(system, site_root, target):
+    """An environment's settings gone, from Harbor's copy (its script goes with its folder)"""
+    name = site_name(site_root)
+    system.path(f"{STATE}/{name}/environments/{target}.json").unlink(missing_ok=True)
+    system.path(f"{SECRETS}/{name}/{target}.json").unlink(missing_ok=True)
+
+
 def values(system, site_root, target="prod"):
     """An environment's settings, its passwords too: from its script in the site folder while that is there, else from
     Harbor's copy. None when it has neither."""

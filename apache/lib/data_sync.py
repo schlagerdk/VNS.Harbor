@@ -36,10 +36,16 @@ ID_RE = re.compile(r"main|[a-z0-9][a-z0-9-]{0,62}")
 HARBOR_STATE = Path("/var/lib/harbor/sites")
 
 
-def mirror(site_root, relative, data):
+def migrated(site_root):
+    """A site migrated (harbor migrate, phase 6): Harbor's copy is its truth, its folder has no scripts or .vns-publish"""
+    return (HARBOR_STATE / Path(site_root).name / "migrated.json").is_file()
+
+
+def mirror(site_root, relative, data, strict=False):
     """The same in Harbor's copy (harbor/state), where there is one. Not there or not writable: the next
-    harbor state sync makes it equal, so nothing stops for it."""
-    if not HARBOR_STATE.is_dir():
+    harbor state sync makes it equal, so nothing stops for it. Strict (a migrated site, where the copy is the truth):
+    an error stops it."""
+    if not HARBOR_STATE.is_dir() and not strict:
         return
     target = HARBOR_STATE / Path(site_root).name / relative
     try:
@@ -51,7 +57,8 @@ def mirror(site_root, relative, data):
         os.chmod(temporary, 0o644)
         os.replace(temporary, target)
     except OSError:
-        pass
+        if strict:
+            raise
 
 
 def config_path(site_root):
@@ -62,7 +69,7 @@ def read_path(site_root):
     """Where the settings are read: the site folder while they are there, else Harbor's copy (harbor/state)"""
     path = config_path(site_root)
     copy = HARBOR_STATE / Path(site_root).name / "data_sync.json"
-    return copy if not path.exists() and copy.is_file() else path
+    return copy if migrated(site_root) or (not path.exists() and copy.is_file()) else path
 
 
 def clean(settings, site_id=""):
@@ -92,6 +99,9 @@ def save(site_root, site_id, settings):
         raise ValueError("Unknown site")
     data = load(site_root)
     data[site_id] = clean(settings, site_id)
+    if migrated(site_root):
+        mirror(site_root, "data_sync.json", data, strict=True)
+        return data[site_id]
     path = config_path(site_root)
     descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=".data_sync.", suffix=".json")
     with os.fdopen(descriptor, "w", encoding="utf-8") as stream:

@@ -61,7 +61,9 @@ def run_create_prod(system, site, variables):
         # common.sh exported the apache folder, which the installed scripts render the current templates with
         return system.run("bash", script.name, env={"R_APACHE_DIR": site.apache_dir, **variables}, check=False)
     finally:
-        os.unlink(script.name)
+        # Run from the admin (VNS_PROD_MODAL=1) the script removes itself, as the old one did
+        if os.path.exists(script.name):
+            os.unlink(script.name)
 
 
 def register_environment(system, name):

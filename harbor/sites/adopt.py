@@ -40,6 +40,9 @@ def release_site(system, name, target=""):
         raise Stop("This environment is not a separate site, so it cannot be moved out.")
     shutil.rmtree(system.path(f"{site.site_root}/scripts/targets/{target}"), ignore_errors=True)
     system.path(f"{site.site_root}/.vns-publish/target-{target}.json").unlink(missing_ok=True)
+    if settings.migrated(system, site.site_root):
+        settings.remove(system, site.site_root, target)
+        system.path(f"/var/lib/harbor/sites/{site.name}/publish/target-{target}.json").unlink(missing_ok=True)
     restore_test_scripts(system, site)
     system.say(f"{environment.FOLDER} is a separate site again. Its files and service were not touched.")
 

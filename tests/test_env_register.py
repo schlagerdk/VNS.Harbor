@@ -123,5 +123,20 @@ class WrapperTests(unittest.TestCase):
         self.assertIn('/../bin/harbor" env register "$@"', (ROOT / "apache/register_env.sh").read_text())
 
 
+
+class RunCreateProdTests(unittest.TestCase):
+    def test_a_script_that_removes_itself(self):
+        """Run from the admin, create_prod.sh removes itself (rm -f "$0"); harbor does not remove it again"""
+        import os as _os
+        from harbor.core.system import RecordingSystem
+        from harbor.core.templates import Site
+        from harbor.environments.register import run_create_prod
+
+        def runs(argv):
+            _os.unlink(argv[1])
+            return ""
+        result = run_create_prod(RecordingSystem(root=Path("/"), answers={"bash": runs}), Site("shop.dk"), {"VNS_PROD_MODAL": "1"})
+        self.assertTrue(result.ok)
+
 if __name__ == "__main__":
     unittest.main()

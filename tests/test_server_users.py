@@ -60,8 +60,22 @@ class Server:
         return ""
 
     def gpasswd(self, argv):
-        group, names = argv[-1], argv[-2]
+        group = argv[-1]
+        found = next((line.split(":")[3] for line in self.lines("group") if line.split(":")[0] == group), "")
+        current = [name for name in found.split(",") if name]
+        names = argv[-2] if argv[1] == "-M" else ",".join(current + [argv[2]]) if argv[1] == "-a" else ",".join(n for n in current if n != argv[2])
         self.write("group", [":".join(line.split(":")[:3] + [names]) if line.split(":")[0] == group else line for line in self.lines("group")])
+        return ""
+
+    def mount(self, argv):
+        mounts = self.root / "proc/self/mounts"
+        mounts.parent.mkdir(parents=True, exist_ok=True)
+        mounts.write_text((mounts.read_text() if mounts.exists() else "") + f"/dev/sda1 {argv[-1]} ext4 rw 0 0\n")
+        return ""
+
+    def umount(self, argv):
+        mounts = self.root / "proc/self/mounts"
+        mounts.write_text("".join(line + "\n" for line in mounts.read_text().splitlines() if line.split()[1] != argv[-1]))
         return ""
 
     def groupdel(self, argv):
@@ -69,6 +83,8 @@ class Server:
         return ""
 
     def usermod(self, argv):
+        if "--shell" not in argv:
+            return ""
         name, shell = argv[-1], argv[argv.index("--shell") + 1]
         self.write("passwd", [":".join(line.split(":")[:6] + [shell]) if line.split(":")[0] == name else line for line in self.lines("passwd")])
         return ""
@@ -80,9 +96,10 @@ class UserTests(unittest.TestCase):
         self.addCleanup(folder.cleanup)
         self.root = Path(folder.name)
         self.server = Server(self.root)
+        self.extra = {}
 
     def sync(self, admin_users):
-        system = RecordingSystem(root=self.root, answers={name: getattr(self.server, name) for name in ("groupadd", "useradd", "userdel", "usermod", "gpasswd", "groupdel")})
+        system = RecordingSystem(root=self.root, answers={name: getattr(self.server, name) for name in ("groupadd", "useradd", "userdel", "usermod", "gpasswd", "groupdel", "mount", "umount")}, **self.extra)
         system.programs.update({"useradd", "setfacl"})
         with mock.patch("sys.stdin", io.StringIO(json.dumps(admin_users))):
             self.assertEqual(main(["users", "sync"], system), 0, system.said)
@@ -169,6 +186,14 @@ class SiteGroupTests(UserTests):
         self.assertIn("setfacl -R -P -x g:site-shop-dk /var/www/shop.dk", system.commands)
         self.assertIn("groupdel site-shop-dk", system.commands)
 
+    def test_the_sticky_bit_is_off_while_the_site_has_a_group(self):
+        (self.root / "var/www/shop.dk").chmod(0o1775)
+        system = self.sync(self.users())
+        self.assertIn("chmod -t /var/www/shop.dk", system.commands)
+        system = self.sync(self.users(anna_actions=("logs",)))
+        self.assertIn("chmod +t /var/www/shop.dk", system.commands)
+        self.assertNotIn("chmod +t /var/www/shop.dk/scripts", system.commands)
+
     def test_a_disabled_user_leaves_the_group(self):
         self.sync(self.users())
         listed = self.users()
@@ -202,6 +227,74 @@ class SiteGroupTests(UserTests):
         self.assertTrue(name.startswith("site-a-very-long"))
         self.assertNotEqual(name, users.site_group("a-very-long-subdomain.of.another-customer.example.com"))
         self.assertEqual(users.site_group("shop.dk"), "site-shop-dk")
+
+
+
+class SftpTests(SiteGroupTests):
+    def sftp_users(self, on=True):
+        listed = self.users()
+        listed[0]["sftp"] = on
+        return listed
+
+    def test_sftp_for_a_user_with_it(self):
+        system = self.sync(self.sftp_users())
+        self.assertEqual(users.members(system, "harbor-sftp"), {"anna"})
+        config = (self.root / "etc/ssh/sshd_config.d/harbor-sftp.conf").read_text()
+        self.assertIn("Match Group harbor-users,!harbor-sftp\n    PasswordAuthentication no", config)
+        self.assertIn("ChrootDirectory /srv/harbor-sftp/%u", config)
+        self.assertTrue(config.rstrip().endswith("Match all"))
+        self.assertLess(system.commands.index("sshd -t"), system.commands.index("systemctl reload ssh"))
+        self.assertIn("mount --bind /var/www/shop.dk /srv/harbor-sftp/anna/shop.dk", system.commands)
+        self.assertEqual(json.loads((self.root / "var/lib/harbor/sftp.json").read_text()), {"anna": ["shop.dk"]})
+        self.assertTrue((self.root / "etc/systemd/system/harbor-sftp-mounts.service").is_file())
+        # Again: nothing reloaded or mounted twice
+        system = self.sync(self.sftp_users())
+        self.assertNotIn("systemctl reload ssh", system.commands)
+        self.assertFalse(any(command.startswith("mount ") for command in system.commands))
+        # Off: out of the group, locked, the keys gone, unmounted, and the SSH server as it was
+        keys = self.root / "home/anna/.ssh"
+        keys.mkdir(parents=True)
+        (keys / "authorized_keys").write_text("ssh-ed25519 AAAA anna\n")
+        system = self.sync(self.sftp_users(on=False))
+        self.assertEqual(users.members(system, "harbor-sftp"), set())
+        self.assertIn("usermod --lock anna", system.commands)
+        self.assertFalse((keys / "authorized_keys").exists())
+        self.assertIn("umount /srv/harbor-sftp/anna/shop.dk", system.commands)
+        self.assertFalse((self.root / "etc/ssh/sshd_config.d/harbor-sftp.conf").exists())
+        self.assertFalse((self.root / "srv/harbor-sftp/anna").exists())
+
+    def test_a_config_sshd_refuses_is_taken_back(self):
+        from harbor.core.system import Result
+        self.extra = {"sshd -t": Result(255, "", "bad")}
+        system = RecordingSystem(root=self.root)
+        with mock.patch("sys.stdin", io.StringIO(json.dumps(self.sftp_users()))):
+            answers = {name: getattr(self.server, name) for name in ("groupadd", "useradd", "userdel", "usermod", "gpasswd", "groupdel", "mount", "umount")}
+            system = RecordingSystem(root=self.root, answers={**answers, "sshd -t": Result(255, "", "bad")})
+            system.programs.update({"useradd", "setfacl"})
+            self.assertEqual(main(["users", "sync"], system), 1)
+        self.assertFalse((self.root / "etc/ssh/sshd_config.d/harbor-sftp.conf").exists())
+        self.assertNotIn("systemctl reload ssh", system.commands)
+        self.assertIn("did not accept", system.said[-1])
+
+    def test_password_and_keys(self):
+        from harbor.server import sftp
+        self.sync(self.sftp_users())
+        system = RecordingSystem(root=self.root)
+        with mock.patch.dict("os.environ", {"HARBOR_SFTP_PASSWORD": "a-long-secret-1"}):
+            self.assertEqual(main(["users", "sftp-password", "u_1"], system), 0, system.said)
+        self.assertIn("anna:a-long-secret-1\n", system.inputs)
+        self.assertNotIn("a-long-secret-1", " ".join(system.commands))
+        with mock.patch.dict("os.environ", {"HARBOR_SFTP_PASSWORD": "short"}):
+            self.assertEqual(main(["users", "sftp-password", "u_1"], RecordingSystem(root=self.root)), 1)
+        (self.root / "home/anna").mkdir(parents=True, exist_ok=True)
+        with mock.patch("sys.stdin", io.StringIO("ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIabc anna@laptop\n\n")):
+            self.assertEqual(main(["users", "sftp-keys", "anna"], RecordingSystem(root=self.root)), 0)
+        self.assertEqual(sftp.keys_of(system, "anna"), "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIabc anna@laptop\n")
+        with mock.patch("sys.stdin", io.StringIO("ssh-ed25519 AAAA x\ncommand=\"rm -rf /\" ssh-rsa AAAA\n")):
+            self.assertEqual(main(["users", "sftp-keys", "anna"], RecordingSystem(root=self.root)), 1)
+        # Never for a user Harbor did not make
+        with mock.patch.dict("os.environ", {"HARBOR_SFTP_PASSWORD": "a-long-secret-1"}):
+            self.assertEqual(main(["users", "sftp-password", "mhs"], RecordingSystem(root=self.root)), 1)
 
 
 if __name__ == "__main__":

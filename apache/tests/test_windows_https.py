@@ -21,7 +21,7 @@ def load(answers, root):
     def probe_url(url):
         asked.append(url)
         return answers[url.split(":")[0]]
-    ns = dict(WINDOWS_HTTPS={}, time=time, re=re, os=os, WEB_ROOT=root, probe_url=probe_url,
+    ns = dict(WINDOWS_HTTPS={}, time=time, re=re, os=os, WEB_ROOT=root, probe_url=probe_url, site_migrated=lambda site: False,
               target_folder=lambda site_root, target: os.path.join(site_root, "scripts", "targets", target),
               app=SimpleNamespace(logger=logging.getLogger(__name__)))
     exec(compile(ast.Module(body=nodes, type_ignores=[]), "windows probe", "exec"), ns)

@@ -49,6 +49,11 @@ def install_scripts(system, site, folder):
     folder = Path(folder)
     if not folder.is_dir():
         return
+    from harbor.state.migrate import born_migrated, server_migrated
+    if server_migrated(system):
+        # A migrated server (phase 6): Harbor does the scripts' work; their names are kept for the admin's buttons
+        born_migrated(system, site, [template.name for template in folder.iterdir() if template.is_file() and template.suffix == ".sh"])
+        return
     scripts = system.path(f"{site.site_root}/scripts")
     scripts.mkdir(parents=True, exist_ok=True)
     for template in sorted(folder.iterdir()):
@@ -358,7 +363,9 @@ class Creation:
             warning = " Browsers warn for names that are not in its certificate." if scheme == "https" else ""
             system.say(f"It also answers any name that no other site has, like {scheme}://<server-ip>/.{warning}")
         if self.type == "csharp":
-            system.say(f"Run {self.site.site_root}/scripts/create_prod.sh when you want a production target for this site.")
+            from harbor.state.migrate import server_migrated
+            system.say("Use Add environment in the admin when you want a production target for this site." if server_migrated(system)
+                       else f"Run {self.site.site_root}/scripts/create_prod.sh when you want a production target for this site.")
 
     def incomplete(self, message, code):
         if message:

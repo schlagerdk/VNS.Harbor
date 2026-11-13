@@ -1437,10 +1437,10 @@ dialog label.env-choice:has(input:checked) { border-color: var(--env-tone); back
 .env-targets.list { overflow: visible; }
 
 /* ---- Server tools: a card per part of the server, its state and what can be done with it */
-#dlg-server-tools { width: min(880px, 96vw); }
-#dlg-server-tools > .server-tools, #dlg-server-tools > menu { margin-left: 24px; margin-right: 24px; }
-#dlg-server-tools > menu { margin: 16px 0 0; }
-#dlg-server-tools > menu .cancel-link { margin-right: auto; }
+dialog.server-tools-dialog { width: min(880px, 96vw); }
+.server-tools-dialog > .server-tools, .server-tools-dialog > menu { margin-left: 24px; margin-right: 24px; }
+.server-tools-dialog > menu { margin: 16px 0 0; }
+.server-tools-dialog > menu .cancel-link { margin-right: auto; }
 .server-tools { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 18px; min-height: 120px; }
 .server-tools-loading { grid-column: 1 / -1; display: grid; place-items: center; padding: 48px 0; color: var(--muted); }
 .tool-card { --tone: var(--blue); display: flex; flex-direction: column; gap: 12px; min-width: 0; padding: 14px 16px 14px; border: 1px solid var(--line); border-radius: 12px;
@@ -1479,3 +1479,28 @@ dialog label.env-choice:has(input:checked) { border-color: var(--env-tone); back
 .server-editions legend { margin-bottom: 8px; color: var(--muted); font-size: 13px; }
 .server-action-danger { margin-top: 10px; padding: 12px 14px; border: 1px solid rgba(248, 81, 73, .35); border-radius: 10px; background: rgba(248, 81, 73, .06); font-size: 13px; }
 @media (max-width: 720px) { .server-tools, .server-editions { grid-template-columns: 1fr; } }
+/* SFTP in the user editor: where to connect, the password and the keys */
+.sftp-area { display: grid; gap: 4px; margin: -4px 0 4px 26px; padding: 12px 14px; border: 1px solid var(--line); border-left: 2px solid rgba(88, 166, 255, .45); border-radius: 0 10px 10px 0; background: var(--panel2); }
+.sftp-area[hidden] { display: none; }
+.sftp-address { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-size: 12.5px; }
+.sftp-address code { padding: 3px 8px; border-radius: 6px; background: rgba(0, 0, 0, .25); color: var(--blue); font-size: 12px; overflow-wrap: anywhere; }
+.sftp-area textarea { min-height: 64px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; resize: vertical; }
+.sftp-area .hint { margin-top: 2px; }
+
+/* Options in the action dialogs (Server tools, Servers): the option cards of Sync data, beside the dialog's own label
+   layout, which stacks a label's contents */
+dialog.newsite label.sync-option.action-option { flex-direction: row; align-items: center; justify-content: flex-start; margin: 0 0 10px; text-align: left; font-size: inherit; color: inherit; }
+.action-option.tone-blue { --option-tone: var(--blue); }
+.action-option.tone-amber { --option-tone: #d29922; }
+.action-option.tone-red { --option-tone: var(--red); }
+.action-option.tone-green { --option-tone: var(--green); }
+.action-option.tone-red .sync-option-icon, .action-option.tone-amber .sync-option-icon { color: color-mix(in srgb, var(--option-tone) 70%, var(--muted)); }
+.action-option:has(input:disabled) { opacity: .45; cursor: default; }
+.action-option:has(input:disabled):hover { border-color: var(--line); }
+.server-action-fields .action-option:first-child { margin-top: 2px; }
+/* Servers: its toolbar as in Users, within the dialog's margins */
+.server-tools-dialog > .servers-toolbar { margin: 18px 24px 0; }
+.server-tools-dialog > .servers-toolbar + .server-tools { margin-top: 12px; }
+/* Add server: the address wide, its SSH port beside it */
+dialog.newsite .server-address-row { grid-template-columns: minmax(0, 3fr) minmax(0, 1fr); }
+@media (max-width: 560px) { dialog.newsite .server-address-row { grid-template-columns: 1fr; } }

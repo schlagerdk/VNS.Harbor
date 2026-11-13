@@ -29,6 +29,11 @@ def install_missing_scripts(system, site, folder):
     folder = Path(folder)
     if not folder.is_dir():
         return
+    from harbor.state.migrate import born_migrated, server_migrated
+    if server_migrated(system):
+        # A migrated server (phase 6): Harbor does the scripts' work; their names are kept for the admin's buttons
+        born_migrated(system, site, [template.name for template in folder.iterdir() if template.is_file() and template.suffix == ".sh"])
+        return
     scripts = system.path(f"{site.site_root}/scripts")
     scripts.mkdir(parents=True, exist_ok=True)
     for template in sorted(folder.iterdir()):

@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from harbor.cli import main  # noqa: E402
-from harbor.core.system import RecordingSystem  # noqa: E402
+from harbor.core.system import RecordingSystem, Result  # noqa: E402
 from harbor.umbraco import backoffice  # noqa: E402
 
 PROJECT = '<Project Sdk="Microsoft.NET.Sdk.Web"><ItemGroup><PackageReference Include="VNS.Harbor" Version="17.0.0" /></ItemGroup></Project>\n'
@@ -102,6 +102,27 @@ class BackofficeTests(unittest.TestCase):
         self.run_harbor("site", "connect", "shop.dk")
         data = json.loads((self.root / "var/www/shop.dk/_publish/vns-harbor.json").read_text())
         self.assertEqual(data["harbor"], "https://admin.example.test")
+
+    def test_an_environment_on_another_server_is_connected_over_ssh(self):
+        target = self.root / "var/www/shop.dk/scripts/targets/production"
+        target.mkdir(parents=True)
+        (target / "publish_prod.sh").write_text("PROD_IP='10.0.0.9'\nPROD_USER='deploy'\nPROD_SSH_PORT='22'\nPROD_FOLDER='shop.dk'\n"
+                                                "PROD_BINDING='shop.dk'\nPROD_HTTPS=y\n")
+        self.run_harbor("site", "backoffice-user", "shop.dk", "editor@shop.dk")
+        self.system = RecordingSystem(root=self.root, answers={"ssh": ""})
+        backoffice.connect(self.system, "shop.dk", "production", harbor_url="https://admin.example.test")
+        sent = next(index for index, command in enumerate(self.system.commands) if "vns-harbor.json.new" in command)
+        self.assertTrue(self.system.commands[sent].startswith("ssh -p 22"))
+        self.assertIn("deploy@10.0.0.9 sudo -n sh -c", self.system.commands[sent])
+        self.assertIn("chown root:www-data /var/www/shop.dk/vns-harbor.json.new", self.system.commands[sent])
+        data = json.loads(self.system.inputs[sent])
+        self.assertEqual((data["environment"], data["harbor"]), ("production", "https://admin.example.test"))
+        self.assertNotIn(data["token"], " ".join(self.system.commands))
+        # Not published with the package there: no link, the Backend button opens the login
+        self.system = RecordingSystem(root=self.root, answers={"ssh": Result(1)})
+        with self.assertRaises(Exception):
+            backoffice.login_link(self.system, "shop.dk", "production")
+        self.assertTrue(any("test -f /var/www/shop.dk/VNS.Harbor.dll" in command for command in self.system.commands))
 
     def test_the_user_can_be_taken_away(self):
         self.run_harbor("site", "backoffice-user", "shop.dk", "editor@shop.dk")
