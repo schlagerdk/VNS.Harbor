@@ -44,7 +44,9 @@ class CreateSiteTests(unittest.TestCase):
         self.assertEqual(comparable(self.new.files()), comparable(self.old.files()))
         self.maxDiff = None
         # The script ran the .NET installer with bash, which the fake server does not record
-        commands = [line for line in without_temporary(harbor_commands(system)) if not line.startswith("bash TEMP ")]
+        # VNS.Harbor is added to an Umbraco 17+ site by harbor, which the script did not (test_umbraco_gets_vns_harbor)
+        commands = [line for line in without_temporary(harbor_commands(system))
+                    if not line.startswith("bash TEMP ") and line != "dotnet add package VNS.Harbor"]
         self.assertEqual(commands, without_temporary(self.old.commands()))
         return result, system
 
@@ -68,6 +70,17 @@ class CreateSiteTests(unittest.TestCase):
                 result, system = self.compare("shop.dk", "csharp", "umbraco", version, "Shop", "shop.dk", publish, "Release", certificate)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertTrue(any("dotnet publish" in line for line in system.commands))
+
+    def test_umbraco_gets_vns_harbor(self):
+        for version, expected in (("18.3.1", True), ("17.2.0", True)):
+            with self.subTest(version=version):
+                self.setUp()
+                result, system = self.compare("shop.dk", "csharp", "umbraco", version, "Shop", "shop.dk", "_publish", "Release", "y")
+                self.assertEqual("dotnet add package VNS.Harbor" in system.commands, expected)
+        # Not found on the package source: the site is made all the same, and it says so
+        system = Server(tempfile.mkdtemp(), "x").system(answers={"dotnet add package VNS.Harbor": __import__("harbor.core.system", fromlist=["Result"]).Result(1)})
+        self.assertEqual(main(["site", "create", "x.dk", "csharp", "umbraco", "18.3.1", "X", "x.dk", "_publish", "Release", "n"], system), 0, system.said)
+        self.assertIn("VNS.Harbor could not be added. Add it to the project later: dotnet add package VNS.Harbor", system.said)
 
     def test_umbraco_13_gets_dotnet_8(self):
         result, system = self.compare("old.dk", "csharp", "umbraco", "13", "Old", "old.dk", "_publish", "Debug", "y", "", "Test")

@@ -20,6 +20,7 @@ from harbor.core.site_config import (configure_umbraco_https, default_site, inst
 from harbor.core.system import CommandFailed, Stop
 from harbor.core.templates import Site, render
 from harbor.server.apache import own_name
+from harbor.core.paths import APACHE
 
 # The admin site reads these: the Umbraco version a site gets when none is given
 DEFAULT_UMBRACO_VERSION = "18.3.1"
@@ -27,7 +28,6 @@ DEFAULT_UMBRACO13_VERSION = "13.16.4"
 DOTNET_VERSION = "net10.0"
 NEW_PUBLISH_FOLDER = "_development"
 
-APACHE = Path(__file__).resolve().parents[2] / "apache"
 SOLUTION = APACHE / "solutionfiles"
 SCHEMA_FILES = ("appsettings-schema.json", "appsettings-schema.Umbraco.Cms.json", "appsettings-schema.usync.json", "umbraco-package-schema.json")
 TEMPLATE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -301,6 +301,12 @@ class Creation:
         for package in ("VNS.Umbraco", "uSync"):
             version = ["-v", "13.0.0"] if self.dotnet_version == "net8.0" else []
             system.run("dotnet", "add", "package", package, *version, cwd=root)
+        if major >= 17:
+            # VNS Harbor in the backoffice (the Backend login and the sync dashboard), for Umbraco 17 and newer. A site is
+            # made also when it cannot be added, for instance before it is on the package source.
+            system.step("Install VNS Harbor package")
+            if not system.run("dotnet", "add", "package", "VNS.Harbor", cwd=root, check=False).ok:
+                system.warn("VNS.Harbor could not be added. Add it to the project later: dotnet add package VNS.Harbor")
         if major >= 18:
             system.say("Delete default wwwroot, views and default settings")
             remove(system, *(f"{root}/{name}" for name in ("wwwroot", "Views", "appsettings.json", "appsettings.Development.json")))

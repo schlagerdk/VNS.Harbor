@@ -13,8 +13,9 @@ from harbor.core.system import Stop
 from harbor.environments import settings
 from harbor.environments.windows import Share
 from harbor.sites.actions import choose_environment, site_named
+from harbor.core.paths import APACHE, LIB
 
-WINDOWS_FILES = Path(__file__).resolve().parents[2] / "apache/lib/windows_files.py"
+WINDOWS_FILES = LIB / "windows_files.py"
 EDITABLE = re.compile(r"web\.config|appsettings(\.[A-Za-z0-9_-]+)?\.json")
 
 ISSUE_CERTIFICATE = r'''set -euo pipefail
@@ -115,7 +116,7 @@ def change_environment(system, name, target="prod", given=""):
     if environment.windows:
         share = Share(system, environment).connect()
         system.step(f"Set {chosen} in web.config")
-        share.set_environment(chosen, str(Path(__file__).resolve().parents[2] / "apache"))
+        share.set_environment(chosen, str(APACHE))
         system.say(f"Now: {chosen} (web.config). IIS restarts the app.")
     else:
         system.step(f"Restart {environment.FOLDER} as {chosen}")

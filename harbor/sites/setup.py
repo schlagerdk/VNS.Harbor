@@ -19,8 +19,8 @@ from harbor.core.site_config import (default_site, install_apache_config, instal
 from harbor.core.system import CommandFailed, Stop
 from harbor.core.templates import Site, render
 from harbor.server.apache import own_name
+from harbor.core.paths import APACHE
 
-APACHE = Path(__file__).resolve().parents[2] / "apache"
 SOLUTION = APACHE / "solutionfiles"
 
 

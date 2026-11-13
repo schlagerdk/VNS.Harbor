@@ -26,8 +26,8 @@ from harbor.core.system import CommandFailed, Stop
 from harbor.core.templates import Site
 from harbor.environments import settings
 from harbor.environments.register import bash_quote, site_name
+from harbor.core.paths import LIB
 
-LIB = Path(__file__).resolve().parents[2] / "apache/lib"
 ROOTS = "/var/lib/vns-roots"
 SYSTEMD = "/etc/systemd/system"
 SITES = "/etc/apache2/sites-available"

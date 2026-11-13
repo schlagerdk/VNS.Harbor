@@ -31,8 +31,18 @@ cat "${tmp}"/*.gpg >/usr/share/keyrings/microsoft-prod.gpg
 SA_LINE = re.compile(r"(-U sa -P )'(?:[^']*'\\'')*[^']*'")
 
 
+EDITIONS = ("Developer", "Express", "Evaluation", "Standard", "Enterprise")
+# The admin gives the sa password in the task's environment, never on its command line
+SA_VARIABLE = "HARBOR_SA_PASSWORD"
+
+
 def yes(answer):
     return answer.strip().lower() in ("y", "yes")
+
+
+def confirm(system, prompt, given=None):
+    """The answer given as an option (the admin), else asked in the terminal"""
+    return given if given is not None else yes(system.ask(prompt))
 
 
 def os_release(system):
@@ -84,13 +94,13 @@ def install_sql_tools(system):
     install_tools(system, version_id)
 
 
-def uninstall_sql_tools(system):
+def uninstall_sql_tools(system, assume_yes=None):
     """Remove SQL client tools without removing SQL Server or shared ODBC packages"""
     packages = [package for package in ("mssql-tools18", "mssql-tools") if installed(system, package)]
     if not packages:
         system.say("SQL command-line tools are not installed")
         return
-    if not yes(system.ask("Remove SQL command-line tools (sqlcmd)? [y/N]: ")):
+    if not confirm(system, "Remove SQL command-line tools (sqlcmd)? [y/N]: ", assume_yes):
         system.say("SQL tools kept")
         return
     system.step("Remove SQL command-line tools")
@@ -100,13 +110,15 @@ def uninstall_sql_tools(system):
 
 
 # ---- the sa password in the scripts
-def sa_scripts(system, folder=SQL_DIR):
+def sa_scripts(system, folder=None):
     """The scripts in sql/ that hold the sa password"""
+    folder = Path(folder or SQL_DIR)
     return sorted(path for path in Path(folder).rglob("*.sh") if path.is_file() and re.search(r"-U sa -P '.*' ", path.read_text(errors="replace")))
 
 
-def sa_apply(password, folder=SQL_DIR):
+def sa_apply(password, folder=None):
     """The sa password in every script in sql/ that uses it: the placeholder after a fresh copy, or the one before"""
+    folder = Path(folder or SQL_DIR)
     quoted = "'" + password.replace("'", "'\\''") + "'"
     for path in Path(folder).rglob("*.sh"):
         if path.is_file():
@@ -116,7 +128,17 @@ def sa_apply(password, folder=SQL_DIR):
                 path.write_text(changed, errors="surrogateescape")
 
 
+def given_sa_password():
+    import os
+    password = os.environ.get(SA_VARIABLE, "")
+    if password and len(password) < 8:
+        raise Stop("SQL Server requires at least 8 characters")
+    return password
+
+
 def sa_prompt(system):
+    if given_sa_password():
+        return given_sa_password()
     while True:
         password = system.ask("Enter the sa password you set during SQL Server setup so the SQL scripts can be updated: ", secret=True)
         confirm = system.ask("Repeat password: ", secret=True)
@@ -130,10 +152,10 @@ def sa_prompt(system):
             return password
 
 
-def set_sa_password(system, folder=SQL_DIR):
+def set_sa_password(system, folder=None, assume_yes=None):
     """Set the sa password in every script in sql/ that uses it, also those in cron/: after the sql folder was copied
     again, so the scripts hold the placeholder once more, or after the sa password was changed on the server"""
-    folder = Path(folder)
+    folder = Path(folder or SQL_DIR)
     scripts = sa_scripts(system, folder)
     if not scripts:
         raise Stop(f"No script in {folder} uses the sa password.")
@@ -145,7 +167,8 @@ def set_sa_password(system, folder=SQL_DIR):
         if system.run(sqlcmd, "-C", "-S", "LOCALHOST", "-U", "sa", "-l", "10", "-b", "-Q", "SET NOCOUNT ON; SELECT 1",
                       env={"SQLCMDPASSWORD": password}, check=False, capture=True).ok:
             system.say("The password works on the local SQL Server.")
-        elif not yes(system.ask("The local SQL Server did not accept the password. Set it in the scripts anyway? [y/N]: ")):
+        elif not confirm(system, "The local SQL Server did not accept the password. Set it in the scripts anyway? [y/N]: ",
+                         assume_yes if assume_yes is not None else (False if given_sa_password() else None)):
             system.say("Nothing was changed.")
             raise Stop("", 1)
     else:
@@ -165,9 +188,14 @@ def find_sql_version(system, ubuntu_version):
     return ""
 
 
-def install_server(system):
-    """The latest SQL Server available for this Ubuntu version, the sa password in the scripts, and sqlcmd if wanted"""
+def install_server(system, edition="", with_tools=None, assume_yes=None):
+    """The latest SQL Server available for this Ubuntu version, the sa password in the scripts, and sqlcmd if wanted.
+    With an edition its setup asks nothing: the sa password comes from HARBOR_SA_PASSWORD (the admin)."""
     import os
+    if edition and edition not in EDITIONS:
+        raise Stop(f"Not an edition: {edition} ({', '.join(EDITIONS)})")
+    if edition and not given_sa_password():
+        raise Stop(f"Set the sa password in {SA_VARIABLE} to install without questions.")
     version_id = ubuntu(system)
     repository = os.environ.get("SQL_UBUNTU_VERSION") or version_id
     if not system.which("gpg"):
@@ -183,7 +211,8 @@ def install_server(system):
         if not version:
             system.warn(f"Microsoft has no SQL Server repository for Ubuntu {repository}.")
             system.warn("Supported: Ubuntu 22.04 and 24.04 LTS.")
-            if not yes(system.ask(f"Try the Ubuntu {FALLBACK_UBUNTU} repository instead (NOT supported by Microsoft, may fail)? [y/N]: ")):
+            if not confirm(system, f"Try the Ubuntu {FALLBACK_UBUNTU} repository instead (NOT supported by Microsoft, may fail)? [y/N]: ",
+                           assume_yes if assume_yes is not None else (False if edition else None)):
                 raise Stop("", 1)
             repository = FALLBACK_UBUNTU
             version = find_sql_version(system, repository)
@@ -202,8 +231,13 @@ def install_server(system):
         system.step("Install mssql-server")
         system.run("apt-get", "update")
         system.run("apt-get", "install", "-y", "mssql-server")
-        # Runs interactively and asks for the sa password, among other things
-        system.run("/opt/mssql/bin/mssql-conf", "setup")
+        if edition:
+            system.step(f"Set up SQL Server ({edition})")
+            system.run("/opt/mssql/bin/mssql-conf", "-n", "setup", "accept-eula",
+                       env={"ACCEPT_EULA": "Y", "MSSQL_PID": edition, "MSSQL_SA_PASSWORD": given_sa_password()})
+        else:
+            # Runs interactively and asks for the sa password, among other things
+            system.run("/opt/mssql/bin/mssql-conf", "setup")
         system.step("Create backup folder")
         prepare_backup_permissions(system)
         system.run("systemctl", "status", "mssql-server", "--no-pager", check=False)
@@ -213,7 +247,7 @@ def install_server(system):
     if server_installed or placeholder:
         sa_apply(sa_prompt(system))
 
-    if yes(system.ask("Install SQL command-line tools (sqlcmd)? [y/N]: ")):
+    if confirm(system, "Install SQL command-line tools (sqlcmd)? [y/N]: ", with_tools):
         if installed(system, "mssql-tools18"):
             system.say("mssql-tools18 is already installed (use update_server.sh to update it) - skipping tools install")
         else:
@@ -222,7 +256,7 @@ def install_server(system):
         system.say("SQL tools installation skipped")
 
 
-def update_server(system):
+def update_server(system, assume_yes=None):
     """SQL Server (and sqlcmd) to the latest version in its repository. A new major version needs install_server."""
     if not installed(system, "mssql-server"):
         raise Stop("mssql-server is not installed - run install_server.sh first")
@@ -234,7 +268,7 @@ def update_server(system):
         system.say("SQL Server is already up to date")
     else:
         system.say("Update available. Take a backup first - e.g. /vns/sql/cron/backup_everything.sh")
-        if not yes(system.ask("Update now? The service is restarted. [y/N]: ")):
+        if not confirm(system, "Update now? The service is restarted. [y/N]: ", assume_yes):
             system.say("Aborted")
             raise Stop("", 1)
         system.run("apt-get", "install", "--only-upgrade", "-y", "mssql-server")
@@ -246,11 +280,11 @@ def update_server(system):
     system.run("systemctl", "status", "mssql-server", "--no-pager")
 
 
-def uninstall_server(system):
+def uninstall_server(system, assume_yes=None, delete_data=None, with_tools=None):
     """SQL Server goes, then sqlcmd if wanted. Its data is kept unless DELETE is typed."""
     if installed(system, "mssql-server"):
         system.say("This will remove SQL Server (mssql-server). SQL tools are optional and can be kept.")
-        if not yes(system.ask("Continue? [y/N]: ")):
+        if not confirm(system, "Continue? [y/N]: ", assume_yes):
             system.say("Aborted")
             raise Stop("", 1)
         system.step("Stop and disable service")
@@ -269,8 +303,9 @@ def uninstall_server(system):
         system.run("apt-get", "autoremove", "-y")
         system.say("")
         system.say("Databases, logs and backups are stored in /var/opt/mssql")
-        system.say("Type DELETE to permanently delete this folder, or press Enter to keep it.")
-        if system.ask("> ") == "DELETE":
+        if delete_data is None:
+            system.say("Type DELETE to permanently delete this folder, or press Enter to keep it.")
+        if (system.ask("> ") == "DELETE") if delete_data is None else delete_data:
             shutil.rmtree(system.path("/var/opt/mssql"), ignore_errors=True)
             system.say("/var/opt/mssql deleted")
         else:
@@ -278,4 +313,8 @@ def uninstall_server(system):
         system.say("SQL Server removed")
     else:
         system.say("mssql-server is not installed")
-    uninstall_sql_tools(system)
+    # with_tools: sqlcmd removed too (True) or kept (False); asked when not given
+    if with_tools is False:
+        system.say("SQL tools kept")
+    else:
+        uninstall_sql_tools(system, with_tools)

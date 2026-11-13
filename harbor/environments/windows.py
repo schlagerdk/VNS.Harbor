@@ -4,8 +4,9 @@ from pathlib import Path
 import tempfile
 
 from harbor.core.system import CommandFailed
+from harbor.core.paths import LIB
 
-OFFLINE_PAGE = Path(__file__).resolve().parents[2] / "apache/lib/app_offline.htm"
+OFFLINE_PAGE = LIB / "app_offline.htm"
 FALLBACK_PAGE = '<!doctype html><html><head><meta charset="utf-8"><title>Updating</title></head><body><h1>Updating, back shortly.</h1></body></html>\n'
 
 

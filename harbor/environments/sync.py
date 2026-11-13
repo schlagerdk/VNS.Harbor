@@ -22,8 +22,8 @@ from harbor.core.system import CommandFailed, Stop
 from harbor.environments import settings
 from harbor.environments.windows import Share
 from harbor.sites.actions import site_named
+from harbor.core.paths import LIB
 
-LIB = Path(__file__).resolve().parents[2] / "apache/lib"
 SETTINGS_FOLDERS = ("ContentTypes", "DataTypes", "Languages", "MediaTypes", "MemberTypes", "RelationTypes", "Templates")
 CODE_FOLDERS = ("Views", "wwwroot/css", "wwwroot/scripts")
 USAGE = "Usage: sync_env.sh <site> <main|environment> <environment|all> [--data <content,media>] [--dry-run]"

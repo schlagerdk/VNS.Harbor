@@ -1893,6 +1893,70 @@ def api_server_logs_clear():
     return jsonify(ok=True)
 
 
+HARBOR_COMMAND = os.path.join(os.path.dirname(APACHE_DIR), "bin", "harbor")
+SQL_EDITIONS = ("Developer", "Express", "Evaluation", "Standard", "Enterprise")
+
+
+@app.route("/api/server/tools")
+def api_server_tools():
+    """What the server has for the sites: SQL Server, sqlcmd, the sa password, cron jobs, .NET, Node.js (harbor server status)"""
+    require_admin()
+    if not os.path.isfile(HARBOR_COMMAND):
+        return error("Harbor is missing. Update VNS first.", 500)
+    try:
+        result = subprocess.run(["/usr/bin/python3", HARBOR_COMMAND, "server", "status"], capture_output=True, text=True, timeout=60)
+        return jsonify(json.loads(result.stdout))
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        app.logger.error("harbor server status: %s", exc)
+        return error("The server's tools could not be read.", 502)
+
+
+def server_tool_command(data):
+    """A Server tools action as a harbor command, and the variables it gets (the sa password never on the command line)"""
+    tool = data.get("tool")
+    harbor = ["/usr/bin/python3", HARBOR_COMMAND]
+    tools_flag = "--with-tools" if data.get("with_tools") is True else "--without-tools"
+    env = {"DEBIAN_FRONTEND": "noninteractive"}
+    if tool in ("sql_install", "sa_password"):
+        password = data.get("sa_password")
+        if not isinstance(password, str) or len(password) < 8 or len(password) > 128 or "\n" in password:
+            abort(400, "The sa password needs at least 8 characters")
+        env["HARBOR_SA_PASSWORD"] = password
+    if tool == "sql_install":
+        if data.get("edition") not in SQL_EDITIONS:
+            abort(400, "Choose an edition")
+        return "Install SQL Server", harbor + ["sql", "install-server", "--edition", data["edition"], tools_flag], env
+    if tool == "sa_password":
+        return "Set the sa password", harbor + ["sql", "set-sa-password"], env
+    if tool == "sql_update":
+        return "Update SQL Server", harbor + ["sql", "update-server", "--yes"], env
+    if tool == "sql_uninstall":
+        delete = data.get("delete_data") is True
+        if delete and data.get("confirmation") != "DELETE":
+            abort(400, "Type DELETE to delete the databases")
+        return "Remove SQL Server", harbor + ["sql", "uninstall-server", "--yes", "--delete-data" if delete else "--keep-data", tools_flag], env
+    if tool == "tools_install":
+        return "Install SQL tools", harbor + ["sql", "install-sql-tools"], env
+    if tool == "tools_uninstall":
+        return "Remove SQL tools", harbor + ["sql", "uninstall-sql-tools", "--yes"], env
+    if tool in ("cron_on", "cron_off"):
+        return ("Turn on" if tool == "cron_on" else "Turn off") + " SQL backups", harbor + ["server", "cron", tool[5:]], env
+    if tool in ("dotnet_install", "dotnet_update"):
+        channel = data.get("channel")
+        if not isinstance(channel, str) or not re.fullmatch(r"[0-9]{1,2}\.0", channel) or int(channel.split(".")[0]) < 8:
+            abort(400, "Choose a .NET version")
+        action = tool.split("_")[1]
+        return f"{action.capitalize()} .NET {channel}", harbor + ["server", "dotnet", action, channel], env
+    if tool == "node_install":
+        major = str(data.get("major", ""))
+        if not re.fullmatch(r"[0-9]{2}", major) or int(major) < 18:
+            abort(400, "Choose a Node.js version")
+        return f"Install Node.js {major}", harbor + ["server", "node", "install", major], env
+    if tool == "node_remove":
+        return "Remove Node.js", harbor + ["server", "node", "remove"], env
+    abort(400, "Unknown tool")
+
+
 @app.route("/api/server-logs")
 def api_server_logs():
     require_admin()
@@ -2184,6 +2248,8 @@ def api_profile():
                 user["version"] = user.get("version", 1) + 1
                 session["version"] = user["version"]
         save_config()
+    if not root:
+        linux_users_changed()
     session["user"] = name
     return jsonify(ok=True, user=name)
 
@@ -2287,12 +2353,62 @@ def api_me():
                    connections={} if admin else user.get("connections", {}))
 
 
+LINUX_USERS_LOCK = threading.Lock()
+LINUX_USERS = "/var/lib/harbor/users.json"
+
+
+def sync_linux_users():
+    """A Linux user for each user of the admin, as it is now (harbor users sync, phase 8a). Only the admin itself, which
+    runs as root: never a test run as a user. One at a time, the last change wins."""
+    if not os.path.isfile(HARBOR_COMMAND) or os.geteuid() != 0:
+        return
+    with LINUX_USERS_LOCK:
+        try:
+            result = subprocess.run(["/usr/bin/python3", HARBOR_COMMAND, "users", "sync", "--config", CONFIG_PATH],
+                                    capture_output=True, text=True, timeout=120)
+            if result.returncode:
+                app.logger.warning("harbor users sync: %s", (result.stdout + result.stderr).strip() or result.returncode)
+        except (OSError, subprocess.SubprocessError) as exc:
+            app.logger.warning("harbor users sync could not run: %s", exc)
+
+
+def linux_users_changed():
+    threading.Thread(target=sync_linux_users, daemon=True).start()
+
+
+def user_shell(site, cwd):
+    """A shell as the user's own Linux user, in the site's folder: it reaches what their Linux user may (phase 8c)"""
+    root = os.path.join(WEB_ROOT, site)
+    inside = os.path.relpath(cwd, root)
+    if inside.startswith("..") or inside.split(os.sep)[0] in ("scripts", ".vns-publish"):
+        abort(403, "You do not have access to this folder.")
+    name = linux_names().get(me()["id"], "")
+    if not name:
+        # Made by the sync that runs after every change to the users; it may still be running
+        linux_users_changed()
+        abort(409, "Your Linux user is being made. Try again in a moment.")
+    return ["/usr/sbin/runuser", "-u", name, "--", "/usr/bin/env", "-i", "HOME=/home/" + name, "USER=" + name, "LOGNAME=" + name,
+            "SHELL=/bin/bash", "TERM=xterm-256color", "LANG=C.UTF-8", "PATH=/usr/local/bin:/usr/bin:/bin", "/bin/bash", "-l"]
+
+
+def linux_names():
+    """{admin user id: Linux user}"""
+    try:
+        with open(LINUX_USERS) as handle:
+            found = json.load(handle)
+        return {key: value.get("linux", "") for key, value in found.items() if isinstance(value, dict)}
+    except (OSError, ValueError, AttributeError):
+        return {}
+
+
 @app.route("/api/users", methods=["GET", "POST"])
 def api_users():
     require_admin()
     if request.method == "GET":
         sites = site_environments()
-        return jsonify(users=access.visible_users(cfg, me()), sites=sites, connections=sql_connections_public(),
+        names = linux_names()
+        listed = [dict(user, linux=names.get(user.get("id"), "")) for user in access.visible_users(cfg, me())]
+        return jsonify(users=listed, sites=sites, connections=sql_connections_public(),
                        site_actions=access.SITE_ACTIONS, sql_actions=access.SQL_ACTIONS)
     data = request.get_json(silent=True) or {}
     password = data.get("password") or ""
@@ -2309,6 +2425,7 @@ def api_users():
         user["created_by"] = me()["id"]
         cfg.setdefault("users", []).append(user)
         save_config()
+    linux_users_changed()
     audit("Created user " + user["username"] + " (" + user["role"] + ")")
     return jsonify(user=access.public(user))
 
@@ -2327,6 +2444,7 @@ def api_user(user_id):
         if request.method == "DELETE":
             users.remove(existing)
             save_config()
+            linux_users_changed()
             audit("Deleted user " + existing["username"])
             return jsonify(ok=True)
         data = request.get_json(silent=True) or {}
@@ -2349,6 +2467,7 @@ def api_user(user_id):
                 user[key] = existing[key]
         users[users.index(existing)] = user
         save_config()
+    linux_users_changed()
     audit("Changed user " + user["username"])
     return jsonify(user=access.public(user))
 
@@ -2427,7 +2546,7 @@ def terminal_scope(payload):
 
 def terminal_auto_close(payload):
     kind = payload.get("kind")
-    if kind in ("shell", "create_site", "setup_site", "copy_site", "register_env", "create_prod", "sync_env", "data_sync", "data_sync_settings", "move_env", "move_site", "adopt_site", "release_site", "delete_site", "change_binding", "prod_action", "dotnet_package", "fix_permissions", "publish_both", "bulk", "update_package", "sql_action", "install_sql_tools"):
+    if kind in ("shell", "create_site", "setup_site", "copy_site", "register_env", "create_prod", "sync_env", "data_sync", "data_sync_settings", "move_env", "move_site", "adopt_site", "release_site", "delete_site", "change_binding", "prod_action", "dotnet_package", "fix_permissions", "publish_both", "bulk", "update_package", "sql_action", "install_sql_tools", "server_tool"):
         return True
     if kind == "remote_tool":
         return payload.get("tool") == "shell"
@@ -2537,6 +2656,8 @@ class TermSession:
                     self.after(self.exit)
             except Exception:
                 app.logger.exception("Could not finish %s", self.title)
+        # A site made, given or deleted: the site groups follow (phase 8b)
+        linux_users_changed()
         with self.lock:
             for q in list(self.subscribers):
                 q.put(None)
@@ -2798,6 +2919,11 @@ def build_command(data):
     """Validate a terminal request and return (title, argv, cwd). User input is never shell code."""
     kind = data.get("kind")
     bash = "/bin/bash"
+    if kind == "server_tool":
+        if not os.path.isfile(HARBOR_COMMAND):
+            abort(500, "Harbor is missing. Update VNS first.")
+        title, argv, _ = server_tool_command(data)
+        return title, argv, "/"
     if kind == "install_sql_tools":
         script = os.path.join(os.path.dirname(APACHE_DIR), "sql", "install_tools.sh")
         if not os.path.isfile(script):
@@ -2959,6 +3085,8 @@ def build_command(data):
                 if not os.path.isdir(cwd):
                     abort(400, "Unknown folder")
                 title = "Shell: " + (data.get("label") or rel(cwd))[:60]
+            if not is_admin():
+                return title, user_shell(site, cwd), cwd
             return title, [bash, "-l"], cwd
         return "Shell: server", [bash, "-l"], "/"
     if kind == "publish_both":
@@ -3359,7 +3487,7 @@ def sees_session(s):
 
 
 # Tasks that run as root by choice, or open a shell: only for administrators
-ADMIN_TASKS = {"install_sql_tools", "update_system", "remote_tool", "shell", "move_env", "move_site", "adopt_site", "release_site",
+ADMIN_TASKS = {"server_tool", "install_sql_tools", "update_system", "remote_tool", "move_env", "move_site", "adopt_site", "release_site",
                "setup_site", "unit_tool", "apache", "register_env"}
 
 
@@ -3410,7 +3538,12 @@ def authorize_task(data):
         return None
     if not (user.get("web")):
         deny()
-    if kind == "script":
+    if kind == "shell":
+        # The server's shell is an administrator's; a site's runs as the user's own Linux user (phase 8c)
+        if not site:
+            deny()
+        need(env_of(site, data), "terminal")
+    elif kind == "script":
         script = data.get("script", "")
         env = (data.get("target") or "prod") if script.endswith("_prod.sh") or data.get("target") else "main"
         action = ("publish" if script.startswith("publish") else "clear_logs" if script.startswith("clear_logs")
@@ -3510,6 +3643,8 @@ def api_term():
     after = authorize_task(payload)
     title, argv, cwd = build_command(payload)
     extra_env = production_setup_env(payload, payload.get("site", "")) if payload.get("kind") == "create_prod" else None
+    if payload.get("kind") == "server_tool":
+        extra_env = server_tool_command(payload)[2]
     if payload.get("kind") == "register_env":
         extra_env = production_setup_env(payload, payload.get("site", ""))
     if payload.get("kind") == "move_env":
@@ -3959,6 +4094,7 @@ def configure_sql_startup_on_admin_start():
 
 
 threading.Thread(target=configure_sql_startup_on_admin_start, daemon=True).start()
+threading.Thread(target=sync_linux_users, daemon=True).start()
 
 
 if __name__ == "__main__":

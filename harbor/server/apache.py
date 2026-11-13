@@ -6,6 +6,7 @@ import shutil
 import tempfile
 
 from harbor.core.system import CommandFailed, Stop
+from harbor.core.paths import APACHE
 
 NAME = re.compile(r"[A-Za-z0-9.-]+")
 SERVERNAME_CONF = "/etc/apache2/conf-available/vns-servername.conf"
@@ -52,7 +53,7 @@ def set_servername(system):
 
 
 # ---- install_apache_conf.sh and install_tls_policy.sh
-APACHE_SOURCE = Path(__file__).resolve().parents[2] / "apache"
+APACHE_SOURCE = APACHE
 SERVER_WIDE = ("vns-offline", "vns-headers")
 
 

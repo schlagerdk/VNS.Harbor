@@ -11,9 +11,9 @@ import shlex
 from harbor.core.names import normalize_site_name, service_name
 from harbor.core.system import Stop
 from harbor.environments import settings
+from harbor.core.paths import LIB
 from harbor.sites.actions import site_named
 
-LIB = Path(__file__).resolve().parents[2] / "apache/lib"
 HOST = re.compile(r"[A-Za-z0-9][A-Za-z0-9.-]{0,252}")
 USER = re.compile(r"[A-Za-z_][A-Za-z0-9_.-]{0,63}")
 

@@ -7,8 +7,9 @@ from harbor.core.names import normalize_site_name
 from harbor.core.system import Stop
 from harbor.core.templates import Site
 from harbor.environments import settings
+from harbor.core.paths import LIB
 
-HELPER = Path(__file__).resolve().parents[2] / "apache/lib/site_permissions.py"
+HELPER = LIB / "site_permissions.py"
 
 
 def fix_permissions(system, name, scope="test", target="prod"):

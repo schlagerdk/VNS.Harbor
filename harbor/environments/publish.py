@@ -18,8 +18,8 @@ from harbor.core.dotnet import runtime_identifier
 from harbor.core.system import CommandFailed, Stop
 from harbor.environments import settings
 from harbor.sites.actions import site_named
+from harbor.core.paths import APACHE, BIN
 
-APACHE = Path(__file__).resolve().parents[2] / "apache"
 SCHEMA_FILES = ("appsettings-schema.json", "appsettings-schema.usync.json", "appsettings-schema.Umbraco.Cms.json", "umbraco-package-schema.json")
 
 PREPARE = r'''set -euo pipefail
@@ -307,7 +307,7 @@ def publish_environment(system, name, target="prod", project="", local_publish="
     # A dry run changes nothing, so it is not recorded as a publish
     if tracked != scope and not dry_run:
         # Run again inside publish_status.py, which records the publish when it works
-        harbor = Path(__file__).resolve().parents[2] / "bin/harbor"
+        harbor = BIN
         result = system.run("python3", str(APACHE / "lib/publish_status.py"), "run", site.site_root, scope, "python3", str(harbor), "env",
                             "publish", site.name, *(["--project", project] if project else []),
                             *(["--local-publish", local_publish] if local_publish else []), env={"VNS_TARGET": target}, check=False)

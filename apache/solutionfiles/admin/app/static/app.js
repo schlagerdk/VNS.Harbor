@@ -58,7 +58,7 @@ const buttonPermission = {
 	"Clear logs": "clear_logs", "Sync data…": "sync_data", "Sync settings…": "sync_settings", "Sync setup…": "sync_any",
 	"Fix permissions": "files", "Change bindings": "bindings", "Issue certificate": "bindings", "Change environment": "bindings",
 	"Check service": "admin", "Edit service": "admin", "Edit config": "admin", "Edit web.config": "files", "Edit appsettings.json": "appsettings",
-	"Stop": "service", "Start": "service", "Restart": "service", "Logs": "logs", "Shell": "admin", "Files": "files",
+	"Stop": "service", "Start": "service", "Restart": "service", "Logs": "logs", "Shell": "terminal", "Files": "files",
 	"Copy site": "copy_site", "Delete site": "delete", "Remove environment": "delete", "Delete everything": "delete_all",
 	"Migrate…": "admin", "Move out…": "admin", "Set up site…": "admin", "Move under main site": "admin", "Add environment": "create_env",
 	"Check": "packages", "Update all": "packages", "Update": "packages", "Add": "packages", "Remove": "packages", "Run custom script": "scripts",
@@ -796,6 +796,9 @@ function matches(site) {
 // Inline SVG (Lucide-style, 24x24 stroke icons); the CSP does not allow external images
 const iconPaths = {
 	grid: "M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z",
+	database: "M12 3c4.4 0 8 1.3 8 3s-3.6 3-8 3-8-1.3-8-3 3.6-3 8-3zM4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6",
+	hexagon: "M12 2l8.7 5v10L12 22l-8.7-5V7zM12 8v8M8.5 10v4M15.5 10v4",
+	dotnet: "M4 7l8-4 8 4v10l-8 4-8-4zM9 10v4M9 10l3 4v-4M15 10h-2v4h2M13 12h1.5",
 	copy: "M9 9h11v11H9zM5 15H4V4h11v1",
 	users: "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75",
 	rows: "M4 5h16v4H4zM4 15h16v4H4z",
@@ -842,7 +845,7 @@ const buttonStyles = {
 	"Migrate…": ["server", "purple"],
 	"Check outdated": ["download", "amber"], "Restart": ["restart", "amber"], "Restart Apache": ["restart", "amber"],
 	"Stop": ["stop", "red"], "Clear logs": ["eraser", "gray"], "Logs": ["file", "gray"],
-	"SQL Server": ["server", "purple"], "Web server": ["globe", "blue"], "Preferences…": ["sliders", "purple"], "Files (/)": ["folder", "blue"],
+	"SQL Server": ["server", "purple"], "Web server": ["globe", "blue"], "Preferences…": ["sliders", "purple"], "Server tools…": ["package", "purple"], "Files (/)": ["folder", "blue"],
 	"Test config": ["activity", "teal"], "Error logs": ["file", "teal"],
 	"Admin app log": ["file", "gray"], "Apache error logs": ["file", "teal"],
 	"Copy site": ["file", "blue"],
@@ -995,7 +998,10 @@ const bindingLink = (binding, asButton) => binding
 // The Backend button: with the VNS.Harbor package and a chosen Umbraco user it logs straight in with a one-time link
 // from Harbor; otherwise, or if that fails, it opens the backoffice's own login
 function backendButton(site, env, url, title) {
-	const link = openLink("Backend", url, title, true);
+	return backofficeLogin(openLink("Backend", url, title, true), site, env, url);
+}
+// A link to the backoffice that logs in as the Backend button does: the button, and the Backoffice link in the details
+function backofficeLogin(link, site, env, url) {
 	if (!currentUser.admin) return link;
 	link.onclick = (event) => {
 		event.stopPropagation();
@@ -1609,7 +1615,7 @@ function envPanel(site, env) {
 				openLink(aliasLabels(env)[index], scheme + "://" + alias + "/"),
 			])));
 	}
-	if (site.kind === "umbraco" && address.url) meta.append(el("dt", { textContent: "Backoffice" }), el("dd", {}, openLink((bindingLabel(env) || address.hostname) + "/umbraco", address.url + "umbraco", address.title)));
+	if (site.kind === "umbraco" && address.url) meta.append(el("dt", { textContent: "Backoffice" }), el("dd", {}, backofficeLogin(openLink((bindingLabel(env) || address.hostname) + "/umbraco", address.url + "umbraco", address.title), site, env, address.url + "umbraco")));
 	if (site.kind === "csharp" || site.kind === "umbraco") {
 		meta.append(el("dt", { textContent: "Datasource" }), el("dd", {
 			className: "database-name",
@@ -1651,10 +1657,11 @@ function envPanel(site, env) {
 		// No shell on IIS, but its files can be browsed and edited over SMB
 		add("Files", () => openFiles("", remoteRef(site, env)), "desktop-only");
 	} else if (env.mode === "remote") {
-		add("Shell", () => openTask({ kind: "remote_tool", site: site.name, tool: "shell", ...targetFields(env) }), "desktop-only");
+		// A shell on another server runs as root there: an administrator's alone
+		if (currentUser.admin) add("Shell", () => openTask({ kind: "remote_tool", site: site.name, tool: "shell", ...targetFields(env) }), "desktop-only");
 		add("Files", () => openFiles("", remoteRef(site, env)), "desktop-only");
 	} else if (env.mode !== "windows") {
-		add("Shell", () => openTask({ kind: "shell", site: site.name, path: env.path, scope: isTarget(env) ? "prod" : "main" }), "desktop-only");
+		add("Shell", () => openTask({ kind: "shell", site: site.name, path: env.path, scope: isTarget(env) ? "prod" : "main", ...(isTarget(env) ? targetFields(env) : {}) }), "desktop-only");
 		add("Files", () => openFiles(env.path), "desktop-only");
 	}
 
@@ -2283,6 +2290,7 @@ $("#search").oninput = (event) => {
 	renderSites();
 };
 $("#btn-server-shell").onclick = () => run(() => openTask({ kind: "shell" }));
+$("#settings-server-tools").onclick = () => { $("#settings-menu").hidden = true; openServerTools(); };
 $("#btn-browse").onclick = () => run(() => openFiles("", "", true));
 $("#btn-check-updates").onclick = () => run(async () => {
 	// It asks NuGet about every project on the server, which takes a while: only on purpose
@@ -4362,6 +4370,12 @@ function hideTaskWindow() {
 	const t = taskShown;
 	taskShown = null;
 	if (taskDialog.open) taskDialog.close();
+	// A window the task was started from opens again when its window is closed after it ended
+	if (t && t.taskState && t.taskState !== "running" && t.afterTask) {
+		const after = t.afterTask;
+		t.afterTask = null;
+		setTimeout(after, 0);
+	}
 	if (!t || !terminals[t.id]) return;
 	t.pane.hidden = true;
 	$("#panes").append(t.pane);
@@ -4553,7 +4567,7 @@ async function openTask(payload) {
 		const t = terminals[data.id];
 		markProcess(t);
 		showTaskWindow(t);
-		return;
+		return t;
 	}
 	if (terminals[data.id]) {
 		showDock();
@@ -5403,7 +5417,7 @@ function renderUsers() {
 	$("#users-list").replaceChildren(...(users.length ? users.map((user) => el("button", { type: "button", className: "user-row" + (user.disabled ? " disabled" : ""),
 		onclick: () => openUserEditor(user) },
 		el("span", { className: "user-avatar", textContent: user.username.slice(0, 1).toUpperCase() }),
-		el("span", { className: "user-text" }, el("strong", { textContent: user.username }), el("small", { textContent: userSummary(user) })),
+		el("span", { className: "user-text" }, el("strong", { textContent: user.username }), el("small", { textContent: userSummary(user) + (user.linux ? ` · Linux user ${user.linux}` : "") })),
 		el("span", { className: "badge " + (user.role === "admin" ? "user-admin" : "user-user"), textContent: user.disabled ? "Locked" : user.role === "admin" ? "Administrator" : "User" }),
 		svgIcon("chevron"))) : [el("p", { className: "muted users-empty", textContent: "No other users yet. Add one to give someone their own login." })]));
 }
@@ -5426,8 +5440,21 @@ function siteGrantRow(name, envKeys, grant) {
 	const newEnvs = el("input", { type: "checkbox", checked: grant ? Boolean(grant.new_envs) : true });
 	const actionBoxes = usersData.site_actions.map(([value, text]) => {
 		const box = el("input", { type: "checkbox", value, checked: (grant?.actions || defaultSiteActions).includes(value) });
-		return el("label", { className: "grant-chip action" }, box, el("span", { textContent: text }));
+		const chip = el("label", { className: "grant-chip action" }, box, el("span", { textContent: text }));
+		if (value === "terminal") chip.title = "A shell in the site's folder as their own Linux user: everything that user may do there, Files and deleting too";
+		return chip;
 	});
+	// A terminal reaches the folder as the user's Linux user: it gives Files as well
+	const actionBox = (value) => actionBoxes.map((chip) => chip.querySelector("input")).find((box) => box.value === value);
+	const terminalBox = actionBox("terminal"), filesBox = actionBox("files");
+	const terminalGivesFiles = () => {
+		if (!terminalBox || !filesBox) return;
+		if (terminalBox.checked) filesBox.checked = true;
+		filesBox.disabled = terminalBox.checked;
+		filesBox.closest("label").title = terminalBox.checked ? "Given by Terminal" : "";
+	};
+	if (terminalBox) terminalBox.addEventListener("change", terminalGivesFiles);
+	terminalGivesFiles();
 	const sync = () => {
 		const count = envBoxes.filter(([, box]) => box.checked).length;
 		whole.checked = count === envBoxes.length;
@@ -5626,3 +5653,218 @@ $("#audit-clear").onclick = () => run(async () => {
 	renderAudit();
 	toast("Activity log cleared", "ok");
 });
+
+
+// ------------------------------------------------------------------ server tools (harbor server status)
+// A card per part of the server. Each action runs as a task with its steps; the window opens again when it is done.
+const serverToolsDialog = $("#dlg-server-tools");
+const serverActionDialog = $("#dlg-server-action");
+const DOTNET_CHANNELS = ["11.0", "10.0", "9.0", "8.0"];
+const NODE_MAJORS = ["24", "22", "20"];
+const SQL_EDITIONS = [
+	["Developer", "Every feature, free, not for production"],
+	["Express", "Free for production, 10 GB per database"],
+	["Standard", "Licensed: production workloads"],
+	["Enterprise", "Licensed: every feature"],
+];
+
+async function openServerTools() {
+	if (!serverToolsDialog.open) serverToolsDialog.showModal();
+	const list = $("#server-tools-list");
+	list.setAttribute("aria-busy", "true");
+	if (!list.childElementCount) list.replaceChildren(el("div", { className: "server-tools-loading", textContent: "Looking at the server…" }));
+	try {
+		const status = await api("/api/server/tools");
+		$("#server-tools-os").textContent = status.os.name ? `${status.os.name} · what this server has for its sites` : "What this server has for its sites";
+		list.replaceChildren(...serverToolCards(status));
+	} catch (error) {
+		list.replaceChildren(el("div", { className: "server-tools-loading", textContent: error.message }));
+	} finally {
+		list.removeAttribute("aria-busy");
+	}
+}
+$("#server-tools-close").onclick = () => serverToolsDialog.close();
+$("#server-tools-refresh").onclick = () => openServerTools();
+
+function toolButton(text, onclick, className = "") {
+	return el("button", { type: "button", textContent: text, className, onclick: () => run(onclick) });
+}
+
+function toolCard({ icon, tone, title, detail, state, stateClass, text, rows, actions }) {
+	const head = el("div", { className: "tool-head" },
+		el("span", { className: "tool-icon" }, svgIcon(icon)),
+		el("div", { className: "tool-title" }, el("strong", { textContent: title }), el("small", { textContent: detail || "—", title: detail || "" })),
+		el("span", { className: "tool-state " + (stateClass || ""), textContent: state }));
+	const card = el("section", { className: "tool-card tone-" + tone }, head);
+	if (text) card.append(el("p", { className: "tool-text", textContent: text }));
+	if (rows && rows.length) card.append(el("ul", { className: "tool-rows" }, ...rows));
+	if (actions && actions.length) card.append(el("div", { className: "tool-actions" }, ...actions));
+	return card;
+}
+
+function toolRow(name, detail, { on = null, action = null, code = false } = {}) {
+	const row = el("li", { className: "tool-row" });
+	if (on !== null) row.append(el("span", { className: "dot" + (on ? " on" : "") }));
+	row.append(el("span", { className: "tool-row-name", textContent: name }));
+	row.append(code ? el("code", { textContent: detail, title: detail }) : el("span", { className: "tool-row-detail", textContent: detail, title: detail }));
+	if (action) row.append(action);
+	return row;
+}
+
+function serverToolCards(status) {
+	const sql = status.sql_server, tools = status.sql_tools, sa = status.sa_password, cron = status.cron;
+	const cards = [];
+	cards.push(toolCard({
+		icon: "database", tone: "purple", title: "SQL Server", detail: sql.installed ? "Version " + sql.version : "Not installed",
+		state: sql.installed ? (sql.running ? "Running" : "Stopped") : "Not installed", stateClass: sql.installed ? (sql.running ? "ok" : "bad") : "",
+		text: sql.installed ? "The databases of the sites here. Update takes the newest patch of this version." : "Microsoft SQL Server for the sites' databases. Not needed when they use a SQL Server elsewhere.",
+		actions: sql.installed
+			? [toolButton("Update", () => confirmServerTool("Update SQL Server?", "Takes the newest update of this version. The service restarts, so take a backup first.", "Update", { tool: "sql_update" })),
+				toolButton("Remove…", () => askServerTool("sql_uninstall"), "tool-danger")]
+			: [toolButton("Install…", () => askServerTool("sql_install"), "primary")],
+	}));
+	cards.push(toolCard({
+		icon: "terminal", tone: "blue", title: "SQL tools", detail: tools.installed ? "sqlcmd " + (tools.version || "") : "sqlcmd is not installed",
+		state: tools.installed ? "Installed" : "Not installed", stateClass: tools.installed ? "ok" : "",
+		text: "sqlcmd runs the backups, the log shrinks and the database scripts. Needed for SQL connections on this server too.",
+		actions: tools.installed
+			? [toolButton("Remove", () => confirmServerTool("Remove the SQL tools?", "sqlcmd goes. SQL Server and its databases stay.", "Remove", { tool: "tools_uninstall" }, true), "tool-danger")]
+			: [toolButton("Install", () => runServerTool({ tool: "tools_install" }), "primary")],
+	}));
+	cards.push(toolCard({
+		icon: "key", tone: "amber", title: "sa password", detail: sa.scripts ? `Used by ${sa.scripts} script${sa.scripts === 1 ? "" : "s"} in sql/` : "No script uses it",
+		state: sa.set ? "Set" : "Not set", stateClass: sa.set ? "ok" : sql.installed ? "warn" : "",
+		text: sa.set ? "The backups and database scripts log in with it. Set it again when it was changed on the SQL Server."
+			: "The backups and database scripts need the sa password of the SQL Server here.",
+		actions: [toolButton(sa.set ? "Change…" : "Set…", () => askServerTool("sa_password"), sa.set ? "" : "primary")],
+	}));
+	const jobs = cron.jobs.backup_everything && cron.jobs.shrink_logs;
+	const someJobs = cron.jobs.backup_everything || cron.jobs.shrink_logs;
+	cards.push(toolCard({
+		icon: "clock", tone: "teal", title: "Backups", detail: "root's crontab",
+		state: jobs ? "On" : someJobs ? "Partly on" : "Off", stateClass: jobs ? "ok" : someJobs ? "warn" : "",
+		rows: [
+			toolRow("Backup", "Every database, every 4 hours at :15", { on: cron.jobs.backup_everything }),
+			toolRow("Log shrink", "Every log, every 4 hours", { on: cron.jobs.shrink_logs }),
+			...cron.others.map((line) => toolRow("Also", line, { code: true })),
+		],
+		actions: jobs
+			? [toolButton("Turn off", () => confirmServerTool("Turn off the backups?", "The backup and log shrink jobs leave root's crontab. Other jobs stay.", "Turn off", { tool: "cron_off" }, true))]
+			: [toolButton("Turn on", () => runServerTool({ tool: "cron_on" }), "primary")],
+	}));
+	const installed = new Set(status.dotnet.map((item) => item.channel));
+	const missing = DOTNET_CHANNELS.filter((channel) => !installed.has(channel));
+	cards.push(toolCard({
+		icon: "dotnet", tone: "pink", title: ".NET", detail: status.dotnet.length ? status.dotnet.map((item) => item.channel).join(" · ") : "Not installed",
+		state: status.dotnet.length ? `${status.dotnet.length} version${status.dotnet.length === 1 ? "" : "s"}` : "Not installed", stateClass: status.dotnet.length ? "ok" : "warn",
+		rows: status.dotnet.map((item) => toolRow(".NET " + item.channel, `SDK ${item.sdk || "—"} · runtime ${item.runtime || "—"}`, {
+			action: toolButton("Update", () => confirmServerTool(`Update .NET ${item.channel}?`, "Installs its newest SDK and ASP.NET Core runtime. Sites use the new runtime when they restart.", "Update", { tool: "dotnet_update", channel: item.channel }), "ghost tool-row-action"),
+		})),
+		actions: missing.length ? [toolButton("Add version…", () => askServerTool("dotnet_install", { channels: missing }))] : [],
+	}));
+	const node = status.node;
+	cards.push(toolCard({
+		icon: "hexagon", tone: "green", title: "Node.js", detail: node.version ? `Version ${node.version}` + (node.npm ? ` · npm ${node.npm}` : "") : "Not installed",
+		state: node.version ? "Installed" : "Not installed", stateClass: node.version ? "ok" : "",
+		text: node.version ? "" : "For sites that build their front end with npm. From NodeSource's repository.",
+		actions: node.version
+			? [toolButton("Change version…", () => askServerTool("node_install", { current: node.version.split(".")[0] })),
+				toolButton("Remove", () => confirmServerTool("Remove Node.js?", "node and npm go from this server.", "Remove", { tool: "node_remove" }, true), "tool-danger")]
+			: [toolButton("Install…", () => askServerTool("node_install"), "primary")],
+	}));
+	return cards;
+}
+
+async function runServerTool(payload) {
+	serverToolsDialog.close();
+	const t = await openTask({ kind: "server_tool", ...payload });
+	if (t) t.afterTask = openServerTools;
+}
+
+async function confirmServerTool(title, message, ok, payload, danger = false) {
+	if (await ask({ title, message, input: false, ok, danger })) await runServerTool(payload);
+}
+
+function passwordFields() {
+	return [
+		el("label", {}, "sa password", el("input", { name: "sa_password", type: "password", required: true, minLength: 8, maxLength: 128, autocomplete: "new-password" })),
+		el("label", {}, "Repeat password", el("input", { name: "sa_repeat", type: "password", required: true, minLength: 8, maxLength: 128, autocomplete: "new-password" })),
+	];
+}
+
+function choiceCards(name, legend, options, checked) {
+	return el("fieldset", { className: "server-editions" }, el("legend", { textContent: legend }),
+		...options.map(([value, sub]) => el("label", { className: "type-card" },
+			el("input", { type: "radio", name, value, required: true, checked: value === checked }),
+			el("span", { className: "tc-title", textContent: value }),
+			el("span", { className: "tc-sub", textContent: sub }))));
+}
+
+function checkOption(name, title, sub, checked) {
+	return el("label", { className: "copy-connection-toggle" }, el("input", { type: "checkbox", name, checked }),
+		el("span", {}, el("strong", { textContent: title }), el("br"), el("span", { className: "muted", textContent: sub })));
+}
+
+// The dialog for an action that needs answers, then its task
+function askServerTool(tool, options = {}) {
+	const form = $("#form-server-action");
+	const fields = $("#server-action-fields");
+	const setup = {
+		sql_install: ["database", "Install SQL Server", "The newest SQL Server for this Ubuntu, set up without questions.", "Install", () => [
+			choiceCards("edition", "Edition", SQL_EDITIONS, "Developer"),
+			...passwordFields(),
+			el("p", { className: "hint", textContent: "At least 8 characters, with three of: upper case, lower case, digits and symbols. The backups and database scripts use it too." }),
+			checkOption("with_tools", "Install the SQL tools (sqlcmd)", "Needed for backups and the database scripts", true),
+		]],
+		sql_uninstall: ["database", "Remove SQL Server", "The service stops and SQL Server goes from this server.", "Remove SQL Server", () => [
+			checkOption("with_tools", "Remove the SQL tools (sqlcmd) too", "Keep them to reach SQL Servers elsewhere", false),
+			checkOption("delete_data", "Delete the databases, logs and backups", "Everything in /var/opt/mssql. Kept when not ticked.", false),
+			el("div", { className: "server-action-danger", hidden: true, id: "server-action-delete" },
+				el("label", {}, "Type DELETE to delete the databases", el("input", { name: "confirmation", autocomplete: "off", spellcheck: false }))),
+		]],
+		sa_password: ["key", "sa password", "The password of the sa login on this SQL Server, for the backups and database scripts. It is checked against the server first.", "Save password", passwordFields],
+		dotnet_install: ["dotnet", "Add .NET", "Its SDK and ASP.NET Core runtime, beside the versions there.", "Install", () => [
+			choiceCards("channel", "Version", (options.channels || []).map((channel) => [channel, channel === "8.0" || channel === "10.0" ? "Long-term support" : "Standard-term support"]), (options.channels || [])[0]),
+		]],
+		node_install: ["hexagon", options.current ? "Change Node.js version" : "Install Node.js", "From NodeSource's repository. Another version is replaced.", options.current ? "Change version" : "Install", () => [
+			choiceCards("major", "Version", NODE_MAJORS.map((major) => [major, major === options.current ? "Installed now" : "LTS"]), NODE_MAJORS.find((major) => major !== options.current)),
+		]],
+	}[tool];
+	const [icon, title, text, ok, build] = setup;
+	$("#server-action-icon").replaceChildren(svgIcon(icon));
+	$("#server-action-title").textContent = title;
+	$("#server-action-text").textContent = text;
+	const button = $("#server-action-ok");
+	button.textContent = ok;
+	button.classList.toggle("danger", tool === "sql_uninstall");
+	fields.replaceChildren(...build());
+	const deleting = form.elements.delete_data;
+	if (deleting) deleting.onchange = () => {
+		$("#server-action-delete").hidden = !deleting.checked;
+		form.elements.confirmation.required = deleting.checked;
+	};
+	form.onsubmit = (event) => {
+		event.preventDefault();
+		const values = form.elements;
+		if (values.sa_repeat && values.sa_password.value !== values.sa_repeat.value) {
+			values.sa_repeat.setCustomValidity("The passwords are not the same");
+			values.sa_repeat.reportValidity();
+			values.sa_repeat.oninput = () => values.sa_repeat.setCustomValidity("");
+			return;
+		}
+		if (values.confirmation && values.delete_data.checked && values.confirmation.value !== "DELETE") {
+			values.confirmation.setCustomValidity("Type DELETE");
+			values.confirmation.reportValidity();
+			values.confirmation.oninput = () => values.confirmation.setCustomValidity("");
+			return;
+		}
+		const payload = { tool };
+		for (const name of ["edition", "channel", "major", "sa_password", "confirmation"]) if (values[name]) payload[name] = values[name].value;
+		for (const name of ["with_tools", "delete_data"]) if (values[name]) payload[name] = values[name].checked;
+		serverActionDialog.close();
+		run(() => runServerTool(payload));
+	};
+	serverActionDialog.showModal();
+	fields.querySelector("input:not([type=radio]):not([type=checkbox])")?.focus();
+}
+$("#server-action-cancel").onclick = () => serverActionDialog.close();

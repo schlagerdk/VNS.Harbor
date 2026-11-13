@@ -23,15 +23,15 @@ def has_channel(sdks, runtimes, channel):
             and re.search(rf"(?m)^Microsoft\.AspNetCore\.App {escaped}\.[0-9]+ \[", runtimes) is not None)
 
 
-def ensure_channel(system, channel):
-    """The SDK and ASP.NET Core runtime of a channel, such as 8.0, installed when missing. An older channel never
-    replaces a newer dotnet host."""
+def ensure_channel(system, channel, force=False):
+    """The SDK and ASP.NET Core runtime of a channel, such as 8.0, installed when missing (force: their newest patches
+    also when it is there). An older channel never replaces a newer dotnet host."""
     dotnet = f"{DOTNET_DIR}/dotnet"
     sdks = runtimes = ""
     if system.path(dotnet).is_file():
         sdks = system.output(dotnet, "--list-sdks")
         runtimes = system.output(dotnet, "--list-runtimes")
-    if has_channel(sdks, runtimes, channel):
+    if has_channel(sdks, runtimes, channel) and not force:
         return
     system.say(f"Install .NET {channel} SDK and ASP.NET Core runtime")
     with tempfile.NamedTemporaryFile(suffix=".sh") as installer:

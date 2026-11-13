@@ -32,6 +32,7 @@ class BackofficeTests(unittest.TestCase):
         site = self.root / "var/www/shop.dk"
         (site / "_publish").mkdir(parents=True)
         (site / "Shop.csproj").write_text(PROJECT)
+        (site / "_publish/VNS.Harbor.dll").write_text("")
         for path in ("etc/systemd/system", "etc/apache2/sites-available"):
             (self.root / path).mkdir(parents=True)
         (self.root / "etc/systemd/system/shop.dk.service").write_text("[Service]\nWorkingDirectory=/var/www/shop.dk/_publish\n")
@@ -83,11 +84,24 @@ class BackofficeTests(unittest.TestCase):
         target = self.root / "var/www/shop.dk/scripts/targets/test"
         target.mkdir(parents=True)
         (target / "publish_prod.sh").write_text("PROD_LOCAL_PATH='/var/www/shop.dk/_test'\nPROD_FOLDER='test.shop.dk'\nPROD_BINDING='test.shop.dk'\nPROD_HTTPS=n\n")
+        # Published before the package was added: no link, the Backend button opens the login
+        with self.assertRaises(Exception):
+            backoffice.login_link(self.system, "shop.dk", "test")
+        (self.root / "var/www/shop.dk/_test").mkdir()
+        (self.root / "var/www/shop.dk/_test/VNS.Harbor.dll").write_text("")
         self.assertEqual(backoffice.backoffice_user(self.system, "shop.dk", "test"), "editor@shop.dk")
         link = backoffice.login_link(self.system, "shop.dk", "test")
         self.assertTrue(link.startswith("http://test.shop.dk/umbraco/vns-harbor/login?token="))
         written = json.loads((self.root / "var/www/shop.dk/_test/vns-harbor.json").read_text())
         self.assertEqual(written["environment"], "test")
+
+    def test_harbors_address_is_the_admin_site_here(self):
+        (self.root / "etc/systemd/system/admin.example.test.service").write_text("[Service]\nWorkingDirectory=/var/www/admin.example.test/app\n")
+        (self.root / "etc/apache2/sites-available/admin.example.test.conf").write_text(
+            "<VirtualHost *:443>\n  ServerName admin.example.test\n  SSLEngine On\n</VirtualHost>\n")
+        self.run_harbor("site", "connect", "shop.dk")
+        data = json.loads((self.root / "var/www/shop.dk/_publish/vns-harbor.json").read_text())
+        self.assertEqual(data["harbor"], "https://admin.example.test")
 
     def test_the_user_can_be_taken_away(self):
         self.run_harbor("site", "backoffice-user", "shop.dk", "editor@shop.dk")

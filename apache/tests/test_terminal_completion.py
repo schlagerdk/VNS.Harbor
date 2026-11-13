@@ -18,8 +18,8 @@ class TerminalCompletionTests(unittest.TestCase):
         names = {"terminal_activity_sites", "terminal_scope", "terminal_auto_close", "terminal_output_problem", "TermSession", "describe"}
         nodes = [node for node in ast.parse((APP / "app.py").read_text()).body
                  if isinstance(node, (ast.FunctionDef, ast.ClassDef)) and node.name in names]
-        # keep_harbor_state: Harbor's copy of the state is kept after a task; not here
-        self.ns = {"re": re, "codecs": codecs, "BUFFER_MAX": 1024, "REMOTE_STATUS": {}, "keep_harbor_state": lambda: None,
+        # keep_harbor_state and linux_users_changed: Harbor keeps its state and the Linux users after a task; not here
+        self.ns = {"re": re, "codecs": codecs, "BUFFER_MAX": 1024, "REMOTE_STATUS": {}, "keep_harbor_state": lambda: None, "linux_users_changed": lambda: None,
                    "os": SimpleNamespace(read=Mock())}
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "terminal completion", "exec"), self.ns)
         add_target_helpers(self.ns)

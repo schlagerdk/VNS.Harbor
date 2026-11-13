@@ -48,6 +48,66 @@ Where the work stands, so it can go on from here after any interruption.
      signs that user in with Umbraco's own sign-in and opens /umbraco. Only users with access to the site in Harbor get
      the button, and each login is logged (who, when).
 
+## Phase 8 steps (users on the server)
+Harbor only ever touches the Linux users in its group `harbor-users`; other users of the server are left alone. Which
+admin user has which Linux user is kept in /var/lib/harbor/users.json. Passwords stay locked until SFTP (8d).
+- [x] 8a `harbor users sync` (the admin's users as JSON, or `--config` with the admin's config.json): a Linux user per
+  admin user (not root), named from the username (the part before @, made valid; a suffix when the name is taken by a
+  user Harbor does not manage), no sudo, its own group and `harbor-users`. A disabled user expires and gets no shell, a
+  removed one is deleted with its home. The admin syncs after every change to its users and when it starts, and shows
+  each user's Linux name.
+  Done 2026-11-13 (tests/test_server_users.py; tried on linux-01: made, disabled and removed, the server's own users
+  untouched).
+- [x] 8b A group per site (`site-<name>`, shortened with a hash when too long) with ACLs on the site's folder (rwX, default
+  ACLs for new files), never on scripts/ or .vns-publish while they hold passwords (until phase 6). A user with the
+  Files grant on a site is in its group; grants and revokes change the groups at once.
+  Done 2026-11-13 (tests/test_server_users.py; tried on linux-01 on mhs.linux-01.vns.dk: writes in the site and _publish,
+  also after fix-permissions, which sets the ACLs again as a publish does; not the script files or .vns-publish; all of
+  it gone when the grant is). The admin syncs after each task too, so a site a user creates is theirs at once.
+- [x] 8b2 Found on linux-01: the site folders were readable by every user of the server (another site's appsettings.json,
+  scripts/). While the server has users, each site's own folder is closed to others (o-rwx on /var/www/<site> only, an
+  ACL first gives www-data rX; vns-build keeps its group rights), its mode kept in /var/lib/harbor/closed-sites.json and
+  given back when the last user goes. The admin's own folder is left alone. Tried on linux-01: every site answered 200
+  closed and open.
+- [x] 8c **Terminal** is a grant per site (asked 2026-11-13): it gives Files too, and a shell in the site's folder as the
+  user's own Linux user (runuser, a clean environment), so it reaches what that user may: the site's files, deleting
+  them too, never another site, scripts/ or sudo. A shell on another server stays an administrator's (it is root there).
+  Tried on linux-01. Note for tests on a server: sync from the admin's config.json, never a list of your own (it
+  removed the user "test" Martin had just made; made again at once).
+- [ ] 8d SFTP: internal-sftp for the group `harbor-sftp` (Match Group, ForceCommand internal-sftp, ChrootDirectory), a
+  folder per user with bind mounts of their sites, password or key set in the admin, on/off per user.
+
+## Phase 4 steps (server tools in the admin)
+One "Server tools" window (Server menu) shows what the server has and does each action as a task with its steps. The
+terminal scripts in sql/ keep asking as they do; the admin gives the answers as options and the passwords in the task's
+environment (never on the command line).
+- [x] 4a `harbor server status` (JSON): Ubuntu, SQL Server (installed, version, running), sqlcmd, whether the sa password
+  is set in sql/, the backup and log shrink cron jobs, .NET SDKs and ASP.NET Core runtimes, Node.js.
+- [x] 4b SQL Server, sqlcmd and the sa password without questions: `--edition`, `--with-tools`, `--yes`,
+  `--delete-data`, the password from `HARBOR_SA_PASSWORD`.
+- [x] 4c `harbor server cron on|off`: the backup and log shrink jobs added or removed once (the custom cron jobs stay).
+- [x] 4d `harbor server dotnet install|update <channel>` and `harbor server node install <major>` (NodeSource).
+- [x] 4e The Server tools window in the admin: a card per part with its state and actions, a dialog per action, the task
+  window for its steps.
+  Done 2026-11-13 (tests/test_server_tools.py, apache/tests/test_server_tools.py; tried on linux-01: status, cron on/off,
+  .NET, a wrong sa password refused). The old "Install SQL tools" button in the SQL view stays until the cutover.
+
+## Phase 3 steps (Harbor installed as releases)
+/vns stays as it is until phase 7: its scripts, cron jobs and the sa password in sql/ keep working. Harbor itself moves
+to releases that are never changed once installed, so an update can be undone.
+- Layout: `/opt/harbor/releases/<version>/` (bin, harbor, apache, sql: everything Harbor runs), `/opt/harbor/current` →
+  the release in use, `/usr/local/bin/harbor` → `current/bin/harbor`. The three newest releases are kept.
+- [x] 3a `harbor self install <source>` installs a release from a copy of the repository (update.sh runs it after it has
+  updated /vns, dev/deploy.sh after its markers: a working copy is copied again every time), `harbor self version`,
+  `harbor self releases`, `harbor self rollback` (tests/test_self_install.py; on linux-01 since 2026-11-13). Paths that
+  are kept elsewhere come from harbor/core/paths.py: from a release they name /opt/harbor/current.
+- 3b and 3c move to the cutover (decided 2026-11-13): until /vns goes, its scripts, the admin and cron run /vns's own copy.
+  Running the release from /vns/bin/harbor before then would make a rollback change harbor but not /vns/apache or the
+  admin: half a system. At the cutover all of it runs from the release, and a rollback is whole.
+- [ ] 3b (at the cutover) /vns/bin/harbor runs the release in /opt/harbor/current when there is one. What harbor renders into a site
+  names /opt/harbor/current (never a release, which is removed later); the sql folder with the password stays /vns/sql.
+- [ ] 3c The admin runs from the release (its venv in /opt/harbor/venv), still as the site admin.<host>.
+
 ## Phase 2 steps (state out of the site folders)
 State in a site folder today: `scripts/publish_prod.sh` and `scripts/targets/<id>/publish_prod.sh` (an environment's
 settings, its password too, at the top of the script that publishes), `scripts/data_sync.json` (Sync setup),
@@ -107,6 +167,8 @@ Phases 3–8 change how servers are installed and updated; they are done with Ma
   the Backend login, the dashboard without and with access, a settings sync to one and to all environments through the
   token API. Environments are always in the order main, Development, Test, Staging, Production (also the sync's steps).
   Only administrators get the automatic login for now (Martin decides whether more should).
+- [x] A new Umbraco 17+ site gets VNS.Harbor (Create site); one that cannot be added is told, and the site is made all the
+  same. The connection names Harbor's own address: the admin site on the server.
 - [ ] 9d Environments on other servers and Windows: vns-harbor.json written there at publish (now: the site and its
   environments on this server); the package on nuget.org.
 

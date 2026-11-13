@@ -13,8 +13,8 @@ import tempfile
 
 from harbor.core.system import CommandFailed, Stop
 from harbor.environments.windows import Share
+from harbor.core.paths import APACHE
 
-APACHE = Path(__file__).resolve().parents[2] / "apache"
 SCHEMA_FILES = ("appsettings-schema.json", "appsettings-schema.usync.json", "appsettings-schema.Umbraco.Cms.json", "umbraco-package-schema.json")
 
 

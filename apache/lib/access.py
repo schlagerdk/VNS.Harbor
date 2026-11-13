@@ -33,6 +33,7 @@ SITE_ACTIONS = [
     ("clear_logs", "Clear logs"),
     ("appsettings", "Edit appsettings.json"),
     ("files", "Files"),
+    ("terminal", "Terminal"),
     ("packages", "NuGet packages"),
     ("bindings", "Bindings and certificates"),
     ("create_env", "Add environments"),
@@ -197,6 +198,9 @@ def clean(data, existing=None, sites=None, connections=None):
         envs = [env for env in grant.get("envs", []) if isinstance(env, str) and ENV_RE.match(env)
                 and (sites is None or env in sites[site])]
         actions = sorted(action for action in grant.get("actions", []) if action in SITE_ACTION_NAMES)
+        # A terminal reaches the site's folder as the user's Linux user: it is Files as well
+        if "terminal" in actions and "files" not in actions:
+            actions = sorted(actions + ["files"])
         if envs:
             entry = {"envs": envs, "new_envs": bool(grant.get("new_envs")), "actions": actions}
             # The environments there were when it was given: later ones count only with new_envs

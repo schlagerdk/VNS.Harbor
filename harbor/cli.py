@@ -139,7 +139,55 @@ def _sql(args, system):
     module = server if name in ("install_server", "update_server", "uninstall_server", "install_sql_tools", "uninstall_sql_tools",
                                 "set_sa_password") else databases
     words = {"copy": 2, "drop": 2, "create": 1, "restore": 1}.get(name, 0)
-    getattr(module, name)(system, *getattr(args, "names", [])[:words])
+    # The answers the admin gives as options (each is asked in the terminal when it is not given)
+    options = {key: getattr(args, key) for key in ("edition", "with_tools", "assume_yes", "delete_data")
+               if getattr(args, key, None) not in (None, "")}
+    getattr(module, name)(system, *getattr(args, "names", [])[:words], **options)
+
+
+def _users_sync(args, system):
+    import json
+    from harbor.server.users import sync
+    try:
+        if args.config:
+            users = json.loads(system.path(args.config).read_text()).get("users", [])
+        else:
+            users = json.loads(sys.stdin.read() or "[]")
+    except (OSError, ValueError) as error:
+        raise Stop(f"The admin's users could not be read: {error}")
+    if not isinstance(users, list):
+        raise Stop("The admin's users must be a list.")
+    sync(system, users)
+
+
+def _users_list(args, system):
+    import json
+    from harbor.server.users import mapping
+    print(json.dumps(mapping(system), indent=2))
+
+
+def _server_status(args, system):
+    import json
+    from harbor.server.tools import status
+    print(json.dumps(status(system), indent=2))
+
+
+def _server_cron(args, system):
+    from harbor.server.tools import cron
+    cron(system, args.state == "on")
+
+
+def _server_dotnet(args, system):
+    from harbor.server.tools import dotnet_install
+    dotnet_install(system, args.channel, update=args.action == "update")
+
+
+def _server_node(args, system):
+    from harbor.server import tools
+    if args.action == "remove":
+        tools.node_remove(system)
+    else:
+        tools.node_install(system, args.major)
 
 
 def _state_sync(args, system):
@@ -198,6 +246,19 @@ def _backoffice_link(args, system):
     system.say(backoffice.login_link(system, args.site, args.environment, args.who))
 
 
+def _self(args, system):
+    from harbor.install import release
+    if args.command == "install":
+        release.install(system, args.source)
+    elif args.command == "rollback":
+        release.rollback(system)
+    elif args.command == "releases":
+        for item in release.releases(system):
+            system.say(f"{'*' if item['current'] else ' '} {item['name']}  {item['installed']}")
+    else:
+        release.version(system)
+
+
 def _environment_binding(args, system):
     from harbor.environments.bindings import change_binding
     change_binding(system, args.site, args.binding, args.aliases, yes=args.confirm == "--yes" or args.yes, target=target())
@@ -227,6 +288,19 @@ def parser():
     command = server.add_parser("install-tls-policy", help="the shared TLS policy (was install_tls_policy.sh)")
     command.add_argument("--start-if-stopped", action="store_true")
     command.set_defaults(handler=_tls_policy)
+    command = server.add_parser("status", help="SQL Server, sqlcmd, the sa password, cron jobs, .NET and Node.js here, as JSON")
+    command.set_defaults(handler=_server_status)
+    command = server.add_parser("cron", help="the backup and log shrink jobs in root's crontab, on or off")
+    command.add_argument("state", choices=("on", "off"))
+    command.set_defaults(handler=_server_cron)
+    command = server.add_parser("dotnet", help="install a .NET channel (SDK and ASP.NET Core runtime), or update it to its newest patch")
+    command.add_argument("action", choices=("install", "update"))
+    command.add_argument("channel", help="such as 10.0")
+    command.set_defaults(handler=_server_dotnet)
+    command = server.add_parser("node", help="install Node.js of a major version (NodeSource), or remove it")
+    command.add_argument("action", choices=("install", "remove"))
+    command.add_argument("major", nargs="?", default="", help="such as 22")
+    command.set_defaults(handler=_server_node)
 
     site = groups.add_parser("site", help="a site on this server").add_subparsers(dest="command", required=True, metavar="<command>")
     command = site.add_parser("fix-permissions", help="the folder the site runs from owned by www-data (was fix_permissions.sh)")
@@ -338,10 +412,37 @@ def parser():
             ("uninstall-sql-tools", 0, "sqlcmd removed (was uninstall_tools.sh)"),
             ("set-sa-password", 0, "the sa password in the scripts in sql/ (was set_sa_password.sh)")):
         command = sql.add_parser(name, help=text)
+        if name in ("install-server", "update-server", "uninstall-server", "uninstall-sql-tools", "set-sa-password"):
+            command.add_argument("--yes", dest="assume_yes", action="store_const", const=True, default=None,
+                                 help="answer yes instead of asking")
+        if name == "install-server":
+            command.add_argument("--edition", default="", help="Developer, Express, Evaluation, Standard or Enterprise: set up "
+                                 "without questions, the sa password from HARBOR_SA_PASSWORD")
+            command.add_argument("--with-tools", dest="with_tools", action="store_const", const=True, default=None)
+            command.add_argument("--without-tools", dest="with_tools", action="store_const", const=False)
+        if name == "uninstall-server":
+            command.add_argument("--with-tools", dest="with_tools", action="store_const", const=True, default=None, help="remove sqlcmd too")
+            command.add_argument("--without-tools", dest="with_tools", action="store_const", const=False, help="keep sqlcmd")
+            command.add_argument("--delete-data", dest="delete_data", action="store_const", const=True, default=None)
+            command.add_argument("--keep-data", dest="delete_data", action="store_const", const=False)
         if words:
             # As the script: what is not given is asked for, and more is not read
             command.add_argument("names", nargs="*", default=[])
         command.set_defaults(handler=_sql)
+
+    users = groups.add_parser("users", help="a Linux user for each user of the admin").add_subparsers(dest="command", required=True, metavar="<command>")
+    command = users.add_parser("sync", help="the Linux users equal to the admin's users (JSON on stdin, or --config)")
+    command.add_argument("--config", default="", help="the admin's config.json")
+    command.set_defaults(handler=_users_sync)
+    command = users.add_parser("list", help="which admin user has which Linux user, as JSON")
+    command.set_defaults(handler=_users_list)
+
+    own = groups.add_parser("self", help="Harbor itself: its releases in /opt/harbor").add_subparsers(dest="command", required=True, metavar="<command>")
+    command = own.add_parser("install", help="install a release from a copy of the repository and use it")
+    command.add_argument("source")
+    command.set_defaults(handler=_self)
+    for name, text in (("version", "the release in use"), ("releases", "the installed releases"), ("rollback", "use the release before the one in use again")):
+        own.add_parser(name, help=text).set_defaults(handler=_self)
 
     state = groups.add_parser("state", help="Harbor's own copy of the state in the site folders").add_subparsers(dest="command", required=True, metavar="<command>")
     command = state.add_parser("sync", help="make Harbor's copy equal to the site folders, of one site or all")
@@ -436,6 +537,18 @@ def touched_sites(args):
     return [name for name in names if isinstance(name, str) and name]
 
 
+def keep_site_rights(system, args):
+    """After a command that sets the modes in a site's folder, the site's group gets its rights again (phase 8b)"""
+    if os.environ.get("VNS_WEB_ROOT") or (args.group, args.command) not in (("site", "fix-permissions"), ("site", "publish"), ("env", "publish")):
+        return
+    from harbor.server.users import keep_site
+    for name in touched_sites(args) or []:
+        try:
+            keep_site(system, name)
+        except (OSError, CommandFailed) as error:
+            system.warn(f"The rights of {name}'s group were not set again: {error}")
+
+
 def keep_state(system, args):
     """Harbor's copy of the sites' state stays equal to the site folders after a command (harbor/state)"""
     from harbor.state import store
@@ -470,6 +583,7 @@ def main(argv=None, system=None, keep=None):
     finally:
         if keep:
             keep_state(system, args)
+            keep_site_rights(system, args)
     return 0
 
 

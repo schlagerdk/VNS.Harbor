@@ -86,6 +86,8 @@ main() {
     # Harbor's copy of the sites' state, equal to the site folders (they stay the truth until phase 6)
     sudo python3 "$TARGET/bin/harbor" state sync || echo "Harbor's copy of the sites' state was not updated." >&2
     printf '%s\n' "$revision" > "$TARGET/.vns-version"
+    # Harbor as a release in /opt/harbor (phase 3): /vns keeps working whether or not this does
+    sudo python3 "$TARGET/bin/harbor" self install "$TARGET" || echo "Harbor was not installed in /opt/harbor." >&2
     echo "VNS updated in $TARGET"
 }
 

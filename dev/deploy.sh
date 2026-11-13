@@ -33,6 +33,8 @@ chmod -R go+rX,go-w "${source}"
 bash "${source}/update.sh" "${source}" 2> >(grep -v "has no Git metadata" >&2)
 printf '%s\n' "${revision}" >/vns/.vns-version
 printf '%s\n' "${label}" >/vns/.vns-dev
+# The release in /opt/harbor, made from what is now in /vns (a working copy: copied again every time)
+python3 /vns/bin/harbor self install /vns
 admin=$(python3 - <<'PY'
 import glob, re
 for path in glob.glob("/etc/systemd/system/*.service"):

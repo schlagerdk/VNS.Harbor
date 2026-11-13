@@ -16,8 +16,8 @@ from harbor.core.site_config import issue_certificate
 from harbor.core.system import CommandFailed, Stop
 from harbor.core.templates import Site
 from harbor.environments import settings
+from harbor.core.paths import LIB
 
-LIB = Path(__file__).resolve().parents[2] / "apache/lib"
 
 
 def copy_module():

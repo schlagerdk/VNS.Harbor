@@ -55,12 +55,26 @@ def running_folder(system, site, environment):
     return found.root
 
 
+def admin_url(system):
+    """Harbor's own address: the admin site on this server (the service that runs /var/www/<admin>/app), as its Apache
+    config names it. Empty when there is none."""
+    services = system.path("/etc/systemd/system")
+    for service in sorted(services.glob("*.service")) if services.is_dir() else []:
+        try:
+            match = re.search(r"(?m)^WorkingDirectory=/var/www/([^/\n]+)/app$", service.read_text(errors="replace"))
+        except OSError:
+            continue
+        if match:
+            return address(system, site_named(system, match[1]), "main")
+    return ""
+
+
 def connect(system, name, environment="main", harbor_url=""):
     """vns-harbor.json where the site runs, so the package knows its Harbor, its token and its login key"""
     site = site_named(system, name)
     keys = connection(system, site, environment)
     path = system.path(f"{running_folder(system, site, environment)}/vns-harbor.json")
-    data = {"harbor": harbor_url or (read_json(path) or {}).get("harbor", ""), "site": site.name, "environment": environment,
+    data = {"harbor": harbor_url or (read_json(path) or {}).get("harbor", "") or admin_url(system), "site": site.name, "environment": environment,
             "token": keys["token"], "loginKey": keys["login_key"]}
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2) + "\n")
@@ -117,6 +131,11 @@ def login_link(system, name, environment="main", who="", now=None):
     user = backoffice_user(system, site.name, environment)
     if not user:
         raise Stop("No Umbraco user is chosen for the Backend button of this site.")
+    # Where it runs on this server, it must run the package: published before the package was added, the login link
+    # would lead nowhere, and the Backend button opens the backoffice's own login instead
+    folder = running_folder(system, site, environment)
+    if not system.path(f"{folder}/VNS.Harbor.dll").is_file():
+        raise Stop(f"{site.name} ({environment}) does not run the VNS.Harbor package yet: publish it.")
     keys = connection(system, site, environment)
     # The site where it runs must know the key: connected now when it is not yet (an environment on this server)
     written = read_json(system.path(f"{running_folder(system, site, environment)}/vns-harbor.json")) or {}

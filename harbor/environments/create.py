@@ -20,8 +20,8 @@ from harbor.core.names import normalize_dns_name, normalize_site_name, service_n
 from harbor.core.system import CommandFailed, Stop
 from harbor.environments import settings
 from harbor.sites.create import ask
+from harbor.core.paths import APACHE
 
-APACHE = Path(__file__).resolve().parents[2] / "apache"
 SOLUTION = APACHE / "solutionfiles"
 ENVIRONMENTS = ("Development", "Test", "Staging", "Production")
 

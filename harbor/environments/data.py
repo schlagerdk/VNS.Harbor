@@ -22,8 +22,8 @@ from harbor.environments import settings
 from harbor.environments.sync import Sync, sync_environments
 from harbor.environments.windows import Share
 from harbor.sites.actions import site_named
+from harbor.core.paths import LIB
 
-LIB = Path(__file__).resolve().parents[2] / "apache/lib"
 
 
 def rules():

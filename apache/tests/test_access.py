@@ -10,6 +10,12 @@ SITES = {"shop.dk": ["main", "prod", "staging"], "blog.dk": ["main"]}
 
 
 class AccessTests(unittest.TestCase):
+    def test_terminal_gives_files(self):
+        user = access.clean({"username": "anna", "web": True, "sites": {"shop.dk": {"envs": ["main"], "actions": ["terminal", "logs"]}}},
+                            sites={"shop.dk": ["main"]})
+        self.assertEqual(user["sites"]["shop.dk"]["actions"], ["files", "logs", "terminal"])
+        self.assertTrue(access.can(user, "shop.dk", "main", "terminal"))
+
     def user(self, **data):
         base = {"username": "anna", "role": "user", "web": True}
         return access.clean({**base, **data}, sites=SITES, connections=["c1"])

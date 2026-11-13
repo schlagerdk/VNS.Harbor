@@ -32,8 +32,8 @@ from harbor.core.templates import Site
 from harbor.environments import settings
 from harbor.environments.register import bash_quote, run_create_prod, site_name
 from harbor.environments.windows import Share
+from harbor.core.paths import LIB
 
-LIB = Path(__file__).resolve().parents[2] / "apache/lib"
 ROOTS = "/var/lib/vns-roots"
 REMOVE_REMOTE_SOURCE = r'''systemctl stop "${UNIT}" || true
 systemctl disable "${UNIT}" || true

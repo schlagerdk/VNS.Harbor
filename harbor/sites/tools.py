@@ -15,8 +15,8 @@ from harbor.core.dotnet import runtime_identifier
 from harbor.core.site_config import ACME, ACME_SERVER, require_acme
 from harbor.core.system import CommandFailed, Stop
 from harbor.sites.actions import site_named
+from harbor.core.paths import APACHE, BIN
 
-APACHE = Path(__file__).resolve().parents[2] / "apache"
 SCHEMA_FILES = ("appsettings-schema.json", "appsettings-schema.usync.json", "appsettings-schema.Umbraco.Cms.json", "umbraco-package-schema.json")
 
 
@@ -153,7 +153,7 @@ def publish(system, name, configuration="", folder="", environment_name=""):
         raise Stop("Usage: publish.sh [Debug|Release]")
     if os.environ.get("VNS_PUBLISH_TRACKED") != "test":
         # Run again inside publish_status.py, which records the publish when it works
-        harbor = Path(__file__).resolve().parents[2] / "bin/harbor"
+        harbor = BIN
         extra = [*(["--folder", folder] if folder else []), *(["--environment-name", environment_name] if environment_name else [])]
         result = system.run("python3", str(APACHE / "lib/publish_status.py"), "run", site.site_root, "test", "python3", str(harbor), "site",
                             "publish", site.name, configuration, *extra, check=False)

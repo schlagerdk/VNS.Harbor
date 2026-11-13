@@ -12,8 +12,9 @@ import tempfile
 from zoneinfo import ZoneInfo
 
 from harbor.core.system import Stop
+from harbor.core.paths import SQL
 
-SQL_DIR = Path(__file__).resolve().parents[2] / "sql"
+SQL_DIR = SQL
 TEMPLATES = SQL_DIR / "scripts"
 SQLCMD = "/opt/mssql-tools18/bin/sqlcmd"
 BACKUPS = "/var/opt/mssql/backup"

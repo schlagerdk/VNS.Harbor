@@ -1435,3 +1435,47 @@ dialog label.env-choice:has(input:checked) { border-color: var(--env-tone); back
 .env-row-more-menu { z-index: 30; }
 /* The file manager's .list scrolls sideways; the list of environments is not that, and its row menus open over it */
 .env-targets.list { overflow: visible; }
+
+/* ---- Server tools: a card per part of the server, its state and what can be done with it */
+#dlg-server-tools { width: min(880px, 96vw); }
+#dlg-server-tools > .server-tools, #dlg-server-tools > menu { margin-left: 24px; margin-right: 24px; }
+#dlg-server-tools > menu { margin: 16px 0 0; }
+#dlg-server-tools > menu .cancel-link { margin-right: auto; }
+.server-tools { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 18px; min-height: 120px; }
+.server-tools-loading { grid-column: 1 / -1; display: grid; place-items: center; padding: 48px 0; color: var(--muted); }
+.tool-card { --tone: var(--blue); display: flex; flex-direction: column; gap: 12px; min-width: 0; padding: 14px 16px 14px; border: 1px solid var(--line); border-radius: 12px;
+	background: linear-gradient(135deg, color-mix(in srgb, var(--tone) 9%, transparent), transparent 55%), var(--panel2); }
+.tool-card.tone-purple { --tone: var(--purple); } .tool-card.tone-teal { --tone: #39c5bb; } .tool-card.tone-amber { --tone: #d29922; }
+.tool-card.tone-green { --tone: var(--green); } .tool-card.tone-pink { --tone: #db61a2; } .tool-card.tone-blue { --tone: var(--blue); }
+.tool-head { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.tool-icon { flex: none; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; color: var(--tone);
+	background: color-mix(in srgb, var(--tone) 16%, transparent); border: 1px solid color-mix(in srgb, var(--tone) 30%, transparent); }
+.tool-icon .ico { width: 18px; height: 18px; margin: 0; }
+.tool-title { display: grid; gap: 1px; flex: 1; min-width: 0; }
+.tool-title strong { font-size: 14.5px; }
+.tool-title small { overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.tool-state { flex: none; display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600;
+	color: var(--muted); background: var(--hover); }
+.tool-state::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.tool-state.ok { color: var(--green); background: rgba(63, 185, 80, .12); }
+.tool-state.warn { color: #d29922; background: rgba(210, 153, 34, .13); }
+.tool-state.bad { color: var(--red); background: rgba(248, 81, 73, .12); }
+.tool-text { margin: 0; color: var(--muted); font-size: 12.5px; line-height: 1.5; }
+.tool-rows { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.tool-row { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 7px 10px; border-radius: 8px; background: rgba(0, 0, 0, .18); font-size: 12.5px; }
+.tool-row .tool-row-name { font-weight: 600; white-space: nowrap; }
+.tool-row .tool-row-detail { flex: 1; min-width: 0; overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.tool-row code { overflow: hidden; color: var(--muted); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+.tool-row .tool-row-action { flex: none; padding: 3px 9px; font-size: 12px; }
+.tool-row .dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--line); }
+.tool-row .dot.on { background: var(--green); box-shadow: 0 0 0 3px rgba(63, 185, 80, .15); }
+.tool-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; padding-top: 2px; }
+.tool-actions button { font-size: 12.5px; padding: 6px 12px; }
+.tool-actions .tool-danger { color: var(--red); border-color: rgba(248, 81, 73, .35); }
+.tool-actions .tool-danger:hover { background: rgba(248, 81, 73, .1); border-color: rgba(248, 81, 73, .4); }
+.server-action-fields { display: grid; gap: 4px; }
+.server-action-fields .type-card { cursor: pointer; }
+.server-editions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0 0 8px; padding: 0; border: 0; }
+.server-editions legend { margin-bottom: 8px; color: var(--muted); font-size: 13px; }
+.server-action-danger { margin-top: 10px; padding: 12px 14px; border: 1px solid rgba(248, 81, 73, .35); border-radius: 10px; background: rgba(248, 81, 73, .06); font-size: 13px; }
+@media (max-width: 720px) { .server-tools, .server-editions { grid-template-columns: 1fr; } }

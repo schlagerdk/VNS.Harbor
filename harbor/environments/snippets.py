@@ -13,8 +13,9 @@ from harbor.core.names import normalize_site_name
 from harbor.core.system import CommandFailed, Stop
 from harbor.environments import settings
 from harbor.sites.actions import site_named
+from harbor.core.paths import LIB
 
-HELPER = Path(__file__).resolve().parents[2] / "apache/lib/config_snippets.py"
+HELPER = LIB / "config_snippets.py"
 
 CARRY = r'''set -euo pipefail
 conf=/etc/apache2/sites-available/${SITE}.conf
