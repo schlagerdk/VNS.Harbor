@@ -129,7 +129,8 @@ class ScriptTests(unittest.TestCase):
         self.assertIn("lib/move_site.py http-conf", receive)
         self.assertIn("allocate_ports", receive)
         self.assertIn("PROD_HTTPS='n'", receive)
-        self.assertNotIn("issue_certificate", self.script)
+        # Certificates come only after the sites run, and only when asked for
+        self.assertLess(receive.index("apache2ctl configtest"), receive.index("issue_certificate"))
 
     def test_nothing_is_stopped_before_the_new_server_is_checked(self):
         self.assertLess(self.script.index('on_new_server "bash -c $(printf %q "${_check}")"'), self.script.index('systemctl stop "${_unit}"'))
@@ -138,6 +139,19 @@ class ScriptTests(unittest.TestCase):
         undo = self.script[self.script.index("undo() {"):self.script.index("trap undo EXIT")]
         self.assertIn('systemctl start "${_unit}"', undo)
         self.assertIn('rm -rf $(printf %q "${_folder}")', undo)
+
+
+class HttpsChoiceTests(unittest.TestCase):
+    source = (APACHE / "solutionfiles/admin/app/static/app.js").read_text()
+    html = (APACHE / "solutionfiles/admin/app/templates/index.html").read_text()
+
+    def test_new_site_and_set_up_site_have_the_https_option_card(self):
+        self.assertNotIn('<select name="certificate">', self.html)
+        self.assertEqual(self.html.count('<input name="https_choice" type="checkbox" checked>'), 2)
+        self.assertEqual(self.html.count('<input type="hidden" name="certificate" value="y">'), 2)
+        self.assertIn('dnsCard(siteForm.binding, { onState: siteHttps.state })', self.source)
+        self.assertIn('dnsCard($("#form-setup-site").binding, { onState: setupHttps.state })', self.source)
+        self.assertIn('const allowed = value === "here" || value === "empty";', self.source)
 
 
 class AdminTests(unittest.TestCase):
@@ -159,9 +173,25 @@ class AdminTests(unittest.TestCase):
         self.assertRegex(self.app, r'ADMIN_TASKS = \{[^}]*"move_site"')
         self.assertIn('os.path.join(APACHE_DIR, "move_site.sh"), site]', self.app)
 
-    def test_environment_to_another_server_starts_with_http(self):
+    def test_environment_to_another_server_gets_https_once_it_runs_there(self):
+        self.assertIn('extra_env["VNS_MOVE_HTTPS"] = extra_env["VNS_PROD_HTTPS"]', self.app)
         self.assertIn('extra_env["VNS_PROD_HTTPS"] = "n"', self.app)
         self.assertIn("const otherServer = moving && !same", self.source)
+        move_env = (APACHE / "move_env.sh").read_text()
+        self.assertIn('issue_wanted_certificate "${_moving}"', move_env)
+        self.assertIn('issue_wanted_certificate "${_finalId}"', move_env)
+
+    def test_https_is_a_choice_checked_against_the_new_server(self):
+        self.assertIn('"VNS_MOVE_HTTPS": "y" if payload.get("https") == "y" else "n",', self.app)
+        self.assertIn('dnsCard(field("server_binding"), { expect: () => field("host").value.trim(), aliases: $("#copy-server-env-bindings") })', self.source)
+        self.assertIn('return target === "remote" ? prodForm.host.value.trim() : target === "same" ? prodForm.dataset.moveHost || "" : "";', self.source)
+        self.assertIn("const expectNow = () => (typeof expected === \"function\" ? expected() : expected) || \"\";", self.source)
+
+    def test_a_certificate_that_fails_leaves_the_site_on_http(self):
+        script = (APACHE / "move_site.sh").read_text()
+        receive = script[script.index("receive() {"):script.index("if [[ ${1:-} == --receive ]]")]
+        self.assertIn('bash ./test_action.sh "${_main}" issue_certificate --yes || _failed+=("${_main}")', receive)
+        self.assertIn("They answer on HTTP", receive)
 
     def test_new_server_can_get_a_new_folder_binding_and_project(self):
         self.assertIn('folder: field("server_folder").value.trim(), binding: field("server_binding").value.trim(),', self.source)

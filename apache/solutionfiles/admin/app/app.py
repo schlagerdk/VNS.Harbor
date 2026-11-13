@@ -3261,9 +3261,12 @@ def api_term():
         extra_env = production_setup_env(payload, payload.get("site", ""))
     if payload.get("kind") == "move_env":
         extra_env = production_setup_env(payload, payload.get("site", ""), moving=True)
-        # On another server DNS may not point there yet, so it starts with HTTP. Issue certificate turns HTTPS on.
+        # On another Linux server it is set up with HTTP, and HTTPS, when chosen, comes once it runs there: if DNS does not
+        # point there yet, it stays on HTTP and the move has still worked. IIS manages a Windows server's certificates.
         source = parse_prod(os.path.join(WEB_ROOT, payload["site"]), target_arg(payload["site"], {"target": payload.get("environment_id")})) or {}
-        if not (extra_env["VNS_PROD_TARGET"] == "same" or extra_env["VNS_PROD_TARGET"] == "local" and source.get("PROD_LOCAL_PATH")):
+        other_server = not (extra_env["VNS_PROD_TARGET"] == "same" or extra_env["VNS_PROD_TARGET"] == "local" and source.get("PROD_LOCAL_PATH"))
+        if other_server and extra_env["VNS_PROD_TARGET"] != "windows":
+            extra_env["VNS_MOVE_HTTPS"] = extra_env["VNS_PROD_HTTPS"]
             extra_env["VNS_PROD_HTTPS"] = "n"
         extra_env["VNS_MOVE_DELETE_LOCAL"] = "y" if payload.get("delete_local") == "y" else "n"
         if payload.get("copy"):
@@ -3296,6 +3299,7 @@ def api_term():
                 abort(400, "A site with environments keeps its project name, as they run the build it makes")
         extra_env = {"VNS_MOVE_IP": host, "VNS_MOVE_USER": user, "VNS_MOVE_PASSWORD": password, "VNS_MOVE_SSH_PORT": port,
                      "VNS_MOVE_FOLDER": folder, "VNS_MOVE_BINDING": binding, "VNS_MOVE_PROJECT": project,
+                     "VNS_MOVE_HTTPS": "y" if payload.get("https") == "y" else "n",
                      "VNS_MOVE_COPY": "1" if payload.get("copy") else "",
                      "VNS_MOVE_DELETE_LOCAL": "y" if not payload.get("copy") and payload.get("delete_local") == "y" else "n",
                      "VNS_COPY_STOP": "y" if payload.get("copy") and payload.get("stop_source") else "n"}

@@ -2,7 +2,8 @@
 # Usage: move_site.sh <site>, with the new server in VNS_MOVE_IP, _USER, _PASSWORD (empty = SSH key) and _SSH_PORT
 # Migrates a site to another Linux server, or copies it there with VNS_MOVE_COPY=1, together with its environments
 # on this server. Environments on other servers or on Windows stay where they are: the site keeps its settings for them.
-# Everything is set up with HTTP on the new server, as DNS may not point there yet. Issue certificate on each site
+# Everything is set up with HTTP on the new server, as DNS may not point there yet. With VNS_MOVE_HTTPS=y each site
+# then gets a certificate there; one whose DNS does not point there yet stays on HTTP, and Issue certificate gives it one
 # when it does. The whole folders go, also the builds, so nothing is built and the sites run the same version.
 # A SQL Server on this machine stays here: the copies' connections to it are pointed at this server's address.
 # A migration stops the sites here and removes their services and Apache configs once the new server runs them, and
@@ -113,6 +114,32 @@ receive() {
 	for _unit in ${_units[@]+"${_units[@]}"}; do
 		systemctl is-active --quiet "${_unit}" || { echo "${_unit} did not start." >&2; exit 1; }
 	done
+	# HTTPS was asked for: a certificate for each site, now that it runs here. One whose DNS does not point here yet
+	# stays on HTTP, as the move has worked.
+	if [[ -f ${_incoming}/certificates ]]; then
+		local _main _id _failed=()
+		_main=$(head -n 1 "${_incoming}/certificates")
+		validate_site_name "${_main}"
+		while IFS= read -r _id; do
+			if [[ ${_id} == main ]]; then
+				echo "Issue a certificate for ${_main}"
+				bash ./test_action.sh "${_main}" issue_certificate --yes || _failed+=("${_main}")
+				continue
+			fi
+			[[ ${_id} =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]] || continue
+			echo "Issue a certificate for the environment ${_id}"
+			_script=${_rootPath}/${_main}/scripts/targets/${_id}/publish_prod.sh
+			[[ ${_id} != prod ]] || _script=${_rootPath}/${_main}/scripts/publish_prod.sh
+			if VNS_TARGET=${_id} bash ./prod_action.sh "${_main}" issue_certificate --yes; then
+				perl -pi -e "s/^PROD_HTTPS=\\S*/PROD_HTTPS='y'/" "${_script}"
+			else
+				_failed+=("${_id}")
+			fi
+		done < <(tail -n +2 "${_incoming}/certificates")
+		if ((${#_failed[@]})); then
+			echo "WARNING: no certificate for ${_failed[*]}, as DNS does not point to this server yet. They answer on HTTP: use Issue certificate on them when it does." >&2
+		fi
+	fi
 	rm -rf "${_incoming:?}"
 }
 
@@ -169,6 +196,7 @@ _newNames=("${_newSite}")
 _folders=("${_siteRoot}")
 _newFolders=("${_rootPath}/${_newSite}")
 _httpScripts=()
+_certificates=(main)
 _kept=()
 for _id in $(prod_targets); do
 	VNS_TARGET=${_id} load_prod_settings
@@ -184,6 +212,7 @@ for _id in $(prod_targets); do
 	if [[ -f ${_apacheSites}/${PROD_FOLDER}.conf ]]; then
 		_names+=("${PROD_FOLDER}")
 		_newNames+=("${PROD_FOLDER}")
+		_certificates+=("${_id}")
 	fi
 	# One in the site's folder goes with it
 	if [[ ${_root} != "${_siteRoot}"/* && -d ${_root} ]]; then
@@ -267,6 +296,7 @@ for _name in "${_names[@]}"; do
 done
 ((${#_httpScripts[@]} == 0)) || printf '%s\n' "${_httpScripts[@]}" >"${_staging}/http-scripts"
 ((!_rename)) || printf '%s\n' "${_site}" "${_newSite}" "${_newBinding}" "${_newProject}" >"${_staging}/rename"
+[[ ${VNS_MOVE_HTTPS:-} != y ]] || printf '%s\n' "${_newSite}" "${_certificates[@]}" >"${_staging}/certificates"
 
 if [[ -z ${_copy} || ${VNS_COPY_STOP:-} == y ]]; then
 	echo "Stop the sites here, so their databases and files stay consistent while they are copied"
@@ -319,7 +349,11 @@ else
 	fi
 	echo "${_site} has moved to ${_host} as ${_newSite} (${_newBinding}). A certificate on this server is not removed."
 fi
-echo "On ${_host} the sites answer on HTTP: ${_newNames[*]}. When DNS points there, use Issue certificate on each of them."
+if [[ ${VNS_MOVE_HTTPS:-} == y ]]; then
+	echo "On ${_host}: ${_newNames[*]}. A site without a certificate there answers on HTTP until Issue certificate gives it one."
+else
+	echo "On ${_host} the sites answer on HTTP: ${_newNames[*]}. When DNS points there, use Issue certificate on each of them."
+fi
 if ((${#_kept[@]})); then
 	echo "Environments on other servers are not moved; ${_site} still publishes to them: ${_kept[*]}"
 fi

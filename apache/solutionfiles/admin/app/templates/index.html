@@ -434,9 +434,14 @@
         <p class="hint">A new name renames the project file and dll, and the site is built on the new server. Namespaces in the code are not changed.</p>
       </div>
       <p class="hint" id="copy-server-path"></p>
+      <div class="copy-options">
+        <label class="sync-option copy-option secure"><input name="https" type="checkbox"><span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span><span class="sync-option-text"><span class="sync-option-title">Set up with HTTPS</span><span class="sync-option-sub">Certificates are issued on the new server once the sites run there</span></span></label>
+      </div>
+      <textarea id="copy-server-env-bindings" hidden></textarea>
+      <div id="copy-server-dns" hidden></div>
       <div class="ns-section">What goes</div>
       <ul id="copy-server-list" class="move-site-list"></ul>
-      <p class="hint move-site-http"><strong>Set up with HTTP.</strong> DNS may not point to the new server yet, so no certificates are issued there. When it does, use Issue certificate on each site.</p>
+      <p class="hint move-site-http" id="copy-server-protocol"></p>
       <div class="copy-options">
         <label class="sync-option copy-option move"><input name="remove_here" type="checkbox"><span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span><span class="sync-option-text"><span class="sync-option-title">Remove it here afterwards</span><span class="sync-option-sub">Migrate: the sites here are stopped while they are copied, and their services and Apache configs are removed once the new server runs them</span></span></label>
         <label class="sync-option copy-option delete copy-option-nested" id="copy-delete-row" hidden><input name="delete_local" type="checkbox"><span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v6M14 11v6"/></svg></span><span class="sync-option-text"><span class="sync-option-title">Also delete the files here</span><span class="sync-option-sub">Otherwise the folders stay on this server, without a service</span></span></label>
@@ -464,8 +469,9 @@
     <div class="ns-grid">
       <label>Folder name <input name="site" required placeholder="www.example.com" autocomplete="off" spellcheck="false"></label>
       <label>Binding (domain) <input name="binding" placeholder="Empty: answers any name" autocomplete="off" spellcheck="false"></label>
-      <label>HTTPS certificate <select name="certificate"><option value="y">Create certificate and enforce HTTPS</option><option value="n">HTTP only - issue certificate later</option></select></label>
     </div>
+    <input type="hidden" name="certificate" value="y">
+    <div class="copy-options https-choice"><label class="sync-option copy-option secure"><input name="https_choice" type="checkbox" checked><span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span><span class="sync-option-text"><span class="sync-option-title">Set up with HTTPS</span><span class="sync-option-sub">A certificate is issued as the site is created, and HTTP goes to HTTPS</span></span></label></div>
     <div id="site-dns"></div>
     <div id="csharp-options">
       <div class="ns-section">C# options</div>
@@ -507,6 +513,7 @@
       <label id="prod-protocol-row">Protocol <select name="https"><option value="y">HTTPS</option><option value="n">HTTP</option></select></label>
     </div>
     <p class="hint" id="prod-protocol-hint"></p>
+    <div id="prod-dns" hidden></div>
     <div id="prod-remote-options">
       <div class="ns-section">SSH connection</div>
       <div class="ns-grid">
@@ -624,9 +631,10 @@
     </header>
     <div class="ns-grid">
       <label>Binding (domain) <input name="binding" autocomplete="off" spellcheck="false" placeholder="Empty: answers any name"></label>
-      <label>HTTPS certificate <select name="certificate"><option value="y">Create certificate and enforce HTTPS</option><option value="n">HTTP only - issue certificate later</option></select></label>
       <label id="setup-site-environment-row">Environment <select name="environment"><option>Development</option><option>Test</option><option>Staging</option><option>Production</option></select></label>
     </div>
+    <input type="hidden" name="certificate" value="y">
+    <div class="copy-options https-choice"><label class="sync-option copy-option secure"><input name="https_choice" type="checkbox" checked><span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span><span class="sync-option-text"><span class="sync-option-title">Set up with HTTPS</span><span class="sync-option-sub">A certificate is issued as the site is set up, and HTTP goes to HTTPS</span></span></label></div>
     <div id="setup-site-dns"></div>
     <p class="hint" id="setup-site-hint"></p>
     <menu><button type="button" id="setup-site-cancel" class="cancel-link">Cancel</button><button type="submit" class="primary">Set up site</button></menu>

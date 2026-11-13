@@ -197,7 +197,7 @@ function dnsRecord(type, name, value) {
 function dnsNameRows(names, answers, address, expect) {
 	return names.map((name, index) => {
 		const answer = answers[index];
-		const [kind, text] = answer?.local ? ["muted", "Local name"] : !answer ? ["muted", "Could not check"] : answer.here ? ["ok", answer.proxy ? "Via " + answer.proxy : "Points here"]
+		const [kind, text] = answer?.local ? ["muted", "Local name"] : !answer ? ["muted", "Could not check"] : answer.here ? ["ok", answer.proxy ? "Via " + answer.proxy : expect ? "Points there" : "Points here"]
 			: answer.addresses.length ? ["warn", "Points to " + answer.addresses[0]] : ["muted", "No record yet"];
 		const status = el("span", { className: "dns-status " + kind, textContent: text });
 		if (answer?.addresses?.length > 1) status.title = answer.addresses.join(", ");
@@ -214,7 +214,10 @@ const dnsName = (text) => text.trim().toLowerCase().replace(/^https?:\/\//, "").
 const dnsAscii = (name) => { try { return new URL("http://" + name).hostname; } catch { return name; } };
 
 // aliases: a textarea with more names (one per line), each checked as the binding is
-function dnsCard(input, { expect = "", name: targetName = "", aliases = null, onState = () => {} } = {}) {
+// expect: the address of another server the names should point to, or a function that gives it as it is typed
+function dnsCard(input, { expect: expected = "", name: targetName = "", aliases = null, onState = () => {} } = {}) {
+	let expect = "";
+	const expectNow = () => (typeof expected === "function" ? expected() : expected) || "";
 	const status = el("span", { className: "dns-status" });
 	const records = el("div", { className: "dns-records" });
 	const note = el("p", { className: "dns-note" });
@@ -231,6 +234,7 @@ function dnsCard(input, { expect = "", name: targetName = "", aliases = null, on
 	const names = () => [...new Set([input.value, ...(aliases ? aliases.value.split(/[\s,]+/) : [])].map(dnsName).filter((name) => name && name !== "*"))];
 	// The binding and its aliases: every name gets a row, and the card says how many point here
 	const showAll = async (list) => {
+		expect = expectNow();
 		card.hidden = false;
 		title.textContent = "DNS for these names";
 		card.classList.remove("here");
@@ -252,15 +256,16 @@ function dnsCard(input, { expect = "", name: targetName = "", aliases = null, on
 		card.classList.toggle("here", ready && here > 0);
 		records.replaceChildren(el("div", { className: "dns-check-rows" }, ...dnsNameRows(list, answers, address, expect)));
 		if (!publicNames.length) { status.className = "dns-status muted"; status.textContent = "Local names: no public DNS"; }
-		else if (ready) { status.className = "dns-status ok"; status.textContent = "All names point here"; }
-		else { status.className = "dns-status warn"; status.textContent = `${here} of ${publicNames.length} point here`; }
+		else if (ready) { status.className = "dns-status ok"; status.textContent = expect ? `All names point to ${expect}` : "All names point here"; }
+		else { status.className = "dns-status warn"; status.textContent = `${here} of ${publicNames.length} point ${expect ? "to " + expect : "here"}`; }
 		note.textContent = !expect && server?.behind_nat
 			? `The public address could not be found, only an internal one (${address}). Set the public address under Preferences, so the records point to where the internet reaches it.`
-			: ready ? "" : "Make the missing records where each domain's DNS is kept. An HTTPS certificate covers every name, so each must point here.";
+			: ready ? "" : `Make the missing records where each domain's DNS is kept. An HTTPS certificate covers every name, so each must point ${expect ? "to " + expect : "here"}.`;
 		note.classList.toggle("warn", Boolean(!expect && server?.behind_nat));
 		onState(!publicNames.length ? "local" : ready ? "here" : "elsewhere");
 	};
 	const show = async () => {
+		expect = expectNow();
 		const list = names();
 		if (list.length > 1) return showAll(list);
 		title.textContent = "DNS for this name";
@@ -276,7 +281,7 @@ function dnsCard(input, { expect = "", name: targetName = "", aliases = null, on
 			...(host && host.includes(".") && host !== name ? [record("CNAME", name, host)] : []));
 		note.textContent = !expect && server?.behind_nat
 			? `The public address could not be found, only an internal one (${address}). Set the public address under Preferences, so the record points to where the internet reaches it.`
-			: "Make one of these where the domain's DNS is kept. An HTTPS certificate is issued only when the name points here.";
+			: `Make one of these where the domain's DNS is kept. An HTTPS certificate is issued only when the name points ${expect ? "to " + expect : "here"}.`;
 		note.classList.toggle("warn", Boolean(!expect && server?.behind_nat));
 		if (!name.includes(".")) {
 			status.className = "dns-status muted";
@@ -299,7 +304,7 @@ function dnsCard(input, { expect = "", name: targetName = "", aliases = null, on
 		card.classList.toggle("here", Boolean(answer.here));
 		// A subdomain can follow the server's own name instead, so it moves with the server
 		if (answer.host && !targetName) records.append(record("CNAME", name, answer.host));
-		if (answer.here) { status.className = "dns-status ok"; status.textContent = answer.proxy ? "Via " + answer.proxy : "Points here"; status.title = answer.proxy ? `Proxied by ${answer.proxy}: its addresses stand in for this server's` : ""; }
+		if (answer.here) { status.className = "dns-status ok"; status.textContent = answer.proxy ? "Via " + answer.proxy : expect ? `Points to ${expect}` : "Points here"; status.title = answer.proxy ? `Proxied by ${answer.proxy}: its addresses stand in for this server's` : ""; }
 		else if (answer.addresses.length) { status.className = "dns-status warn"; status.textContent = `Points to ${answer.addresses[0]}`; status.title = answer.addresses.join(", "); }
 		else { status.className = "dns-status muted"; status.textContent = "No record yet"; }
 		onState(answer.here ? "here" : answer.addresses.length ? "elsewhere" : "none");
@@ -310,7 +315,8 @@ function dnsCard(input, { expect = "", name: targetName = "", aliases = null, on
 		if (!document.contains(card)) { clearInterval(watch); return; }
 		// A closed dialog hides it, so it is checked again when the dialog opens
 		if (!input.offsetParent) { card.hidden = true; seen = null; clearTimeout(timer); return; }
-		const typed = input.value + "\n" + (aliases ? aliases.value : "");
+		// Another server's address is checked again when it changes
+		const typed = input.value + "\n" + (aliases ? aliases.value : "") + "\n" + expectNow();
 		if (typed === seen) return;
 		seen = typed;
 		clearTimeout(timer);
@@ -2034,6 +2040,9 @@ async function copySite(site, main) {
 	};
 	field("server_binding").oninput = () => { serverBindingEdited = true; };
 	showServerPath();
+	// With HTTPS, DNS for the site and its environments here is checked against the new server as it is typed
+	$("#copy-server-env-bindings").value = site.environments.filter((env) => isTarget(env) && env.mode === "local").map(bindingLabel).filter(Boolean).join("\n");
+	$("#copy-server-dns").replaceChildren(dnsCard(field("server_binding"), { expect: () => field("host").value.trim(), aliases: $("#copy-server-env-bindings") }));
 
 	const update = () => {
 		const toServer = field("destination").value === "server";
@@ -2052,6 +2061,15 @@ async function copySite(site, main) {
 		field("delete_local").disabled = !removing;
 		if (!removing) field("delete_local").checked = false;
 		$("#copy-stop-row").hidden = removing;
+		const https = toServer && field("https").checked;
+		const host = field("host").value.trim();
+		$("#copy-server-dns").hidden = !https;
+		$("#copy-server-protocol").classList.toggle("secure", https);
+		$("#copy-server-protocol").replaceChildren(...(!https
+			? [el("strong", { textContent: "Set up with HTTP." }), " DNS may not point to the new server yet, so no certificates are issued there. When it does, use Issue certificate on each site."]
+			: [el("strong", { textContent: "Set up with HTTPS." }), privateIPv4(host)
+				? ` ${host} is an internal address, so DNS cannot be checked against it here. Each site gets its certificate on the new server; one whose DNS does not point there yet stays on HTTP, and Issue certificate gives it one later.`
+				: " Each site gets its certificate on the new server once it runs there. One whose DNS does not point there yet stays on HTTP, and Issue certificate gives it one later."]));
 		$("#copy-site-title").textContent = removing ? "Migrate site" : "Copy site";
 		$("#copy-site-description").textContent = !toServer
 			? `Copy ${siteLabel(site)} to a new folder here, with its own service and Apache config.`
@@ -2064,6 +2082,8 @@ async function copySite(site, main) {
 	};
 	for (const input of field("destination")) input.onchange = update;
 	field("remove_here").onchange = update;
+	field("https").onchange = update;
+	field("host").addEventListener("input", update);
 	field("change_connection").onchange = update;
 	update();
 	showCopyPath();
@@ -2098,7 +2118,7 @@ async function copySite(site, main) {
 					payload = { kind: "move_site", site: site.name, host: field("host").value.trim(), ssh_port: field("ssh_port").value,
 						user: field("user").value.trim(), password: field("ssh_password").value, copy: !removing,
 						folder: field("server_folder").value.trim(), binding: field("server_binding").value.trim(),
-						project: serverProject ? field("server_project").value.trim() : "",
+						project: serverProject ? field("server_project").value.trim() : "", https: field("https").checked ? "y" : "n",
 						delete_local: removing && field("delete_local").checked ? "y" : "n", stop_source: !removing && field("stop_source").checked };
 				} else {
 					payload = { kind: "copy_site", site: site.name, target: field("target").value.trim(), binding: field("binding").value.trim() };
@@ -2300,27 +2320,40 @@ siteForm.addEventListener("click", (event) => {
 siteForm.elements.template.oninput = syncTemplateVersion;
 siteForm.site.oninput = () => { if (!siteForm.binding.dataset.edited) siteForm.binding.value = siteForm.site.value; };
 siteForm.binding.oninput = () => { siteForm.binding.dataset.edited = "1"; };
-// HTTPS is a choice only when the binding points here: the certificate is issued as the site is created.
-// An empty binding is the site for any name, where the server decides. The choice comes back when DNS is right.
-const httpsOption = siteForm.certificate.querySelector('option[value="y"]');
-const httpsLabel = httpsOption.textContent;
-let httpsChosen = true;
-function syncHttps(state) {
-	if (state === "checking") return;
-	const allowed = state === "here" || state === "empty";
-	httpsOption.disabled = !allowed;
-	httpsOption.textContent = allowed ? httpsLabel : "HTTPS - possible once DNS points here";
-	if (!allowed && siteForm.certificate.value === "y") siteForm.certificate.value = "n";
-	else if (allowed && httpsChosen) siteForm.certificate.value = "y";
+// HTTPS as an option card, sent as certificate y or n. It is a choice only when the binding points here: the
+// certificate is issued as the site is made. An empty binding is the site for any name, where the server decides.
+// The choice comes back when DNS is right.
+function httpsChoice(form) {
+	const box = form.elements.https_choice;
+	const card = box.closest("label");
+	const sub = card.querySelector(".sync-option-sub");
+	const text = sub.textContent;
+	let chosen = true;
+	const send = () => { form.elements.certificate.value = box.checked ? "y" : "n"; };
+	box.addEventListener("change", () => {
+		chosen = box.checked;
+		send();
+	});
+	const state = (value) => {
+		if (value === "checking") return;
+		const allowed = value === "here" || value === "empty";
+		box.disabled = !allowed;
+		card.classList.toggle("disabled", !allowed);
+		sub.textContent = allowed ? text : "Possible once DNS for the binding points here. Until then it runs on HTTP, and Issue certificate gives it one later";
+		box.checked = allowed && chosen;
+		send();
+	};
+	return { state, reset: () => { chosen = true; state("empty"); } };
 }
-siteForm.certificate.addEventListener("change", () => { httpsChosen = siteForm.certificate.value === "y"; });
-$("#site-dns").replaceChildren(dnsCard(siteForm.binding, { onState: syncHttps }));
-$("#setup-site-dns").replaceChildren(dnsCard($("#form-setup-site").binding));
+const siteHttps = httpsChoice(siteForm);
+const setupHttps = httpsChoice($("#form-setup-site"));
+$("#site-dns").replaceChildren(dnsCard(siteForm.binding, { onState: siteHttps.state }));
+$("#setup-site-dns").replaceChildren(dnsCard($("#form-setup-site").binding, { onState: setupHttps.state }));
 // The binding's message is about the certificate choice as well: any change clears it, or the browser keeps
 // refusing the form before it is checked again
 for (const type of ["input", "change"]) siteForm.addEventListener(type, () => siteForm.binding.setCustomValidity(""));
 $("#btn-new-site").onclick = () => { siteForm.reset(); siteForm.elements.template.setCustomValidity(""); siteForm.binding.setCustomValidity(""); delete siteForm.binding.dataset.edited; syncSiteForm(); dialog.showModal(); siteForm.site.focus(); };
-$("#btn-new-site").addEventListener("click", () => { httpsChosen = true; syncHttps("empty"); });
+$("#btn-new-site").addEventListener("click", () => siteHttps.reset());
 $("#btn-empty-new-site").onclick = () => $("#btn-new-site").click();
 $("#site-cancel").onclick = (e) => { e.preventDefault(); dialog.close(); };
 siteForm.onsubmit = (event) => {
@@ -2393,9 +2426,16 @@ function syncProdForm() {
 		prodForm.elements.https.value = prodForm.dataset.httpsChoice;
 		delete prodForm.dataset.httpsChoice;
 	}
-	$("#prod-protocol-row").hidden = noSettings || otherServer;
+	$("#prod-protocol-row").hidden = noSettings;
 	$("#prod-protocol-hint").hidden = noSettings;
-	if (otherServer) $("#prod-protocol-hint").textContent = "It is set up with HTTP on the new server, as DNS may not point there yet. Use Issue certificate on the environment when it does.";
+	const https = prodForm.elements.https.value === "y";
+	if (otherServer && !windows) {
+		$("#prod-protocol-hint").textContent = https
+			? "It gets its certificate on the new server once it runs there. If the binding does not point there yet, it stays on HTTP, and Issue certificate gives it one later."
+			: "It starts with HTTP, as DNS may not point to the new server yet. Choose HTTPS when it does, or use Issue certificate on it later.";
+	}
+	// With HTTPS on Linux, DNS for the binding is checked against the server it runs on
+	$("#prod-dns").hidden = noSettings || windows || !https;
 	prodForm.folder.required = !(moving && local) && !noSettings;
 	prodForm.binding.required = true;
 	const fromWindows = prodForm.dataset.moveMode === "windows";
@@ -2546,6 +2586,11 @@ async function releaseEnvironment(site, env) {
 	await openTask({ kind: "release_site", site: site.name, target: env.target });
 }
 $("#prod-target-row").addEventListener("change", syncProdForm);
+prodForm.elements.https.addEventListener("change", syncProdForm);
+$("#prod-dns").replaceChildren(dnsCard(prodForm.binding, { expect: () => {
+	const target = prodForm.elements.target.value;
+	return target === "remote" ? prodForm.host.value.trim() : target === "same" ? prodForm.dataset.moveHost || "" : "";
+} }));
 // A local environment gets its own folder and site name, so the defaults follow the environment
 prodForm.elements.environment.onchange = () => {
 	const name = prodForm.elements.environment.value.toLowerCase();
@@ -2675,6 +2720,7 @@ const setupKindText = {
 };
 function openSetupSiteDialog(site) {
 	setupSiteForm.reset();
+	setupHttps.reset();
 	setupSiteForm.dataset.site = site.name;
 	const build = site.setup_kind.endsWith("build");
 	$("#setup-site-found").textContent = `${siteLabel(site)} holds ${setupKindText[site.setup_kind] || site.setup_kind}`;

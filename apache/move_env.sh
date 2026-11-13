@@ -395,6 +395,20 @@ copy_content() (
 	fi
 )
 
+# HTTPS was asked for on another server: it was set up with HTTP, and gets its certificate now that it runs there.
+# If DNS does not point there yet, it stays on HTTP, as the move has worked.
+issue_wanted_certificate() {
+	[[ ${VNS_MOVE_HTTPS:-} == y && ${_destination} != windows ]] || return 0
+	local _id=$1 _script
+	_script=${_siteRoot}/scripts/targets/${_id}/publish_prod.sh
+	echo "Issue a certificate for ${VNS_PROD_BINDING:-the binding}"
+	if VNS_TARGET=${_id} bash ./prod_action.sh "${_site}" issue_certificate --yes; then
+		perl -pi -e "s/^PROD_HTTPS=\\S*/PROD_HTTPS='y'/" "${_script}"
+	else
+		echo "WARNING: no certificate yet, as DNS for ${VNS_PROD_BINDING:-the binding} does not point to the new server. It answers on HTTP: use Issue certificate on it when DNS points there." >&2
+	fi
+}
+
 move_to_server() {
 	# Not local: undo_server_move runs when the script exits and needs them
 	_moving=${_oldId}-moving
@@ -529,6 +543,7 @@ move_to_server() {
 	if [[ -n ${_copy} ]]; then
 		[[ -z ${_fetchFolder} ]] || rm -rf "${_fetchFolder}"
 		echo "${_oldName} is copied, and the copy is the environment ${_moving}. ${_oldName} is not changed."
+		issue_wanted_certificate "${_moving}"
 		return 0
 	fi
 
@@ -557,6 +572,7 @@ move_to_server() {
 		mv -f "${_siteRoot}/.vns-publish/target-${_moving}.json" "${_siteRoot}/.vns-publish/target-${_finalId}.json"
 	fi
 	[[ -z ${_fetchFolder} ]] || rm -rf "${_fetchFolder}"
+	issue_wanted_certificate "${_finalId}"
 	echo "${_oldName} has moved. Point DNS for ${VNS_PROD_BINDING:-the binding} to the new server if you have not done so."
 	echo "A certificate on this server for the old binding is not removed."
 }

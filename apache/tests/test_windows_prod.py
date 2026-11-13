@@ -455,7 +455,7 @@ class LinuxHttpTests(ScriptTestCase):
 class ProductionSetupTests(unittest.TestCase):
     def setUp(self):
         source = (APACHE / "solutionfiles/admin/app/app.py").read_text()
-        wanted = ("production_setup_env", "dns_name", "windows_share", "windows_site_folder", "parse_prod", "read_text")
+        wanted = ("production_setup_env", "ssh_login", "dns_name", "windows_share", "windows_site_folder", "parse_prod", "read_text")
         nodes = [node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef) and node.name in wanted]
         nodes += [node for node in ast.parse(source).body
                   if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "PROD_KEYS"]
@@ -1596,7 +1596,7 @@ class ManagedSiteTests(unittest.TestCase):
         self.assertLess(source.index(check), source.index("python3 lib/copy_site.py"))
         app = (APACHE / "solutionfiles/admin/app/app.py").read_text()
         self.assertIn("Make the copy from there", app)
-        self.assertIn('if (!site.managed_by) addManage("Copy site"', (APACHE / "solutionfiles/admin/app/static/app.js").read_text())
+        self.assertIn('!site.managed_by) addManage("Copy site"', (APACHE / "solutionfiles/admin/app/static/app.js").read_text())
 
     def test_status_writes_the_note_and_delete_removes_it(self):
         self.assertIn('Path("/var/lib/vns-managed", site)', (APACHE / "remote_site.sh").read_text())

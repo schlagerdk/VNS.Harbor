@@ -255,14 +255,17 @@ class CreateCommandTests(unittest.TestCase):
         with self.assertRaises(BadRequest):
             self.command(publish="../other")
 
-    def test_copy_command_is_allowlisted_and_rejects_production(self):
+    def test_copy_command_is_allowlisted_and_takes_a_site_with_environments(self):
         self.ns.update(site_arg=lambda data: "source.test", ADMIN_SITE="admin.test", WEB_ROOT="/var/www")
         payload = {"kind": "copy_site", "site": "source.test", "target": "æøå.test", "binding": "æøå.example.test"}
+        expected = [str(APACHE / "copy_site.sh"), "source.test", "æøå.test", "xn--5cab8c.example.test"]
         with patch.object(os.path, "isfile", return_value=False):
-            args = self.ns["build_command"](payload)[1]
-            self.assertEqual(args[1:], [str(APACHE / "copy_site.sh"), "source.test", "æøå.test",
-                                       "xn--5cab8c.example.test"])
-        with patch.object(os.path, "isfile", return_value=True), self.assertRaisesRegex(BadRequest, "production"):
+            self.assertEqual(self.ns["build_command"](payload)[1][1:], expected)
+        # The copy is a site of its own: its environments stay with the source
+        with patch.object(os.path, "isfile", return_value=True):
+            self.assertEqual(self.ns["build_command"](payload)[1][1:], expected)
+        self.ns.update(site_arg=lambda data: "admin.test")
+        with self.assertRaisesRegex(BadRequest, "admin site"):
             self.ns["build_command"](payload)
 
     def test_unified_template_defaults_to_web_and_detects_umbraco(self):
