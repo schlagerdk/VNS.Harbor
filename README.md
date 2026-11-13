@@ -1,5 +1,9 @@
 # VNS Harbor
 
+<p align="left">
+  <img src="admin/static/harbor-mark.svg" alt="VNS Harbor" width="56" />
+</p>
+
 VNS Harbor hosts and manages web sites on an Ubuntu server: Apache with Let's Encrypt certificates, .NET and Umbraco,
 Python and static sites, SQL Server with backups, and each site's environments (Development, Test, Staging,
 Production) on this server, other Linux servers or IIS on Windows.
