@@ -2,6 +2,12 @@
 
 All notable changes to VNS.Linux are listed here, newest first.
 
+## [1.1.15] - 2026-11-13
+
+### Features
+
+- Copy site on the main site is one dialog for this server and another server, where Remove it here afterwards makes it a migration, and its choices and those of the environment dialog are option cards
+
 ## [1.1.14] - 2026-11-13
 
 ### Features
