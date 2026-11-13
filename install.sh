@@ -1,6 +1,7 @@
 #!/bin/bash
 # VNS Harbor on a new Ubuntu server:
 #
+#   apt-get update && apt-get install -y curl    (a minimal Ubuntu has no curl)
 #   curl -fsSL https://raw.githubusercontent.com/schlagerdk/VNS.Harbor/main/install.sh | sudo bash
 #
 # The base setup (time zone, updates, the few packages Harbor itself needs), the newest release of Harbor in

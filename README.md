@@ -12,7 +12,8 @@ sandbox of its own, and builds run as the unprivileged user `vns-build`.
 On a new Ubuntu server, as root:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/schlagerdk/VNS.Harbor/main/install.sh | sudo bash
+apt-get update && apt-get install -y curl    # a minimal Ubuntu has no curl
+curl -fsSL https://raw.githubusercontent.com/schlagerdk/VNS.Harbor/main/install.sh | bash
 ```
 
 `install.sh` does three things:
