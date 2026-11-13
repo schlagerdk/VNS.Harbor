@@ -132,7 +132,11 @@ Steps:
   Left: a server without the vns-build group shows the folder's group as a number (its build did not need it).
 - [x] 6e The bridge release migrates every site (the cutover, step 1): update.sh runs `harbor migrate` after Harbor is
   installed (a site that is not ready is left and told); VERSION 1.2.0 with its CHANGELOG. Tried on linux-01
-  (2026-11-13): every site migrated, every one answers. Left: Martin commits, tags v1.2.0 and releases it.
+  (2026-11-13): every site migrated, every one answers. Released as v1.2.0 by Martin.
+  - Found on linux-02 with the real release: the update.sh that runs is the one the server had (it replaces itself as
+    it goes), so a server on 1.1.x did nothing of the bridge on its first update. 1.2.1: the admin updater, which runs
+    after the new code is in place, does the bridge steps too (harmless to repeat). Tried on linux-02 put back on a real
+    1.1.16: one Update installed Harbor and migrated its site.
 
 ## Phase 5 steps (other servers)
 linux-02 (172.23.3.16) is the test server, reached from linux-01 (172.23.3.17) since 2026-11-13.

@@ -272,6 +272,17 @@ sudo "${_siteRoot}/venv/bin/pip" install --quiet -r "${_siteRoot}/app/requiremen
 echo "Update the scripts"
 install_scripts "${_solutionFolder}/admin/scripts"
 
+# The bridge to Harbor (since 1.2.0). update.sh does it too, but the update.sh that runs is the one the server had: an
+# update from before 1.2.0 runs the old one, which does not. This updater runs after the new code is in place, so the
+# first update to 1.2.0 already moves the sites over. Each step is harmless to repeat and only warns when it fails.
+_harbor="${_apacheDir}/../bin/harbor"
+if [[ -f ${_harbor} ]]; then
+	echo "Bring Harbor up to date"
+	sudo python3 "${_harbor}" state sync || echo "Harbor's copy of the sites' state was not updated." >&2
+	sudo python3 "${_harbor}" self install "$(cd "${_apacheDir}/.." && pwd)" || echo "Harbor was not installed in /opt/harbor." >&2
+	sudo python3 "${_harbor}" migrate || echo "Not every site was migrated: sudo harbor migrate --dry-run tells why." >&2
+fi
+
 echo "Restart the admin site"
 # The service uses KillMode=process, so terminals opened in the admin site keep running
 sudo systemctl restart "$(python3 "${_apacheDir}/lib/domain_names.py" "${_site}" unit)"
