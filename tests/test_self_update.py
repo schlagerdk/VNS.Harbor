@@ -147,6 +147,24 @@ class AfterUpdateTests(unittest.TestCase):
         system, _ = self.after_update()
         self.assertFalse((self.root / "vns").exists())
 
+    def test_the_sql_check_moves_from_vns_and_vns_goes(self):
+        """test-01: the services ran /vns/apache/lib/sql_ready.py before the site starts, so /vns stayed after 1.0.1"""
+        services = self.root / "etc/systemd/system"
+        (services / "multi-user.target.wants").mkdir(parents=True)
+        old = ('[Service]\nRootDirectory=/var/lib/vns-roots/shop.dk\n'
+               'ExecStartPre=/usr/bin/python3 "/vns/apache/lib/sql_ready.py" "/var/www/shop.dk/_publish"\n')
+        (services / "shop.dk.service").write_text(old)
+        (services / "multi-user.target.wants/shop.dk.service").symlink_to("../shop.dk.service")
+        (services / "blog.dk.service").write_text(old.replace("/vns/apache/lib", "/opt/harbor/releases/1.0.0-abc/lib").replace("shop", "blog"))
+        system, _ = self.after_update()
+        for name in ("shop.dk", "blog.dk"):
+            self.assertIn(f'ExecStartPre=/usr/bin/python3 "/opt/harbor/current/lib/sql_ready.py" "/var/www/{name}/_publish"',
+                          (services / f"{name}.service").read_text())
+        self.assertTrue((services / "multi-user.target.wants/shop.dk.service").is_symlink())
+        self.assertIn("systemctl daemon-reload", system.commands)
+        self.assertFalse(any(command.startswith("systemctl restart") for command in system.commands))
+        self.assertFalse((self.root / "vns").exists())
+
     def test_a_failed_step_is_told_and_the_rest_runs(self):
         system, moved = self.after_update({"python3": lambda argv: Result(1 if "migrate" in argv else 0)})
         self.assertTrue(any("harbor migrate --dry-run" in line for line in system.said), system.said)

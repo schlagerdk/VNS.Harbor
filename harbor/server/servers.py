@@ -37,6 +37,28 @@ try:
     found["harbor"]["name"] = os.path.basename(os.path.realpath("/opt/harbor/current"))
 except (OSError, ValueError):
     found["harbor"] = None
+# The release a rollback there goes back to: the one installed before the one in use, from the same repository
+def release(name):
+    folder = os.path.join("/opt/harbor/releases", name)
+    try:
+        info = json.load(open(os.path.join(folder, "release.json")))
+    except (OSError, ValueError):
+        info = {}
+    try:
+        repository = open(os.path.join(folder, "REPOSITORY")).read().strip()
+    except OSError:
+        repository = ""
+    return {"name": name, "version": info.get("version", ""), "installed": info.get("installed", ""), "repository": repository}
+try:
+    names = [name for name in os.listdir("/opt/harbor/releases") if not name.startswith(".")]
+except OSError:
+    names = []
+found_releases = sorted((release(name) for name in names), key=lambda item: (item["installed"], item["name"]), reverse=True)
+found["rollback"] = None
+if found["harbor"]:
+    index = next((index for index, item in enumerate(found_releases) if item["name"] == found["harbor"]["name"]), None)
+    if index is not None and index + 1 < len(found_releases) and found_releases[index + 1]["repository"] == found_releases[index]["repository"]:
+        found["rollback"] = {key: found_releases[index + 1][key] for key in ("name", "version")}
 try:
     found["vns"] = open("/vns/VERSION").read().strip()
 except OSError:
@@ -208,6 +230,19 @@ def status(system, name):
     except (ValueError, IndexError):
         found = {}
     return {"name": name, **{key: entry[key] for key in ("host", "user", "port")}, "reachable": True, **judged(found)}
+
+
+def rollback(system, name):
+    """The other server goes back to the release installed there before the one in use (harbor self rollback there)"""
+    entry = server(system, name)
+    found = status(system, name)
+    if not found["reachable"]:
+        raise Stop(f"{name} does not answer: {' '.join(found['error'])}")
+    if not found.get("rollback"):
+        raise Stop(f"{name} has no earlier release of VNS Harbor to go back to.")
+    system.step(f"Roll {name} back to Harbor {found['rollback']['name']}")
+    remote(system, entry, "python3 /opt/harbor/current/bin/harbor self rollback", capture=False)
+    system.say(f"{name} runs Harbor {found['rollback']['name']} again.")
 
 
 def install(system, name):

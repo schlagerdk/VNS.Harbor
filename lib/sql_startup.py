@@ -20,6 +20,14 @@ READINESS_VERSION = 3
 ORDERING = "[Unit]\nWants=mssql-server.service\nAfter=network-online.target mssql-server.service\n"
 
 
+def ready_helper():
+    """sql_ready.py as the services run it: through /opt/harbor/current, so it is there after an update and after the
+    release it came with is cleaned up"""
+    helper = Path(__file__).with_name("sql_ready.py").resolve()
+    release = re.match(r"^/opt/harbor/releases/[^/]+/(.+)$", str(helper))
+    return Path("/opt/harbor/current", release[1]) if release else helper
+
+
 def configure(service, root, variables):
     text = service.read_text(encoding="utf-8")
     if not any(line.startswith("ExecStart=") and "/dotnet " in line for line in text.splitlines()):
@@ -68,8 +76,9 @@ def configure(service, root, variables):
         service_section = re.search(r"(?m)^\[Service\]\s*$", updated)
         if service_section is None:
             raise ValueError("The service has no [Service] section")
-        helper = Path(__file__).with_name("sql_ready.py").resolve()
-        pre_start = f'ExecStartPre=/usr/bin/python3 "{helper}" "{Path(root)}"'
+        pre_start = f'ExecStartPre=/usr/bin/python3 "{ready_helper()}" "{Path(root)}"'
+        # One there already runs from where it is now: an older installation or a release that may be cleaned up
+        updated = re.sub(r'(?m)^ExecStartPre=.*sql_ready\.py.*$', lambda match: pre_start, updated)
         if not any(line.startswith("ExecStartPre=") and "sql_ready.py" in line
                    for line in updated.splitlines()):
             if re.search(r"(?m)^RootDirectory=", updated) and re.search(

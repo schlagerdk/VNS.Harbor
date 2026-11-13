@@ -45,6 +45,19 @@ class SqlStartupTests(unittest.TestCase):
         self.assertIn("TimeoutStartSec=150", self.service.read_text())
         self.assertFalse(module.configure(self.service, self.root, {}))
 
+    def test_the_check_runs_through_the_release_in_use(self):
+        """Never from one release, which is cleaned up later, nor from an older installation (test-01 kept /vns for it)"""
+        with patch.object(module, "__file__", "/opt/harbor/releases/1.0.1-abc/lib/sql_startup.py"), \
+                patch.object(module.Path, "resolve", lambda path: path):
+            self.assertEqual(module.ready_helper(), Path("/opt/harbor/current/lib/sql_ready.py"))
+            self.settings("Server=.;Database=example")
+            self.service.write_text(self.unit_text + 'ExecStartPre=/usr/bin/python3 "/vns/apache/lib/sql_ready.py" "/old"\n')
+            self.assertTrue(module.configure(self.service, self.root, {}))
+        text = self.service.read_text()
+        self.assertIn(f'ExecStartPre=/usr/bin/python3 "/opt/harbor/current/lib/sql_ready.py" "{self.root}"', text)
+        self.assertNotIn("/vns/", text)
+        self.assertEqual(text.count("sql_ready.py"), 1)
+
     def test_environment_file_and_variables_override_base_settings(self):
         self.settings("Server=remote.test;Database=db")
         self.settings("Data Source=.;Database=db", "appsettings.Test.json")

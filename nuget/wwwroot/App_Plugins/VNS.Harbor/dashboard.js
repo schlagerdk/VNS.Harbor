@@ -78,12 +78,12 @@ export default class VnsHarborDashboard extends UmbElementMixin(LitElement) {
 				? html`${link("Frontend", destination.url, destination.binding)}${link("Backend", destination.url + "umbraco", destination.binding + "/umbraco")}`
 				: html`<span class="label">${destination.binding || destination.id}</span>`}</div>
 			<div class="actions">
-				<uui-button look="primary" ?disabled=${this._busy || !destination.settings}
-					title=${destination.settings ? "Document types, templates, views, css and scripts" : "Sync setup does not let this site send settings there"}
-					@click=${() => this.#sync(destination, "settings")}>Sync settings</uui-button>
-				<uui-button look="primary" color="positive" ?disabled=${this._busy || !kinds}
-					title=${kinds ? `Merges ${kinds}: nothing is deleted there` : "Sync setup does not let this site send data there"}
-					@click=${() => this.#sync(destination, "data")}>Sync ${kinds || "data"}</uui-button>
+				${destination.settings ? html`<uui-button look="primary" ?disabled=${this._busy}
+					title="Document types, templates, views, css and scripts"
+					@click=${() => this.#sync(destination, "settings")}>Sync settings</uui-button>` : nothing}
+				${kinds ? html`<uui-button look="primary" color="positive" ?disabled=${this._busy}
+					title=${`Merges ${kinds}: nothing is deleted there`}
+					@click=${() => this.#sync(destination, "data")}>Sync ${kinds}</uui-button>` : nothing}
 			</div>
 		</div>`;
 	}
@@ -98,8 +98,8 @@ export default class VnsHarborDashboard extends UmbElementMixin(LitElement) {
 			<div><strong>All environments</strong><span>${settings.length > 1 ? `Settings to ${settings.map((item) => item.environment).join(", ")}` : ""}${
 				settings.length > 1 && data.length > 1 ? " · " : ""}${data.length > 1 ? `data to ${data.map((item) => item.environment).join(", ")}` : ""}</span></div>
 			<div class="actions">
-				<uui-button look="primary" ?disabled=${this._busy || settings.length < 2} @click=${() => this.#sync(all, "settings")}>Sync settings to all</uui-button>
-				<uui-button look="primary" color="positive" ?disabled=${this._busy || data.length < 2} @click=${() => this.#sync(all, "data")}>Sync data to all</uui-button>
+				${settings.length > 1 ? html`<uui-button look="primary" ?disabled=${this._busy} @click=${() => this.#sync(all, "settings")}>Sync settings to all</uui-button>` : nothing}
+				${data.length > 1 ? html`<uui-button look="primary" color="positive" ?disabled=${this._busy} @click=${() => this.#sync(all, "data")}>Sync data to all</uui-button>` : nothing}
 			</div>
 		</div>`;
 	}

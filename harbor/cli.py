@@ -204,6 +204,8 @@ def _servers(args, system):
         print(json.dumps(servers.servers(system), indent=2))
     elif args.command == "install":
         servers.install(system, args.name)
+    elif args.command == "rollback":
+        servers.rollback(system, args.name)
     else:
         names = [args.name] if args.name else sorted(servers.servers(system))
         # Every server: this one first
@@ -563,6 +565,9 @@ def parser():
     command.add_argument("--revoke-key", action="store_true", help="also take Harbor's key out of authorized_keys there")
     command.set_defaults(handler=_servers)
     command = other.add_parser("install", help="install this server's Harbor release there and use it (an agent); again updates it")
+    command.add_argument("name")
+    command.set_defaults(handler=_servers)
+    command = other.add_parser("rollback", help="the release installed there before the one in use, used again there")
     command.add_argument("name")
     command.set_defaults(handler=_servers)
     command = other.add_parser("list", help="the servers, as JSON")

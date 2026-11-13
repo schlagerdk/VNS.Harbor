@@ -814,6 +814,7 @@ const iconPaths = {
 	logout: "M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9",
 	sync: "M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8M21 3v5h-5M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16M8 16H3v5",
 	restart: "M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8M21 3v5h-5",
+	undo: "M3 7v6h6M21 17a9 9 0 0 0-15-6.7L3 13",
 	trash: "M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2",
 	play: "M6 3l14 9-14 9z",
 	stop: "M7 5h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z",
@@ -5213,7 +5214,7 @@ async function runSystemUpdate(existing = null) {
 	// From which version to which, also when the page was reloaded during the update
 	const showVersions = (state) => {
 		if (!state || (!state.from && !state.to)) return;
-		$("#system-update-title").textContent = state.to ? `Updating to ${state.to}` : "Updating to the latest";
+		$("#system-update-title").textContent = state.rollback ? `Rolling back to ${state.to}` : state.to ? `Updating to ${state.to}` : "Updating to the latest";
 		$("#system-update-versions-line").textContent = `${state.from ? "v" + state.from : "Installed version"} → ${state.to || "the latest on main"}`;
 		$("#system-update-versions-line").hidden = false;
 	};
@@ -5259,7 +5260,7 @@ async function runSystemUpdate(existing = null) {
 		}
 		throw new Error("The update has not confirmed completion. Reload the page to check its status; do not start another update.");
 	} catch (error) {
-		$("#system-update-title").textContent = "Update not completed";
+		$("#system-update-title").textContent = existing?.rollback ? "Rollback not completed" : "Update not completed";
 		$("#system-update-message").textContent = error.message;
 		$(".update-spinner").hidden = true;
 		$("#system-update-overlay").classList.add("failed");
@@ -5273,6 +5274,7 @@ async function runSystemUpdate(existing = null) {
 $("#system-update-overlay").addEventListener("cancel", (event) => event.preventDefault());
 $("#system-update-close").onclick = () => $("#system-update-overlay").close();
 $("#system-update-reload").onclick = () => location.reload();
+let systemRollback = null;
 async function checkSystemUpdate(refresh = false) {
 	// Updates of the server are an administrator's: a user's page does not ask
 	if (!currentUser.admin) return;
@@ -5294,6 +5296,10 @@ async function checkSystemUpdate(refresh = false) {
 		: available ? `Update available · Installed: ${installedText} · New: ${latestText}` : "Settings";
 	$("#settings-version").textContent = result.installed_version ? `v${result.installed_version}` : installedText || "";
 	if (available) $("#settings-update").replaceChildren(svgIcon("sync"), result.mode === "release" ? `Update to ${latestText}` : "Update to the latest");
+	// The release installed before this one, while it is still there (the three newest are kept)
+	systemRollback = result.rollback || null;
+	$("#settings-rollback").hidden = !systemRollback;
+	if (systemRollback) $("#settings-rollback").replaceChildren(svgIcon("undo"), `Roll back to v${systemRollback.version}`);
 	if (result.status === "error") throw new Error(result.error);
 }
 $("#btn-settings").onclick = (event) => {
@@ -5375,6 +5381,17 @@ async function openSystemUpdateDialog() {
 }
 $("#system-update-cancel").onclick = () => $("#dlg-system-update").close();
 $("#settings-update").onclick = () => run(openSystemUpdateDialog);
+$("#settings-rollback").dataset.tone = "amber";
+$("#settings-rollback").onclick = () => run(async () => {
+	if (!systemRollback) return;
+	const installed = $("#settings-version").textContent;
+	if (!(await ask({
+		title: `Roll back to v${systemRollback.version}?`,
+		message: `Harbor goes back to the release installed before ${installed || "this one"} (${systemRollback.name}), and the admin starts again on it. The sites keep running. A later update brings the newest release back.`,
+		input: false, ok: "Roll back",
+	}))) return;
+	await runSystemUpdate(await api("/api/system-update/run", { json: { action: "rollback" } }));
+});
 $("#settings-update").dataset.tone = "purple";
 $("#settings-update").prepend(svgIcon("sync"));
 
@@ -6153,6 +6170,15 @@ function serverCard(item, release) {
 	const actions = [];
 	if (item.reachable && item.compatible && release && !current) {
 		actions.push(toolButton(harbor ? `Update to ${release.split("-")[0]}` : "Install Harbor", () => runServers({ action: "install", name: item.name }), "primary"));
+	}
+	// The release installed there before the one in use, while it is still there
+	if (item.reachable && item.rollback) {
+		actions.push(toolButton(`Roll back to ${item.rollback.version}`, async () => {
+			if (!(await ask({ title: `Roll back ${item.name} to ${item.rollback.version}?`,
+				message: `${item.name} goes back to Harbor ${item.rollback.name}, the release installed there before ${harbor}. Its sites keep running.`,
+				input: false, ok: "Roll back" }))) return;
+			await runServers({ action: "rollback", name: item.name });
+		}));
 	}
 	actions.push(toolButton("Remove…", () => askRemoveServer(item), "tool-danger"));
 	return toolCard({ icon: "server", tone: item.reachable ? "blue" : "amber", title: item.name, detail: `${item.user}@${item.host}${item.port !== 22 ? ":" + item.port : ""}`,

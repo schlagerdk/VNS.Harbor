@@ -14,18 +14,18 @@ sandbox of its own, and builds run as the unprivileged user `vns-build`.
 ## Screenshots
 
 <p align="center">
-  <img src="assets/screenshots/overview.jpg" alt="The sites on a server" width="49%" />
-  <img src="assets/screenshots/site.jpg" alt="An Umbraco site with its environments" width="49%" />
-</p>
-
-<p align="center">
-  <img src="assets/screenshots/server-tools.jpg" alt="Server tools: SQL Server, backups, scheduled jobs, .NET and Node.js" width="49%" />
-  <img src="assets/screenshots/scheduled-jobs.jpg" alt="Scheduled jobs: root's crontab, a job at a time" width="49%" />
-</p>
-
-<p align="center">
-  <img src="assets/screenshots/user.jpg" alt="A user: the sites, environments and actions they may use, SFTP and SQL Server" width="49%" />
   <img src="assets/screenshots/login.jpg" alt="The admin's login" width="49%" />
+  <img src="assets/screenshots/overview.jpg" alt="The sites on a server" width="49%" />
+</p>
+
+<p align="center">
+  <img src="assets/screenshots/site.jpg" alt="An Umbraco site with its environments" width="49%" />
+  <img src="assets/screenshots/server-tools.jpg" alt="Server tools: SQL Server, backups, scheduled jobs, .NET and Node.js" width="49%" />
+</p>
+
+<p align="center">
+  <img src="assets/screenshots/scheduled-jobs.jpg" alt="Scheduled jobs: root's crontab, a job at a time" width="49%" />
+  <img src="assets/screenshots/user.jpg" alt="A user: the sites, environments and actions they may use, SFTP and SQL Server" width="49%" />
 </p>
 
 ## Installation
@@ -65,7 +65,8 @@ sudo harbor self update --ref v1.0.0
 
 An update fetches the release from GitHub and lets that release install itself (`harbor self finish-update`). The
 release is copied whole to `/opt/harbor/releases/<version>` and made the one in use (`/opt/harbor/current`); the three
-newest are kept, and `sudo harbor self rollback` goes back to the one before. The release then brings the server up to
+newest are kept, and a rollback goes back to the one before, the admin with it: **Roll back to …** in the settings menu
+(or in the Servers window for another server), or `sudo harbor self rollback`. The release then brings the server up to
 date (`harbor self after-update`):
 
 - the server-wide Apache configs and the keep-alive job

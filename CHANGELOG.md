@@ -2,6 +2,19 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.2] - 2026-11-14
+
+### Features
+
+- Roll back from the admin: Roll back to … in the settings menu, and for each server in the Servers window. The admin starts again on the earlier release; a release from before VNS Harbor is never gone back to
+
+### Fixes
+
+- The SQL check a site runs before it starts is moved from the old installation to /opt/harbor/current, so the old installation is removed after the update; nothing is restarted for it
+- A new site's SQL check runs from /opt/harbor/current, not from one release, so it is there after older releases are cleaned up
+- The VNS Harbor dashboard in Umbraco names the main site by the environment it runs as (such as Development), not Main
+- The screenshots in the README are in the order they are used
+
 ## [1.0.1] - 2026-11-14
 
 ### Features

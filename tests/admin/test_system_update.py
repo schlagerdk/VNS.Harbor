@@ -40,7 +40,9 @@ class SystemUpdateTests(unittest.TestCase):
                        installed_version=lambda: self.version, github_releases=lambda: self.releases,
                        release_versions=lambda: [release["version"] for release in self.releases or []] if self.tags is None else self.tags,
                        commit_details=lambda installed, latest: {"compare_url": "compare", "latest_commit": {"subject": "fix: x"}},
-                       version_key=lambda value: tuple(int(part) for part in value.split(".")))
+                       version_key=lambda value: tuple(int(part) for part in value.split(".")),
+                       rollback_release=lambda: self.rollback)
+        self.rollback = None
         self.version = ""
         self.releases = None
         self.tags = None
@@ -57,6 +59,7 @@ class SystemUpdateTests(unittest.TestCase):
         self.assertEqual(response.json["installed"], self.installed)
         self.assertEqual(response.json["latest"], self.latest)
         self.assertEqual(self.run.call_args.kwargs["timeout"], 15)
+        self.assertIsNone(response.json["rollback"])
         self.client.get("/api/system-update")
         self.assertEqual(self.run.call_count, 1)
         self.clock.return_value = 1061

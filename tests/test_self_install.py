@@ -98,6 +98,35 @@ class ReleaseTests(unittest.TestCase):
         self.assertEqual(main(["self", "rollback"], system), 1)
         self.assertIn("no earlier release", system.said[-1])
 
+    def installed(self, *names):
+        """Releases installed one after the other, the last in use: (name, repository)"""
+        for index, (name, repository) in enumerate(names):
+            folder = self.root / "opt/harbor/releases" / name
+            (folder / "bin").mkdir(parents=True)
+            (folder / "bin/harbor").write_text("")
+            (folder / "REPOSITORY").write_text(repository + "\n")
+            (folder / "release.json").write_text(json.dumps({"version": name.split("-")[0], "installed": f"2026-11-13T10:00:0{index}+00:00"}))
+        (self.root / "opt/harbor/current").symlink_to(f"releases/{names[-1][0]}")
+
+    def test_rollback_moves_the_admin_site_to_the_earlier_release(self):
+        self.installed(("1.0.0-a", "schlagerdk/VNS.Harbor"), ("1.0.1-b", "schlagerdk/VNS.Harbor"))
+        (self.root / "var/www/admin.example.test/app").mkdir(parents=True)
+        (self.root / "var/www/admin.example.test/app/config.json").write_text('{"secret_key": "k"}')
+        from unittest import mock
+        with mock.patch.dict(os.environ, {"VNS_WEB_ROOT": "/var/www"}):
+            system = self.harbor("self", "rollback")
+        self.assertEqual(self.current(), "releases/1.0.0-a")
+        self.assertIn("python3 /opt/harbor/current/bin/harbor admin update admin.example.test", system.commands)
+
+    def test_no_rollback_to_a_release_from_before_harbor(self):
+        """test-01 had the old installation's release beside 1.0.0 and 1.0.1"""
+        self.installed(("1.3.0-old", "someone/Other"), ("1.0.0-a", "schlagerdk/VNS.Harbor"))
+        self.assertEqual(release.rollback_target(RecordingSystem(root=self.root))[0], None)
+        system = RecordingSystem(root=self.root)
+        self.assertEqual(main(["self", "rollback"], system), 1)
+        self.assertIn("from before VNS Harbor", system.said[-1])
+        self.assertEqual(self.current(), "releases/1.0.0-a")
+
     def test_not_a_copy_of_harbor(self):
         system = RecordingSystem(root=self.root)
         self.assertEqual(main(["self", "install", str(self.folder)], system), 1)

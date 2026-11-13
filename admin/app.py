@@ -1615,7 +1615,15 @@ def api_run_system_update():
             return jsonify(state)
         if state["status"] == "running":
             abort(409, "A system update is already running")
-        _, command, _ = build_command({"kind": "update_system"})
+        # A rollback runs as an update does: the admin starts again on the release it goes back to
+        rollback = (request.get_json(silent=True) or {}).get("action") == "rollback"
+        if rollback:
+            earlier = rollback_release()
+            if not earlier:
+                abort(400, "There is no earlier release of VNS Harbor to go back to.")
+            command = ["/usr/bin/python3", HARBOR_COMMAND, "self", "rollback"]
+        else:
+            _, command, _ = build_command({"kind": "update_system"})
         helper = Path(LIB_DIR) / "system_update.py"
         if not helper.is_file():
             abort(400, "System update helper is missing")
@@ -1624,8 +1632,8 @@ def api_run_system_update():
         try:
             with os.fdopen(descriptor, "w") as stream:
                 # The versions are kept with the job, so a page reloaded during the update still shows them
-                state = {"id": job, "status": "running", "started": time.time(),
-                         "from": installed_version(), "to": update_target()}
+                state = {"id": job, "status": "running", "started": time.time(), "from": installed_version(),
+                         "to": "v" + earlier["version"] if rollback else update_target(), "rollback": rollback}
                 temporary = path.with_suffix(".tmp")
                 with open(temporary, "w", opener=lambda name, flags: os.open(name, flags, 0o600)) as status_stream:
                     json.dump(state, status_stream)
@@ -1814,8 +1822,21 @@ def api_system_update():
         except (OSError, ValueError, subprocess.SubprocessError) as exc:
             app.logger.error("System update check failed: %s", exc)
             response = {"status": "error", "error": "Could not check GitHub for updates. Try again in one minute."}
+        response["rollback"] = rollback_release()
         SYSTEM_UPDATE_CACHE.update(checked_at=time.monotonic(), result=response)
         return jsonify(**response)
+
+
+def rollback_release():
+    """The release a rollback goes back to ({version, name}), or None: only one installed before the one in use, from
+    VNS Harbor (harbor self rollback)"""
+    try:
+        from harbor.core.system import System
+        from harbor.install import release
+        earlier, _ = release.rollback_target(System())
+    except (ImportError, OSError, ValueError):
+        return None
+    return {"version": earlier["version"], "name": earlier["name"]} if earlier else None
 
 
 UPDATE_CHECK_LOCK = threading.Lock()
@@ -2100,6 +2121,8 @@ def servers_command(data):
         return f"Add server {name}", harbor + ["add", name, host, "--user", user, "--port", port], {"HARBOR_SSH_PASSWORD": password}
     if action == "install":
         return f"Install Harbor on {name}", harbor + ["install", name], {}
+    if action == "rollback":
+        return f"Roll back Harbor on {name}", harbor + ["rollback", name], {}
     if action == "remove":
         options = [*(["--uninstall"] if data.get("uninstall") is True else []), *(["--revoke-key"] if data.get("revoke_key") is True else [])]
         return f"Remove server {name}", harbor + ["remove", name, *options], {}
@@ -2241,6 +2264,13 @@ def backoffice_environment(site):
     return "main" if target == "main" else target_arg(site, {"target": target})
 
 
+def main_environment(site):
+    """The environment the main site runs as (ASPNETCORE_ENVIRONMENT or DOTNET_ENVIRONMENT in its service)"""
+    service_text = read_text(os.path.join(SERVICE_DIR, service_name(site) + ".service"))
+    match = re.search(r"(?:ASPNETCORE|DOTNET)_ENVIRONMENT=([^\s\"']+)", service_text)
+    return match.group(1) if match else "Unknown"
+
+
 # ---- The VNS.Harbor package's API (phase 9b): a site asks with its own token, and only about itself
 def harbor_api_destinations(site, source):
     """Where the site may sync to: its other environments, with what Sync setup lets it send each"""
@@ -2266,7 +2296,9 @@ def harbor_api_destinations(site, source):
                 secure = https_status(site)["scheme"] == "https"
             else:
                 secure = prod.get("PROD_HTTPS") != "n"
-            found.append({"id": destination, "environment": prod.get("PROD_ENVIRONMENT") or ("Main" if destination == "main" else destination),
+            # The main site by the environment it runs as, as the admin shows it, never "main"
+            environment = prod.get("PROD_ENVIRONMENT") or (main_environment(site) if destination == "main" else destination)
+            found.append({"id": destination, "environment": environment,
                           "binding": binding, "url": f"{'https' if secure else 'http'}://{binding}/" if binding else "",
                           "settings": settings_allowed, "data": kinds})
     # Always in the order the environments follow: the main site, Development, Test, Staging, Production

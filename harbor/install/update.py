@@ -139,6 +139,7 @@ def after_update(system):
     worked.append(attempt(system, "Not every site was migrated: sudo harbor migrate --dry-run tells why.", "python3", harbor, "migrate"))
     worked.append(attempt(system, "The sa password was not kept in Harbor.", "python3", harbor, "sql", "import-sa-password"))
     worked.append(attempt(system, "The backup jobs were not changed to harbor commands.", "python3", harbor, "server", "cron", "upgrade"))
+    move_sql_ready(system)
     # VNS 1.x stays in /vns (its custom scripts are there), but its harbor is the one in use: anything that still calls
     # /vns/bin/harbor runs this release
     legacy = system.path("/vns/bin/harbor")
@@ -205,6 +206,29 @@ def started_from_vns(system):
             return True
         pid = int(parent)
     return False
+
+
+# The check before a site starts that its SQL Server answers, as the services run it
+SQL_READY = "/opt/harbor/current/lib/sql_ready.py"
+OLD_SQL_READY = re.compile(r'(?<=ExecStartPre=/usr/bin/python3 )"?(?:/vns/apache/lib|/opt/harbor/releases/[^/"\s]+/lib)/sql_ready\.py"?')
+
+
+def move_sql_ready(system):
+    """The sites' services run the SQL check from the release in use, no longer from /vns or from one release. It
+    counts from the site's next start: nothing is restarted."""
+    moved = []
+    folder = system.path("/etc/systemd/system")
+    for service in sorted(folder.glob("*.service")) if folder.is_dir() else []:
+        if service.is_symlink() or not service.is_file():
+            continue
+        text = service.read_text(errors="replace")
+        updated = OLD_SQL_READY.sub(f'"{SQL_READY}"', text)
+        if updated != text:
+            service.write_text(updated)
+            moved.append(service.name)
+    if moved:
+        system.say(f"The SQL check before a site starts runs from {SQL_READY} in {len(moved)} service(s).")
+        system.run("systemctl", "daemon-reload", check=False)
 
 
 def remove_vns(system):

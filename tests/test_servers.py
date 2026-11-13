@@ -99,6 +99,17 @@ class ServerTests(unittest.TestCase):
         main(["servers", "install", "two"], system)
         self.assertFalse(any(command.startswith("rsync") for command in system.commands))
 
+    def test_rollback_runs_there_only_with_an_earlier_release(self):
+        self.add(self.system(ssh=lambda argv: ""))
+        earlier = {**STATUS, "rollback": {"name": "1.0.0-abc", "version": "1.0.0"}}
+        system = self.system(ssh=lambda argv: json.dumps(earlier) if argv[-1] == "python3 -" else "")
+        self.assertEqual(main(["servers", "rollback", "two"], system), 0, system.said)
+        self.assertTrue(system.commands[-1].endswith("python3 /opt/harbor/current/bin/harbor self rollback"), system.commands[-1])
+        system = self.system(ssh=lambda argv: json.dumps({**STATUS, "rollback": None}) if argv[-1] == "python3 -" else "")
+        self.assertEqual(main(["servers", "rollback", "two"], system), 1)
+        self.assertIn("no earlier release", system.said[-1])
+        self.assertFalse(any("self rollback" in command for command in system.commands))
+
     def test_remove_forgets_and_can_uninstall_and_take_the_key(self):
         self.add(self.system(ssh=lambda argv: ""))
         system = self.system(ssh=lambda argv: "")

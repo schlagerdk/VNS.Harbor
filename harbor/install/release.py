@@ -134,17 +134,42 @@ def prune(system, keep=KEEP):
             system.say(f"Release {item['name']} removed")
 
 
-def rollback(system):
-    """The release installed before the one in use is used again"""
+def repository_of(system, name):
+    """Where a release's code came from (its REPOSITORY file), or "" """
+    try:
+        return system.path(f"{RELEASES}/{name}/REPOSITORY").read_text().strip()
+    except OSError:
+        return ""
+
+
+def rollback_target(system):
+    """The release a rollback goes back to: the one installed before the one in use, from the same repository (one from
+    before VNS Harbor is never gone back to). None, and why, when there is none."""
     found = releases(system)
     current = next((index for index, item in enumerate(found) if item["current"]), None)
     if current is None:
-        raise Stop("No release of Harbor is in use.")
+        return None, "No release of Harbor is in use."
     if current + 1 >= len(found):
-        raise Stop("There is no earlier release to go back to.")
-    earlier = found[current + 1]["name"]
-    link(system, CURRENT, f"releases/{earlier}")
-    system.say(f"Harbor {earlier} is in use again ({CURRENT}).")
+        return None, "There is no earlier release to go back to."
+    earlier = found[current + 1]
+    if repository_of(system, earlier["name"]) != repository_of(system, found[current]["name"]):
+        return None, f"The release before this one ({earlier['name']}) is from before VNS Harbor: there is no earlier release to go back to."
+    return earlier, ""
+
+
+def rollback(system):
+    """The release installed before the one in use is used again, the admin site too: it starts again on that
+    release's code, which also brings its Python packages back to that release"""
+    from harbor.install import admin
+    earlier, why = rollback_target(system)
+    if not earlier:
+        raise Stop(why)
+    link(system, CURRENT, f"releases/{earlier['name']}")
+    system.say(f"Harbor {earlier['name']} is in use again ({CURRENT}).")
+    for name in admin.admin_sites(system):
+        system.step(f"Start the admin site {name} on {earlier['name']}")
+        # The earlier release's own code moves the admin: it knows what that release needs
+        system.run("python3", f"{CURRENT}/bin/harbor", "admin", "update", name)
 
 
 def version(system):
