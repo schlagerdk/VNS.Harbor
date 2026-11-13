@@ -69,6 +69,14 @@ and reads through one API. When the scripts are gone (2d, removed in phase 6) th
   site folder only, never its own copy. Tried on linux-01: a changed setting is in the copy at once.)
 - [ ] 2d The site scripts' work into harbor commands (publish, sync, clear logs, change environment, service tools), so
   nothing needs the files in the site folder. The scripts there then only call harbor; phase 6 removes them.
+  - [x] The tools: check/restart/edit service, edit conf, restart Apache, clear logs, update packages and app permissions
+    (Python), issue the certificate again, outdated, change environment, publish (`harbor site …`), and an environment's
+    clear logs (`harbor env clear-logs`; its script no longer holds a password). The templates are wrappers with the
+    site baked in (tests/test_site_tools.py against the templates as they were, tests/legacy/solutionfiles).
+    update_admin_site.sh leaves a script that calls harbor alone, and upgrades a very old publish.sh to the wrapper
+    with its folder and EnvironmentName. A real publish through harbor on linux-01 worked (12 s, status recorded).
+  - [ ] publish_prod.sh (Linux, 466 lines) and the Windows one (196): the settings block stays, the work is harbor's
+  - [ ] create_prod.sh (316 lines)
 
 - New site defaults (asked 2026-11-13): environment Development and publish folder `_development` (dialog, admin, `harbor site create`).
 

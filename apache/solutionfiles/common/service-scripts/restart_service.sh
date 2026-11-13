@@ -1,18 +1,5 @@
 #!/bin/bash
-clear
-
-_site=@SERVICE_NAME@
-
-sudo systemctl daemon-reload
-sudo systemctl restart "${_site}"
-
-sleep 2
-sudo systemctl status "${_site}" --no-pager
-
-if systemctl is-active --quiet "${_site}"; then
-	echo "OK: ${_site} is running"
-else
-	echo "FAILED: ${_site} is not running. Last log lines:"
-	sudo journalctl -u "${_site}" -n 20 --no-pager
-	exit 1
-fi
+# Restart the service and see that it runs.
+# It is a harbor command now; this script only calls it.
+[[ $EUID -eq 0 ]] || exec sudo "$0" "$@"
+exec "@APACHE_DIR@/../bin/harbor" site restart-service @SITE@

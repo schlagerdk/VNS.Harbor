@@ -117,15 +117,8 @@ class UpdatePublishScriptsTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         text = self.local.read_text()
         self.assertTrue(text.startswith("#!/bin/bash\n"))
-        self.assertIn('cd "$(dirname "$0")"', text)
-        self.assertIn("_site=example.test", text)
-        self.assertIn("_projectName=Example", text)
-        self.assertIn("_publishFolder=_publish", text)
-        self.assertIn("_configuration=${1:-Debug}", text)
-        self.assertIn("-p:EnvironmentName=Test", text)
-        self.assertIn("trap start_service EXIT", text)
-        self.assertIn('dotnet publish "${_projectName}.csproj"', text)
-        self.assertIn("lib/publish_status.py", text)
+        # The publish is harbor's now: the script calls it with what the old one had
+        self.assertIn('/bin/harbor" site publish example.test "${1:-Debug}" --folder _publish --environment-name Test', text)
         self.assertEqual(self.local.stat().st_mode & 0o777, 0o700)
         backups = list(self.local.parent.glob("publish.sh.vns-backup-*"))
         self.assertEqual(len(backups), 1)
@@ -150,43 +143,14 @@ class UpdatePublishScriptsTests(unittest.TestCase):
             "-c Release -p:PublishDir=_Publish /p:EnvironmentName=Production"))
         result = self.run_updater()
         self.assertEqual(result.returncode, 0, result.stderr)
-        text = self.local.read_text()
-        self.assertIn("_publishFolder=_Publish", text)
-        self.assertIn("_configuration=${1:-Release}", text)
-        self.assertIn("-p:EnvironmentName=Production", text)
+        self.assertIn('site publish example.test "${1:-Release}" --folder _Publish --environment-name Production', self.local.read_text())
 
-    def test_upgraded_legacy_script_restarts_service_after_failed_publish_from_other_directory(self):
-        self.local.write_text(self.legacy_script())
+    def test_a_script_that_calls_harbor_is_left_as_it_is(self):
+        wrapper = '#!/bin/bash\nexec "/vns/apache/../bin/harbor" site publish example.test "${1:-Debug}"\n'
+        self.local.write_text(wrapper)
         result = self.run_updater()
         self.assertEqual(result.returncode, 0, result.stderr)
-        helper = self.apache / "lib/dotnet.sh"
-        helper.parent.mkdir(exist_ok=True)
-        helper.write_text('linux_runtime_identifier() { echo linux-x64; }\n')
-        # The build runs through the build user's helper; not as root it runs the command as it is
-        (helper.parent / "build_as.py").write_text((Path(__file__).resolve().parents[1] / "lib/build_as.py").read_text())
-        binary = self.apache / "bin"
-        binary.mkdir()
-        calls = self.apache / "calls"
-        for name, body in (
-                ("systemctl", 'printf "%s\\n" "$*" >> "$CALLS"'),
-                ("dotnet", 'printf "%s\\n" "$PWD" >> "$CALLS"\nexit 7')):
-            path = binary / name
-            path.write_text("#!/bin/bash\n" + body + "\n")
-            path.chmod(0o700)
-        runtime = self.local.parent.parent / "_publish/runtimes"
-        runtime.mkdir(parents=True)
-        (runtime / "old.dll").write_text("stale")
-        # Exercise the publish body without needing host root privileges.
-        runner = self.local.with_name("test-runner.sh")
-        runner.write_text(self.local.read_text().replace('[[ $EUID -eq 0 ]] || exec sudo "$0" "$@"\n', ""))
-        result = subprocess.run(["bash", str(runner)], cwd=self.apache,
-                                env=os.environ | {"VNS_PUBLISH_TRACKED": "test", "CALLS": str(calls),
-                                                  "PATH": str(binary) + ":" + os.environ["PATH"]},
-                                capture_output=True, text=True)
-        self.assertEqual(result.returncode, 7, result.stderr + result.stdout)
-        self.assertEqual(calls.read_text().splitlines(),
-                         ["stop example.test", str(self.local.parent.parent), "start example.test"])
-        self.assertFalse(runtime.exists())
+        self.assertEqual(self.local.read_text(), wrapper)
 
     def test_already_migrated_script_gets_assembly_refresh_without_duplicate_source(self):
         for path in (self.local, self.local_prod):

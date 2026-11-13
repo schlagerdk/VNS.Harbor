@@ -1,8 +1,5 @@
 #!/bin/bash
-clear
-sudo nano /etc/apache2/sites-available/@SITE@.conf
-
-read -r -p "Test config and reload apache? [Y/n]: " _answer
-if [[ ! ${_answer} =~ ^[nN] ]]; then
-	sudo apache2ctl configtest && sudo systemctl reload apache2
-fi
+# Edit the Apache config, then test it and reload Apache.
+# It is a harbor command now; this script only calls it.
+[[ $EUID -eq 0 ]] || exec sudo "$0" "$@"
+exec "@APACHE_DIR@/../bin/harbor" site edit-conf @SITE@

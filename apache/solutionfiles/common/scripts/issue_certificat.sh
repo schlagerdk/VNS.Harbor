@@ -1,16 +1,5 @@
 #!/bin/bash
-set -euo pipefail
-clear
-
-source "@APACHE_DIR@/lib/common.sh"
-_site=@SITE@
-set_site_vars
-_binding=$(awk '$1 == "ServerName" { print $2; exit }' "${_configPath}")
-[[ -n ${_binding} ]] || { echo "Could not determine ServerName in ${_configPath}" >&2; exit 1; }
-set_certificate_domains "${_configPath}" "${_binding}"
-require_acme
-echo "Issue certificate for ${_certificateDomainNames}"
-"${_acme}" --issue --apache --server "${_acmeServer}" --force "${_certificateDomainArgs[@]}"
-
-echo  Reload apache
-systemctl reload apache2
+# Issue the certificate again, for the Apache config as it is.
+# It is a harbor command now; this script only calls it.
+[[ $EUID -eq 0 ]] || exec sudo "$0" "$@"
+exec "@APACHE_DIR@/../bin/harbor" site reissue-certificate @SITE@

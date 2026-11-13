@@ -205,7 +205,8 @@ assert.equal(publishBadge({}), null);
         self.assertIn("const pending = publishBadge(env);", source[source.index("function siteCard("):source.index("function renderSite(")])
         self.assertIn("const pending = publishBadge(env);", source[source.index("function envPanel("):])
         for scope, template in (
-            ("test", APACHE / "solutionfiles/csharp/scripts/publish.sh"),
+            # As it was before it called harbor (harbor site publish is compared with it in tests/test_site_tools.py)
+            ("test", APACHE.parent / "tests/legacy/solutionfiles/csharp/scripts/publish.sh"),
             ("prod", APACHE / "solutionfiles/csharp/prod-scripts/publish_prod.sh"),
         ):
             text = template.read_text()

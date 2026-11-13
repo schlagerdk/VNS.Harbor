@@ -749,7 +749,9 @@ configure_project_dotnet "$1"
 
     def test_all_publish_paths_select_the_project(self):
         for path in ("scripts/publish.sh", "prod-scripts/publish_prod.sh"):
-            text = (APACHE / "solutionfiles/csharp" / path).read_text()
+            # publish.sh as it was before it called harbor (compared with harbor site publish in tests/test_site_tools.py)
+            legacy = APACHE.parent / "tests/legacy/solutionfiles/csharp" / path
+            text = (legacy if legacy.is_file() else APACHE / "solutionfiles/csharp" / path).read_text()
             self.assertIn('dotnet publish "${_projectName}.csproj"', text)
             runtime_argument = '--runtime "${_runtimeIdentifier}"' if path.startswith("prod-") else '--runtime "$(linux_runtime_identifier)"'
             self.assertIn(runtime_argument, text)

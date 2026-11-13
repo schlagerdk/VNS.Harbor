@@ -1,15 +1,5 @@
 #!/bin/bash
-clear
-
-_app=@SITE_ROOT@/app
-
-if [[ ! -d ${_app} ]]; then
-	echo "Folder not found: ${_app}" >&2
-	exit 1
-fi
-
-sudo chown -R www-data:www-data "${_app}"
-sudo find "${_app}" -type d -exec chmod 755 {} \;
-sudo find "${_app}" -type f -exec chmod 644 {} \;
-
-echo "Permissions fixed on ${_app}"
+# The app folder owned by www-data: folders 755, files 644.
+# It is a harbor command now; this script only calls it.
+[[ $EUID -eq 0 ]] || exec sudo "$0" "$@"
+exec "@APACHE_DIR@/../bin/harbor" site fix-app-permissions @SITE@

@@ -95,10 +95,9 @@ def upgrade_legacy_local(path, text):
               "APACHE_DIR": str(apache).replace("\\", "\\\\").replace('"', '\\"').replace("$", "\\$").replace("`", "\\`")}
     for key, value in values.items():
         template = template.replace("@" + key + "@", value)
-    if environment:
-        template = template.replace(' -p:PublishDir="${_publishFolder}"',
-                                    ' -p:PublishDir="${_publishFolder}" -p:EnvironmentName=' + environment)
-    return template
+    # The publish is harbor's (harbor site publish); the folder and environment name the script had go with it
+    options = " --folder " + shlex.quote(folder) + (" --environment-name " + environment if environment else "")
+    return re.sub(r'(?m)^(exec .*/bin/harbor" site publish .*)$', lambda match: match[1] + options, template, count=1)
 
 
 def update_publish_script(path, production):
@@ -106,6 +105,10 @@ def update_publish_script(path, production):
         raise RuntimeError(f"Refusing to modify symlink: {path}")
     original = path.read_text()
     text = original if production else upgrade_legacy_local(path, original)
+    # A script that calls harbor has nothing to patch: the publish is harbor's
+    if "/bin/harbor" in text:
+        (unchanged if text == original else planned).append((path, text))
+        return
     publish_lines = list(re.finditer(PUBLISH_LINE, text))
     if len(publish_lines) != 1:
         raise RuntimeError(f"Expected one dotnet publish command in {path}")

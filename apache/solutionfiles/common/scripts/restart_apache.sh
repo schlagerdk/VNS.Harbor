@@ -1,3 +1,5 @@
 #!/bin/bash
-clear
-sudo systemctl restart apache2
+# Restart Apache.
+# It is a harbor command now; this script only calls it.
+[[ $EUID -eq 0 ]] || exec sudo "$0" "$@"
+exec "@APACHE_DIR@/../bin/harbor" server restart-apache

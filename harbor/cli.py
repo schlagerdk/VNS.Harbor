@@ -147,6 +147,22 @@ def _state_sync(args, system):
     sync_command(system, args.site)
 
 
+def _site_tool(args, system):
+    from harbor.sites import tools
+    name = args.command.replace("-", "_")
+    if name == "publish":
+        tools.publish(system, args.site, args.configuration, args.folder, args.environment_name)
+    elif name == "restart_apache":
+        tools.restart_apache(system)
+    else:
+        getattr(tools, name)(system, args.site)
+
+
+def _clear_environment_logs(args, system):
+    from harbor.sites.tools import clear_environment_logs
+    clear_environment_logs(system, args.site, target())
+
+
 def _environment_binding(args, system):
     from harbor.environments.bindings import change_binding
     change_binding(system, args.site, args.binding, args.aliases, yes=args.confirm == "--yes" or args.yes, target=target())
@@ -167,6 +183,8 @@ def parser():
     groups = root.add_subparsers(dest="group", required=True, metavar="<group>")
 
     server = groups.add_parser("server", help="the server itself").add_subparsers(dest="command", required=True, metavar="<command>")
+    command = server.add_parser("restart-apache", help="restart Apache (was a site's restart_apache.sh)")
+    command.set_defaults(handler=_site_tool)
     command = server.add_parser("set-servername", help="give Apache a global ServerName (was set_servername.sh)")
     command.set_defaults(handler=_servername)
     command = server.add_parser("install-apache-conf", help="the server-wide Apache configs (was install_apache_conf.sh)")
@@ -225,6 +243,24 @@ def parser():
     command.add_argument("incoming")
     command.add_argument("sql_server", nargs="?", default="")
     command.set_defaults(handler=_receive_sites)
+    # The tools a site's scripts folder had (apache/solutionfiles/*/scripts)
+    for name, text in (("check-service", "the service's status (was check_service.sh)"),
+                       ("restart-service", "restart the service and see that it runs (was restart_service.sh)"),
+                       ("edit-conf", "edit the Apache config, then test and reload (was edit_conf.sh)"),
+                       ("edit-service", "edit the service, then reload and restart (was edit_service.sh)"),
+                       ("clear-logs", "Umbraco's logs, with the site stopped (was clear_logs.sh)"),
+                       ("update-packages", "a Python site's packages upgraded (was update_packages.sh)"),
+                       ("fix-app-permissions", "a Python site's app folder owned by www-data (was fix_permissions.sh)"),
+                       ("reissue-certificate", "the certificate issued again for the config as it is (was issue_certificat.sh)"),
+                       ("outdated", "the project's outdated packages, and an upgrade if wanted (was outdated.sh)"),
+                       ("publish", "build into the publish folder and start again (was publish.sh / publish_local.sh)")):
+        command = site.add_parser(name, help=text)
+        command.add_argument("site")
+        if name == "publish":
+            command.add_argument("configuration", nargs="?", default="", help="Debug or Release")
+            command.add_argument("--folder", default="", help="the publish folder, when not the one the service runs from")
+            command.add_argument("--environment-name", default="", help="-p:EnvironmentName for the build, as a very old script had")
+        command.set_defaults(handler=_site_tool)
     command = site.add_parser("binding", help="change the binding and aliases of the site here (was change_binding.sh)")
     command.add_argument("site", nargs="?", default="")
     command.add_argument("binding", nargs="?", default="", help="the new binding, or * to answer any name")
@@ -300,6 +336,9 @@ def parser():
     command.add_argument("site")
     command.add_argument("environment", nargs="?", default="")
     command.set_defaults(handler=_move_environment)
+    command = environment.add_parser("clear-logs", help="Umbraco's logs where the environment is (was clear_logs_prod.sh)")
+    command.add_argument("site")
+    command.set_defaults(handler=_clear_environment_logs)
     command = environment.add_parser("binding", help="change the binding and aliases where the environment is (was change_binding_prod.sh)")
     command.add_argument("site", nargs="?", default="")
     command.add_argument("binding", nargs="?", default="")

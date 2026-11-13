@@ -339,7 +339,7 @@ class CertificateAliasTests(unittest.TestCase):
         change_local = script_text("change_binding.sh")
         change_remote = script_text("change_binding_prod.sh")
         publish = (APACHE / "solutionfiles/csharp/prod-scripts/publish_prod.sh").read_text()
-        legacy = (APACHE / "solutionfiles/common/scripts/issue_certificat.sh").read_text()
+        legacy = (APACHE.parent / "tests/legacy/solutionfiles/common/scripts/issue_certificat.sh").read_text()
         self.assertIn('"${_certificateDomainArgs[@]}"', common)
         self.assertIn('set_certificate_domains "${_configPath}" "${_binding}"', test_action)
         self.assertIn('"${_certificateDomainArgs[@]}"', test_action)

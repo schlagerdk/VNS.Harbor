@@ -23,6 +23,8 @@ from apache.tests.app_targets import add_target_helpers
 APACHE = Path(__file__).resolve().parents[1]
 WINDOWS_TEMPLATES = APACHE / "solutionfiles/csharp/windows-prod-scripts"
 UMBRACO_TEMPLATES = APACHE / "solutionfiles/csharp/umbraco/windows-prod-scripts"
+# clear_logs_prod.sh as it was before it called harbor: harbor env clear-logs is compared with it in tests/
+LEGACY_UMBRACO_TEMPLATES = APACHE.parent / "tests/legacy/solutionfiles/csharp/umbraco/windows-prod-scripts"
 LINUX_TEMPLATE = APACHE / "solutionfiles/csharp/prod-scripts/publish_prod.sh"
 BASH = shutil.which("bash")
 BASH_MAJOR = int(subprocess.run([BASH, "-c", "echo ${BASH_VERSINFO[0]}"], capture_output=True, text=True).stdout)
@@ -337,14 +339,14 @@ class WindowsPublishTests(ScriptTestCase):
 
 class WindowsContentTests(ScriptTestCase):
     def test_clear_logs_takes_the_site_offline_and_back(self):
-        result = self.run_script(self.script("clear_logs_prod.sh", UMBRACO_TEMPLATES))
+        result = self.run_script(self.script("clear_logs_prod.sh", LEGACY_UMBRACO_TEMPLATES))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("Nothing to delete", result.stdout)
         self.assertFalse(any("app_offline" in call for call in self.calls()))
         executable(self.bin / "rclone", FAKE_RCLONE.replace(
             '[[ ${2%/} == ":smb:share\\$/sites/prod.test" ]] || exit "${FAKE_LSF_STATUS:-3}"', ""))
         self.log.write_text("")
-        result = self.run_script(self.script("clear_logs_prod.sh", UMBRACO_TEMPLATES))
+        result = self.run_script(self.script("clear_logs_prod.sh", LEGACY_UMBRACO_TEMPLATES))
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertLess(self.index("copyto "), self.index("purge "))
         self.assertLess(self.index("purge "), self.index("deletefile"))
@@ -613,9 +615,10 @@ class CreateProdTests(ScriptTestCase):
             self.assertNotRegex(path.read_text(), r"@[A-Z_]+@")
         # The sync script only calls sync_env.sh: it holds no settings and no password
         self.assertNotIn("PROD_SMB_PASSWORD", (self.scripts / "targets/staging/sync_prod.sh").read_text())
-        for name in ("publish_prod.sh", "clear_logs_prod.sh"):
-            self.assertEqual(self.setting("PROD_SMB_PASSWORD", name), "pa$$ 'w\"ord")
-            self.assertEqual(self.setting("PROD_WINDOWS_SHARE", name), "//10.0.0.1/share$/sites/prod.test")
+        self.assertEqual(self.setting("PROD_SMB_PASSWORD"), "pa$$ 'w\"ord")
+        self.assertEqual(self.setting("PROD_WINDOWS_SHARE"), "//10.0.0.1/share$/sites/prod.test")
+        # Clear logs calls harbor, which reads the environment's settings: it holds no password of its own
+        self.assertNotIn("PROD_SMB_PASSWORD", (self.scripts / "targets/staging/clear_logs_prod.sh").read_text())
         self.assertEqual(self.setting("PROD_TARGET"), "windows")
         self.assertEqual(self.setting("PROD_HTTPS"), "n")
         self.assertIn('value="Staging"', (self.server / "web.config").read_text())

@@ -1,43 +1,5 @@
 #!/bin/bash
-set -euo pipefail
-cd "$(dirname "$0")"
-cd ..
-clear
-
-# Check if dotnet is installed
-if ! command -v dotnet &> /dev/null
-then
-    echo "dotnet SDK not found. Please install it first."
-    exit 1
-fi
-
-# dotnet-outdated is an apphost that needs DOTNET_ROOT when .NET is not in /usr/share/dotnet
-if [[ -z ${DOTNET_ROOT:-} ]]; then
-    DOTNET_ROOT=$(dirname "$(readlink -f "$(command -v dotnet)")")
-    export DOTNET_ROOT
-fi
-
-echo "Running dotnet outdated..."
-_output=$(mktemp)
-trap 'rm -f "${_output}"' EXIT
-dotnet outdated 2>&1 | tee "${_output}"
-
-if grep -q "No outdated dependencies were detected" "${_output}"; then
-    echo
-    echo "Done."
-    exit 0
-fi
-
-echo
-read -p "Do you want to upgrade the packages? (y/n): " answer
-
-if [[ "$answer" == "y" || "$answer" == "Y" ]]; then
-    echo "Running dotnet outdated --upgrade..."
-    dotnet outdated --upgrade
-    echo "Upgrade completed."
-else
-    echo "No upgrade performed."
-fi
-
-echo
-echo "Done."
+# The project's outdated packages, and an upgrade if wanted.
+# It is a harbor command now; this script only calls it.
+[[ $EUID -eq 0 ]] || exec sudo "$0" "$@"
+exec "@APACHE_DIR@/../bin/harbor" site outdated @SITE@

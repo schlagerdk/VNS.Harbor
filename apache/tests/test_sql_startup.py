@@ -101,7 +101,7 @@ class SqlStartupTests(unittest.TestCase):
         apache = LIB.parent
         creation = (LIB / "common.sh").read_text().split("install_service() {", 1)[1]
         self.assertLess(creation.index("sql_startup.py"), creation.index('systemctl restart'))
-        publish = (apache / "solutionfiles/csharp/scripts/publish.sh").read_text()
+        publish = (apache.parent / "tests/legacy/solutionfiles/csharp/scripts/publish.sh").read_text()
         self.assertLess(publish.index("sql_startup.py"), publish.rindex("\nstart_service\n"))
         production = (apache / "solutionfiles/csharp/prod-scripts/publish_prod.sh").read_text()
         self.assertLess(production.index("sql_startup.py"), production.index("systemctl start"))
