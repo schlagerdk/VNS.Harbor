@@ -4,16 +4,18 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>Sign in · VNS Server admin</title>
-<link rel="icon" href="/static/vns-logo.webp" type="image/webp">
+<title>Sign in · VNS Harbor</title>
+<link rel="icon" href="/static/harbor-mark.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/static/style.css?v={{ asset_version }}">
 </head>
 <body class="login">
 <main class="login-shell">
   <form method="post" action="/login" class="card login-card">
   <header class="login-heading">
-    <img class="login-logo" src="/static/vns-logo.webp" width="128" height="91" alt="VNS - vital new software">
-    <div class="login-brand-name">VNS / SERVER ADMIN</div>
+    <div class="login-brand">
+      <img class="login-logo" src="/static/harbor-mark.svg" width="56" height="56" alt="">
+      <div class="login-brand-name">VNS Harbor<span>Server admin</span></div>
+    </div>
     <h1>Your server. Under control.</h1>
     <p>Sites, services and databases. One workspace.</p>
   </header>
@@ -27,7 +29,12 @@
     <button type="submit" class="primary wide">Log in</button>
   </div>
   </form>
-  <p class="login-footer">VNS Linux <span aria-hidden="true">/</span> Server administration</p>
+  <footer class="login-footer">
+    <a class="powered-by" href="https://vns.dk" target="_blank" rel="noopener">
+      <img src="/static/vns-logo-footer.png" width="54" height="38" alt="VNS - vital new software">
+      <span>Powered by VNS</span>
+    </a>
+  </footer>
 </main>
 </body>
 </html>

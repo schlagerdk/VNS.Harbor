@@ -9,8 +9,8 @@
 <meta name="server-hostname" content="{{ hostname }}">
 <meta name="start-view" content="{{ start_view }}">
 <meta name="role" content="{{ role }}">
-<title>{{ hostname }} · Server admin</title>
-<link rel="icon" href="/static/vns-logo.webp" type="image/webp">
+<title>{{ hostname }} · VNS Harbor</title>
+<link rel="icon" href="/static/harbor-mark.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/static/vendor/xterm.css">
 <link rel="stylesheet" href="/static/style.css?v={{ asset_version }}">
 </head>
@@ -32,8 +32,8 @@
 </dialog>
 <header class="page-header">
   <a class="brand" href="#sites" title="All sites">
-    <img class="logo" src="/static/vns-logo.webp" width="64" height="45" alt="VNS - vital new software">
-    <span><h1>Server admin</h1><span class="host">{{ hostname }}</span></span>
+    <img class="logo" src="/static/harbor-mark.svg" width="38" height="38" alt="">
+    <span><h1>VNS Harbor</h1><span class="host">{{ hostname }}</span></span>
   </a>
   <nav class="view-switch" aria-label="Section">
     <button type="button" id="switch-sites" data-view="sites">Web Server</button>
@@ -314,6 +314,12 @@
   </section>
 
  </main>
+<footer class="page-footer">
+  <a class="powered-by" href="https://vns.dk" target="_blank" rel="noopener">
+    <img src="/static/vns-logo-footer.png" width="54" height="38" alt="VNS - vital new software">
+    <span>Powered by VNS</span>
+  </a>
+</footer>
 
 <dialog id="dlg-files" class="wide files-dialog" aria-labelledby="files-title">
   <section id="view-files">

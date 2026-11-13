@@ -41,6 +41,14 @@ button.wide { width: 100%; padding: 9px; }
 .page-header { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 16px; padding: 10px 24px; background: var(--gradient); box-shadow: var(--shadow); }
 .brand { display: flex; align-items: center; gap: 12px; text-decoration: none; }
 .brand h1 { margin: 0; font-size: 20px; color: #fff; text-shadow: 0 2px 10px rgba(0, 0, 0, .3); }
+.brand .logo { display: block; width: 38px; height: 38px; flex: none; border-radius: 10px; box-shadow: 0 0 0 1px rgba(255, 255, 255, .35), 0 4px 12px rgba(0, 0, 0, .25); }
+/* The page's foot: Powered by VNS, at the bottom of the window when the page is shorter */
+body:has(> .page-footer) { display: flex; flex-direction: column; min-height: 100vh; min-height: 100dvh; }
+body:has(> .page-footer) > main { flex: 1 0 auto; width: 100%; }
+.page-footer { display: flex; justify-content: center; padding: 28px 24px 32px; }
+.powered-by { display: inline-flex; align-items: center; gap: 14px; color: #a8b3d6; font-size: 18px; font-weight: 700; letter-spacing: -.01em; text-decoration: none; opacity: .75; transition: opacity .2s; }
+.powered-by:hover { opacity: 1; }
+.powered-by img { display: block; width: 54px; height: auto; }
 .brand .host { color: rgba(255, 255, 255, .8); font-size: 13px; }
 .page-header nav { display: flex; gap: 6px; flex: 1; }
 .page-header nav button { background: transparent; border-color: transparent; color: rgba(255, 255, 255, .85); font-weight: 500; }
@@ -304,8 +312,10 @@ body.login { display: grid; place-items: center; min-height: 100vh; min-height: 
 .login-shell { width: min(440px, 100%); padding: 0; }
 .login-card.card { width: 100%; border-color: rgba(139, 148, 180, .24); border-radius: 20px; box-shadow: 0 24px 80px rgba(0, 0, 0, .4), 0 0 50px rgba(108, 123, 255, .05); }
 .login-heading { padding: 32px 32px 26px; background: radial-gradient(ellipse at top left, rgba(108, 123, 255, .18), transparent 85%); border-bottom: 1px solid var(--line); }
-.login-logo { display: block; width: 128px; height: auto; aspect-ratio: 3507 / 2480; object-fit: contain; margin-bottom: 18px; }
-.login-brand-name { margin-bottom: 10px; font-size: 10px; font-weight: 700; letter-spacing: .18em; color: #b4bcff; }
+.login-brand { display: flex; align-items: center; gap: 14px; margin-bottom: 22px; }
+.login-logo { display: block; width: 56px; height: 56px; border-radius: 15px; box-shadow: 0 8px 24px rgba(108, 123, 255, .28); }
+.login-brand-name { display: flex; flex-direction: column; font-size: 20px; font-weight: 700; letter-spacing: -.02em; color: #fff; }
+.login-brand-name span { margin-top: 2px; font-size: 10px; font-weight: 700; letter-spacing: .18em; text-transform: uppercase; color: #b4bcff; }
 .login-heading h1 { margin: 0; font-size: clamp(22px, 5vw, 28px); line-height: 1.25; letter-spacing: -.035em; }
 .login-heading p { margin: 10px 0 0; font-size: 13px; color: var(--muted); }
 .login-card .card-body { padding: 26px 32px 32px; }
@@ -316,8 +326,9 @@ body.login { display: grid; place-items: center; min-height: 100vh; min-height: 
 .login-card button.primary { min-height: 44px; margin-top: 4px; border-radius: 9px; background: linear-gradient(135deg, #5865d8, #7548ba); border-color: #8580e6; box-shadow: 0 4px 16px rgba(108, 123, 255, .16); }
 .login-card button.primary:hover { background: linear-gradient(135deg, #6673e7, #8658cb); border-color: #b4bcff; }
 .login-error { padding: 10px 12px; border: 1px solid rgba(248, 81, 73, .35); border-radius: 9px; background: rgba(248, 81, 73, .08); }
-.login-footer { margin: 20px 0 0; text-align: center; color: var(--muted); font-size: 11px; }
-.login-footer span { margin: 0 8px; opacity: .5; }
+.login-footer { display: flex; justify-content: center; margin: 28px 0 0; }
+.login-footer .powered-by { font-size: 15px; gap: 12px; }
+.login-footer .powered-by img { width: 46px; }
 @media (max-width: 480px) { .login-heading { padding: 26px 24px 22px; } .login-card .card-body { padding: 24px; } }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; width: min(360px, 92vw); box-shadow: var(--shadow); overflow: hidden; }
 .card-head { background: var(--gradient); padding: 22px 24px; }
@@ -1504,3 +1515,10 @@ dialog.newsite label.sync-option.action-option { flex-direction: row; align-item
 /* Add server: the address wide, its SSH port beside it */
 dialog.newsite .server-address-row { grid-template-columns: minmax(0, 3fr) minmax(0, 1fr); }
 @media (max-width: 560px) { dialog.newsite .server-address-row { grid-template-columns: 1fr; } }
+
+/* The terminal's scrollbar, thin and dim on its dark background (not the light default) */
+.xterm .xterm-viewport { scrollbar-width: thin; scrollbar-color: rgba(139, 148, 158, .35) transparent; }
+.xterm .xterm-viewport::-webkit-scrollbar { width: 10px; background: transparent; }
+.xterm .xterm-viewport::-webkit-scrollbar-track { background: transparent; }
+.xterm .xterm-viewport::-webkit-scrollbar-thumb { background: rgba(139, 148, 158, .3); border: 3px solid transparent; border-radius: 10px; background-clip: padding-box; }
+.xterm .xterm-viewport::-webkit-scrollbar-thumb:hover { background-color: rgba(139, 148, 158, .55); }
