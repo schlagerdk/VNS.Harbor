@@ -1,5 +1,6 @@
 """A site's names and paths, and the templates rendered with them. From lib/common.sh: set_site_vars and render."""
 from dataclasses import dataclass
+from pathlib import Path
 
 from harbor.core.names import normalize_dns_name
 
@@ -21,7 +22,8 @@ class Site:
     admin_mail: str = ADMIN_MAIL
     build_config: str = ""
     environment: str = ""
-    apache_dir: str = "/vns/apache"
+    # The apache folder of this installation (/vns/apache on a server), which the scripts of a site run
+    apache_dir: str = str(Path(__file__).resolve().parents[2] / "apache")
     csharp_kind: str = ""
     access_rules: str = ""
 

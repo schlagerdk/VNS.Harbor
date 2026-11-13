@@ -548,9 +548,11 @@ class TemplateTests(unittest.TestCase):
     def test_actions_without_ssh_are_refused_for_windows(self):
         self.assertIn("PROD_TARGET:-} == windows", (APACHE / "lib/prod.sh").read_text())
         for script in ("change_binding_prod.sh", "prod_action.sh"):
-            self.assertIn("PROD_TARGET:-} == windows", (APACHE / script).read_text())
+            # A script that runs harbor now is read as it was; harbor is compared with it in tests/
+            legacy = APACHE.parent / "tests/legacy" / script
+            self.assertIn("PROD_TARGET:-} == windows", (legacy if legacy.exists() else APACHE / script).read_text())
         self.assertIn("PROD_TARGET:-} != windows", (APACHE / "remote_site.sh").read_text())
-        self.assertIn('_prodTarget} == windows', (APACHE / "delete_site.sh").read_text())
+        self.assertIn('_prodTarget} == windows', (APACHE.parent / "tests/legacy/delete_site.sh").read_text())
 
 
 SUDO_REMOVING_ITSELF = r"""#!/bin/bash
@@ -711,7 +713,9 @@ class WindowsActionTests(ScriptTestCase):
         (self.apache / "lib/domain_names.py").unlink()
         (self.apache / "lib/domain_names.py").symlink_to(APACHE / "lib/domain_names.py")
         for script in ("prod_action.sh", "change_binding_prod.sh", "remote_site.sh", "delete_site.sh", "fix_permissions.sh", "sync_env.sh", "adopt_site.sh"):
-            shutil.copy(APACHE / script, self.apache)
+            # A script that runs harbor now is tested as it was (tests/legacy): harbor is compared with it in tests/
+            legacy = APACHE.parent / "tests/legacy" / script
+            shutil.copy(legacy if legacy.exists() else APACHE / script, self.apache)
         common = self.apache / "lib/common.sh"
         common.write_text(common.read_text().replace("_rootPath=${VNS_WEB_ROOT:-/var/www}", f"_rootPath={self.root}/www"))
         self.scripts = self.root / "www/example.test/scripts"
@@ -1596,7 +1600,7 @@ class ManagedSiteTests(unittest.TestCase):
             self.assertNotIn("adopt_into", sites[1])
 
     def test_copy_site_refuses_a_managed_site(self):
-        source = (APACHE / "copy_site.sh").read_text()
+        source = (APACHE.parent / "tests/legacy/copy_site.sh").read_text()  # as it was; harbor is compared with it in tests/
         check = 'if [[ -f /var/lib/vns-managed/${_source} ]]; then'
         self.assertIn(check, source)
         self.assertLess(source.index(check), source.index("python3 lib/copy_site.py"))
@@ -1606,7 +1610,7 @@ class ManagedSiteTests(unittest.TestCase):
 
     def test_status_writes_the_note_and_delete_removes_it(self):
         self.assertIn('Path("/var/lib/vns-managed", site)', (APACHE / "remote_site.sh").read_text())
-        self.assertEqual((APACHE / "delete_site.sh").read_text().count("/var/lib/vns-managed/"), 2)
+        self.assertEqual((APACHE.parent / "tests/legacy/delete_site.sh").read_text().count("/var/lib/vns-managed/"), 2)
 
 
 class LocalFolderRuleTests(ProductionSetupTests):
@@ -1633,12 +1637,16 @@ class LocalFolderRuleTests(ProductionSetupTests):
             with self.subTest(path), self.assertRaises(BadRequest):
                 self.setup_env(self.local(path, **values))
 
-    def test_moving_needs_a_new_folder_outside_the_site_and_takes_its_name(self):
+    def test_moving_needs_a_new_folder_and_one_outside_the_site_takes_its_name(self):
         web = Path(self.temp.name).resolve()
         result = self.ns["production_setup_env"](self.local(web / "new.site", folder="old"), "example.test", moving=True)
         self.assertEqual(result["VNS_PROD_FOLDER"], "new.site")
+        # A subfolder of the main site, as for a new environment: it keeps the name it was given
+        result = self.ns["production_setup_env"](self.local(self.scripts.parent / "_staging", folder="staging-example.test"), "example.test", moving=True)
+        self.assertEqual((result["VNS_PROD_FOLDER"], result["VNS_PROD_LOCAL_PATH"]), ("staging-example.test", str((self.scripts.parent / "_staging").resolve())))
+        (self.scripts.parent / "_taken").mkdir()
         with self.assertRaises(BadRequest):
-            self.ns["production_setup_env"](self.local(self.scripts.parent / "_other"), "example.test", moving=True)
+            self.ns["production_setup_env"](self.local(self.scripts.parent / "_taken", folder="taken-example.test"), "example.test", moving=True)
 
 
 class AdoptionListingTests(unittest.TestCase):

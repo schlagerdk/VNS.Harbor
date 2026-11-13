@@ -33,7 +33,7 @@ class CertificateCleanupTests(unittest.TestCase):
             if shared:
                 (root / "enabled/other.conf").write_text(
                     "ServerName other.test\nServerAlias EXAMPLE.TEST\n")
-            source = (APACHE / "delete_site.sh").read_text()
+            source = (APACHE.parent / "tests/legacy/delete_site.sh").read_text()  # as it was; harbor is compared with it in tests/
             if remote:
                 start = source.index('if [[ ${DELETE_CERTIFICATE} =~')
                 code = source[start:source.index("\nsystemctl daemon-reload", start)]

@@ -28,7 +28,8 @@ class TlsPolicyTests(unittest.TestCase):
         self.bin.mkdir()
         self.log = self.root / "calls"
         self.script = self.root / "install_tls_policy.sh"
-        self.script.write_text((APACHE / "install_tls_policy.sh").read_text().replace(
+        # The script as it was, before it ran harbor (tests/test_server_install.py compares harbor with it)
+        self.script.write_text((APACHE.parent / "tests/legacy/install_tls_policy.sh").read_text().replace(
             "/etc/apache2", str(self.conf)))
         (self.root / "conf").mkdir()
         (self.root / "conf/vns-tls.conf").write_text(POLICY)

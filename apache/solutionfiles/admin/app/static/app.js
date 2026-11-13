@@ -1685,7 +1685,7 @@ function envPanel(site, env) {
 		for (const [tool, label] of [["check_service", "Check service"], ["edit_service", "Edit service"], ["edit_conf", "Edit config"]]) {
 			if (tool !== "edit_conf" && !env.unit && env.mode !== "remote") continue;
 			tools.append(el("button", { textContent: label, className: "small" + (tool === "check_service" ? "" : " desktop-only"), onclick: () => run(() => tool === "check_service"
-				? openTask({ kind: env.mode === "remote" ? "remote_tool" : "unit_tool", site: site.name, unit: env.unit, tool, scope: isTarget(env) ? "prod" : "main", ...targetFields(env) })
+				? openServiceStatus(site, env)
 				: editConfiguration(site, env, tool === "edit_service" ? "service" : "conf")) }));
 		}
 		if (site.kind === "csharp" || site.kind === "umbraco") {
@@ -1709,7 +1709,8 @@ function envPanel(site, env) {
 	else if (hasProd(site) && !site.admin) addManage("Delete site", () => deleteSite(site, isTarget(env) ? "prod" : "test", env), "danger");
 	if (!hasProd(site) && !site.admin) addManage("Delete site", () => deleteSite(site, "all"), "danger");
 
-	const panel = el("section", { className: "env " + (isTarget(env) ? "prod" : "") }, heading, meta);
+	// Its edge in the colour of its environment, as its badge
+	const panel = el("section", { className: `env ${isTarget(env) ? "prod" : ""} tone-${environmentLabel(site, env).toLowerCase()}` }, heading, meta);
 	panel.dataset.env = envKeyOf(env);
 	if (missing) panel.append(el("p", { className: "package-error", textContent: `The site no longer exists on ${env.host}. Publish creates it again. Delete site removes this environment here.` }));
 	else if (env.exists === false) panel.append(el("p", { className: "muted", textContent: "Nothing published here yet." }));
@@ -1766,11 +1767,24 @@ function envListRow(panel, key, site, env) {
 		}
 	}
 	const shortcuts = el("div", { className: "env-row-actions" });
-	// Each one clicks the card's own button, so it asks and does exactly the same
+	// Each one clicks the card's own button, so it asks and does exactly the same. Publish stands in the row; the
+	// others are in its menu, so every row has the same buttons and none of them wraps.
+	const more = el("div", { className: "env-row-more-menu menu", hidden: true });
 	for (const label of envRowButtons) {
 		const original = buttons.find((button) => button.textContent.trim() === label);
-		if (original) shortcuts.append(el("button", { type: "button", className: "small", textContent: label, title: original.title,
-			onclick: (event) => { event.stopPropagation(); original.click(); } }));
+		if (!original) continue;
+		const run = (event) => { event.stopPropagation(); more.hidden = true; original.click(); };
+		if (label === "Publish") shortcuts.append(el("button", { type: "button", className: "small", textContent: label, title: original.title, onclick: run }));
+		else more.append(el("button", { type: "button", textContent: label, title: original.title, onclick: run }));
+	}
+	if (more.childElementCount) {
+		const opener = el("button", { type: "button", className: "small env-row-more", title: "More", ariaLabel: "More", "aria-haspopup": "true", textContent: "⋯" });
+		opener.onclick = (event) => {
+			event.stopPropagation();
+			for (const other of document.querySelectorAll(".env-row-more-menu")) if (other !== more) other.hidden = true;
+			more.hidden = !more.hidden;
+		};
+		shortcuts.append(el("div", { className: "env-row-more-wrap" }, opener, more));
 	}
 	const toggle = el("button", { type: "button", className: "env-row-toggle", title: "All buttons and details", ariaLabel: "Show all" }, svgIcon("chevron"));
 	const unfold = (open) => {
@@ -1787,16 +1801,21 @@ function envListRow(panel, key, site, env) {
 	const column = (className, items) => el("div", { className: "env-col " + className }, ...items);
 	const title = take((item) => item.tagName === "H3");
 	if (title[0]) title[0].title = title[0].textContent;
-	const status = take((item) => item.classList.contains("site-activity") || item.classList.contains("dot") || /\bstate-/.test(item.className) || /badge (|static|remote|windows)$/.test(item.className));
+	// Something running on it is said with its status line, where there is room: not between its state and environment
+	const activity = take((item) => item.classList.contains("site-activity"));
+	const status = take((item) => item.classList.contains("dot") || /\bstate-/.test(item.className) || /badge (|static|remote|windows)$/.test(item.className));
 	const kind = take((item) => /\benv-(?!missing)/.test(item.className));
 	const icons = take((item) => item.classList.contains("https-lock") || item.classList.contains("remote-icon"));
 	const note = take((item) => item.classList.contains("publish-status") || item.classList.contains("env-missing"));
 	head.replaceChildren(column("env-col-name", title), column("env-col-status", status), column("env-col-kind", kind),
-		column("env-col-icons", icons), column("env-col-note", [...note, ...parts.filter((item) => !item.dataset.placed)]),
+		column("env-col-icons", icons), column("env-col-note", [...activity, ...note, ...parts.filter((item) => !item.dataset.placed)]),
 		el("div", { className: "env-col env-col-actions" }, ...(links.childElementCount ? [links] : []), shortcuts), toggle);
 	panel.classList.add("env-listed");
 	unfold(unfoldedEnvs.has(key));
 }
+document.addEventListener("click", (event) => {
+	if (!event.target.closest(".env-row-more-wrap")) for (const menu of document.querySelectorAll(".env-row-more-menu")) menu.hidden = true;
+});
 function applyEnvLayout() {
 	$("#env-targets").classList.toggle("list", envLayout === "list");
 	$("#env-layout-grid").setAttribute("aria-pressed", String(envLayout === "grid"));
@@ -2027,11 +2046,11 @@ async function copySite(site, main) {
 	field("server_project").value = site.project || "";
 	const serverProject = Boolean(site.project) && !hasProd(site);
 	$("#copy-server-project-row").hidden = !serverProject;
-	let serverBindingEdited = false;
 	const showServerPath = () => {
 		$("#copy-server-path").textContent = `On the new server: /var/www/${field("server_folder").value.trim() || "…"}`;
 	};
 	// The binding follows the folder while they are the same and the binding is not edited
+	let serverBindingEdited = false;
 	let previousFolder = field("server_folder").value;
 	field("server_folder").oninput = () => {
 		if (!serverBindingEdited && field("server_binding").value === previousFolder) field("server_binding").value = field("server_folder").value;
@@ -2098,12 +2117,12 @@ async function copySite(site, main) {
 		}
 		if (!bindingEdited) field("binding").value = field("target").value;
 	};
+	field("binding").oninput = () => { bindingEdited = true; };
 	field("database").oninput = () => {
 		databaseEdited = true;
 		suggestUsername();
 	};
 	field("username").oninput = () => { usernameEdited = true; };
-	field("binding").oninput = () => { bindingEdited = true; };
 	$("#copy-site-cancel").onclick = () => dialog.close();
 	dialog.onclose = () => form.reset();
 	form.onsubmit = (event) => {
@@ -2395,8 +2414,8 @@ function syncProdForm() {
 	$("#prod-remote-options").hidden = !linuxRemote;
 	$("#prod-windows-options").hidden = !windows;
 	$("#prod-protocol-hint").textContent = windows
-		? "The protocol sets the site address used for the check after publishing. Bindings and certificates are managed in IIS."
-		: "HTTPS issues a certificate, which requires DNS for the binding to point to the server. HTTP runs without a certificate.";
+		? "The address checked after publishing. IIS manages the binding and its certificate"
+		: "A certificate is issued, so DNS for the binding must point to the server. Off: HTTP without one";
 	prodForm.local_path.required = local;
 	prodForm.host.required = linuxRemote;
 	prodForm.user.required = linuxRemote;
@@ -2409,7 +2428,8 @@ function syncProdForm() {
 	const same = target === "same";
 	const sameServerMove = moving && !copying && local && prodForm.dataset.moveMode === "local";
 	const noSettings = sameServerMove;
-	$("#prod-folder-row").hidden = moving && local || noSettings;
+	// Only moving to another folder here names it by the folder; anything else has a name of its own
+	$("#prod-folder-row").hidden = noSettings;
 	$("#prod-folder-label").textContent = windows ? "Folder name" : "Folder / service name";
 	// On Windows the IIS site's folder is the share and the folder name, shown in full
 	const share = prodForm.smb_share.value.trim().replace(/\\/g, "/").replace(/\/+$/, "");
@@ -2421,12 +2441,12 @@ function syncProdForm() {
 	const otherServer = moving && !same && !(local && prodForm.dataset.moveMode === "local");
 	if (otherServer && !prodForm.dataset.httpsChoice) {
 		prodForm.dataset.httpsChoice = prodForm.elements.https.value;
-		prodForm.elements.https.value = "n";
+		setProdHttps("n");
 	} else if (!otherServer && prodForm.dataset.httpsChoice) {
-		prodForm.elements.https.value = prodForm.dataset.httpsChoice;
+		setProdHttps(prodForm.dataset.httpsChoice);
 		delete prodForm.dataset.httpsChoice;
 	}
-	$("#prod-protocol-row").hidden = noSettings;
+	$("#prod-protocol-row").parentElement.hidden = noSettings;
 	$("#prod-protocol-hint").hidden = noSettings;
 	const https = prodForm.elements.https.value === "y";
 	if (otherServer && !windows) {
@@ -2436,7 +2456,7 @@ function syncProdForm() {
 	}
 	// With HTTPS on Linux, DNS for the binding is checked against the server it runs on
 	$("#prod-dns").hidden = noSettings || windows || !https;
-	prodForm.folder.required = !(moving && local) && !noSettings;
+	prodForm.folder.required = !noSettings;
 	prodForm.binding.required = true;
 	const fromWindows = prodForm.dataset.moveMode === "windows";
 	const hasSql = fromWindows || prodForm.dataset.moveSql === "1";
@@ -2471,19 +2491,37 @@ function syncProdForm() {
 	$("#prod-submit").textContent = !moving ? "Add environment" : copying ? "Copy" : "Migrate";
 	$("#prod-local-hint").textContent = sameServerMove
 		? "The folder is moved, and the service and Apache config follow it. It must be a new folder directly under /var/www, which also becomes the site's name. The port is unchanged. A new binding with HTTPS gets a new certificate, so DNS must point here first."
-		: moving ? "It must be a new folder directly under /var/www, which also becomes the site's name."
+		: moving ? "A new subfolder of this site's folder, or a new folder directly under /var/www, which then also becomes the site's name."
 		: "Use a subfolder of this site's folder, or /var/www/<production folder> to keep it outside the main site's folder.";
 	const previous = prodForm.dataset.target;
-	if (previous && previous !== target) {
-		const defaultsFor = (name) => name === "local"
-			? { folder: prodForm.dataset.localFolder, binding: prodForm.dataset.localBinding }
-			: { folder: prodForm.dataset.remoteFolder, binding: prodForm.dataset.remoteBinding };
-		const previousDefaults = defaultsFor(previous);
-		const nextDefaults = defaultsFor(target);
-		if (prodForm.folder.value === previousDefaults.folder) prodForm.folder.value = nextDefaults.folder;
-		if (!prodForm.binding.dataset.edited && prodForm.binding.value === previousDefaults.binding) prodForm.binding.value = nextDefaults.binding;
-	}
 	prodForm.dataset.target = target;
+	if (previous && previous !== target) applyProdSuggestion();
+}
+// What the dialog suggests for a new environment or a copy: its folder, binding and folder here. On this server it is
+// <environment>-<site>; on another server Production keeps the site's own name and binding, the others get their own.
+function prodSuggestion() {
+	const target = prodForm.elements.target.value;
+	const environment = (prodForm.elements.environment.value || "Production").toLowerCase();
+	const label = prodForm.dataset.siteLabel;
+	const own = `${environment}-${label}`;
+	// Only on another server: on this one, or the same one as the environment copied, the name is taken
+	const sameName = (target === "remote" || target === "windows") && environment === "production";
+	return { folder: sameName ? label : own, binding: sameName ? prodForm.dataset.mainBinding : own,
+		// Here, in the main site's folder: _development, _test, _staging or _production
+		path: `/var/www/${prodForm.dataset.siteName}/_${environment}` };
+}
+// A field that still holds the last suggestion takes the new one; what was entered stays. A migration keeps its names.
+function applyProdSuggestion() {
+	if (prodForm.dataset.moveTarget && !prodForm.dataset.copy) return;
+	const next = prodSuggestion();
+	const last = prodForm.dataset;
+	if (last.suggestedFolder === undefined || prodForm.folder.value === last.suggestedFolder) prodForm.folder.value = next.folder;
+	if (last.suggestedBinding === undefined || (!prodForm.binding.dataset.edited && prodForm.binding.value === last.suggestedBinding)) prodForm.binding.value = next.binding;
+	if (last.suggestedPath === undefined || prodForm.local_path.value === last.suggestedPath) prodForm.local_path.value = next.path;
+	Object.assign(last, { suggestedFolder: next.folder, suggestedBinding: next.binding, suggestedPath: next.path });
+}
+function forgetProdSuggestion() {
+	for (const key of ["suggestedFolder", "suggestedBinding", "suggestedPath"]) delete prodForm.dataset[key];
 }
 function openCreateProdDialog(site, moveEnv, copying = false) {
 	prodForm.reset();
@@ -2518,23 +2556,18 @@ function openCreateProdDialog(site, moveEnv, copying = false) {
 	if (moveEnv?.mode === "remote") targets.prepend(targetCard("same", "Same server", moveEnv.host || "Another folder there"));
 	const main = site.environments.find((env) => !isTarget(env));
 	const binding = (main && bindingLabel(main)) || siteLabel(site);
-	prodForm.folder.value = siteLabel(site);
-	prodForm.binding.value = binding;
 	prodForm.dataset.siteName = site.name;
 	prodForm.dataset.siteLabel = siteLabel(site);
-	prodForm.local_path.value = `/var/www/${site.name}/_production`;
-	prodForm.dataset.remoteFolder = siteLabel(site);
-	prodForm.dataset.remoteBinding = binding;
-	prodForm.dataset.localFolder = `production-${siteLabel(site)}`;
-	prodForm.dataset.localBinding = `production-${siteLabel(site)}`;
+	prodForm.dataset.mainBinding = binding;
+	forgetProdSuggestion();
 	prodForm.elements.target.value = moveEnv?.mode === "remote" ? "same" : "local";
-	prodForm.elements.https.value = main && main.scheme === "http" ? "n" : "y";
+	setProdHttps(main && main.scheme === "http" ? "n" : "y");
 	prodMoveContext = moveEnv ? { site, moveEnv, binding } : null;
 	if (moveEnv) {
+		// The environment first: a copy's suggested name comes from it
+		if (["Development", "Test", "Staging", "Production"].includes(moveEnv.environment)) prodForm.elements.environment.value = moveEnv.environment;
 		applyProdMoveMode();
-		prodForm.elements.https.value = moveEnv.scheme === "http" ? "n" : "y";
-		const current = [...prodForm.elements.environment.options].find((option) => option.value === moveEnv.environment);
-		if (current) prodForm.elements.environment.value = current.value;
+		setProdHttps(moveEnv.scheme === "http" ? "n" : "y");
 	}
 	// Another environment on a Windows server gives the share and login it was set up with
 	const windowsEnv = !moveEnv && site.environments.find((env) => env.mode === "windows" && env.folder);
@@ -2542,8 +2575,9 @@ function openCreateProdDialog(site, moveEnv, copying = false) {
 		prodForm.smb_share.value = windowsEnv.folder.split("/").slice(0, -1).join("/");
 		if (windowsEnv.user) prodForm.smb_user.value = windowsEnv.user;
 	}
-	// The fields start with the remote defaults: a new environment on this server gets its own folder and binding
-	prodForm.dataset.target = moveEnv ? prodForm.elements.target.value : "remote";
+	prodForm.dataset.target = prodForm.elements.target.value;
+	// A new environment starts with the suggestions; a copy got them above
+	if (!moveEnv) applyProdSuggestion();
 	syncProdForm();
 	prodForm.dataset.site = site.name;
 	prodDialog.showModal();
@@ -2563,17 +2597,18 @@ function applyProdMoveMode() {
 	$("#prod-description").textContent = copying
 		? `Copy ${label} to a new folder or server. It stays as it is, and the copy becomes a new environment here.`
 		: `Migrate ${label} to another folder or server. Everything goes with it.`;
-	const name = copying ? "" : moveEnv.unit || moveEnv.folder || siteLabel(site);
-	const movedBinding = copying ? "" : bindingLabel(moveEnv) || binding;
+	// A copy is a new environment and is suggested names of its own; a migration keeps those it has
+	forgetProdSuggestion();
+	if (copying) {
+		delete prodForm.binding.dataset.edited;
+		applyProdSuggestion();
+		return;
+	}
+	const name = moveEnv.unit || moveEnv.folder || siteLabel(site);
 	prodForm.folder.value = name;
-	prodForm.binding.value = movedBinding;
-	if (copying) delete prodForm.binding.dataset.edited;
-	else prodForm.binding.dataset.edited = "1";
+	prodForm.binding.value = bindingLabel(moveEnv) || binding;
+	prodForm.binding.dataset.edited = "1";
 	prodForm.local_path.value = `/var/www/${name}`;
-	prodForm.dataset.remoteFolder = name;
-	prodForm.dataset.remoteBinding = movedBinding;
-	prodForm.dataset.localFolder = name;
-	prodForm.dataset.localBinding = movedBinding;
 }
 prodForm.elements.remove_here.onchange = () => {
 	applyProdMoveMode();
@@ -2586,30 +2621,27 @@ async function releaseEnvironment(site, env) {
 	await openTask({ kind: "release_site", site: site.name, target: env.target });
 }
 $("#prod-target-row").addEventListener("change", syncProdForm);
-prodForm.elements.https.addEventListener("change", syncProdForm);
+// HTTPS is an option card; the form sends https y or n, as the select it replaced did
+function setProdHttps(value) {
+	prodForm.elements.https.value = value;
+	prodForm.elements.https_card.checked = value === "y";
+}
+prodForm.elements.https_card.addEventListener("change", () => {
+	prodForm.elements.https.value = prodForm.elements.https_card.checked ? "y" : "n";
+	syncProdForm();
+});
 $("#prod-dns").replaceChildren(dnsCard(prodForm.binding, { expect: () => {
 	const target = prodForm.elements.target.value;
 	return target === "remote" ? prodForm.host.value.trim() : target === "same" ? prodForm.dataset.moveHost || "" : "";
 } }));
-// A local environment gets its own folder and site name, so the defaults follow the environment
-prodForm.elements.environment.onchange = () => {
-	const name = prodForm.elements.environment.value.toLowerCase();
-	const nextFolder = `${name}-${prodForm.dataset.siteLabel}`;
-	const local = prodForm.elements.target.value === "local";
-	if (local && prodForm.folder.value === prodForm.dataset.localFolder) prodForm.folder.value = nextFolder;
-	if (local && !prodForm.binding.dataset.edited && prodForm.binding.value === prodForm.dataset.localBinding) prodForm.binding.value = nextFolder;
-	if (!prodForm.dataset.moveTarget && /\/_[a-z]+$/.test(prodForm.local_path.value)) prodForm.local_path.value = `/var/www/${prodForm.dataset.siteName}/_${name}`;
-	prodForm.dataset.localFolder = nextFolder;
-	prodForm.dataset.localBinding = nextFolder;
-};
+// The suggestions follow the environment, on this server or another
+$("#prod-environment-row").onchange = applyProdSuggestion;
 prodForm.folder.oninput = () => {
 	if (!prodForm.binding.dataset.edited) prodForm.binding.value = prodForm.folder.value;
 	syncProdForm();
 };
-prodForm.local_path.oninput = () => {
-	if (prodForm.dataset.copy && !prodForm.binding.dataset.edited) prodForm.binding.value = prodForm.local_path.value.trim().split("/").pop();
-	syncProdForm();
-};
+// The absolute path never changes the binding: it is the folder, not the site's address
+prodForm.local_path.oninput = syncProdForm;
 prodForm.host.oninput = syncProdForm;
 prodForm.smb_share.oninput = syncProdForm;
 prodForm.elements.change_connection.onchange = syncProdForm;
@@ -2627,7 +2659,7 @@ prodForm.onsubmit = (event) => {
 			data.connection = { server: data.conn_server.trim(), database: data.conn_database.trim(), username: data.conn_username.trim(), password: data.conn_password };
 		}
 	}
-	for (const key of ["conn_server", "conn_database", "conn_username", "conn_password", "change_connection", "remove_here"]) delete data[key];
+	for (const key of ["conn_server", "conn_database", "conn_username", "conn_password", "change_connection", "remove_here", "https_card"]) delete data[key];
 	data.site = prodForm.dataset.site;
 	run(async () => {
 		await openTask(data);
@@ -4052,13 +4084,54 @@ $("#editor-text").onkeydown = (event) => {
 const terminals = {};
 let activeTerminal = null;
 
+// Terminals are those to type in (a shell); actions are processes, with a window of their own
+const terminalTabs = () => Object.values(terminals).filter((t) => !t.taskWindow);
+const processes = () => Object.values(terminals).filter((t) => t.taskWindow);
 function updateTerminalState() {
-	const count = Object.keys(terminals).length;
+	const count = terminalTabs().length;
 	$("#term-count").textContent = count;
 	$("#term-count").hidden = !count;
 	$("#btn-dock").hidden = !count;
 	if (!count) $("#dock").hidden = true;
+	updateProcesses();
 }
+function updateProcesses() {
+	const list = processes();
+	const running = list.filter((t) => !t.exited).length;
+	const button = $("#btn-processes");
+	button.hidden = !list.length;
+	button.classList.toggle("running", running > 0);
+	button.classList.toggle("problem", list.some((t) => t.taskState === "failed" || t.taskState === "warning"));
+	$("#process-count").textContent = list.length;
+	if (!list.length) $("#processes-menu").hidden = true;
+	$("#process-list").replaceChildren(...list.map((t) => {
+		const state = t.taskState || "running";
+		const elapsed = Math.max(0, Math.round(((t.ended || Date.now()) - t.started) / 1000));
+		const text = state === "running" ? `Running · ${elapsed < 60 ? elapsed + " s" : Math.floor(elapsed / 60) + " min"}`
+			: state === "done" ? "Done" : state === "warning" ? "Finished with warnings" : "Failed";
+		return el("li", {}, el("button", { type: "button", className: `process-item ${state}`, onclick: () => {
+			$("#processes-menu").hidden = true;
+			$("#btn-processes").setAttribute("aria-expanded", "false");
+			showTaskWindow(t);
+		} }, el("span", { className: "process-state", "aria-hidden": "true" }),
+			el("span", { className: "process-text" }, el("span", { className: "process-title", textContent: t.taskTitle }),
+				el("span", { className: "process-sub", textContent: t.steps.length && state === "running" ? t.steps[t.steps.length - 1].text : text }))));
+	}));
+}
+$("#btn-processes").onclick = (event) => {
+	event.stopPropagation();
+	const menu = $("#processes-menu");
+	menu.hidden = !menu.hidden;
+	$("#btn-processes").setAttribute("aria-expanded", String(!menu.hidden));
+	if (!menu.hidden) updateProcesses();
+};
+document.addEventListener("click", (event) => {
+	if (!$("#processes-menu").hidden && !event.target.closest(".processes")) {
+		$("#processes-menu").hidden = true;
+		$("#btn-processes").setAttribute("aria-expanded", "false");
+	}
+});
+setInterval(() => { if (!$("#processes-menu").hidden) updateProcesses(); }, 1000);
 
 function showDock() {
 	$("#dock").hidden = false;
@@ -4067,13 +4140,14 @@ function showDock() {
 
 function toggleDock() {
 	if (!$("#dock").hidden) { $("#dock").hidden = true; return; }
-	if (!Object.keys(terminals).length) { toast("No terminals open. Open a shell or run a script from a site."); return; }
+	if (!terminalTabs().length) { toast("No terminals open. Open a shell from a site or the server."); return; }
+	if (!terminals[activeTerminal] || terminals[activeTerminal].taskWindow) activate(terminalTabs()[0].id);
 	showDock();
 }
 $("#btn-dock").onclick = toggleDock;
 // Closing the window also removes the terminals whose process has finished; running ones keep going
 async function closeDock() {
-	for (const t of Object.values(terminals).filter((x) => x.exited)) await t.remove();
+	for (const t of terminalTabs().filter((x) => x.exited)) await t.remove();
 	$("#dock").hidden = true;
 }
 $("#dock-close").onclick = closeDock;
@@ -4084,6 +4158,196 @@ document.addEventListener("keydown", (event) => {
 	if (!event.repeat) run(closeDock);
 }, true);
 $("#dock-size").onclick = () => { $("#dock").classList.toggle("max"); fitActive(); };
+
+// ---- Check service: the state of a site's service in a window, its log folded out when something is wrong
+const serviceDialog = $("#dlg-service");
+let serviceShown = null;
+const SERVICE_STATES = { running: ["ok", "Running"], activating: ["busy", "Starting"], deactivating: ["busy", "Stopping"],
+	failed: ["bad", "Failed"], inactive: ["off", "Stopped"], missing: ["off", "No service"] };
+function bytesText(value) {
+	if (value == null) return "–";
+	return value >= 1073741824 ? `${(value / 1073741824).toFixed(1)} GB` : `${Math.round(value / 1048576)} MB`;
+}
+function durationText(seconds) {
+	if (seconds == null) return "–";
+	const days = Math.floor(seconds / 86400), hours = Math.floor(seconds % 86400 / 3600), minutes = Math.floor(seconds % 3600 / 60);
+	return days ? `${days} d ${hours} h` : hours ? `${hours} h ${minutes} min` : minutes ? `${minutes} min` : `${Math.floor(seconds)} s`;
+}
+function serviceFact(label, value, title = "") {
+	return el("div", { className: "service-fact", title }, el("span", { className: "service-fact-label", textContent: label }), el("span", { className: "service-fact-value", textContent: value }));
+}
+function renderService(data) {
+	const key = data.loaded === "not-found" ? "missing" : data.active === "active" ? "running" : data.active;
+	const [tone, text] = SERVICE_STATES[key] || ["off", data.active || "Unknown"];
+	serviceDialog.dataset.tone = tone;
+	$("#service-pill").textContent = text;
+	$("#service-pill").className = `service-pill ${tone}`;
+	$("#service-description").textContent = data.description && data.description !== `${data.unit}.service` ? data.description : data.unit;
+	const since = data.since ? new Date(data.since * 1000) : null;
+	const facts = [
+		serviceFact(data.active === "active" ? "Running for" : "Since", since ? durationText(Date.now() / 1000 - data.since) : "–", since ? since.toLocaleString() : ""),
+		serviceFact("Memory", bytesText(data.memory)),
+		serviceFact("CPU time", data.cpu_seconds == null ? "–" : data.cpu_seconds < 60 ? `${data.cpu_seconds.toLocaleString(undefined, { maximumFractionDigits: 1 })} s` : durationText(data.cpu_seconds)),
+		serviceFact("Port", data.port ? String(data.port) : "–"),
+		serviceFact("Main PID", data.pid ? String(data.pid) : "–"),
+		serviceFact("Tasks", data.tasks == null ? "–" : String(data.tasks)),
+		serviceFact("Restarts", data.restarts == null ? "–" : String(data.restarts), "Times systemd restarted it after it stopped"),
+		serviceFact("Starts at boot", data.enabled === "enabled" ? "Yes" : data.enabled ? "No" : "–"),
+	];
+	$("#service-facts").replaceChildren(...facts);
+	const lines = data.log || [];
+	// A line is shown from its time on: the host and unit in front of each line say nothing here
+	$("#service-log").replaceChildren(...(lines.length ? lines.map((line) => {
+		const match = line.match(/^(\S+)T(\d\d:\d\d:\d\d)\S*\s+\S+\s+[^:]+:\s?(.*)$/);
+		const problem = /\b(errors?|fail(ed|ure)?|fatal|\w*exception|traceback|warn(ing)?s?|crit(ical)?)\b/i.test(line);
+		return el("div", { className: "service-log-line" + (problem ? " problem" : "") },
+			el("span", { className: "service-log-time", textContent: match ? match[2] : "" }), el("span", { textContent: match ? match[3] : line }));
+	}) : [el("div", { className: "service-log-empty", textContent: "No log lines." })]));
+	const trouble = key === "failed" || data.log_problem;
+	setServiceLog(serviceShown.logOpen ?? trouble);
+	$("#service-note").textContent = key === "failed" ? `It stopped with exit status ${data.exit_status ?? "?"}${data.result && data.result !== "success" ? ` (${data.result})` : ""}.`
+		: data.log_problem ? "The latest log lines have errors or warnings." : "";
+	$("#service-note").hidden = !$("#service-note").textContent;
+}
+function setServiceLog(open) {
+	serviceShown.logOpen = open;
+	$("#service-log-panel").hidden = !open;
+	$("#service-log-toggle").textContent = open ? "Hide log" : "Show log";
+	if (open) requestAnimationFrame(() => { $("#service-log").scrollTop = $("#service-log").scrollHeight; });
+}
+async function loadServiceStatus() {
+	const { site, env } = serviceShown;
+	serviceDialog.classList.add("loading");
+	try {
+		const query = isTarget(env) ? `target=${encodeURIComponent(env.target)}` : `unit=${encodeURIComponent(env.unit)}`;
+		renderService(await api(`/api/sites/${encodeURIComponent(site.name)}/service?${query}`));
+	} finally {
+		serviceDialog.classList.remove("loading");
+	}
+}
+async function openServiceStatus(site, env) {
+	serviceShown = { site, env, logOpen: undefined };
+	$("#service-title").textContent = bindingLabel(env) || env.unit || siteLabel(site);
+	$("#service-pill").textContent = "Checking…";
+	$("#service-pill").className = "service-pill busy";
+	$("#service-description").textContent = isTarget(env) && env.mode === "remote" ? env.host || "" : "";
+	$("#service-facts").replaceChildren();
+	$("#service-log").replaceChildren();
+	$("#service-note").hidden = true;
+	setServiceLog(false);
+	serviceDialog.showModal();
+	await loadServiceStatus();
+}
+$("#service-refresh").onclick = () => run(loadServiceStatus);
+$("#service-log-toggle").onclick = () => setServiceLog(!serviceShown.logOpen);
+$("#service-close").onclick = () => serviceDialog.close();
+
+// ---- An action runs in a window of its own: its steps, and the output only when something went wrong or is asked for.
+// harbor commands report their steps (an OSC sequence, see harbor/core/system.py); a script shows its latest line.
+const taskDialog = $("#dlg-task");
+let taskShown = null;
+const ANSI = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*(?:\x07|\x1b\\)|\r/g;
+function taskStateIcon(state) {
+	if (state === "running") return el("span", { className: "task-spinner" });
+	const paths = { done: "M5 12.5l4.5 4.5L19 7.5", failed: "M7 7l10 10M17 7L7 17", warning: "M12 8v5M12 16.5v.5" };
+	const svg = svgIcon("file");
+	svg.querySelector("path").setAttribute("d", paths[state]);
+	return svg;
+}
+function renderTask(t) {
+	if (taskShown !== t) return;
+	const state = t.taskState || "running";
+	taskDialog.dataset.state = state;
+	$("#task-state").replaceChildren(taskStateIcon(state));
+	$("#task-title").textContent = t.taskTitle;
+	const elapsed = Math.max(0, Math.round((Date.now() - t.started) / 1000));
+	const closing = state === "done" && t.closing;
+	taskDialog.classList.toggle("closing", closing);
+	$("#task-status").textContent = state === "running" ? `Working… ${elapsed < 60 ? elapsed + " s" : Math.floor(elapsed / 60) + " min " + (elapsed % 60) + " s"}`
+		: closing ? "Done – closing" : state === "done" ? "Done" : state === "warning" ? "Finished with warnings: see the output" : `Failed${t.exitCode ? ` (exit ${t.exitCode})` : ""}: see the output`;
+	$("#task-steps").replaceChildren(...t.steps.map((step, index) => {
+		const last = index === t.steps.length - 1;
+		const kind = step.type === "warning" ? "warning" : last && state === "running" ? "active" : last && state === "failed" ? "failed" : "done";
+		return el("li", { className: `task-step ${kind}` }, el("span", { className: "task-step-mark", "aria-hidden": "true" }), el("span", { textContent: step.text }));
+	}));
+	$("#task-steps").hidden = !t.steps.length;
+	// A script without steps shows what it is doing now
+	$("#task-current").textContent = state === "running" && !t.steps.length ? t.lastLine || "Starting…" : "";
+	$("#task-current").hidden = !$("#task-current").textContent;
+	$("#task-background").hidden = state !== "running";
+	// A window that closes by itself has no Close button to miss
+	$("#task-close").hidden = state === "running" || closing;
+}
+function setTaskOutput(t, open) {
+	t.outputOpen = open;
+	$("#task-details").hidden = !open;
+	$("#task-toggle").textContent = open ? "Hide output" : "Show output";
+	if (open) requestAnimationFrame(() => { try { t.fit.fit(); } catch (_) { /* not measured yet */ } });
+}
+function showTaskWindow(t) {
+	if (taskShown && taskShown !== t) hideTaskWindow();
+	taskShown = t;
+	t.pane.hidden = false;
+	$("#task-details").replaceChildren(t.pane);
+	setTaskOutput(t, !!t.outputOpen);
+	renderTask(t);
+	if (!taskDialog.open) taskDialog.showModal();
+	clearInterval(t.clock);
+	t.clock = setInterval(() => (t.taskState === "running" ? renderTask(t) : clearInterval(t.clock)), 1000);
+}
+// The task goes on, and is one of the terminals: its tab shows it again
+function hideTaskWindow() {
+	const t = taskShown;
+	taskShown = null;
+	if (taskDialog.open) taskDialog.close();
+	if (!t || !terminals[t.id]) return;
+	t.pane.hidden = true;
+	$("#panes").append(t.pane);
+	updateProcesses();
+}
+function finishTask(t, code, problem) {
+	t.taskState = code === 0 && !problem ? "done" : code === 0 ? "warning" : "failed";
+	t.ended = Date.now();
+	updateProcesses();
+	if (t.taskState !== "done") {
+		if (taskShown !== t) showTaskWindow(t);
+		setTaskOutput(t, true);
+	}
+	renderTask(t);
+	// Someone reading the output decides when it closes
+	if (t.taskState === "done" && t.autoClose && !(taskShown === t && t.outputOpen)) {
+		// The tick is seen for a moment, with a line running out, then it closes by itself. Show output keeps it open.
+		t.closing = true;
+		renderTask(t);
+		t.closeTimer = setTimeout(() => {
+			if (!t.closing) return;
+			if (taskShown === t) hideTaskWindow();
+			if (terminals[t.id]) t.remove();
+		}, 1000);
+	}
+}
+$("#task-toggle").onclick = () => {
+	const t = taskShown;
+	if (!t) return;
+	// Looking at the output keeps a finished window open, with its Close button
+	if (t.closing) {
+		t.closing = false;
+		clearTimeout(t.closeTimer);
+		renderTask(t);
+	}
+	setTaskOutput(t, !t.outputOpen);
+};
+$("#task-background").onclick = hideTaskWindow;
+$("#task-close").onclick = () => {
+	const t = taskShown;
+	hideTaskWindow();
+	if (t && t.exited && terminals[t.id]) t.remove();
+};
+taskDialog.addEventListener("cancel", (event) => {
+	// Escape hides a running task, and closes a finished one
+	event.preventDefault();
+	(taskShown?.exited ? $("#task-close") : $("#task-background")).click();
+});
 
 function fitActive() {
 	const t = terminals[activeTerminal];
@@ -4099,7 +4363,9 @@ window.addEventListener("resize", () => { if (!$("#dock").hidden) fitActive(); }
 function activate(id) {
 	activeTerminal = id;
 	for (const [key, t] of Object.entries(terminals)) {
-		t.pane.hidden = key !== id;
+		// A process's output is in its window, never a pane of the dock
+		if (t.taskWindow && taskShown === t) continue;
+		t.pane.hidden = key !== id || t.taskWindow;
 		t.tab.classList.toggle("active", key === id);
 	}
 	fitActive();
@@ -4115,11 +4381,24 @@ function connectTerminal(t) {
 	};
 	ws.onmessage = (event) => {
 		const message = JSON.parse(event.data);
-		if (message.o !== undefined) t.term.write(message.o);
+		if (message.o !== undefined) {
+			t.term.write(message.o);
+			// The latest line of output, for a script's task window
+			const lines = message.o.replace(ANSI, "").split("\n").map((line) => line.trim()).filter(Boolean);
+			if (lines.length) {
+				t.lastLine = lines[lines.length - 1].slice(0, 200);
+				if (taskShown === t && !t.steps.length) renderTask(t);
+			}
+		}
 		if (message.x !== undefined) {
 			t.exited = true;
 			updateSiteActivity();
 			t.exitCode = message.x;
+			if (t.taskWindow) {
+				finishTask(t, message.x, message.output_problem !== false);
+				run(currentView === "sql" ? loadSqlConnections : loadSites);
+				return;
+			}
 			if (t.autoClose && message.x === 0 && message.output_problem === false && t.remove) {
 				t.remove();
 				run(currentView === "sql" ? loadSqlConnections : loadSites);
@@ -4153,7 +4432,18 @@ function openTerminal(id, title, autoClose, sites = [], running = true, scope = 
 	const fit = new FitAddon.FitAddon();
 	term.loadAddon(fit);
 	term.open(pane);
-	const t = { id, term, fit, pane, tab, title: titleNode, taskTitle: title, sites, scope, targets: targets || [], exited: !running, ws: null, autoClose: !!autoClose, remove: null };
+	const t = { id, term, fit, pane, tab, title: titleNode, taskTitle: title, sites, scope, targets: targets || [], exited: !running, ws: null, autoClose: !!autoClose, remove: null,
+		steps: [], lastLine: "", taskState: running ? "running" : "done", started: Date.now(), taskWindow: false, outputOpen: false };
+	// Steps a harbor command reports: not shown in the terminal itself
+	term.parser.registerOscHandler(7777, (data) => {
+		if (!data.startsWith("harbor;")) return false;
+		try {
+			const event = JSON.parse(data.slice("harbor;".length));
+			if (event.type === "step" || event.type === "warning") t.steps.push({ type: event.type, text: String(event.text || "") });
+			renderTask(t);
+		} catch (_) { /* not ours */ }
+		return true;
+	});
 	terminals[id] = t;
 	updateSiteActivity();
 
@@ -4174,10 +4464,12 @@ function openTerminal(id, title, autoClose, sites = [], running = true, scope = 
 		await run(() => api(`/api/term/${id}/close`, { json: {} }));
 		t.exited = true;
 		if (t.ws) t.ws.close();
+		if (taskShown === t) hideTaskWindow();
+		clearInterval(t.clock);
 		term.dispose(); tab.remove(); pane.remove();
 		delete terminals[id];
 		updateSiteActivity();
-		activeTerminal = Object.keys(terminals)[0] || null;
+		activeTerminal = terminalTabs()[0]?.id || null;
 		if (activeTerminal) activate(activeTerminal);
 		updateTerminalState();
 	};
@@ -4194,6 +4486,13 @@ function openTerminal(id, title, autoClose, sites = [], running = true, scope = 
 async function openTask(payload) {
 	const data = await api("/api/term", { json: payload });
 	openTerminal(data.id, data.title, data.auto_close, data.sites, data.running, data.scope, data.targets);
+	// An action gets a window of its own; a shell, or a task that asks for input, stays a terminal
+	if (terminals[data.id] && data.process) {
+		const t = terminals[data.id];
+		markProcess(t);
+		showTaskWindow(t);
+		return;
+	}
 	if (terminals[data.id]) {
 		showDock();
 		for (const dialog of document.querySelectorAll("dialog[open]")) {
@@ -4206,10 +4505,28 @@ async function openTask(payload) {
 	}
 }
 
+// A process has no tab in the dock: it is under Processes, and its output in its window
+function markProcess(t) {
+	t.taskWindow = true;
+	t.tab.hidden = true;
+	t.pane.hidden = true;
+	const first = terminalTabs()[0];
+	activeTerminal = first ? first.id : null;
+	if (first) activate(first.id);
+	updateTerminalState();
+}
+
 async function restoreTerminals() {
 	const { sessions } = await api("/api/term");
-	for (const s of sessions) openTerminal(s.id, s.title, s.auto_close, s.sites, s.running, s.scope, s.targets);
-	if (sessions.length) { for (const t of Object.values(terminals)) t.pane.hidden = true; activate(sessions[0].id); }
+	for (const s of sessions) {
+		openTerminal(s.id, s.title, s.auto_close, s.sites, s.running, s.scope, s.targets);
+		const t = terminals[s.id];
+		if (!t || !s.process) continue;
+		if (!s.running) t.taskState = s.exit === 0 && !s.output_problem ? "done" : s.exit === 0 ? "warning" : "failed";
+		markProcess(t);
+	}
+	for (const t of Object.values(terminals)) t.pane.hidden = true;
+	if (terminalTabs().length) activate(terminalTabs()[0].id);
 }
 
 run(async () => {

@@ -47,6 +47,13 @@
   </div>
   <span class="spacer"></span>
   <div id="server-ips" class="server-ips" role="group" aria-label="Server addresses" hidden></div>
+  <div class="processes">
+    <button id="btn-processes" class="ghost" title="Processes" aria-haspopup="true" aria-expanded="false" hidden><span class="process-indicator" aria-hidden="true"></span><span class="btn-label">Processes</span> <span id="process-count" class="count"></span></button>
+    <div id="processes-menu" class="menu processes-menu" hidden>
+      <div class="menu-group-title">Processes</div>
+      <ul id="process-list" class="process-list"></ul>
+    </div>
+  </div>
   <button id="btn-dock" class="ghost" title="Terminals (Ctrl+`)" hidden>⌨<span class="btn-label"> Terminals</span> <span id="term-count" class="count" hidden></span></button>
   <div class="user">
     <button id="btn-settings" class="ghost" title="Server" aria-label="Server" aria-haspopup="true">⚙<span class="btn-label"> Server</span> <span id="system-update-badge" class="badge system-update-available" hidden>Update available</span></button>
@@ -340,6 +347,46 @@
   </div>
 </section>
 
+<dialog id="dlg-service" class="newsite service-dialog" aria-labelledby="service-title">
+  <form method="dialog">
+  <header class="ns-head">
+    <span class="ns-icon" data-header-icon="server" aria-hidden="true"></span>
+    <div><h2 id="service-title"></h2><p id="service-description"></p></div>
+    <span id="service-pill" class="service-pill" role="status"></span>
+  </header>
+  <div id="service-facts" class="service-facts"></div>
+  <p id="service-note" class="hint service-note" hidden></p>
+  <div id="service-log-panel" class="service-log-panel" hidden>
+    <div class="ns-section">Latest log lines</div>
+    <div id="service-log" class="service-log"></div>
+  </div>
+  <menu>
+    <button type="button" id="service-log-toggle" class="cancel-link">Show log</button>
+    <span class="spacer"></span>
+    <button type="button" id="service-refresh" class="ghost">Refresh</button>
+    <button type="button" id="service-close">Close</button>
+  </menu>
+  </form>
+</dialog>
+
+<dialog id="dlg-task" class="newsite task-dialog" aria-labelledby="task-title">
+  <form method="dialog" id="form-task">
+  <header class="ns-head">
+    <span class="ns-icon task-state" id="task-state" aria-hidden="true"></span>
+    <div><h2 id="task-title"></h2><p id="task-status" role="status" aria-live="polite"></p></div>
+  </header>
+  <ol id="task-steps" class="task-steps"></ol>
+  <p id="task-current" class="task-current"></p>
+  <div id="task-details" class="task-details" hidden></div>
+  <menu>
+    <button type="button" id="task-toggle" class="cancel-link task-toggle">Show output</button>
+    <span class="spacer"></span>
+    <button type="button" id="task-background" class="ghost">Run in background</button>
+    <button type="button" id="task-close" hidden>Close</button>
+  </menu>
+  </form>
+</dialog>
+
 <div id="toasts" popover="manual"></div>
 
 <dialog id="dlg-prompt">
@@ -483,7 +530,7 @@
         <label>Version (optional) <input name="version" placeholder="Installed template version" autocomplete="off" spellcheck="false"></label>
         <label>C# project name <input name="project" placeholder="same as folder name"></label>
         <label>Build <select name="build"><option>Debug</option><option>Release</option></select></label>
-        <label>Environment <select name="environment"><option>Development</option><option selected>Test</option><option>Staging</option><option>Production</option></select></label>
+        <div class="choice-field wide"><span class="choice-label">Environment</span><div class="env-choices" role="radiogroup" aria-label="Environment"><label class="env-choice env-development"><input type="radio" name="environment" value="Development"><span>Development</span></label><label class="env-choice env-test"><input type="radio" name="environment" value="Test" checked><span>Test</span></label><label class="env-choice env-staging"><input type="radio" name="environment" value="Staging"><span>Staging</span></label><label class="env-choice env-production"><input type="radio" name="environment" value="Production"><span>Production</span></label></div></div>
         <label>Local publish folder <input name="publish" value="_publish" placeholder="Site root when empty"></label>
       </div>
       <p id="template-status" class="hint template-status" role="status" hidden></p>
@@ -507,12 +554,12 @@
     </div>
     <div class="ns-section">Site</div>
     <div class="ns-grid">
+      <div class="choice-field wide" id="prod-environment-row"><span class="choice-label">Environment</span><div class="env-choices" role="radiogroup" aria-label="Environment"><label class="env-choice env-development"><input type="radio" name="environment" value="Development"><span>Development</span></label><label class="env-choice env-test"><input type="radio" name="environment" value="Test"><span>Test</span></label><label class="env-choice env-staging"><input type="radio" name="environment" value="Staging"><span>Staging</span></label><label class="env-choice env-production"><input type="radio" name="environment" value="Production" checked><span>Production</span></label></div></div>
       <label id="prod-folder-row"><span id="prod-folder-label">Folder / service name</span> <input name="folder" required autocomplete="off" spellcheck="false"></label>
       <label id="prod-binding-row">Binding (domain) <input name="binding" required autocomplete="off" spellcheck="false"></label>
-      <label id="prod-environment-row">Environment <select name="environment"><option>Development</option><option>Test</option><option>Staging</option><option selected>Production</option></select></label>
-      <label id="prod-protocol-row">Protocol <select name="https"><option value="y">HTTPS</option><option value="n">HTTP</option></select></label>
     </div>
-    <p class="hint" id="prod-protocol-hint"></p>
+    <input type="hidden" name="https" value="y">
+    <div class="copy-options https-choice"><label class="sync-option copy-option secure" id="prod-protocol-row"><input name="https_card" type="checkbox" checked><span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span><span class="sync-option-text"><span class="sync-option-title">Set up with HTTPS</span><span class="sync-option-sub" id="prod-protocol-hint"></span></span></label></div>
     <div id="prod-dns" hidden></div>
     <div id="prod-remote-options">
       <div class="ns-section">SSH connection</div>
@@ -631,7 +678,7 @@
     </header>
     <div class="ns-grid">
       <label>Binding (domain) <input name="binding" autocomplete="off" spellcheck="false" placeholder="Empty: answers any name"></label>
-      <label id="setup-site-environment-row">Environment <select name="environment"><option>Development</option><option>Test</option><option>Staging</option><option>Production</option></select></label>
+      <div class="choice-field wide" id="setup-site-environment-row"><span class="choice-label">Environment</span><div class="env-choices" role="radiogroup" aria-label="Environment"><label class="env-choice env-development"><input type="radio" name="environment" value="Development"><span>Development</span></label><label class="env-choice env-test"><input type="radio" name="environment" value="Test" checked><span>Test</span></label><label class="env-choice env-staging"><input type="radio" name="environment" value="Staging"><span>Staging</span></label><label class="env-choice env-production"><input type="radio" name="environment" value="Production"><span>Production</span></label></div></div>
     </div>
     <input type="hidden" name="certificate" value="y">
     <div class="copy-options https-choice"><label class="sync-option copy-option secure"><input name="https_choice" type="checkbox" checked><span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span><span class="sync-option-text"><span class="sync-option-title">Set up with HTTPS</span><span class="sync-option-sub">A certificate is issued as the site is set up, and HTTP goes to HTTPS</span></span></label></div>

@@ -20,7 +20,7 @@ class ApacheReloadTests(unittest.TestCase):
         self.assertIn('sudo bash "$(pwd)/install_tls_policy.sh" --start-if-stopped', source)
 
     def test_failed_configtest_stops_delete(self):
-        delete = (APACHE / "delete_site.sh").read_text()
+        delete = (APACHE.parent / "tests/legacy/delete_site.sh").read_text()  # as it was; harbor is compared with it in tests/
         blocks = [delete[delete.index('echo "Reload daemon"'):]]
         for block in blocks:
             result = run_shell("""
@@ -63,7 +63,7 @@ class ApplicationReloadTests(unittest.TestCase):
                     self.assertEqual(cms["WebRouting"]["UmbracoApplicationUrl"], "https://example.test")
 
     def test_certificate_action_restarts_only_after_settings_change(self):
-        source = (APACHE / "test_action.sh").read_text()
+        source = (APACHE.parent / "tests/legacy" / "test_action.sh").read_text()  # as it was; harbor is compared with it in tests/
         start = source.index("\t\t\t_settingsChanged=")
         block = source[start:source.index("\n\t\tfi", start)]
         for changed in (True, False):

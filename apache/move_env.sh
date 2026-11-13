@@ -439,8 +439,9 @@ move_to_server() {
 	if [[ ${_destination} == local ]]; then
 		local _newName _newLocalRoot=${VNS_PROD_LOCAL_PATH%/}
 		_newName=$(basename "${_newLocalRoot}")
-		if [[ ${_newLocalRoot} != "${_rootPath}/${_newName}" || -e ${_newLocalRoot} ]]; then
-			echo "The new folder must be a new folder directly under ${_rootPath}." >&2
+		# A folder of its own under /var/www, or a subfolder of the main site's, as for a new environment
+		if [[ -e ${_newLocalRoot} ]] || [[ ${_newLocalRoot} != "${_rootPath}/${_newName}" && $(dirname "${_newLocalRoot}") != "${_siteRoot}" ]]; then
+			echo "The new folder must be a new folder directly under ${_rootPath}, or in ${_siteRoot}." >&2
 			exit 1
 		fi
 	elif [[ ${_destination} == remote && ${_sourceRemote} == 1 && ${VNS_PROD_IP:-} == "${PROD_IP}" && ${VNS_PROD_FOLDER:-} == "${_oldName}" ]]; then

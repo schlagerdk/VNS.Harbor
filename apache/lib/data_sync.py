@@ -105,7 +105,8 @@ def settings_allowed(config, source, destination):
 
 def apply_appsettings(data, settings):
     """Set uSync for one site: the content and media handlers by what it takes part with, export on save
-    for a sender, and import at startup for a receiver. A site with data sync off gets the handlers off,
+    and at startup for a sender, and import at startup for a receiver. A sender exports everything when it starts,
+    so content made before it could send is there to sync too: export on save only writes what is saved after. A site with data sync off gets the handlers off,
     and the values set here are reverted. Returns the changed object."""
     settings = clean(settings)
     on = settings["enabled"]
@@ -121,6 +122,10 @@ def apply_appsettings(data, settings):
     default["DisabledHandlers"] = disabled
     if on:
         general["ExportOnSave"] = "All" if settings["send"] else "Settings"
+        if settings["send"]:
+            general["ExportAtStartup"] = "All"
+        elif general.get("ExportAtStartup") == "All":
+            general["ExportAtStartup"] = "None"
         general["ImportAtStartup"] = "All" if settings["receive"] else "Settings"
         general["UiEnabledGroups"] = "Settings,Content"
     else:
@@ -128,6 +133,8 @@ def apply_appsettings(data, settings):
             general["ImportAtStartup"] = "Settings"
         if general.get("ExportOnSave") == "Settings":
             general["ExportOnSave"] = "All"
+        if general.get("ExportAtStartup") == "All":
+            general["ExportAtStartup"] = "None"
         if general.get("UiEnabledGroups") == "Settings,Content":
             general["UiEnabledGroups"] = "Settings"
     return data

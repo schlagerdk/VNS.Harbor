@@ -327,8 +327,9 @@ class CertificateAliasTests(unittest.TestCase):
 
     def test_aliases_are_used_by_every_supported_certificate_flow(self):
         common = (APACHE / "lib/common.sh").read_text()
-        test_action = (APACHE / "test_action.sh").read_text()
-        prod_action = (APACHE / "prod_action.sh").read_text()
+        # The scripts as they were; harbor is compared with them in tests/
+        test_action = (APACHE.parent / "tests/legacy" / "test_action.sh").read_text()
+        prod_action = (APACHE.parent / "tests/legacy" / "prod_action.sh").read_text()
         change_local = (APACHE / "change_binding.sh").read_text()
         change_remote = (APACHE / "change_binding_prod.sh").read_text()
         publish = (APACHE / "solutionfiles/csharp/prod-scripts/publish_prod.sh").read_text()

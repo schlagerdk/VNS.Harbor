@@ -383,7 +383,7 @@ class RemoteTransportTests(unittest.TestCase):
             result = subprocess.run(["/bin/bash", str(root / "remote_site.sh"), "example.test", "status"],
                                     capture_output=True, env=env)
             self.assertEqual(result.returncode, 7)
-            (root / "delete_site.sh").write_text((APACHE / "delete_site.sh").read_text())
+            (root / "delete_site.sh").write_text((APACHE.parent / "tests/legacy/delete_site.sh").read_text())  # as it was
             for name in ("sudo", "clear"):
                 mock = root / "bin" / name
                 mock.write_text('#!/bin/bash\nprintf "%s\\n" "$@" >> "$TEST_LOCAL_ACTIONS"\n')

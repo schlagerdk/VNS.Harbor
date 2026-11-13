@@ -1874,6 +1874,42 @@ def api_server_logs():
         return error("Could not read server logs.", 502)
 
 
+def harbor_modules():
+    """The harbor package, installed beside the apache folder the admin runs the scripts of"""
+    install = os.path.dirname(os.path.realpath(APACHE_DIR))
+    if install not in sys.path:
+        sys.path.insert(0, install)
+    from harbor.core.system import System
+    from harbor.environments import settings as harbor_settings
+    from harbor.sites import service as harbor_service
+    return System, harbor_settings, harbor_service
+
+
+@app.route("/api/sites/<name>/service")
+def api_service_status(name):
+    """A service's state and latest log lines, for the status window (Check service). Here or where an environment runs."""
+    require_admin()
+    site = site_arg({"site": name})
+    System, harbor_settings, harbor_service = harbor_modules()
+    try:
+        if request.args.get("target"):
+            target = target_arg(site, {"target": request.args.get("target")})
+            environment = harbor_settings.load(System(), os.path.join(WEB_ROOT, site), target)
+            if environment.windows:
+                abort(400, "A Windows environment's service is IIS: check it there")
+            unit = service_name(environment.FOLDER)
+            state = harbor_service.status(System(), unit, environment if not environment.local else None)
+        else:
+            unit = request.args.get("unit") or site
+            if unit not in site_units(site):
+                abort(400, "Unknown service")
+            unit = service_name(unit)
+            state = harbor_service.status(System(), unit)
+    except harbor_settings.SettingsError as error:
+        return error(str(error), 502)
+    return jsonify(unit=unit, **state)
+
+
 @app.route("/api/sites/<name>/logs")
 def api_logs(name):
     require_site(name, (request.args.get("target") or "prod") if request.args.get("scope") == "prod" else unit_env(name, request.args.get("unit") or name), "logs")
@@ -2168,6 +2204,11 @@ def terminal_targets(payload):
     return []
 
 
+def terminal_process(payload):
+    """An action, shown in a window of its own and listed under Processes, or a terminal to type in (a shell)"""
+    return terminal_auto_close(payload) and payload.get("kind") not in ("shell", "remote_tool")
+
+
 def terminal_scope(payload):
     kind = payload.get("kind")
     if kind == "publish_both" and payload.get("environments_only"):
@@ -2246,6 +2287,8 @@ class TermSession:
             "USER": "root",
             "SHELL": "/bin/bash",
             "PATH": os.environ.get("PATH", DEFAULT_PATH),
+            # harbor commands report their steps for the task window (harbor/core/system.py)
+            "HARBOR_PROGRESS": "1",
         }
         dotnet_root = dotnet_root_dir()
         if dotnet_root:
@@ -2439,13 +2482,16 @@ def production_setup_env(data, site, moving=False):
             within_site = os.path.commonpath((site_root, target_path)) == site_root
         except ValueError:
             within_site = False
-        if within_site and not moving:
+        if within_site:
+            # A subfolder of the main site's folder, as for a new environment; a copy or migration needs a new one
             if target_path == site_root:
                 abort(400, "Choose a subfolder of this site's folder, or a folder of its own")
+            if moving and os.path.exists(target_path):
+                abort(400, "%s already exists" % target_path)
         else:
             # Outside this site it is a site of its own: its folder, service and Apache config share one name
             name = os.path.basename(target_path)
-            if within_site or os.path.dirname(target_path) != os.path.realpath(WEB_ROOT):
+            if os.path.dirname(target_path) != os.path.realpath(WEB_ROOT):
                 abort(400, "The folder must be directly under %s" % WEB_ROOT)
             if os.path.exists(target_path):
                 abort(400, "%s already exists" % target_path)
@@ -3244,7 +3290,7 @@ def grant(user_id, change):
 def describe(s):
     return {"id": s.id, "title": s.title, "running": s.running, "exit": s.exit,
             "auto_close": s.auto_close, "output_problem": s.output_problem, "sites": s.sites,
-            "scope": s.scope, "targets": getattr(s, "targets", [])}
+            "scope": s.scope, "targets": getattr(s, "targets", []), "process": getattr(s, "process", False)}
 
 
 @app.route("/api/term", methods=["GET", "POST"])
@@ -3323,6 +3369,7 @@ def api_term():
             if payload.get("kind") == "create_prod":
                 os.unlink(argv[1])
             raise
+        session_obj.process = terminal_process(payload)
         SESSIONS[session_obj.id] = session_obj
     audit("Started: " + title)
     return jsonify(describe(session_obj))

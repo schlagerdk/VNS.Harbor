@@ -85,6 +85,23 @@ apply_settings() {
 	fi
 }
 
+# Whether uSync has written content in a site's folder, where data sync takes it from. uSync writes content when it
+# is saved, and everything at startup on a site that may send, so content made before has to be written once.
+has_exported_content() (
+	local _id=$1 _folder
+	if [[ ${_id} == main ]]; then
+		_folder=$(main_folder)
+		compgen -G "${_folder}/uSync/*/Content/*" >/dev/null
+		return
+	fi
+	export VNS_TARGET=${_id}
+	load_prod_settings
+	if [[ ${PROD_TARGET} == windows ]]; then
+		return 0
+	fi
+	prod_exec "compgen -G $(printf %q "${_root}")'/uSync/*/Content/*' >/dev/null" 2>/dev/null
+)
+
 case "${_action}" in
 	settings)
 		_id=${3:-}
@@ -105,10 +122,19 @@ case "${_action}" in
 		valid_id "${_from}"
 		[[ -n ${_to} ]] || { echo "Choose a destination." >&2; exit 1; }
 		# Every destination is checked before anything is synced
+		_wantsContent=0
 		for _id in ${_to//,/ }; do
 			valid_id "${_id}"
-			python3 lib/data_sync.py kinds "${_siteRoot}" "${_from}" "${_id}" >/dev/null || exit 1
+			_kinds=$(python3 lib/data_sync.py kinds "${_siteRoot}" "${_from}" "${_id}") || exit 1
+			[[ " ${_kinds} " != *" content "* ]] || _wantsContent=1
 		done
+		# Content is synced from what uSync has written: without it, only media would go, and that would look like a sync
+		if ((_wantsContent)) && ! has_exported_content "${_from}"; then
+			echo "${_from} has no content written by uSync yet, so there is no content to sync." >&2
+			echo "uSync writes content when it is saved, and all of it when a site that may send data starts." >&2
+			echo "Save Sync setup on ${_from}, which restarts it, or restart it, then sync again." >&2
+			exit 1
+		fi
 		# One destination: settings from the main site, then the data merged in, then a restart to import it.
 		# Every step stops it on its own, as set -e is off in the if that runs it.
 		sync_one() (

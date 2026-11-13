@@ -71,6 +71,23 @@ class DataSyncTests(unittest.TestCase):
         self.assertEqual(off["uSync"]["Settings"]["ExportOnSave"], "All")
         self.assertEqual(off["uSync"]["Settings"]["UiEnabledGroups"], "Settings")
 
+    def test_a_sender_writes_everything_at_startup(self):
+        """Export on save only writes what is saved after: content made before has to be written once, at startup"""
+        template = json.loads((ROOT / "solutionfiles/csharp/umbraco/project/appsettings.json").read_text())
+        sender = data_sync.apply_appsettings(json.loads(json.dumps(template)), dict(ON, receive=False))
+        self.assertEqual(sender["uSync"]["Settings"]["ExportAtStartup"], "All")
+        receiver = data_sync.apply_appsettings(json.loads(json.dumps(sender)), dict(ON, send=False))
+        self.assertEqual(receiver["uSync"]["Settings"]["ExportAtStartup"], "None")
+        off = data_sync.apply_appsettings(json.loads(json.dumps(sender)), {"enabled": False})
+        self.assertEqual(off["uSync"]["Settings"]["ExportAtStartup"], "None")
+        untouched = data_sync.apply_appsettings(json.loads(json.dumps(template)), dict(ON, send=False))
+        self.assertNotIn("ExportAtStartup", untouched["uSync"]["Settings"])
+
+    def test_a_sync_without_written_content_stops_and_says_why(self):
+        script = (ROOT / "data_sync.sh").read_text()
+        self.assertIn('if ((_wantsContent)) && ! has_exported_content "${_from}"; then', script)
+        self.assertLess(script.index("has_exported_content \"${_from}\""), script.index("sync_one \"${_id}\""))
+
     def test_command_line_reports_why_a_sync_is_refused(self):
         with tempfile.TemporaryDirectory() as folder:
             (Path(folder) / "scripts").mkdir()

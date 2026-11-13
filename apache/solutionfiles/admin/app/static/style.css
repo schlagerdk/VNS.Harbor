@@ -1001,21 +1001,25 @@ dialog.editor .editor-toolbar > button, dialog.editor .editor-toolbar > select {
 .env-row-links .frontend { --link-tone: var(--green); }
 .env-row-links .backend { --link-tone: #39c5cf; }
 /* An environment row in fixed columns: name, state, environment, icons and status line up in every row */
-.env-targets.list > .env-listed > .env-head { display: grid; grid-template-columns: minmax(0, 280px) 112px 118px 60px 150px minmax(0, 1fr) 30px; flex-wrap: nowrap; gap: 10px; }
+.env-targets.list > .env-listed > .env-head { display: grid; grid-template-columns: minmax(0, 280px) 112px 112px 22px minmax(0, 1fr) auto 30px; flex-wrap: nowrap; gap: 12px; }
 .env-col { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .env-col-name h3 { min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .env-col-actions { justify-content: flex-end; gap: 10px; }
 .env-col-actions .env-row-links { min-width: 0; }
 .env-col-actions .env-row-links a.btn-link { min-width: 0; }
-.env-col-actions .env-row-links a.btn-link.frontend { max-width: 260px; }
+.env-col-actions .env-row-links a.btn-link.frontend { max-width: 300px; }
+.env-col-actions .env-row-links a.btn-link { white-space: nowrap; flex: none; }
+.env-row-actions { flex-wrap: nowrap; }
 .env-col-note .publish-status, .env-col-note .badge { white-space: nowrap; }
+.env-col { overflow: hidden; }
+.env-col-actions { overflow: visible; }
 @media (max-width: 1200px) {
 	.env-targets.list > .env-listed > .env-head { grid-template-columns: minmax(0, 1fr) auto auto auto 30px; }
 	.env-targets.list > .env-listed > .env-head .env-col-note { display: none; }
 	.env-targets.list > .env-listed > .env-head .env-col-actions { grid-column: 1 / -1; grid-row: 2; justify-content: flex-start; flex-wrap: wrap; }
 }
-/* In the list the coloured top edge of each card would make a stripe per row: a row has the same edge all round */
-.env-targets.list > .env-listed, .env-targets.list > .env-listed.prod { border-top: 1px solid var(--line); }
+/* In the list the coloured top edge of each card would make a stripe per row: a row has its colour on the left */
+.env-targets.list > .env-listed, .env-targets.list > .env-listed.prod { border-top: 1px solid var(--line); border-left: 3px solid var(--env-tone, var(--line)); }
 .env-targets.list > .env-listed:hover { border-color: rgba(88, 166, 255, .35); }
 /* Four places to run (Migrate offers "Separate site" too): one row of four, two by two on a narrow screen */
 .prod-target-cards:has(> .type-card:nth-child(4):not([hidden])) { grid-template-columns: repeat(4, minmax(0, 1fr)); }
@@ -1310,3 +1314,124 @@ dialog label.copy-option-nested { margin-left: 46px; }
 .copy-option.disabled { opacity: .55; cursor: not-allowed; }
 .copy-option.disabled:hover { border-color: var(--line); }
 .https-choice { margin: 2px 0 14px; }
+
+/* An action's window: its steps, and its output only when something went wrong or is asked for */
+dialog.task-dialog { width: min(560px, calc(100vw - 32px)); }
+.task-dialog .ns-head .ns-icon { transition: background .25s; }
+.task-dialog[data-state="done"] .ns-icon { background: linear-gradient(135deg, #2ea043, #3fb950); }
+.task-dialog[data-state="warning"] .ns-icon { background: linear-gradient(135deg, #bb8009, #d29922); }
+.task-dialog[data-state="failed"] .ns-icon { background: linear-gradient(135deg, #b62324, #f85149); }
+.task-state .ico { width: 22px; height: 22px; margin: 0; stroke-width: 2.6; }
+.task-spinner { width: 20px; height: 20px; border: 2.5px solid rgba(255, 255, 255, .35); border-top-color: #fff; border-radius: 50%; animation: update-spin .8s linear infinite; }
+#task-status { font-variant-numeric: tabular-nums; }
+.task-steps { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 2px; max-height: 40vh; overflow-y: auto; }
+.task-steps[hidden] { display: none; }
+.task-step { display: flex; align-items: flex-start; gap: 10px; padding: 6px 2px; font-size: 13.5px; color: var(--muted); }
+.task-step.active { color: var(--text); font-weight: 600; }
+.task-step.failed { color: var(--red); font-weight: 600; }
+.task-step.warning { color: #d29922; }
+.task-step-mark { flex: none; position: relative; width: 16px; height: 16px; margin-top: 1px; border-radius: 50%; border: 1.5px solid var(--line); }
+.task-step.done .task-step-mark { border-color: var(--green); background: var(--green) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230d1117' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E") center / 10px no-repeat; }
+.task-step.active .task-step-mark { border-color: var(--blue); border-top-color: transparent; animation: update-spin .8s linear infinite; }
+.task-step.failed .task-step-mark { border-color: var(--red); background: var(--red); }
+.task-step.warning .task-step-mark { border-color: #d29922; background: #d29922; }
+.task-current { margin: 2px 0 14px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel2); color: var(--muted); font: 12.5px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.task-current[hidden] { display: none; }
+.task-details { height: min(46vh, 420px); margin: 0 0 12px; padding: 8px; border: 1px solid var(--line); border-radius: 8px; background: #000; overflow: hidden; }
+.task-details[hidden] { display: none; }
+.task-details .pane { position: static; height: 100%; display: block; }
+.task-dialog menu { align-items: center; }
+.task-dialog menu .spacer { flex: 1; }
+.task-toggle { font-size: 13px; }
+@media (max-width: 560px) { .task-details { height: 50vh; } }
+/* A finished window that closes by itself: a line runs out under its header */
+.task-dialog .ns-head { position: relative; }
+.task-dialog .ns-head::after { content: ""; position: absolute; left: 0; bottom: 0; height: 2px; width: 0; background: var(--green); opacity: 0; }
+.task-dialog.closing .ns-head::after { opacity: 1; animation: task-closing 1s linear forwards; }
+@keyframes task-closing { from { width: 100%; } to { width: 0; } }
+@media (prefers-reduced-motion: reduce) { .task-dialog.closing .ns-head::after { animation: none; width: 100%; } }
+
+/* Check service: the state of a site's service */
+dialog.service-dialog { width: min(620px, calc(100vw - 32px)); }
+.service-dialog .ns-head > div { flex: 1; }
+.service-pill { flex: none; display: inline-flex; align-items: center; gap: 7px; padding: 5px 12px; border-radius: 999px; font-size: 12.5px; font-weight: 600; background: rgba(139, 148, 158, .16); color: var(--muted); }
+.service-pill::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.service-pill.ok { color: var(--green); background: rgba(63, 185, 80, .14); }
+.service-pill.ok::before { box-shadow: 0 0 0 3px rgba(63, 185, 80, .22); }
+.service-pill.bad { color: var(--red); background: rgba(248, 81, 73, .14); }
+.service-pill.busy { color: var(--blue); background: rgba(88, 166, 255, .14); }
+.service-pill.busy::before { animation: service-pulse 1s ease-in-out infinite alternate; }
+@keyframes service-pulse { from { opacity: .35; } to { opacity: 1; } }
+.service-facts { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 1px; margin: 0 0 14px; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--line); transition: opacity .15s; }
+.service-dialog.loading .service-facts { opacity: .5; }
+.service-fact { display: flex; flex-direction: column; gap: 3px; padding: 11px 13px; background: var(--panel2); min-width: 0; }
+.service-fact-label { color: var(--muted); font-size: 10.5px; font-weight: 600; letter-spacing: .07em; text-transform: uppercase; }
+.service-fact-value { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.service-note { margin: -4px 0 12px; }
+.service-dialog[data-tone="bad"] .service-note { color: var(--red); }
+.service-log-panel[hidden] { display: none; }
+.service-log { max-height: 34vh; overflow: auto; margin: 0 0 14px; padding: 8px 0; border: 1px solid var(--line); border-radius: 8px; background: #05070a; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.service-log-line { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 10px; padding: 1px 12px; color: #c9d1d9; white-space: pre-wrap; overflow-wrap: anywhere; }
+.service-log-line.problem { color: #ffa198; background: rgba(248, 81, 73, .08); }
+.service-log-time { color: #6e7681; font-variant-numeric: tabular-nums; }
+.service-log-empty { padding: 4px 12px; color: var(--muted); }
+.service-dialog menu { align-items: center; }
+.service-dialog menu .spacer { flex: 1; }
+@media (max-width: 560px) { .service-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* Processes in the header: actions that run, or ended with a problem; a click opens their window again */
+.processes { position: relative; }
+#btn-processes { display: inline-flex; align-items: center; gap: 7px; }
+#btn-processes[hidden] { display: none; }
+.process-indicator { width: 9px; height: 9px; border-radius: 50%; background: rgba(255, 255, 255, .55); }
+#btn-processes.running .process-indicator { width: 12px; height: 12px; background: none; border: 2px solid rgba(255, 255, 255, .35); border-top-color: #fff; animation: update-spin .8s linear infinite; }
+#btn-processes.problem:not(.running) .process-indicator { background: #ff7b72; box-shadow: 0 0 0 3px rgba(255, 123, 114, .25); }
+.processes-menu { width: min(360px, calc(100vw - 24px)); padding: 6px; }
+.processes-menu .menu-group-title { padding: 6px 10px 4px; }
+.process-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; max-height: 60vh; overflow-y: auto; }
+.menu .process-item { display: flex; align-items: center; gap: 11px; width: 100%; padding: 9px 10px; text-align: left; }
+.process-state { flex: none; width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--line); }
+.process-item.running .process-state { border-color: var(--blue); border-top-color: transparent; animation: update-spin .8s linear infinite; }
+.process-item.done .process-state { border-color: var(--green); background: var(--green); }
+.process-item.failed .process-state { border-color: var(--red); background: var(--red); }
+.process-item.warning .process-state { border-color: #d29922; background: #d29922; }
+.process-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.process-title { color: var(--text); font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.process-sub { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.process-item.failed .process-sub { color: var(--red); }
+
+/* Environment as four choices in its colours, in place of a select */
+.ns-grid > .wide { grid-column: 1 / -1; }
+.choice-field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; min-width: 0; }
+.choice-field[hidden] { display: none; }
+.choice-label { color: var(--muted); font-size: 12.5px; }
+.env-choices { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+dialog label.env-choice { --env-tone: var(--blue); position: relative; flex-direction: row; align-items: center; justify-content: center; gap: 8px; height: 40px; margin: 0; padding: 0 10px;
+	border: 1px solid var(--line); border-radius: 8px; background: var(--panel2); color: var(--text); font-size: 13.5px; font-weight: 600; cursor: pointer; transition: border-color .15s, background .15s; }
+dialog label.env-choice.env-test { --env-tone: #d29922; }
+dialog label.env-choice.env-staging { --env-tone: var(--purple); }
+dialog label.env-choice.env-production { --env-tone: var(--red); }
+.env-choice::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--env-tone); opacity: .55; transition: opacity .15s; }
+.env-choice input { position: absolute; opacity: 0; pointer-events: none; }
+dialog label.env-choice:hover { border-color: color-mix(in srgb, var(--env-tone) 55%, var(--line)); }
+dialog label.env-choice:has(input:checked) { border-color: var(--env-tone); background: color-mix(in srgb, var(--env-tone) 13%, var(--panel2)); box-shadow: 0 0 0 1px var(--env-tone) inset; }
+.env-choice:has(input:checked)::before { opacity: 1; box-shadow: 0 0 0 3px color-mix(in srgb, var(--env-tone) 25%, transparent); }
+.env-choice:has(input:focus-visible) { outline: 2px solid var(--env-tone); outline-offset: 2px; }
+@media (max-width: 560px) { .env-choices { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* Each environment in its own colour: the top edge of its card, the left edge of its row in the list */
+.env.tone-development { --env-tone: var(--blue); }
+.env.tone-test { --env-tone: #d29922; }
+.env.tone-staging { --env-tone: var(--purple); }
+.env.tone-production { --env-tone: var(--red); }
+.env[class*="tone-"] { border-top-color: var(--env-tone); }
+.env-row-more-wrap { position: relative; }
+.env-row .env-row-more, .env-col-actions .env-row-more { min-width: 30px; padding-left: 8px; padding-right: 8px; font-weight: 700; letter-spacing: .05em; }
+.env-row-more-menu { right: 0; top: calc(100% + 6px); min-width: 180px; }
+.env-row-more-menu[hidden] { display: none; }
+/* The row's menu opens over the rows below it */
+.env-targets.list > .env-listed, .env-targets.list > .env-listed > .env-head { overflow: visible; }
+.env-targets.list > .env-listed:has(.env-row-more-menu:not([hidden])) { position: relative; z-index: 5; }
+.env-row-more-menu { z-index: 30; }
+/* The file manager's .list scrolls sideways; the list of environments is not that, and its row menus open over it */
+.env-targets.list { overflow: visible; }

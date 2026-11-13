@@ -206,7 +206,7 @@ console.log(JSON.stringify([first, firstNone, none.hidden]));
         self.assertIn('response = windows_files(site, target, data)', app)
         self.assertIn('add("Files", () => openFiles("", remoteRef(site, env)), "desktop-only");', source)
         # data_sync.sh still reads and saves appsettings.json with the narrow helper
-        script = (APACHE / "windows_file.sh").read_text()
+        script = (APACHE.parent / "tests/legacy" / "windows_file.sh").read_text()  # as it was; harbor is compared with it in tests/
         self.assertIn("^(web\\.config|appsettings(\\.[A-Za-z0-9_-]+)?\\.json)$", script)
 
     def test_start_page_and_sql_query(self):
