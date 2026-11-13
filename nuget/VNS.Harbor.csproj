@@ -1,5 +1,5 @@
 <Project Sdk="Microsoft.NET.Sdk.Razor">
-	<!-- VNS Harbor in Umbraco 17+: the backoffice login from the Harbor admin, and the dashboard that syncs this site's
+	<!-- VNS Harbor in Umbraco 18 and newer: the backoffice login from the Harbor admin, and the dashboard that syncs this site's
        settings and data to its environments through Harbor. -->
 	<PropertyGroup>
 		<TargetFramework>net10.0</TargetFramework>

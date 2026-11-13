@@ -1,4 +1,4 @@
-"""A site's connection to Harbor through the VNS.Harbor package (Umbraco 17+), and the backoffice login from the admin.
+"""A site's connection to Harbor through the VNS.Harbor package (Umbraco 18 and newer), and the backoffice login from the admin.
 Phase 9a of dev/HARBOR.md.
 
   /etc/harbor/secrets/sites/<site>/connection/<environment>.json   the site's token for Harbor's API and its login key

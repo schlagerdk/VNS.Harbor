@@ -72,12 +72,12 @@ class CreateSiteTests(unittest.TestCase):
                 self.assertTrue(any("dotnet publish" in line for line in system.commands))
 
     def test_umbraco_gets_vns_harbor(self):
-        # The package follows Umbraco's versions from 18.3.1: an Umbraco 17 site gets the last one for 17
-        for version, added in (("18.3.1", "dotnet add package VNS.Harbor"), ("17.2.0", "dotnet add package VNS.Harbor -v 18.0.3")):
+        # Umbraco 18 and newer: the package's versions follow Umbraco's
+        for version, expected in (("18.3.1", True), ("17.2.0", False)):
             with self.subTest(version=version):
                 self.setUp()
                 result, system = self.compare("shop.dk", "csharp", "umbraco", version, "Shop", "shop.dk", "_publish", "Release", "y")
-                self.assertIn(added, system.commands)
+                self.assertEqual("dotnet add package VNS.Harbor" in system.commands, expected)
         # Not found on the package source: the site is made all the same, and it says so
         system = Server(tempfile.mkdtemp(), "x").system(answers={"dotnet add package VNS.Harbor": __import__("harbor.core.system", fromlist=["Result"]).Result(1)})
         self.assertEqual(main(["site", "create", "x.dk", "csharp", "umbraco", "18.3.1", "X", "x.dk", "_publish", "Release", "n"], system), 0, system.said)
