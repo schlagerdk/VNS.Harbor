@@ -321,7 +321,7 @@ In this order:
       folder; an environment's settings go straight into Harbor (env create); a site that still has its scripts is told
       to run `harbor migrate` first. Reading a site's scripts stays, so `harbor migrate` can still move one over.
     - The admin and run_create_prod run `harbor env create` with the site's values instead of a rendered create_prod.sh.
-    - The custom SQL scripts (clean_umbraco7_db, delete_old_2dm_data) moved to misc/custom-sql: not Harbor's, not shipped.
+    - The custom SQL scripts (clean_umbraco7_db, delete_old_2dm_data) are not Harbor's: kept locally in misc/ (not in git).
     - Changed from the plan: **tests/legacy stays** (tests only, never in a release). Most tests compare harbor with
       the frozen scripts; without them most coverage would go. Added there: tests/legacy/vns-sql (/vns/sql as 1.3.0
       left it: what import-sa-password reads), tests/legacy/wrappers (the 1.3.0 templates and apache wrappers), and

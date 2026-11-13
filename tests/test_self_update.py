@@ -28,7 +28,7 @@ class NewerTests(unittest.TestCase):
             self.assertEqual(update.installed_repository(folder), "schlagerdk/VNS.Linux", "VNS 1.x had no REPOSITORY")
             Path(folder, "REPOSITORY").write_text("schlagerdk/VNS.Harbor\n")
             self.assertEqual(update.installed_repository(folder), "schlagerdk/VNS.Harbor")
-        self.assertEqual((ROOT / "REPOSITORY").read_text().strip(), "schlagerdk/VNS.Linux", "this code's own")
+        self.assertEqual((ROOT / "REPOSITORY").read_text().strip(), "schlagerdk/VNS.Harbor", "this code's own")
 
 
 class UpdateTests(unittest.TestCase):
@@ -107,8 +107,33 @@ class AfterUpdateTests(unittest.TestCase):
         self.assertEqual(harbor, ["server install-tls-policy", "server install-apache-conf", "state sync", "migrate",
                                   "sql import-sa-password", "server cron upgrade"])
         moved.assert_called_once_with(system, "admin.example.test")
-        # VNS 1.x stays, but its harbor is the one in use
+        # Nothing names /vns any more: backed up, then removed (phase 7)
+        self.assertTrue(any(command.startswith("tar -czf /var/lib/harbor/backups/vns-") and command.endswith(" -C / vns")
+                            for command in system.commands), system.commands)
+        self.assertFalse((self.root / "vns").exists())
+
+    def test_vns_stays_while_something_names_it(self):
+        (self.root / "etc/cron.d").mkdir(parents=True)
+        (self.root / "etc/cron.d/custom").write_text("0 3 * * * root /vns/sql/cron/delete_old_2dm_data.sh\n")
+        system, _ = self.after_update()
+        self.assertTrue((self.root / "vns").is_dir())
+        self.assertTrue(any("/vns stays: it is still named in /etc/cron.d/custom" in line for line in system.said), system.said)
+        # Its harbor is the one in use meanwhile
         self.assertEqual(os.readlink(self.root / "vns/bin/harbor"), "/usr/local/bin/harbor")
+        self.assertFalse(any(command.startswith("tar ") for command in system.commands))
+
+    def test_vns_stays_while_it_holds_the_sa_password_harbor_lacks(self):
+        (self.root / "vns/sql").mkdir()
+        (self.root / "vns/sql/create_db.sh").write_text("sa -U sa -P 's3cret' -i scripts/create_db.sql\n")
+        system, _ = self.after_update({"python3": Result(0), "crontab -l": Result(1)})
+        self.assertTrue((self.root / "vns").is_dir())
+        self.assertTrue(any("sa password" in line for line in system.said), system.said)
+
+    def test_other_paths_with_vns_in_them_are_not_vns(self):
+        (self.root / "etc/systemd/system").mkdir(parents=True)
+        (self.root / "etc/systemd/system/shop.dk.service").write_text("RootDirectory=/var/lib/vns-roots/shop.dk\nBindPaths=/var/lib/vns/x\n")
+        system, _ = self.after_update()
+        self.assertFalse((self.root / "vns").exists())
 
     def test_a_failed_step_is_told_and_the_rest_runs(self):
         system, moved = self.after_update({"python3": lambda argv: Result(1 if "migrate" in argv else 0)})

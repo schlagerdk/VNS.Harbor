@@ -146,6 +146,66 @@ def after_update(system):
         admin.update(system, name)
     if not sites:
         system.say("No admin site was found to update.")
+    remove_vns(system)
+
+
+# ---- /vns, where VNS 1.x lived (phase 7)
+VNS = "/vns"
+# Where something the server runs could still name /vns: cron, services, Apache
+NAMED_IN = ("/etc/cron.d", "/etc/crontab", "/var/spool/cron/crontabs", "/etc/systemd/system", "/etc/apache2/sites-available",
+            "/etc/apache2/conf-available")
+NAMES_VNS = re.compile(r"(?<![\w./-])/vns(/|\b)")
+
+
+def names_vns(system):
+    """What the server runs that still names /vns: files in NAMED_IN, and root's crontab"""
+    found = []
+    for place in NAMED_IN:
+        top = system.path(place)
+        for path in ([top] if top.is_file() else sorted(top.rglob("*")) if top.is_dir() else []):
+            try:
+                if path.is_file() and NAMES_VNS.search(path.read_text(errors="replace")):
+                    found.append("/" + str(path.relative_to(system.path("/"))))
+            except OSError:
+                continue
+    table = system.run("crontab", "-l", check=False, capture=True)
+    if table.ok and NAMES_VNS.search(table.stdout):
+        found.append("root's crontab")
+    return found
+
+
+def remove_vns(system):
+    """/vns goes once nothing uses it: backed up first (/var/lib/harbor/backups/vns-<time>.tar.gz, root only). It stays,
+    and why is told, while cron, a service or Apache still names it, or while it holds the sa password Harbor lacks."""
+    from datetime import datetime
+    from harbor.sql.databases import SA_SECRET
+    from harbor.sql.server import sa_scripts
+    from harbor.state.store import read_json
+    folder = system.path(VNS)
+    if not folder.is_dir() or folder.is_symlink():
+        return
+    found = names_vns(system)
+    if found:
+        system.warn(f"{VNS} stays: it is still named in {', '.join(found)}. Move what is there, then update again.")
+        return
+    if not (read_json(system.path(SA_SECRET)) or {}).get("sa_password") and (folder / "sql").is_dir():
+        holding = [path for path in sa_scripts(system, folder / "sql") if "'@SA_PASSWORD@'" not in path.read_text(errors="replace")]
+        if holding:
+            system.warn(f"{VNS} stays: its scripts hold the sa password, which Harbor does not have yet "
+                        "(harbor sql import-sa-password).")
+            return
+    system.step(f"Remove {VNS}: VNS 1.x is no longer used")
+    backups = system.path("/var/lib/harbor/backups")
+    backups.mkdir(parents=True, exist_ok=True)
+    backups.chmod(0o700)
+    archive = f"/var/lib/harbor/backups/vns-{datetime.now().strftime('%Y%m%d-%H%M%S')}.tar.gz"
+    if not system.run("tar", "-czf", archive, "-C", "/", VNS.strip("/"), check=False).ok:
+        system.warn(f"{VNS} stays: it could not be backed up first.")
+        return
+    if system.path(archive).is_file():
+        system.path(archive).chmod(0o600)
+    shutil.rmtree(folder)
+    system.say(f"{VNS} is removed. Its backup: {archive}")
 
 
 def describe(system):

@@ -1,5 +1,5 @@
 .DS_Store
-misc
+misc/*
 
 # Local tools, such as make_release.sh, not part of the solution
 .local/
