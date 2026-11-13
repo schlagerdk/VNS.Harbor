@@ -354,6 +354,10 @@ In this order:
     packages' own code in wwwroot/App_Plugins (VNS.Harbor's dashboard, uSync and VNS.Umbraco updates) never reached it.
     wwwroot/App_Plugins now always goes along (rsync, and rclone for Windows); the rest of wwwroot stays as it is.
     On linux-01: mhs's staging, production and test got the dashboard, their media untouched.
+  - [x] 4o Found 2026-11-13: an environment connected after the admin moved to the release got an empty Harbor address
+    (the admin was found by its service's WorkingDirectory in /var/www). The admin site is now found by its login
+    (app/config.json) wherever its code runs (harbor/install/admin.is_admin_site; lib/site_permissions.py and the
+    servers' handshake the same). mhs's environments on linux-01 connected again.
   - [ ] 4e REPOSITORY schlagerdk/VNS.Harbor, VERSION 1.0.0, CHANGELOG; tried with dev/deploy.sh and a real update on
     linux-02 from 1.3.0. Martin releases it.
 - [ ] 5 Martin deletes VNS.Linux on GitHub once every server has taken 1.3.0.

@@ -95,10 +95,15 @@ def runs_package(system, site, environment):
 def admin_url(system):
     """Harbor's own address: the admin site on this server (the service that runs /var/www/<admin>/app), as its Apache
     config names it. Empty when there is none."""
+    from harbor.install.admin import admin_sites
+    found = admin_sites(system)
+    if found:
+        return address(system, site_named(system, found[0]), "main")
+    # Its service: its code in its folder (VNS 1.x), or its data there and its code in the release (Harbor)
     services = system.path("/etc/systemd/system")
     for service in sorted(services.glob("*.service")) if services.is_dir() else []:
         try:
-            match = re.search(r"(?m)^WorkingDirectory=/var/www/([^/\n]+)/app$", service.read_text(errors="replace"))
+            match = re.search(r"(?m)^(?:WorkingDirectory|Environment=HARBOR_ADMIN_DATA)=/var/www/([^/\n]+)/app$", service.read_text(errors="replace"))
         except OSError:
             continue
         if match:

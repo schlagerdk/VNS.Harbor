@@ -143,9 +143,10 @@ def finish(result):
 
 
 def sites(system):
+    from harbor.install.admin import is_admin_site
     web = system.path("/var/www")
     return [path.name for path in sorted(web.iterdir()) if path.is_dir() and not path.is_symlink()
-            and (path / "scripts").is_dir() and not (path / "app/manage.py").exists()] if web.is_dir() else []
+            and (path / "scripts").is_dir() and not is_admin_site(path) and not (path / "app/manage.py").exists()] if web.is_dir() else []
 
 
 def dry_run(system, name=""):

@@ -1,47 +1,7 @@
-﻿@charset "UTF-8";
-@import url("https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css");
+@charset "UTF-8";
+@import url("https://cdn.jsdelivr.net/npm/bootstrap-icons@1.13.2/font/bootstrap-icons.css");
 @import url("https://fonts.googleapis.com/css?family=Open+Sans:300i,400,400i,600,600i,700,700i&display=swap");
 /* ---------------------------------- System Colors ----------------------------------  */
-/* Material Icons */
-.mdi {
-  /* Required */
-  font-family: "Material Design Icons";
-  vertical-align: middle;
-  /* Rules for sizing the icon. */
-  /* Rules for using icons as black on a light background. */
-  /* Rules for using icons as white on a dark background. */
-}
-.mdi-18 {
-  font-size: 18px;
-}
-.mdi-20 {
-  font-size: 20px;
-}
-.mdi-24 {
-  font-size: 24px;
-}
-.mdi-30 {
-  font-size: 30px;
-}
-.mdi-36 {
-  font-size: 36px;
-}
-.mdi-48 {
-  font-size: 48px;
-}
-.mdi.md-dark {
-  color: rgba(0, 0, 0, 0.54);
-}
-.mdi.md-dark.md-inactive {
-  color: rgba(0, 0, 0, 0.26);
-}
-.mdi.md-light {
-  color: rgb(255, 255, 255);
-}
-.mdi.md-light.md-inactive {
-  color: rgba(255, 255, 255, 0.3);
-}
-
 /* ---------------------------------- HTML5 Tags ----------------------------------  */
 article, aside, details, figcaption, figure, footer, header, hgroup, main, nav, section, summary {
   display: block;
@@ -258,12 +218,12 @@ input[type=button], input[type=submit] {
   border-radius: 0;
 }
 
-input[type=tel], input[type=email], input[type=number], input[type=text], input[type=search] {
+input[type=tel], input[type=email], input[type=number], input[type=text], input[type=password], input[type=search] {
   border-radius: 2px;
   border-color: #00727e;
 }
 
-input.focus, input:focus, input.active.focus, input.active:focus, input:active.focus, input:active:focus, input.form-control:focus {
+input.focus, input:focus, input.active.focus, input.active:focus, input.form-control:focus, textarea.focus, textarea:focus, textarea.active.focus, textarea.active:focus, textarea.form-control:focus, .btn.focus, .btn:focus, .btn.active.focus, .btn.active:focus, .btn.form-control:focus {
   border-color: #00727e;
   outline-width: 0 !important;
   outline: none !important;
@@ -337,8 +297,8 @@ input[type=radio]:after {
   width: 17px;
   height: 17px;
   border-radius: 17px;
-  top: -3px;
-  left: -2px;
+  top: -5px;
+  left: -4px;
   background-color: #fff;
   position: relative;
   content: "";
@@ -350,8 +310,8 @@ input[type=radio]:checked:after {
   width: 17px;
   height: 17px;
   border-radius: 17px;
-  top: -3px;
-  left: -2px;
+  top: -5px;
+  left: -4px;
   border: 0px solid white;
   position: relative;
   content: "";
@@ -370,6 +330,16 @@ input[type=radio]:checked:after {
   cursor: pointer;
 }
 
+@media (max-width: 576px) {
+  input[type=radio]:after {
+    top: -2px;
+    left: -1px;
+  }
+  input[type=radio]:checked:after {
+    top: -2px;
+    left: -1px;
+  }
+}
 /* ---------------------------------- Select ---------------------------------- */
 select.focus, select:focus, select.active.focus, select.active:focus, select:active.focus, select:active:focus, select.form-control:focus {
   border-color: #00727e;
@@ -380,16 +350,29 @@ select.focus, select:focus, select.active.focus, select.active:focus, select:act
   -webkit-box-shadow: none !important;
 }
 
-.select2-selection__rendered {
-  line-height: 38px !important;
+.select2-selection {
+  min-height: 40px !important;
 }
 
-.select2-selection {
-  height: 38px !important;
+.select2-selection--multiple .select2-search__field {
+  width: auto !important;
+  height: 22px !important;
+  margin-top: 8px !important;
 }
 
 .select2-selection__arrow {
-  height: 38px !important;
+  height: 40px !important;
+}
+
+.select2-selection--single {
+  border-radius: 2px !important;
+}
+.select2-selection--single .select2-selection__rendered {
+  line-height: 38px !important;
+}
+
+.select2-selection--single, .select2-selection--multiple {
+  border-color: #ced4da !important;
 }
 
 .select2-container--default .select2-results__option--highlighted[aria-selected] {
@@ -560,9 +543,6 @@ select.focus, select:focus, select.active.focus, select.active:focus, select:act
   margin: 0;
   margin-bottom: 30px;
 }
-.alert .mdi {
-  font-size: 40px;
-}
 .alert .headline {
   font-weight: 600;
   font-size: 20px;
@@ -572,11 +552,6 @@ select.focus, select:focus, select.active.focus, select.active:focus, select:act
   color: #D14646;
 }
 
-@media (max-width: 576px) {
-  .alert .mdi {
-    font-size: 30px;
-  }
-}
 /* ---------------------------------- Spinner ---------------------------------- */
 .spinner-border {
   color: #00727e;
@@ -661,91 +636,71 @@ select.focus, select:focus, select.active.focus, select.active:focus, select:act
 }
 /* ---------------------------------- Slanted ---------------------------------- */
 .slanted-top-left {
-  -webkit-clip-path: polygon(0% 50px, 100% 0%, 100% 100%, 0% 100%);
   clip-path: polygon(0% 50px, 100% 0%, 100% 100%, 0% 100%);
 }
 .slanted-top-right {
-  -webkit-clip-path: polygon(0 0, 100% 50px, 100% 100%, 0 100%);
   clip-path: polygon(0 0, 100% 50px, 100% 100%, 0 100%);
 }
 .slanted-bottom-left {
-  -webkit-clip-path: polygon(0 0, 100% 0, 100% 100%, 0 calc(100% - 50px));
   clip-path: polygon(0 0, 100% 0, 100% 100%, 0 calc(100% - 50px));
 }
 .slanted-bottom-right {
-  -webkit-clip-path: polygon(0% 0%, 100% 0, 100% calc(100% - 50px), 0% 100%);
   clip-path: polygon(0% 0%, 100% 0, 100% calc(100% - 50px), 0% 100%);
 }
 
 @media (max-width: 992px) {
   .slanted-top-left {
-    -webkit-clip-path: polygon(0% 40px, 100% 0%, 100% 100%, 0% 100%);
     clip-path: polygon(0% 40px, 100% 0%, 100% 100%, 0% 100%);
   }
   .slanted-top-right {
-    -webkit-clip-path: polygon(0 0, 100% 40px, 100% 100%, 0 100%);
     clip-path: polygon(0 0, 100% 40px, 100% 100%, 0 100%);
   }
   .slanted-bottom-left {
-    -webkit-clip-path: polygon(0 0, 100% 0, 100% 100%, 0 calc(100% - 40px));
     clip-path: polygon(0 0, 100% 0, 100% 100%, 0 calc(100% - 40px));
   }
   .slanted-bottom-right {
-    -webkit-clip-path: polygon(0% 0%, 100% 0, 100% calc(100% - 40px), 0% 100%);
     clip-path: polygon(0% 0%, 100% 0, 100% calc(100% - 40px), 0% 100%);
   }
 }
 @media (max-width: 768px) {
   .slanted-top-left {
-    -webkit-clip-path: polygon(0% 30px, 100% 0%, 100% 100%, 0% 100%);
     clip-path: polygon(0% 30px, 100% 0%, 100% 100%, 0% 100%);
   }
   .slanted-top-right {
-    -webkit-clip-path: polygon(0 0, 100% 30px, 100% 100%, 0 100%);
     clip-path: polygon(0 0, 100% 30px, 100% 100%, 0 100%);
   }
   .slanted-bottom-left {
-    -webkit-clip-path: polygon(0 0, 100% 0, 100% 100%, 0 calc(100% - 30px));
     clip-path: polygon(0 0, 100% 0, 100% 100%, 0 calc(100% - 30px));
   }
   .slanted-bottom-right {
-    -webkit-clip-path: polygon(0% 0%, 100% 0, 100% calc(100% - 30px), 0% 100%);
     clip-path: polygon(0% 0%, 100% 0, 100% calc(100% - 30px), 0% 100%);
   }
 }
 @media (max-width: 576px) {
   .slanted-top-left {
-    -webkit-clip-path: polygon(0% 20px, 100% 0%, 100% 100%, 0% 100%);
     clip-path: polygon(0% 20px, 100% 0%, 100% 100%, 0% 100%);
   }
   .slanted-top-right {
-    -webkit-clip-path: polygon(0 0, 100% 20px, 100% 100%, 0 100%);
     clip-path: polygon(0 0, 100% 20px, 100% 100%, 0 100%);
   }
   .slanted-bottom-left {
-    -webkit-clip-path: polygon(0 0, 100% 0, 100% 100%, 0 calc(100% - 20px));
     clip-path: polygon(0 0, 100% 0, 100% 100%, 0 calc(100% - 20px));
   }
   .slanted-bottom-right {
-    -webkit-clip-path: polygon(0% 0%, 100% 0, 100% calc(100% - 20px), 0% 100%);
     clip-path: polygon(0% 0%, 100% 0, 100% calc(100% - 20px), 0% 100%);
   }
 }
 @media (max-width: 320px) {
   .slanted-top-left {
-    -webkit-clip-path: polygon(0% 10px, 100% 0%, 100% 100%, 0% 100%);
     clip-path: polygon(0% 10px, 100% 0%, 100% 100%, 0% 100%);
   }
   .slanted-top-right {
-    -webkit-clip-path: polygon(0 0, 100% 10px, 100% 100%, 0 100%);
     clip-path: polygon(0 0, 100% 10px, 100% 100%, 0 100%);
   }
   .slanted-bottom-left {
-    -webkit-clip-path: polygon(0 0, 100% 0, 100% 100%, 0 calc(100% - 10px));
     clip-path: polygon(0 0, 100% 0, 100% 100%, 0 calc(100% - 10px));
   }
   .slanted-bottom-right {
-    -webkit-clip-path: polygon(0% 0%, 100% 0, 100% calc(100% - 10px), 0% 100%);
     clip-path: polygon(0% 0%, 100% 0, 100% calc(100% - 10px), 0% 100%);
   }
 }

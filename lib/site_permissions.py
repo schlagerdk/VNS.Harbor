@@ -1,10 +1,22 @@
 """Repair application content permissions without following symbolic links."""
+import json
 import os
 from pathlib import Path
 import pwd
 import grp
 import re
 import stat
+
+
+def admin_data(folder):
+    """The admin site's app folder: its login (config.json), with the admin's code beside it (VNS 1.x) or not (Harbor)"""
+    if (Path(folder) / "manage.py").exists() and (Path(folder) / "config.json").exists():
+        return True
+    try:
+        config = json.loads((Path(folder) / "config.json").read_text())
+    except (OSError, ValueError):
+        return False
+    return isinstance(config, dict) and bool(config.get("secret_key"))
 
 
 def repair(root, service, uid, gid, web_root=Path("/var/www")):
@@ -15,7 +27,7 @@ def repair(root, service, uid, gid, web_root=Path("/var/www")):
     web_root = web_root.resolve()
     if root == web_root or not root.is_relative_to(web_root):
         raise ValueError("Expected a site folder inside /var/www")
-    if (root / "app/manage.py").exists() and (root / "app/config.json").exists():
+    if admin_data(root / "app"):
         raise ValueError("Admin site permissions must remain root-owned")
     target = root
     if service.is_file():
@@ -29,7 +41,7 @@ def repair(root, service, uid, gid, web_root=Path("/var/www")):
         target = target.resolve(strict=True)
         if not target.is_relative_to(root):
             raise ValueError("Service WorkingDirectory is outside the site")
-        if (target / "manage.py").exists() and (target / "config.json").exists():
+        if admin_data(target):
             raise ValueError("Admin site permissions must remain root-owned")
     elif (root / "app").is_dir():
         raise ValueError("App folder found without a service; cannot safely select content")

@@ -63,6 +63,22 @@ class BackofficeTests(unittest.TestCase):
         self.run_harbor("state", "sync", "shop.dk")
         self.assertTrue(secret.is_file())
 
+    def test_harbors_address_is_the_admin_sites_wherever_its_code_runs(self):
+        """Found by its login (config.json), with its code in the release (Harbor) as well as in its folder (VNS 1.x):
+        an environment connected after the admin moved to the release got an empty address"""
+        admin = self.root / "var/www/admin.example.test"
+        (admin / "app").mkdir(parents=True)
+        (admin / "app/config.json").write_text('{"secret_key": "k"}')
+        (self.root / "etc/systemd/system/admin.example.test.service").write_text(
+            "[Service]\nWorkingDirectory=/opt/harbor/current/admin\nEnvironment=HARBOR_ADMIN_DATA=/var/www/admin.example.test/app\n")
+        (self.root / "etc/apache2/sites-available/admin.example.test.conf").write_text(
+            "<VirtualHost *:443>\n  ServerName admin.example.test\n  SSLEngine On\n</VirtualHost>\n")
+        from unittest import mock
+        with mock.patch.dict("os.environ", {"VNS_WEB_ROOT": "/var/www"}):
+            self.run_harbor("site", "connect", "shop.dk")
+        data = json.loads((self.root / "var/www/shop.dk/_publish/vns-harbor.json").read_text())
+        self.assertEqual(data["harbor"], "https://admin.example.test")
+
     def test_a_link_is_signed_once_for_the_chosen_user(self):
         with self.assertRaises(Exception):
             backoffice.login_link(self.system, "shop.dk")

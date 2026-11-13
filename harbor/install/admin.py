@@ -45,18 +45,23 @@ def web_root():
     return os.environ.get("VNS_WEB_ROOT") or "/var/www"
 
 
+def is_admin_site(path):
+    """A site folder that is the admin's: its app folder holds the admin's login (config.json), whether the admin's code
+    is there (VNS 1.x) or in the release (Harbor)"""
+    app = Path(path) / "app"
+    if (app / "manage.py").exists() and (app / "config.json").exists():
+        return True
+    try:
+        config = json.loads((app / "config.json").read_text())
+    except (OSError, ValueError):
+        return False
+    return isinstance(config, dict) and bool(config.get("secret_key"))
+
+
 def admin_sites(system):
-    """The admin sites here: a folder in /var/www whose app folder holds the admin's login (config.json)"""
-    found = []
+    """The admin sites here"""
     root = system.path(web_root())
-    for path in sorted(root.iterdir()) if root.is_dir() else []:
-        try:
-            config = json.loads((path / "app/config.json").read_text())
-        except (OSError, ValueError):
-            continue
-        if isinstance(config, dict) and config.get("secret_key"):
-            found.append(path.name)
-    return found
+    return [path.name for path in sorted(root.iterdir()) if path.is_dir() and is_admin_site(path)] if root.is_dir() else []
 
 
 def choose(system, name):

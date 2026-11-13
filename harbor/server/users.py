@@ -9,6 +9,7 @@ from the admin (the terminal, phase 8c) and, later, over SFTP (8d).
 import hashlib
 import re
 
+from harbor.install.admin import is_admin_site
 from harbor.core.system import Stop
 from harbor.state.store import read_json, write_json
 
@@ -250,7 +251,7 @@ def site_folders(system):
     web = system.path(WEB_ROOT)
     for path in sorted(web.iterdir()) if web.is_dir() else []:
         if (path.is_dir() and not path.is_symlink() and SITE_NAME.fullmatch(path.name)
-                and not ((path / "app/manage.py").exists() and (path / "app/config.json").exists())):
+                and not is_admin_site(path)):
             yield path
 
 

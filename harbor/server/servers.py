@@ -47,7 +47,8 @@ for name in sorted(os.listdir("/etc/systemd/system")) if os.path.isdir("/etc/sys
         text = open(os.path.join("/etc/systemd/system", name)).read()
     except OSError:
         continue
-    match = re.search(r"(?m)^WorkingDirectory=/var/www/([^/\n]+)/app$", text)
+    # The admin site: its code in its folder (VNS 1.x), or its data there and its code in the release (Harbor)
+    match = re.search(r"(?m)^(?:WorkingDirectory|Environment=HARBOR_ADMIN_DATA)=/var/www/([^/\n]+)/app$", text)
     if match:
         admin = match.group(1)
 found["admin"] = admin
