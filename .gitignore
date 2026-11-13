@@ -1,15 +1,16 @@
 .DS_Store
-misc/*
+
+# Notes and scripts of your own, not part of the solution
+misc/
 
 # Local tools, such as make_release.sh, not part of the solution
 .local/
 
-# Python compile cache
+# Python's caches
 __pycache__/
 *.pyc
+.pytest_cache/
 
-# The admin's activity log is the server's own, and a run from the repository writes one beside the app
-apache/solutionfiles/admin/app/audit.log
 # The VNS.Harbor package's build output
 nuget/bin/
 nuget/obj/
