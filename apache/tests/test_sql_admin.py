@@ -16,6 +16,13 @@ from apache.tests.app_targets import add_target_helpers
 
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def frozen(path):
+    """A script in sql/ as it was before it ran harbor (tests/legacy/sql): harbor is compared with it in tests/test_sql.py"""
+    copy = ROOT / "tests/legacy" / path.relative_to(ROOT)
+    return copy if copy.is_file() else path
+
 spec = importlib.util.spec_from_file_location("sql_admin", ROOT / "sql/lib/admin.py")
 sql = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(sql)
@@ -667,9 +674,9 @@ class SqlApiTests(unittest.TestCase):
             self.assertEqual(cwd, str(ROOT / "sql"))
 
     def test_tools_installer_is_client_only_and_shared_with_server_setup(self):
-        installer = (ROOT / "sql/install_tools.sh").read_text()
+        installer = frozen(ROOT / "sql/install_tools.sh").read_text()
         shared = (ROOT / "sql/lib/install_tools.sh").read_text()
-        server = (ROOT / "sql/install_server.sh").read_text()
+        server = frozen(ROOT / "sql/install_server.sh").read_text()
         self.assertIn('source "${_sqlDir}/lib/install_tools.sh"', installer)
         self.assertIn('source "${_sqlDir}/lib/install_tools.sh"', server)
         self.assertNotIn("mssql-conf setup", installer)

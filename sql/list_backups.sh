@@ -1,4 +1,3 @@
 #!/bin/bash
-clear
-ls -la --color /var/opt/mssql/backup
-echo /var/opt/mssql/backup
+# Usage: list_backups.sh. It is now `harbor sql list-backups`.
+exec "$(dirname "$(readlink -f "$0")")/../bin/harbor" sql list-backups "$@"

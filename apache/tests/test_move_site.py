@@ -119,7 +119,7 @@ class HttpSettingsTests(unittest.TestCase):
 
 
 class ScriptTests(unittest.TestCase):
-    script = (APACHE / "move_site.sh").read_text()
+    script = (APACHE.parent / "tests/legacy/move_site.sh").read_text()
 
     def test_script_is_valid_bash(self):
         subprocess.run(["bash", "-n", str(APACHE / "move_site.sh")], check=True)
@@ -177,7 +177,7 @@ class AdminTests(unittest.TestCase):
         self.assertIn('extra_env["VNS_MOVE_HTTPS"] = extra_env["VNS_PROD_HTTPS"]', self.app)
         self.assertIn('extra_env["VNS_PROD_HTTPS"] = "n"', self.app)
         self.assertIn("const otherServer = moving && !same", self.source)
-        move_env = (APACHE / "move_env.sh").read_text()
+        move_env = (APACHE.parent / "tests/legacy/move_env.sh").read_text()
         self.assertIn('issue_wanted_certificate "${_moving}"', move_env)
         self.assertIn('issue_wanted_certificate "${_finalId}"', move_env)
 
@@ -188,7 +188,7 @@ class AdminTests(unittest.TestCase):
         self.assertIn("const expectNow = () => (typeof expected === \"function\" ? expected() : expected) || \"\";", self.source)
 
     def test_a_certificate_that_fails_leaves_the_site_on_http(self):
-        script = (APACHE / "move_site.sh").read_text()
+        script = (APACHE.parent / "tests/legacy/move_site.sh").read_text()
         receive = script[script.index("receive() {"):script.index("if [[ ${1:-} == --receive ]]")]
         self.assertIn('bash ./test_action.sh "${_main}" issue_certificate --yes || _failed+=("${_main}")', receive)
         self.assertIn("They answer on HTTP", receive)
@@ -200,7 +200,7 @@ class AdminTests(unittest.TestCase):
         self.assertIn("A site with environments keeps its project name", self.app)
 
     def test_renamed_site_is_rewritten_on_the_new_server_and_built_with_a_new_project(self):
-        script = (APACHE / "move_site.sh").read_text()
+        script = (APACHE.parent / "tests/legacy/move_site.sh").read_text()
         self.assertIn('python3 lib/copy_site.py rename "${_rootPath}/${_from}" "${_rootPath}/${_to}"', script)
         self.assertIn('[[ -z ${_toProject} ]] || _build=${_to}', script)
         self.assertIn('copy_to_new_server "${_folders[_index]}/" "${_folder}/"', script)

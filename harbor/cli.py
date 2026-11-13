@@ -118,6 +118,30 @@ def _data_sync(args, system):
     data_sync(system, args.site, args.action, args.source, args.destinations, args.option[0] if args.option else "")
 
 
+def _move_environment(args, system):
+    from harbor.environments.move import move_environment
+    move_environment(system, args.site, args.environment)
+
+
+def _move_site(args, system):
+    from harbor.sites.move import move_site
+    move_site(system, args.site)
+
+
+def _receive_sites(args, system):
+    from harbor.sites.move import receive
+    receive(system, args.incoming, args.sql_server)
+
+
+def _sql(args, system):
+    from harbor.sql import databases, server
+    name = args.command.replace("-", "_")
+    module = server if name in ("install_server", "update_server", "uninstall_server", "install_sql_tools", "uninstall_sql_tools",
+                                "set_sa_password") else databases
+    words = {"copy": 2, "drop": 2, "create": 1, "restore": 1}.get(name, 0)
+    getattr(module, name)(system, *getattr(args, "names", [])[:words])
+
+
 def _environment_binding(args, system):
     from harbor.environments.bindings import change_binding
     change_binding(system, args.site, args.binding, args.aliases, yes=args.confirm == "--yes" or args.yes, target=target())
@@ -188,6 +212,14 @@ def parser():
     command.add_argument("main")
     command.add_argument("environment", nargs="?", default="")
     command.set_defaults(handler=_release_site)
+    command = site.add_parser("move", help="migrate or copy a site with its environments here to another server, "
+                              "the server in VNS_MOVE_* (was move_site.sh)")
+    command.add_argument("site")
+    command.set_defaults(handler=_move_site)
+    command = site.add_parser("receive", help="on the new server: set up the sites that arrived in a folder (was move_site.sh --receive)")
+    command.add_argument("incoming")
+    command.add_argument("sql_server", nargs="?", default="")
+    command.set_defaults(handler=_receive_sites)
     command = site.add_parser("binding", help="change the binding and aliases of the site here (was change_binding.sh)")
     command.add_argument("site", nargs="?", default="")
     command.add_argument("binding", nargs="?", default="", help="the new binding, or * to answer any name")
@@ -195,6 +227,29 @@ def parser():
     command.add_argument("confirm", nargs="?", default="", help="--yes")
     command.add_argument("--yes", action="store_true")
     command.set_defaults(handler=_change_binding)
+
+    sql = groups.add_parser("sql", help="the local SQL Server and its databases").add_subparsers(dest="command", required=True, metavar="<command>")
+    for name, words, text in (
+            ("create", 1, "a database with a login of its own (was create_db.sh)"),
+            ("copy", 2, "a database copied to a new one with a login of its own (was copy_db.sh)"),
+            ("restore", 1, "a database from its backup, with a login of its own (was restore_db.sh)"),
+            ("drop", 2, "a database, and its backup if wanted (was drop_db.sh)"),
+            ("list-databases", 0, "the databases (was list_dbs.sh)"),
+            ("list-backups", 0, "the backup files (was list_backups.sh)"),
+            ("backup-everything", 0, "every database backed up (was cron/backup_everything.sh)"),
+            ("shrink-logs", 0, "every log shrunk (was cron/shrink_logs.sh)"),
+            ("add-to-crontab", 0, "the log shrink and backup in root's crontab (was cron/add_to_crontab.sh)"),
+            ("install-server", 0, "SQL Server, the sa password in the scripts and sqlcmd (was install_server.sh)"),
+            ("update-server", 0, "SQL Server and sqlcmd to their latest versions (was update_server.sh)"),
+            ("uninstall-server", 0, "SQL Server removed, and sqlcmd if wanted (was uninstall_server.sh)"),
+            ("install-sql-tools", 0, "sqlcmd without SQL Server (was install_tools.sh)"),
+            ("uninstall-sql-tools", 0, "sqlcmd removed (was uninstall_tools.sh)"),
+            ("set-sa-password", 0, "the sa password in the scripts in sql/ (was set_sa_password.sh)")):
+        command = sql.add_parser(name, help=text)
+        if words:
+            # As the script: what is not given is asked for, and more is not read
+            command.add_argument("names", nargs="*", default=[])
+        command.set_defaults(handler=_sql)
 
     environment = groups.add_parser("env", help="an environment of a site, chosen with VNS_TARGET").add_subparsers(dest="command", required=True, metavar="<command>")
     command = environment.add_parser("action", help="issue_certificate or change_env where the environment is (was prod_action.sh)")
@@ -230,6 +285,11 @@ def parser():
     # --dry-run, or anything else, which is refused as the script refused it
     command.add_argument("option", nargs=argparse.REMAINDER, help="--dry-run")
     command.set_defaults(handler=_data_sync)
+    command = environment.add_parser("move", help="migrate or copy an environment to another folder or server, "
+                                     "the destination in VNS_PROD_* (was move_env.sh)")
+    command.add_argument("site")
+    command.add_argument("environment", nargs="?", default="")
+    command.set_defaults(handler=_move_environment)
     command = environment.add_parser("binding", help="change the binding and aliases where the environment is (was change_binding_prod.sh)")
     command.add_argument("site", nargs="?", default="")
     command.add_argument("binding", nargs="?", default="")

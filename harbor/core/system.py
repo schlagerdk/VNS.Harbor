@@ -91,11 +91,18 @@ class System:
         """Whether a program is installed, as command -v"""
         return shutil.which(program) is not None
 
-    def ask(self, prompt):
-        """A question in the terminal, as read -r -p. Nothing when there is nobody to answer."""
+    def ask(self, prompt, secret=False):
+        """A question in the terminal, as read -r -p. Nothing when there is nobody to answer. A secret is not shown
+        (read -s), and stops the command when nobody answers, as the scripts did."""
         try:
+            if secret:
+                import getpass
+                return getpass.getpass(prompt)
             return input(prompt)
         except EOFError:
+            if secret:
+                print()
+                raise Stop("", 1) from None
             return ""
 
     def event(self, kind, text):
@@ -145,8 +152,9 @@ class RecordingSystem(System):
         starts = sorted((start for start in self.answers if line == start or line.startswith(start + " ")), key=len, reverse=True)
         answer = self.answers[starts[0]] if starts else ""
         if callable(answer):
-            # An answer that takes two arguments gets what came on stdin too
-            answer = answer(argv, input) if len(inspect.signature(answer).parameters) == 2 else answer(argv)
+            # An answer that takes two arguments gets what came on stdin too, one that takes three also the variables
+            given = len(inspect.signature(answer).parameters)
+            answer = answer(argv, input, dict(env or {})) if given == 3 else answer(argv, input) if given == 2 else answer(argv)
         result = answer if isinstance(answer, Result) else Result(0, answer + ("\n" if answer else ""), "")
         if check and not result.ok:
             raise CommandFailed(argv, result)
@@ -161,8 +169,10 @@ class RecordingSystem(System):
     def which(self, program):
         return program in self.programs
 
-    def ask(self, prompt):
+    def ask(self, prompt, secret=False):
         self.asked.append(prompt)
+        if not self.replies and secret:
+            raise Stop("", 1)
         return self.replies.pop(0) if self.replies else ""
 
     def say(self, text):

@@ -20,7 +20,14 @@ Where the work stands, so it can go on from here after any interruption.
 5. Other servers: agent or full admin, installed and updated from the admin over SSH, version handshake.
 6. Migration: dry run, import, verify, generated site scripts to a backup, rollback.
 7. 2.0: the `/vns` wrappers go.
-8. **NuGet package VNS.Harbor for Umbraco 17+** (asked 2026-11-13; the new backoffice only): a "VNS Harbor" dashboard tab in Umbraco's backoffice
+8. **Users on the server** (asked 2026-11-13; after phase 4, or right after phase 3): each admin user gets a Linux user
+   (no sudo), made and removed with the user. Files access to a site becomes access to its folder through a group per
+   site and ACLs (the site keeps running as www-data, owners stay). Grants and revokes in the admin update them at once.
+   - The terminal of a user who is not an administrator runs as that user, so it reaches only what they may.
+   - SFTP: OpenSSH's internal-sftp for these users only (Match Group vns-sftp, ForceCommand internal-sftp), locked to a
+     folder that holds only their sites (bind mounts), password or key managed in the admin, on/off per user and server.
+   - Depends on phase 2: scripts, .vns-publish and settings with passwords must be out of the site folders first.
+9. **NuGet package VNS.Harbor for Umbraco 17+** (asked 2026-11-13; the new backoffice only): a "VNS Harbor" dashboard tab in Umbraco's backoffice
    (beside "Welcome to Umbraco", "Redirect URL Management"), where an editor syncs settings or data from the site
    they are in to the environments they choose, with the same rules as the admin (who may send, who may receive, what
    each takes part with), and the steps shown as they run.
@@ -35,6 +42,15 @@ Where the work stands, so it can go on from here after any interruption.
    - The tab first checks that it reaches the managing Harbor. If it does not, it says the site needs access to Harbor
      at its address over HTTPS to sync from here, and the sync buttons stay off.
    - Depends on phase 2 (settings and the token out of the site folder). Not on phase 5.
+
+## Kept as files that can be changed by hand (asked 2026-11-13)
+- `apache/solutionfiles/csharp/umbraco/project` (the Umbraco site a new site starts from: Program.cs, the csproj,
+  appsettings.json, wwwroot, Views, uSync) changes over time. It stays plain files in Harbor, which anyone can
+  overwrite, change, remove or add to, with no code to change. `harbor site create` copies what is there; when Harbor
+  moves to /opt/harbor (phase 3), a server can have its own copy that is used instead of the bundled one, and an
+  update never overwrites it.
+- `sql/clean_umbraco7_db.sh` and `sql/cron/delete_old_2dm_data.sh` (with their .sql) are custom scripts for some
+  servers: not part of harbor, kept as they are where they exist (also by the bridge release and the cutover).
 
 ## The cutover, when everything is done and works (asked 2026-11-13)
 In this order:
@@ -76,8 +92,9 @@ In this order:
 - [x] 1d adopt_site → `harbor site adopt` / `harbor site release`, carry_snippets → `harbor env carry-snippets` (tests/test_sites_adopt.py)
 - [x] 1d sync_env → `harbor env sync` (tests/test_env_sync.py, rsync run for real on both sides); `Site` honours VNS_WEB_ROOT as common.sh does (a test hook)
 - [x] 1d data_sync → `harbor env data-sync` (tests/test_env_data.py); it uses apache/lib/data_sync.py's functions directly and runs the settings and data syncs in-process
-- [ ] 1d move_env, move_site
-- [ ] 1e sql/*
+- [x] 1d move_env → `harbor env move` (tests/test_env_move.py: each case on two fake servers built alike, rsync real, create_prod/publish_prod played by a fake bash); a real copy linux-01 → linux-02 failed cleanly on the network (linux-01 cannot reach linux-02 on SSH yet) and was undone
+- [x] 1d move_site → `harbor site move` / `harbor site receive` (tests/test_sites_move.py: two fake servers per side; the script receives with its own --receive, harbor with harbor site receive). Not yet tried for real: linux-01 → linux-02 SSH is blocked in the network (linux-02 → linux-01 internally is open, but needs a login)
+- [x] 1e sql/* → `harbor sql …` (tests/test_sql.py); sqlcmd gets the sa password in SQLCMDPASSWORD instead of -P. The wrappers keep the line `sa -U sa -P '…' -i scripts/<x>.sql`, so set_sa_password.sh, install_server.sh and update.sh (which reads drop_db.sh) find and keep the password as before. The custom scripts stay outside harbor
 
 ## How a script is moved
 1. Freeze the script as it is in `tests/legacy/` (and `tests/legacy/lib/` for what it sources).

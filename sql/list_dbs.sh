@@ -1,6 +1,6 @@
 #!/bin/bash
-cd "$(dirname "$0")"
-clear
-# -W trims padding, -s sets a column separator; sed drops the dashed header line and column re-aligns the output
-/opt/mssql-tools18/bin/sqlcmd -C -S LOCALHOST -U sa -P '@SA_PASSWORD@' -W -s '|' -i scripts/list_dbs.sql |
-	sed '2d' | column -t -s '|'
+# Usage: list_dbs.sh. It is now `harbor sql list-databases`.
+# The sa password, as set_sa_password.sh and updates set it here: sqlcmd gets it in SQLCMDPASSWORD
+sa() { export SQLCMDPASSWORD=$4; }
+sa -U sa -P '@SA_PASSWORD@' -i scripts/list_dbs.sql
+exec "$(dirname "$(readlink -f "$0")")/../bin/harbor" sql list-databases "$@"

@@ -1039,7 +1039,7 @@ class MoveEnvironmentTests(AdoptSiteTests):
 
     def setUp(self):
         super().setUp()
-        move = (APACHE / "move_env.sh").read_text().replace('[[ $EUID -eq 0 ]] || exec sudo "$0" "$@"\n', "")
+        move = (APACHE.parent / "tests/legacy/move_env.sh").read_text().replace('[[ $EUID -eq 0 ]] || exec sudo "$0" "$@"\n', "")
         move = move.replace("/etc/", f"{self.etc}/").replace("_rootsFolder=/var/lib/vns-roots", f"_rootsFolder={self.root}/roots")
         (self.apache / "move_env.sh").write_text(move)
         (self.root / "server").mkdir()
@@ -1357,7 +1357,7 @@ if [[ $destination == *:* ]]; then destination=$FAKE_REMOTE/www/${destination#*:
 mkdir -p "$destination"
 cp -R "${source%/}/." "$destination"
 """)
-        move = (APACHE / "move_env.sh").read_text().replace('[[ $EUID -eq 0 ]] || exec sudo "$0" "$@"\n', "")
+        move = (APACHE.parent / "tests/legacy/move_env.sh").read_text().replace('[[ $EUID -eq 0 ]] || exec sudo "$0" "$@"\n', "")
         move = move.replace("_rootsFolder=/var/lib/vns-roots", f"_rootsFolder={self.root}/roots")
         move = move.replace('_oldService=/etc/', f'_oldService={self.etc}/').replace('_oldConf=/etc/', f'_oldConf={self.etc}/')
         (self.apache / "move_env.sh").write_text(move)
@@ -1458,7 +1458,7 @@ cp -R "${source%/}/." "$destination"
         (self.www / "dev.example.test/_x").mkdir()
         (self.etc / "systemd/system/x.test.service").write_text("[Service]\n")
         (self.etc / "apache2/sites-available/x.test.conf").write_text("\n")
-        move = (APACHE / "move_env.sh").read_text().replace('[[ $EUID -eq 0 ]] || exec sudo "$0" "$@"\n', "")
+        move = (APACHE.parent / "tests/legacy/move_env.sh").read_text().replace('[[ $EUID -eq 0 ]] || exec sudo "$0" "$@"\n', "")
         move = move.replace('_oldService=/etc/', f'_oldService={self.etc}/').replace('_oldConf=/etc/', f'_oldConf={self.etc}/')
         (self.apache / "move_env.sh").write_text(move)
         result = subprocess.run([BASH, str(self.apache / "move_env.sh"), "dev.example.test", "local"], capture_output=True, text=True,
@@ -1524,7 +1524,7 @@ cp -R "${source%/}/." "$destination"
         executable(self.bin / "rclone", FAKE_RCLONE)
         template = self.apache / "solutionfiles/csharp/prod-scripts/publish_prod.sh"
         template.write_text(template.read_text().replace("#!/bin/bash\n", '#!/bin/bash\necho "PREPARED ${VNS_MIGRATE_ONLY:-built}" >>"$FAKE_LOG"\nexit 0\n', 1))
-        move = (APACHE / "move_env.sh").read_text().replace('[[ $EUID -eq 0 ]] || exec sudo "$0" "$@"\n', "")
+        move = (APACHE.parent / "tests/legacy/move_env.sh").read_text().replace('[[ $EUID -eq 0 ]] || exec sudo "$0" "$@"\n', "")
         move = move.replace("_rootsFolder=/var/lib/vns-roots", f"_rootsFolder={self.root}/roots")
         (self.apache / "move_env.sh").write_text(move)
         executable(self.bin / "rsync", '#!/bin/bash\nexit 0\n')
@@ -1546,7 +1546,7 @@ cp -R "${source%/}/." "$destination"
         folder = self.scripts / "targets/windows"
         folder.mkdir()
         (folder / "publish_prod.sh").write_text("PROD_TARGET=windows\nPROD_FOLDER='win.test'\nPROD_BINDING='win.test'\n")
-        move = (APACHE / "move_env.sh").read_text().replace('[[ $EUID -eq 0 ]] || exec sudo "$0" "$@"\n', "")
+        move = (APACHE.parent / "tests/legacy/move_env.sh").read_text().replace('[[ $EUID -eq 0 ]] || exec sudo "$0" "$@"\n', "")
         (self.apache / "move_env.sh").write_text(move)
         result = subprocess.run([BASH, str(self.apache / "move_env.sh"), "dev.example.test", "windows"], capture_output=True, text=True,
                                 env=self.env | dict(VNS_PROD_TARGET="local", VNS_PROD_LOCAL_PATH=str(self.www / "x")))

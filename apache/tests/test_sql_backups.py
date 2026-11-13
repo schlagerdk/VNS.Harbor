@@ -9,6 +9,13 @@ from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def frozen(path):
+    """A script in sql/ as it was before it ran harbor (tests/legacy/sql): harbor is compared with it in tests/test_sql.py"""
+    copy = ROOT / "tests/legacy" / path.relative_to(ROOT)
+    return copy if copy.is_file() else path
+
 spec = importlib.util.spec_from_file_location("backup_permissions", ROOT / "sql/lib/backup_files.py")
 permissions = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(permissions)
@@ -32,7 +39,7 @@ class ScheduledBackupTests(unittest.TestCase):
                 'if [[ ${0##*/} == sqlcmd ]]; then exit "$SQL_EXIT"; fi\n'
                 'if [[ ${0##*/} == chown ]]; then exit "$CHOWN_EXIT"; fi\n')
             path.chmod(0o755)
-        source = (ROOT / "sql/cron/backup_everything.sh").read_text()
+        source = frozen(ROOT / "sql/cron/backup_everything.sh").read_text()
         source = source.replace('[[ $EUID -eq 0 ]]', "true").replace(
             "/var/opt/mssql/backup", str(self.backups)).replace(
             "/opt/mssql-tools18/bin/sqlcmd", str(self.bin / "sqlcmd"))
@@ -90,7 +97,7 @@ class ScheduledBackupTests(unittest.TestCase):
 
     def test_copy_restore_and_installer_use_shared_preparation(self):
         for name in ("copy_db.sh", "restore_db.sh", "install_server.sh"):
-            source = (ROOT / "sql" / name).read_text()
+            source = frozen(ROOT / "sql" / name).read_text()
             self.assertIn("source lib/backup_permissions.sh", source)
             self.assertIn("prepare_backup_permissions", source)
             self.assertNotIn("chmod -R 757", source)

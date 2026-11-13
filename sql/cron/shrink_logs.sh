@@ -1,9 +1,6 @@
 #!/bin/bash
-cd ${0%/*}
-
-TZ=":Europe/Copenhagen"
-
-echo "----- `date '+%d.%m.%Y %H:%M'` -------------------------------------------------------------------------------"
-/opt/mssql-tools18/bin/sqlcmd -C -S LOCALHOST -U sa -P '@SA_PASSWORD@' -i ../scripts/shrink_logs.sql
-echo "All logs now shrinked! -------------------------------------------------------- `date '+%d.%m.%Y %H:%M'` -----"
-echo ""
+# Usage: shrink_logs.sh. It is now `harbor sql shrink-logs`.
+# The sa password, as set_sa_password.sh and updates set it here: sqlcmd gets it in SQLCMDPASSWORD
+sa() { export SQLCMDPASSWORD=$4; }
+sa -U sa -P '@SA_PASSWORD@' -i scripts/shrink_logs.sql
+exec "$(dirname "$(readlink -f "$0")")/../../bin/harbor" sql shrink-logs "$@"
