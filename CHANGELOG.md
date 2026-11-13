@@ -2,6 +2,12 @@
 
 All notable changes to VNS.Linux are listed here, newest first.
 
+## [1.1.14] - 2026-11-13
+
+### Features
+
+- The test banner stands out clearly, with a warning icon, the environment name in a dark badge, larger bold text, stronger stripes and a dark bottom edge; it casts a shadow only once it sticks and pushes headers pinned to the top of the page down below it
+
 ## [1.1.13] - 2026-11-12
 
 ### Features
