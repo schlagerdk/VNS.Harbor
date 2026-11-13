@@ -1,30 +1,30 @@
 <Project Sdk="Microsoft.NET.Sdk.Razor">
-  <!-- VNS Harbor in Umbraco 17+: the backoffice login from the Harbor admin, and the dashboard that syncs this site's
+	<!-- VNS Harbor in Umbraco 17+: the backoffice login from the Harbor admin, and the dashboard that syncs this site's
        settings and data to its environments through Harbor. -->
-  <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
-    <ImplicitUsings>enable</ImplicitUsings>
-    <Nullable>enable</Nullable>
-    <PackageId>VNS.Harbor</PackageId>
-    <Version>18.0.3</Version>
-    <Authors>VNS</Authors>
-    <Description>VNS Harbor in Umbraco: log in from the Harbor admin, and sync settings and data to the site's environments.</Description>
-    <PackageTags>umbraco;umbraco-marketplace;vns;harbor</PackageTags>
-    <Copyright>2026</Copyright>
-    <PackageLicenseFile>LICENSE.md</PackageLicenseFile>
-    <PackageReadmeFile>README.md</PackageReadmeFile>
-    <PackageIcon>icon.png</PackageIcon>
-    <!-- The files in wwwroot are served from /App_Plugins/VNS.Harbor, where Umbraco finds its package manifest -->
-    <StaticWebAssetBasePath>/</StaticWebAssetBasePath>
-    <GenerateDocumentationFile>false</GenerateDocumentationFile>
-  </PropertyGroup>
-  <ItemGroup>
-    <None Include="docs\LICENSE.md" Pack="true" PackagePath="\" />
-    <None Include="docs\icon.png" Pack="true" PackagePath="\" />
-    <None Include="docs\README.md" Pack="true" PackagePath="\" />
-  </ItemGroup>
-  <ItemGroup>
-    <PackageReference Include="Umbraco.Cms.Web.Common" Version="[17.0.0, 19.0.0)" />
-    <PackageReference Include="Umbraco.Cms.Api.Management" Version="[17.0.0, 19.0.0)" />
-  </ItemGroup>
+	<PropertyGroup>
+		<TargetFramework>net10.0</TargetFramework>
+		<ImplicitUsings>enable</ImplicitUsings>
+		<Nullable>enable</Nullable>
+		<PackageId>VNS.Harbor</PackageId>
+		<Version>18.3.1</Version>
+		<Authors>VNS</Authors>
+		<Description>VNS Harbor in Umbraco: log in from the Harbor admin, and sync settings and data to the site's environments.</Description>
+		<PackageTags>umbraco;umbraco-marketplace;vns;harbor</PackageTags>
+		<Copyright>2026</Copyright>
+		<PackageLicenseFile>LICENSE.md</PackageLicenseFile>
+		<PackageReadmeFile>README.md</PackageReadmeFile>
+		<PackageIcon>icon.png</PackageIcon>
+		<!-- The files in wwwroot are served from /App_Plugins/VNS.Harbor, where Umbraco finds its package manifest -->
+		<StaticWebAssetBasePath>/</StaticWebAssetBasePath>
+		<GenerateDocumentationFile>false</GenerateDocumentationFile>
+	</PropertyGroup>
+	<ItemGroup>
+		<None Include="docs\LICENSE.md" Pack="true" PackagePath="\" />
+		<None Include="docs\icon.png" Pack="true" PackagePath="\" />
+		<None Include="docs\README.md" Pack="true" PackagePath="\" />
+	</ItemGroup>
+	<ItemGroup>
+		<PackageReference Include="Umbraco.Cms.Web.Common" Version="[18.3.1, 19.0.0)" />
+		<PackageReference Include="Umbraco.Cms.Api.Management" Version="[18.3.1, 19.0.0)" />
+	</ItemGroup>
 </Project>

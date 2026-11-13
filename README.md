@@ -99,7 +99,7 @@ Each action runs as a task with its steps shown as they come, and its output fol
 
 ## VNS.Harbor for Umbraco
 
-The NuGet package [VNS.Harbor](https://www.nuget.org/packages/VNS.Harbor) (Umbraco 17 and 18) links a site to the
+The NuGet package [VNS.Harbor](https://www.nuget.org/packages/VNS.Harbor) (Umbraco 18; its versions follow Umbraco's) links a site to the
 Harbor that publishes it:
 
 - The admin's **Backend** button logs straight into the backoffice.

@@ -46,7 +46,7 @@ class CreateSiteTests(unittest.TestCase):
         # The script ran the .NET installer with bash, which the fake server does not record
         # VNS.Harbor is added to an Umbraco 17+ site by harbor, which the script did not (test_umbraco_gets_vns_harbor)
         commands = [line for line in without_temporary(harbor_commands(system))
-                    if not line.startswith("bash TEMP ") and line != "dotnet add package VNS.Harbor"]
+                    if not line.startswith("bash TEMP ") and not line.startswith("dotnet add package VNS.Harbor")]
         self.assertEqual(commands, without_temporary(self.old.commands()))
         return result, system
 
@@ -72,11 +72,12 @@ class CreateSiteTests(unittest.TestCase):
                 self.assertTrue(any("dotnet publish" in line for line in system.commands))
 
     def test_umbraco_gets_vns_harbor(self):
-        for version, expected in (("18.3.1", True), ("17.2.0", True)):
+        # The package follows Umbraco's versions from 18.3.1: an Umbraco 17 site gets the last one for 17
+        for version, added in (("18.3.1", "dotnet add package VNS.Harbor"), ("17.2.0", "dotnet add package VNS.Harbor -v 18.0.3")):
             with self.subTest(version=version):
                 self.setUp()
                 result, system = self.compare("shop.dk", "csharp", "umbraco", version, "Shop", "shop.dk", "_publish", "Release", "y")
-                self.assertEqual("dotnet add package VNS.Harbor" in system.commands, expected)
+                self.assertIn(added, system.commands)
         # Not found on the package source: the site is made all the same, and it says so
         system = Server(tempfile.mkdtemp(), "x").system(answers={"dotnet add package VNS.Harbor": __import__("harbor.core.system", fromlist=["Result"]).Result(1)})
         self.assertEqual(main(["site", "create", "x.dk", "csharp", "umbraco", "18.3.1", "X", "x.dk", "_publish", "Release", "n"], system), 0, system.said)

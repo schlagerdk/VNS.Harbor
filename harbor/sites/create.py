@@ -25,6 +25,8 @@ from harbor.core.paths import LIB, SITE_TEMPLATES
 # The admin site reads these: the Umbraco version a site gets when none is given
 DEFAULT_UMBRACO_VERSION = "18.3.1"
 DEFAULT_UMBRACO13_VERSION = "13.16.4"
+# The last VNS.Harbor package for Umbraco 17; from 18.3.1 it follows Umbraco's own versions
+HARBOR_PACKAGE_FOR_UMBRACO17 = "18.0.3"
 DOTNET_VERSION = "net10.0"
 NEW_PUBLISH_FOLDER = "_development"
 
@@ -295,7 +297,9 @@ class Creation:
             # VNS Harbor in the backoffice (the Backend login and the sync dashboard), for Umbraco 17 and newer. A site is
             # made also when it cannot be added, for instance before it is on the package source.
             system.step("Install VNS Harbor package")
-            if not system.run("dotnet", "add", "package", "VNS.Harbor", cwd=root, check=False).ok:
+            # It follows Umbraco's versions from 18.3.1: an Umbraco 17 site gets the last one for 17
+            version = ["-v", HARBOR_PACKAGE_FOR_UMBRACO17] if major == 17 else []
+            if not system.run("dotnet", "add", "package", "VNS.Harbor", *version, cwd=root, check=False).ok:
                 system.warn("VNS.Harbor could not be added. Add it to the project later: dotnet add package VNS.Harbor")
         if major >= 18:
             system.say("Delete default wwwroot, views and default settings")

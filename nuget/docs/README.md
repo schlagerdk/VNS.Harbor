@@ -1,6 +1,6 @@
 # VNS Harbor
 
-VNS Harbor for Umbraco 17 and 18. It links an Umbraco site to VNS Harbor, the server admin that hosts and publishes it.
+VNS Harbor for Umbraco 18. Its versions follow Umbraco's: VNS.Harbor 18.3.1 is for Umbraco 18.3.1 and newer (for Umbraco 17, use VNS.Harbor 18.0.3). It links an Umbraco site to VNS Harbor, the server admin that hosts and publishes it.
 
 - **Log in from Harbor:** the Backend button in the Harbor admin opens the site's backoffice already logged in, with no Umbraco password stored or sent.
 - **Sync from the backoffice:** the dashboard sends this site's settings and data to its other environments (Development, Test, Staging, Production) through Harbor, and shows each step as it runs.
@@ -69,7 +69,7 @@ If Harbor cannot be reached, the dashboard says so and the sync buttons stay off
 
 ## Requirements
 
-- Umbraco 17 or 18 (the new backoffice), .NET 10
+- Umbraco 18.3.1 or newer (Umbraco 17: VNS.Harbor 18.0.3), .NET 10
 - A site published by VNS Harbor, so that `vns-harbor.json` is there
 
 ## License

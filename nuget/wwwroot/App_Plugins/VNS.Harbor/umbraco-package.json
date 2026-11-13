@@ -1,7 +1,7 @@
 {
   "$schema": "../../umbraco-package-schema.json",
   "name": "VNS.Harbor",
-  "version": "18.0.3",
+  "version": "18.3.1",
   "allowPublicAccess": false,
   "extensions": [
     {
