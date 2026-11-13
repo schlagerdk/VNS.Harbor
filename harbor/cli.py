@@ -376,7 +376,7 @@ def parser():
     command.set_defaults(handler=_server_init)
     command = server.add_parser("status", help="SQL Server, sqlcmd, the sa password, cron jobs, .NET and Node.js here, as JSON")
     command.set_defaults(handler=_server_status)
-    command = server.add_parser("cron", help="the backup and log shrink jobs in root's crontab: on, off, or upgrade (from the scripts of VNS 1.x to harbor)")
+    command = server.add_parser("cron", help="the backup and log shrink jobs in root's crontab: on, off, or upgrade (older jobs to harbor commands)")
     command.add_argument("state", choices=("on", "off", "upgrade"))
     command.set_defaults(handler=_server_cron)
     command = server.add_parser("dotnet", help="install a .NET channel (SDK and ASP.NET Core runtime), or update it to its newest patch")

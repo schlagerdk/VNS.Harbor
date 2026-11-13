@@ -51,12 +51,6 @@ date (`harbor self after-update`):
 - the sa password and the backup jobs
 - the admin site
 
-A server that still has the scripts in `/vns` is moved over in the same update:
-
-- every site is migrated: its settings go into Harbor, and its scripts folder goes
-- the admin runs from the release
-- `/vns` is backed up to `/var/lib/harbor/backups` and removed, once nothing on the server names it any more
-
 ## On the server
 
 | Path | What it is |

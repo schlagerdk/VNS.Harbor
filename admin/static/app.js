@@ -5996,7 +5996,7 @@ function askRemoveServer(item) {
 	const form = $("#form-server-action");
 	$("#server-action-icon").replaceChildren(svgIcon("server"));
 	$("#server-action-title").textContent = `Remove ${item.name}`;
-	$("#server-action-text").textContent = `Harbor forgets ${item.name} here. Its sites, the old /vns and its admin are never touched.`;
+	$("#server-action-text").textContent = `Harbor forgets ${item.name} here. Its sites and its admin are never touched.`;
 	const button = $("#server-action-ok");
 	button.textContent = "Remove server";
 	button.classList.add("danger");

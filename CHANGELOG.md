@@ -4,13 +4,13 @@ All notable changes to VNS Harbor are listed here, newest first.
 
 ## [1.0.0] - 2026-11-13
 
-The first release of VNS Harbor. A server that still has the scripts in /vns is moved over by its next update.
+The first release of VNS Harbor.
 
 ### Features
 
 - Harbor and the admin run from /opt/harbor: the admin is part of each release (its Python in /opt/harbor/venv, its data where it was), so an update or a rollback is always the whole of it
 - A new server is set up with install.sh: the base setup, the newest release, harbor server init (Apache, acme.sh, .NET, keep-alive) and harbor admin install
-- The update moves a server off /vns: every site migrated, the admin moved to the release, the keep-alive job on the release, and /vns backed up and removed once nothing names it
+- The update moves a server to Harbor in full: every site migrated, the admin and the keep-alive job on the release, and the old installation backed up and removed once nothing uses it
 - A clean layout: bin/harbor, harbor/, admin/, lib/ and templates/; the old scripts, site templates, update.sh and init.sh are gone
 - A new site gets no scripts folder: its tools are harbor commands, and an environment's settings go straight into Harbor
 - VNS Harbor has its own mark in the header, on the login and as the icon; the VNS logo is at the bottom as Powered by VNS
