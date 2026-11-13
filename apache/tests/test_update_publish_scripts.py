@@ -28,7 +28,8 @@ class UpdatePublishScriptsTests(unittest.TestCase):
         self.apache = Path(self.temp.name) / "apache"
         self.apache.mkdir()
         (self.apache / "lib").mkdir()
-        shutil.copy(APACHE / "lib/domain_names.py", self.apache / "lib")
+        # It runs the harbor package beside the real apache folder, as on a server
+        (self.apache / "lib/domain_names.py").symlink_to(APACHE / "lib/domain_names.py")
         templates = self.apache / "solutionfiles/csharp/scripts"
         templates.mkdir(parents=True)
         shutil.copy(APACHE / "solutionfiles/csharp/scripts/publish.sh", templates)

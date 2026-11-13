@@ -707,6 +707,9 @@ class WindowsActionTests(ScriptTestCase):
         super().setUp()
         self.apache = self.root / "apache"
         shutil.copytree(APACHE / "lib", self.apache / "lib", ignore=shutil.ignore_patterns("__pycache__"))
+        # It runs the harbor package beside the real apache folder, as on a server
+        (self.apache / "lib/domain_names.py").unlink()
+        (self.apache / "lib/domain_names.py").symlink_to(APACHE / "lib/domain_names.py")
         for script in ("prod_action.sh", "change_binding_prod.sh", "remote_site.sh", "delete_site.sh", "fix_permissions.sh", "sync_env.sh", "adopt_site.sh"):
             shutil.copy(APACHE / script, self.apache)
         common = self.apache / "lib/common.sh"
@@ -905,6 +908,9 @@ class AdoptSiteTests(unittest.TestCase):
         (self.etc / "systemd/system").mkdir(parents=True)
         (self.etc / "apache2/sites-available").mkdir(parents=True)
         shutil.copytree(APACHE / "lib", self.apache / "lib", ignore=shutil.ignore_patterns("__pycache__"))
+        # It runs the harbor package beside the real apache folder, as on a server
+        (self.apache / "lib/domain_names.py").unlink()
+        (self.apache / "lib/domain_names.py").symlink_to(APACHE / "lib/domain_names.py")
         shutil.copytree(APACHE / "solutionfiles/csharp", self.apache / "solutionfiles/csharp",
                         ignore=lambda folder, names: ["project"] if "project" in names else [])
         shutil.copy(APACHE / "adopt_site.sh", self.apache)
@@ -1749,7 +1755,8 @@ class WindowsUpdaterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "apache/lib").mkdir(parents=True)
-            (root / "apache/lib/domain_names.py").write_text((APACHE / "lib/domain_names.py").read_text())
+            # It runs the harbor package beside the real apache folder, as on a server
+            (root / "apache/lib/domain_names.py").symlink_to(APACHE / "lib/domain_names.py")
             scripts = root / "www/example.test/scripts"
             scripts.mkdir(parents=True)
             (scripts.parent / "App.csproj").write_text("<Project />\n")
@@ -1779,7 +1786,8 @@ class WindowsUpdaterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "apache/lib").mkdir(parents=True)
-            (root / "apache/lib/domain_names.py").write_text((APACHE / "lib/domain_names.py").read_text())
+            # It runs the harbor package beside the real apache folder, as on a server
+            (root / "apache/lib/domain_names.py").symlink_to(APACHE / "lib/domain_names.py")
             (root / "apache/solutionfiles/csharp/umbraco/prod-scripts").mkdir(parents=True)
             shutil.copy(APACHE / "solutionfiles/csharp/umbraco/prod-scripts/sync_prod.sh", root / "apache/solutionfiles/csharp/umbraco/prod-scripts")
             scripts = root / "www/example.test/scripts"

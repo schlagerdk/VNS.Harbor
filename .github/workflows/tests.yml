@@ -1,0 +1,19 @@
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  tests:
+    # As on the servers: bash 5 and the GNU tools, which a Mac does not have
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install what the admin's tests import
+        run: pip install flask
+      - name: Run every test
+        run: python -m unittest $(ls apache/tests/test_*.py tests/test_*.py | sed 's|\.py$||; s|/|.|g')

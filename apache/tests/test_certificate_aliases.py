@@ -80,7 +80,8 @@ class CertificateAliasTests(unittest.TestCase):
                             return text
 
                         (root / "lib/common.sh").write_text(fixture_source((APACHE / "lib/common.sh").read_text()))
-                        shutil.copy(APACHE / "lib/domain_names.py", root / "lib")
+                        # It runs the harbor package beside the real apache folder, as on a server
+                        (root / "lib/domain_names.py").symlink_to(APACHE / "lib/domain_names.py")
                         templates = root / "solutionfiles/common"
                         templates.mkdir(parents=True)
                         shutil.copy(APACHE / "solutionfiles/common/apache-temp.conf.tpl", templates)

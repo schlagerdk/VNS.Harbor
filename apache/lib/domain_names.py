@@ -1,43 +1,13 @@
-"""Canonical DNS names shared by the admin application and shell scripts."""
-import re
+"""Moved to harbor.core.names. This file stays for the admin site and the scripts that run it by its path."""
+import os
 import sys
-import unicodedata
 
+_install = os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
+if not os.path.isdir(os.path.join(_install, "harbor")):
+    sys.exit(f"The harbor package was not found in {_install}: it is installed beside the apache folder.")
+sys.path.insert(0, _install)
 
-def normalize_dns_name(value, fully_qualified=False):
-    if not isinstance(value, str) or not value or len(value) > 1024:
-        raise ValueError("Enter a DNS name, without scheme or path.")
-    try:
-        name = value.encode("idna").decode("ascii")
-    except UnicodeError as error:
-        raise ValueError("Invalid international DNS name.") from error
-    labels = name.split(".")
-    if (len(name) > 253 or (fully_qualified and len(labels) < 2)
-            or any(not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?", label)
-                   for label in labels)):
-        # The name is shown as Python writes it, so a space or a control character in it can be seen
-        raise ValueError(f"{value!r} is not a valid DNS name. Use letters, digits and hyphens between the dots "
-                         "(at most 63 characters each, 253 total).")
-    return name.lower() if fully_qualified else name
-
-
-def display_dns_name(value):
-    return ".".join(label.encode("ascii").decode("idna") if label.lower().startswith("xn--") else label
-                    for label in value.split("."))
-
-
-def normalize_site_name(value):
-    normalize_dns_name(value)
-    name = unicodedata.normalize("NFC", value)
-    if (len(name.encode("utf-8")) > 255
-            or not re.fullmatch(r"[^\W_](?:[^\W_]|[.-])*", name)):
-        raise ValueError("Invalid site folder name.")
-    return name
-
-
-def service_name(value):
-    return normalize_dns_name(value)
-
+from harbor.core.names import display_dns_name, normalize_dns_name, normalize_site_name, service_name  # noqa: E402,F401
 
 if __name__ == "__main__":
     try:
