@@ -81,7 +81,7 @@ export default class VnsHarborDashboard extends UmbElementMixin(LitElement) {
 				<uui-button look="primary" ?disabled=${this._busy || !destination.settings}
 					title=${destination.settings ? "Document types, templates, views, css and scripts" : "Sync setup does not let this site send settings there"}
 					@click=${() => this.#sync(destination, "settings")}>Sync settings</uui-button>
-				<uui-button look="outline" ?disabled=${this._busy || !kinds}
+				<uui-button look="primary" color="positive" ?disabled=${this._busy || !kinds}
 					title=${kinds ? `Merges ${kinds}: nothing is deleted there` : "Sync setup does not let this site send data there"}
 					@click=${() => this.#sync(destination, "data")}>Sync ${kinds || "data"}</uui-button>
 			</div>
@@ -99,7 +99,7 @@ export default class VnsHarborDashboard extends UmbElementMixin(LitElement) {
 				settings.length > 1 && data.length > 1 ? " · " : ""}${data.length > 1 ? `data to ${data.map((item) => item.environment).join(", ")}` : ""}</span></div>
 			<div class="actions">
 				<uui-button look="primary" ?disabled=${this._busy || settings.length < 2} @click=${() => this.#sync(all, "settings")}>Sync settings to all</uui-button>
-				<uui-button look="secondary" ?disabled=${this._busy || data.length < 2} @click=${() => this.#sync(all, "data")}>Sync data to all</uui-button>
+				<uui-button look="primary" color="positive" ?disabled=${this._busy || data.length < 2} @click=${() => this.#sync(all, "data")}>Sync data to all</uui-button>
 			</div>
 		</div>`;
 	}
