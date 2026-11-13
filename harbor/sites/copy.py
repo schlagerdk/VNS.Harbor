@@ -15,6 +15,7 @@ from harbor.core.ports import allocate_port
 from harbor.core.site_config import issue_certificate
 from harbor.core.system import CommandFailed, Stop
 from harbor.core.templates import Site
+from harbor.environments import settings
 
 LIB = Path(__file__).resolve().parents[2] / "apache/lib"
 
@@ -29,8 +30,13 @@ def copy_module():
     return module
 
 
-def copy_site(system, source_name, target_name, binding, database="", project=None, connection=None):
-    """project and connection default to VNS_COPY_PROJECT and VNS_COPY_SQL, as the script read them"""
+def copy_site(system, source_name, target_name, binding, database="", project=None, connection=None, stop_source=False, remove_source=""):
+    """project and connection default to VNS_COPY_PROJECT and VNS_COPY_SQL, as the script read them.
+
+    stop_source stops the source while it is copied, so a SQLite database is copied as it is, and starts it again.
+    remove_source makes it a move: the source is stopped, and once the copy runs, its service and Apache config are
+    removed ("config", the folder stays) or the whole site ("all"). Only a site without environments can be moved
+    so, as the copy leaves the environments out."""
     try:
         source_name = normalize_site_name(source_name)
         target_name = normalize_site_name(target_name)
@@ -48,6 +54,49 @@ def copy_site(system, source_name, target_name, binding, database="", project=No
     if managed.is_file():
         lines = managed.read_text().splitlines() + ["", ""]
         raise Stop(f"{source_name} is an environment of the main site {lines[0]} on {lines[1]}. Make the copy from there.")
+    if remove_source not in ("", "config", "all"):
+        raise Stop("Remove the source with config or all.")
+    if remove_source and settings.target_ids(system, source.site_root):
+        raise Stop(f"{source_name} has environments, which a copy leaves out. Move them first, or copy it and delete it afterwards.")
+    unit = source.service_name if system.path(source.service_path).is_file() else ""
+    stopped = bool(unit) and (stop_source or bool(remove_source)) and system.run("systemctl", "is-active", "--quiet", unit, check=False).ok
+    if stopped:
+        system.step(f"Stop {source_name} while it is copied")
+        system.run("systemctl", "stop", unit)
+    try:
+        copy_files(system, site, source, source_name, target_name, binding, database, project, connection)
+    except Stop:
+        if stopped:
+            system.run("systemctl", "start", unit, check=False)
+        raise
+    if stopped and not remove_source:
+        system.step(f"Start {source_name} again")
+        system.run("systemctl", "start", unit, check=False)
+    if remove_source:
+        remove(system, source_name, remove_source)
+
+
+def remove(system, name, what):
+    """The source of a move, once the copy runs: its service and Apache config, or all of it"""
+    from harbor.sites.delete import Deletion, delete_site
+    if what == "all":
+        delete_site(system, name, "y", "all")
+        return
+    site = Site(name)
+    binding = next((line.split()[1] for line in system.path(site.config_path).read_text().splitlines()
+                    if line.split()[:1] == ["ServerName"] and len(line.split()) > 1), "") if system.path(site.config_path).is_file() else ""
+    deletion = Deletion(system, site, "y")
+    deletion.service_and_config(name)
+    # Its certificate goes unless the copy kept the binding
+    if binding and "." in binding:
+        deletion.certificate(binding, site.certificate_directory)
+    system.run("systemctl", "daemon-reload", check=False)
+    system.run("apache2ctl", "configtest", check=False)
+    system.run("systemctl", "reload", "apache2", check=False)
+    system.say(f"{name} no longer runs here. Its folder {site.site_root} is kept.")
+
+
+def copy_files(system, site, source, source_name, target_name, binding, database, project, connection):
     reservation = None
     try:
         if system.path(source.service_path).is_file():

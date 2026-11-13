@@ -464,6 +464,11 @@
         </div>
       </fieldset>
     </fieldset>
+      <div class="copy-options" id="copy-here-options">
+        <label class="sync-option copy-option move" id="copy-move-row"><input name="move_here" type="checkbox"><span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span><span class="sync-option-text"><span class="sync-option-title">Remove it here afterwards</span><span class="sync-option-sub">Move: the site is stopped while it is copied, and its service and Apache config are removed once the copy runs. A way to give it a new folder and binding</span></span></label>
+        <label class="sync-option copy-option delete copy-option-nested" id="copy-move-delete-row" hidden><input name="move_delete" type="checkbox"><span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v6M14 11v6"/></svg></span><span class="sync-option-text"><span class="sync-option-title">Also delete the old folder</span><span class="sync-option-sub">Otherwise it stays in /var/www, without a service</span></span></label>
+        <label class="sync-option copy-option stop" id="copy-here-stop-row"><input name="move_stop" type="checkbox"><span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg></span><span class="sync-option-text"><span class="sync-option-title">Stop the site here while copying</span><span class="sync-option-sub">So a SQLite database stays consistent. It starts again afterwards</span></span></label>
+      </div>
     <fieldset id="copy-server" class="copy-section" hidden disabled>
       <div class="ns-grid">
         <label>Server host <input name="host" required autocomplete="url" spellcheck="false" placeholder="server.example.com"></label>

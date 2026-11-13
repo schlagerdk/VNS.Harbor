@@ -116,7 +116,7 @@ class PublishStatusTests(unittest.TestCase):
         self.assertNotIn("should not run", result.stderr)
 
     def test_initial_site_creation_publishes_record_only_success(self):
-        source = (APACHE / "create_site.sh").read_text()
+        source = (APACHE.parent / "tests/legacy/create_site.sh").read_text()
         commands = [line.strip() for line in source.splitlines() if "dotnet publish " in line]
         self.assertEqual(len(commands), 2)
         bin_dir = self.root / "tools"

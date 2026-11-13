@@ -60,7 +60,7 @@ def _environment_action(args, system):
 
 def _copy_site(args, system):
     from harbor.sites.copy import copy_site
-    copy_site(system, args.source, args.target, args.binding, args.database or "")
+    copy_site(system, args.source, args.target, args.binding, args.database or "", stop_source=args.stop_source, remove_source=args.remove_source or "")
 
 
 def _setup_site(args, system):
@@ -71,6 +71,21 @@ def _setup_site(args, system):
 def _delete_site(args, system):
     from harbor.sites.delete import delete_site
     delete_site(system, args.site, args.certificates, args.scope, os.environ.get("VNS_TARGET", ""))
+
+
+def _change_binding(args, system):
+    from harbor.sites.bindings import change_binding
+    change_binding(system, args.site, args.binding, args.aliases, yes=args.confirm == "--yes" or args.yes)
+
+
+def _create_site(args, system):
+    from harbor.sites.create import create_site
+    create_site(system, args.arguments)
+
+
+def _environment_binding(args, system):
+    from harbor.environments.bindings import change_binding
+    change_binding(system, args.site, args.binding, args.aliases, yes=args.confirm == "--yes" or args.yes, target=target())
 
 
 def _windows_file(args, system):
@@ -112,6 +127,8 @@ def parser():
     command.add_argument("target")
     command.add_argument("binding")
     command.add_argument("database", nargs="?", default="")
+    command.add_argument("--stop-source", action="store_true", help="stop the source while it is copied, then start it again")
+    command.add_argument("--remove-source", choices=("config", "all"), help="move: remove the source's service and Apache config, or all of it, once the copy runs")
     command.set_defaults(handler=_copy_site)
     command = site.add_parser("setup", help="set up a folder put in /var/www by hand (was setup_site.sh)")
     command.add_argument("site", nargs="?", default="")
@@ -124,6 +141,17 @@ def parser():
     command.add_argument("certificates", nargs="?", default="", help="y to revoke and remove the certificates")
     command.add_argument("scope", nargs="?", default="all", help="all, test (the site itself) or prod (the environment in VNS_TARGET)")
     command.set_defaults(handler=_delete_site)
+    command = site.add_parser("create", help="create an HTML, Python or C# site (was create_site.sh)")
+    command.add_argument("arguments", nargs="*", help="folder, html|python|csharp, umbraco|empty, template version, project, binding, "
+                         "publish folder, Debug|Release, y|n certificate, template, environment, template package; asked for when not given")
+    command.set_defaults(handler=_create_site)
+    command = site.add_parser("binding", help="change the binding and aliases of the site here (was change_binding.sh)")
+    command.add_argument("site", nargs="?", default="")
+    command.add_argument("binding", nargs="?", default="", help="the new binding, or * to answer any name")
+    command.add_argument("aliases", nargs="?", default=None, help="the aliases, separated by commas or spaces; asked for when not given")
+    command.add_argument("confirm", nargs="?", default="", help="--yes")
+    command.add_argument("--yes", action="store_true")
+    command.set_defaults(handler=_change_binding)
 
     environment = groups.add_parser("env", help="an environment of a site, chosen with VNS_TARGET").add_subparsers(dest="command", required=True, metavar="<command>")
     command = environment.add_parser("action", help="issue_certificate or change_env where the environment is (was prod_action.sh)")
@@ -132,6 +160,13 @@ def parser():
     command.add_argument("argument", nargs="?", default="", help="the environment for change_env, or --yes")
     command.add_argument("--yes", action="store_true", help="no question before a certificate")
     command.set_defaults(handler=_environment_action)
+    command = environment.add_parser("binding", help="change the binding and aliases where the environment is (was change_binding_prod.sh)")
+    command.add_argument("site", nargs="?", default="")
+    command.add_argument("binding", nargs="?", default="")
+    command.add_argument("aliases", nargs="?", default=None, help="the aliases, separated by commas or spaces; asked for when not given")
+    command.add_argument("confirm", nargs="?", default="", help="--yes")
+    command.add_argument("--yes", action="store_true")
+    command.set_defaults(handler=_environment_binding)
     command = environment.add_parser("windows-file", help="read or save web.config or appsettings*.json on Windows (was windows_file.sh)")
     command.add_argument("site")
     command.add_argument("action", choices=("read", "save"))

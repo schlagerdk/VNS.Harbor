@@ -9,6 +9,12 @@ import unittest
 APACHE = Path(__file__).resolve().parents[1]
 
 
+def script_text(name):
+    """A script as it was before it ran harbor (tests/legacy), else as it is: harbor is compared with it in tests/"""
+    legacy = APACHE.parent / "tests/legacy" / name
+    return (legacy if legacy.exists() else APACHE / name).read_text()
+
+
 def run_shell(code):
     return subprocess.run(["bash", "-c", "set -euo pipefail\n" + code],
                           capture_output=True, text=True)
@@ -81,7 +87,7 @@ sudo() { echo "CALL:$*"; }
 
     def test_binding_changes_restart_only_when_appsettings_changed(self):
         for remote in (False, True):
-            source = (APACHE / ("change_binding_prod.sh" if remote else "change_binding.sh")).read_text()
+            source = script_text("change_binding_prod.sh" if remote else "change_binding.sh")
             marker = "if [[ -f ${backup}/appsettings.json ]]" if remote else "if [[ -f ${_backupDir}/appsettings.json ]]"
             start = source.rindex(marker)
             end_marker = "\n# 4." if remote else "\n# The site that answers any name has a second link to its config"

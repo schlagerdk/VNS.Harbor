@@ -11,6 +11,12 @@ import unittest
 APACHE = Path(__file__).resolve().parents[1]
 
 
+def script_text(name):
+    """A script as it was before it ran harbor (tests/legacy), else as it is: harbor is compared with it in tests/"""
+    legacy = APACHE.parent / "tests/legacy" / name
+    return (legacy if legacy.exists() else APACHE / name).read_text()
+
+
 def shell_function(source, name):
     start = source.index(name + "() {")
     return source[start:source.index("\n}", start) + 2]
@@ -125,10 +131,10 @@ class CertificateAliasTests(unittest.TestCase):
                             command.chmod(0o700)
                         new = "new.example.test" if primary_changed else "example.test"
                         if production:
-                            source = (APACHE / "change_binding_prod.sh").read_text().split("<<'REMOTE'\n", 1)[1].split("\nREMOTE", 1)[0]
+                            source = script_text("change_binding_prod.sh").split("<<'REMOTE'\n", 1)[1].split("\nREMOTE", 1)[0]
                             args = []
                         else:
-                            source = (APACHE / "change_binding.sh").read_text()
+                            source = script_text("change_binding.sh")
                             args = ["example.test", new, "api.example.test"]
                         script = root / "change.sh"
                         script.write_text(fixture_source(source))
@@ -170,7 +176,7 @@ class CertificateAliasTests(unittest.TestCase):
 
     def test_ui_confirmation_skips_terminal_prompt_for_both_targets(self):
         for name in ("change_binding.sh", "change_binding_prod.sh"):
-            source = (APACHE / name).read_text()
+            source = script_text(name)
             start = source.index("_confirm=y\n")
             end = source.index('|| { echo "Aborted"; exit 1; }', start) + len('|| { echo "Aborted"; exit 1; }')
             code = source[start:end].replace("${_confirm,,}", "${_confirm}")
@@ -330,8 +336,8 @@ class CertificateAliasTests(unittest.TestCase):
         # The scripts as they were; harbor is compared with them in tests/
         test_action = (APACHE.parent / "tests/legacy" / "test_action.sh").read_text()
         prod_action = (APACHE.parent / "tests/legacy" / "prod_action.sh").read_text()
-        change_local = (APACHE / "change_binding.sh").read_text()
-        change_remote = (APACHE / "change_binding_prod.sh").read_text()
+        change_local = script_text("change_binding.sh")
+        change_remote = script_text("change_binding_prod.sh")
         publish = (APACHE / "solutionfiles/csharp/prod-scripts/publish_prod.sh").read_text()
         legacy = (APACHE / "solutionfiles/common/scripts/issue_certificat.sh").read_text()
         self.assertIn('"${_certificateDomainArgs[@]}"', common)

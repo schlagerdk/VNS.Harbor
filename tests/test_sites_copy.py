@@ -6,6 +6,7 @@ import unittest
 from tests.harness import APACHE, Server, harbor_commands
 from tests.test_core_bindings import NEEDS_BASH_4
 from harbor.cli import main
+from harbor.core.system import Result
 
 CONF = ("<VirtualHost *:80>\n  ServerAdmin it@shop.dk\n  ServerName shop.dk\n  ServerAlias www.shop.dk\n  DocumentRoot /var/www/shop.dk/_publish/wwwroot\n"
         "  ProxyRequests Off\n  RequestHeader set X-Forwarded-Proto \"http\"\n  ProxyPass / http://127.0.0.1:4000/\n</VirtualHost>\n")
@@ -81,6 +82,69 @@ class CopySiteTests(unittest.TestCase):
 class WrapperTests(unittest.TestCase):
     def test_the_script_runs_harbor(self):
         self.assertIn('bin/harbor" site copy "$@"', (APACHE / "copy_site.sh").read_text())
+
+
+
+class MoveHereTests(unittest.TestCase):
+    """A copy that takes over: a new folder and binding for a site, which no longer runs under its old name"""
+
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.server = Server(folder.name, "here")
+        make_site(self.server)
+
+    def copy(self, *options, answers=None):
+        system = self.server.system(answers={"systemctl is-active --quiet": "", **(answers or {})})
+        code = main(["site", "copy", "shop.dk", "new.shop.dk", "new.shop.dk", *options], system)
+        return code, system, harbor_commands(system)
+
+    def test_stopped_while_copied_and_started_again(self):
+        code, system, commands = self.copy("--stop-source")
+        self.assertEqual(code, 0, system.said)
+        self.assertLess(commands.index("systemctl stop shop.dk"), next(i for i, line in enumerate(commands) if "a2ensite new.shop.dk" in line))
+        self.assertEqual(commands[-1], "systemctl start shop.dk")
+        self.assertTrue((self.server.root / "etc/systemd/system/shop.dk.service").is_file())
+
+    def test_a_site_that_is_not_running_is_not_started(self):
+        code, system, commands = self.copy("--stop-source", answers={"systemctl is-active --quiet shop.dk": Result(3)})
+        self.assertEqual(code, 0, system.said)
+        self.assertNotIn("systemctl stop shop.dk", commands)
+        self.assertNotIn("systemctl start shop.dk", commands)
+
+    def test_move_keeps_the_old_folder(self):
+        code, system, commands = self.copy("--remove-source", "config")
+        self.assertEqual(code, 0, system.said)
+        root = self.server.root
+        self.assertTrue((root / "var/www/new.shop.dk/_publish/Shop.dll").is_file())
+        self.assertTrue((root / "etc/systemd/system/new.shop.dk.service").is_file())
+        self.assertFalse((root / "etc/systemd/system/shop.dk.service").exists())
+        self.assertFalse((root / "etc/apache2/sites-available/shop.dk.conf").exists())
+        self.assertTrue((root / "var/www/shop.dk/Shop.csproj").is_file())
+        self.assertNotIn("systemctl start shop.dk", commands)
+        self.assertIn("shop.dk no longer runs here. Its folder /var/www/shop.dk is kept.", system.said)
+
+    def test_move_with_the_old_folder(self):
+        code, system, commands = self.copy("--remove-source", "all")
+        self.assertEqual(code, 0, system.said)
+        self.assertFalse((self.server.root / "var/www/shop.dk").exists())
+        self.assertTrue((self.server.root / "var/www/new.shop.dk").is_dir())
+
+    def test_a_failed_copy_starts_the_site_again_and_removes_nothing(self):
+        code, system, commands = self.copy("--remove-source", "all", answers={"a2ensite": Result(1)})
+        self.assertEqual(code, 1)
+        self.assertEqual(commands[-1], "systemctl start shop.dk")
+        self.assertTrue((self.server.root / "etc/systemd/system/shop.dk.service").is_file())
+        self.assertTrue((self.server.root / "var/www/shop.dk").is_dir())
+
+    def test_a_site_with_environments_is_not_moved(self):
+        target = self.server.root / "var/www/shop.dk/scripts/targets/production"
+        target.mkdir(parents=True)
+        (target / "publish_prod.sh").write_text("PROD_FOLDER='shop.dk'\nPROD_BINDING='shop.dk'\n")
+        code, system, commands = self.copy("--remove-source", "config")
+        self.assertEqual(code, 1)
+        self.assertIn("has environments", system.said[-1])
+        self.assertEqual(commands, [])
 
 
 if __name__ == "__main__":

@@ -1657,8 +1657,11 @@ def api_package_updates():
         return jsonify(**UPDATE_CHECK)
 
 def default_umbraco_version():
-    """The Umbraco version create_site.sh installs when none is given."""
-    match = re.search(r"^_defaultUmbracoVersion=([0-9][0-9A-Za-z.\-]*)", read_text(os.path.join(APACHE_DIR, "create_site.sh")) or "", re.M)
+    """The Umbraco version a new site gets when none is given (harbor site create; create_site.sh before it)."""
+    text = read_text(os.path.join(os.path.dirname(APACHE_DIR), "harbor/sites/create.py")) or ""
+    match = re.search(r'^DEFAULT_UMBRACO_VERSION = "([0-9][0-9A-Za-z.\-]*)"', text, re.M)
+    if not match:
+        match = re.search(r"^_defaultUmbracoVersion=([0-9][0-9A-Za-z.\-]*)", read_text(os.path.join(APACHE_DIR, "create_site.sh")) or "", re.M)
     return match.group(1) if match else ""
 
 
@@ -2976,6 +2979,14 @@ def build_command(data):
                 abort(400, "The site needs exactly one project to rename it")
         if database.strip():
             argv.append(database.strip())
+        # A move: the copy takes over, and the site here is removed once it runs (only a site without environments)
+        remove = data.get("remove_here")
+        if remove:
+            if target_ids(os.path.join(WEB_ROOT, source)):
+                abort(400, "A site with environments cannot be moved this way: the copy leaves its environments out.")
+            argv += ["--remove-source", "all" if data.get("delete_local") == "y" else "config"]
+        elif data.get("stop_source"):
+            argv.append("--stop-source")
         if project:
             argv = ["/usr/bin/env", "VNS_COPY_PROJECT=" + project, *argv]
         return "Copy site: " + source, argv, APACHE_DIR
@@ -3256,6 +3267,8 @@ def authorize_task(data):
         user.get("create_sites") or deny()
         if kind == "copy_site":
             need("main", "files")
+            if data.get("remove_here"):
+                need("main", "delete")
         name = data.get("name") or data.get("folder") or data.get("new_site") or ""
         before = set(site_dirs())
         return lambda status: status == 0 and grant(uid, lambda target: [access.grant_site(target, made) for made in set(site_dirs()) - before])

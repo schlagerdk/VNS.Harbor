@@ -55,8 +55,11 @@ Where the work stands, so it can go on from here after any interruption.
 - [x] 1c copy_site → `harbor site copy` (tests/test_sites_copy.py, on the shared fake server in tests/harness.py)
 - [x] 1c setup_site → `harbor site setup` (tests/test_sites_setup.py)
 - [x] 1c delete_site → `harbor site delete` (tests/test_sites_delete.py)
-- [ ] 1c change_binding, change_binding_prod, create_site
+- [x] 1c change_binding → `harbor site binding` (tests/test_sites_binding.py); old tests that read a converted script use `script_text()`, which prefers tests/legacy
+- [x] 1c change_binding_prod → `harbor env binding` (tests/test_env_binding.py); the script sent to the environment stays word for word
+- [x] 1c create_site → `harbor site create` (tests/test_sites_create.py); the admin reads the default Umbraco version from harbor/sites/create.py; edits keep a file's line endings (the bundled views have CRLF)
 - [x] Design: the Protocol select in Add environment is the HTTPS option card; Environment is four choices in its colours (New site, Add environment, Set up site)
+- [x] Copy site on this server can move: Remove it here afterwards (+ Also delete the old folder) and Stop the site here while copying, as for another server; `harbor site copy --remove-source config|all --stop-source`; only a site without environments can be moved, and only by a user who may delete it
 - [ ] Design: other native selects (Build Debug/Release and the like) the same way, when they come up
 - [ ] 1d register_env, remote_site, adopt_site, carry_snippets, sync_env, data_sync, move_env, move_site
 - [ ] 1e sql/*

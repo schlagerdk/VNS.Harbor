@@ -46,7 +46,7 @@ class Server:
         copy = self.folder / f"{self.root.name}-apache"
         if copy.exists():
             return copy
-        shutil.copytree(APACHE, copy, ignore=shutil.ignore_patterns("tests", "__pycache__", "*.pyc", "project"))
+        shutil.copytree(APACHE, copy, ignore=shutil.ignore_patterns("tests", "__pycache__", "*.pyc"))
         for frozen in LEGACY.glob("*.sh"):
             shutil.copy(frozen, copy / frozen.name)
         for frozen in (LEGACY / "lib").glob("*"):
@@ -94,8 +94,11 @@ class Server:
         (bin_folder / "hostname").write_text(f'#!/bin/bash\necho "hostname $*" >>"{self.log}"\necho {self.hostname}\n')
         (bin_folder / "sudo").write_text('#!/bin/bash\nexec "$@"\n')
         helpers = "|".join(f"*/{name}" for name in RECORDED_HELPERS)
+        # A virtual environment is recorded, with a pip that records what it would install
+        venv = (f'if [[ $1 == -m && $2 == venv ]]; then echo "python3 $*" >>"{self.log}"; mkdir -p "$3/bin"; '
+                f'printf \'#!/bin/bash\\necho "$0 $*" >>"{self.log}"\\n\' >"$3/bin/pip"; chmod +x "$3/bin/pip"; exit 0; fi\n')
         (bin_folder / "python3").write_text(f'#!/bin/bash\ncase "$1" in {helpers}) echo "python3 $*" >>"{self.log}"; exit 0 ;; esac\n'
-                                            f'exec {sys.executable} "$@"\n')
+                                            + venv + f'exec {sys.executable} "$@"\n')
         (self.root / "etc/acmesh/acme.sh").write_text(f'#!/bin/bash\necho "/etc/acmesh/acme.sh $*" >>"{self.log}"\n')
         for path in [*bin_folder.iterdir(), self.root / "etc/acmesh/acme.sh"]:
             path.chmod(0o755)
@@ -138,6 +141,14 @@ class Server:
         return [line.replace(apache, "APACHE").replace(str(self.root), "") for line in self.log.read_text().splitlines()]
 
 
+TEMPORARY = re.compile(r"/tmp/tmp[.\w]+")
+
+
 def harbor_commands(system):
     """harbor's commands as the script's are compared: the apache folder as APACHE"""
     return [line.replace(str(APACHE), "APACHE").replace(str(system.root), "") for line in system.commands]
+
+
+def without_temporary(commands):
+    """Commands with the temporary files they name (mktemp's or Python's) as TEMP"""
+    return [TEMPORARY.sub("TEMP", line) for line in commands]

@@ -2021,8 +2021,17 @@ async function copySite(site, main) {
 		if (!usernameEdited) field("username").value = field("database").value;
 	};
 	const showCopyPath = () => {
-		$("#copy-site-path").textContent = `Copied to /var/www/${field("target").value.trim() || "…"}`;
+		$("#copy-site-path").textContent = `${field("move_here").checked ? "Moved" : "Copied"} to /var/www/${field("target").value.trim() || "…"}`;
 	};
+	// A move here is a copy that takes over: only for a site without environments (a copy leaves them out), and only
+	// for a user who may delete it. Stopping it while it is copied needs a service.
+	const canMoveHere = !hasProd(site) && can(site.name, "main", "delete");
+	const hasService = Boolean(main && main.unit);
+	$("#copy-move-row").hidden = !canMoveHere;
+	field("move_here").disabled = !canMoveHere;
+	$("#copy-here-options").hidden = !canMoveHere && !hasService;
+	$("#copy-no-environments").textContent = "The copy is a site of its own: its environments are not copied, and you can add environments to it afterwards."
+		+ (can(site.name, "main", "delete") ? " So it can be copied here, not moved." : "");
 	// A site with a project gets a project of its own
 	const hasProject = site.has_project;
 	$("#copy-project-row").hidden = !hasProject;
@@ -2089,11 +2098,20 @@ async function copySite(site, main) {
 			: [el("strong", { textContent: "Set up with HTTPS." }), privateIPv4(host)
 				? ` ${host} is an internal address, so DNS cannot be checked against it here. Each site gets its certificate on the new server; one whose DNS does not point there yet stays on HTTP, and Issue certificate gives it one later.`
 				: " Each site gets its certificate on the new server once it runs there. One whose DNS does not point there yet stays on HTTP, and Issue certificate gives it one later."]));
-		$("#copy-site-title").textContent = removing ? "Migrate site" : "Copy site";
+		const movingHere = !toServer && canMoveHere && field("move_here").checked;
+		$("#copy-move-delete-row").hidden = !movingHere;
+		field("move_delete").disabled = !movingHere;
+		if (!movingHere) field("move_delete").checked = false;
+		$("#copy-here-stop-row").hidden = movingHere || !hasService;
+		field("move_stop").disabled = movingHere || !hasService;
+		showCopyPath();
+		$("#copy-site-title").textContent = removing ? "Migrate site" : movingHere ? "Move site" : "Copy site";
 		$("#copy-site-description").textContent = !toServer
-			? `Copy ${siteLabel(site)} to a new folder here, with its own service and Apache config.`
+			? movingHere
+				? `Move ${siteLabel(site)} to a new folder and binding here. It no longer runs under its old name.`
+				: `Copy ${siteLabel(site)} to a new folder here, with its own service and Apache config.`
 			: removing ? `Move ${siteLabel(site)} to another server. It no longer runs here.` : `Copy ${siteLabel(site)} to another server. It stays here as it is.`;
-		$("#copy-site-submit").textContent = removing ? "Migrate site" : "Copy site";
+		$("#copy-site-submit").textContent = removing ? "Migrate site" : movingHere ? "Move site" : "Copy site";
 		for (const item of $("#copy-server-list").querySelectorAll(".goes .move-site-where")) item.textContent = removing ? "Moves" : "Copied";
 		$("#copy-server-hint").textContent = "The whole folders go, including builds, media, logs and SQLite databases, so the sites run the same version and nothing is built. A database in SQL Server stays where it is: connections to this server's own SQL Server are pointed at its address, which must accept connections from the new server."
 			+ (kept ? ` Environments on other servers are not touched, and are published to${removing ? " from the new server" : " from both servers"}.` : "")
@@ -2101,6 +2119,7 @@ async function copySite(site, main) {
 	};
 	for (const input of field("destination")) input.onchange = update;
 	field("remove_here").onchange = update;
+	field("move_here").onchange = update;
 	field("https").onchange = update;
 	field("host").addEventListener("input", update);
 	field("change_connection").onchange = update;
@@ -2141,6 +2160,10 @@ async function copySite(site, main) {
 						delete_local: removing && field("delete_local").checked ? "y" : "n", stop_source: !removing && field("stop_source").checked };
 				} else {
 					payload = { kind: "copy_site", site: site.name, target: field("target").value.trim(), binding: field("binding").value.trim() };
+					if (canMoveHere && field("move_here").checked) {
+						payload.remove_here = true;
+						payload.delete_local = field("move_delete").checked ? "y" : "n";
+					} else if (hasService && field("move_stop").checked) payload.stop_source = true;
 					if (hasProject) payload.project = field("project").value.trim();
 					if (hasSqlConnection && field("change_connection").checked) {
 						payload.connection = { server: field("server").value.trim(), database: field("database").value.trim(),

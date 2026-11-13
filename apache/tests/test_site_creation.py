@@ -20,7 +20,8 @@ from apache.tests.app_targets import add_target_helpers
 
 APACHE = Path(__file__).resolve().parents[1]
 APP = APACHE / "solutionfiles/admin/app"
-CREATE = (APACHE / "create_site.sh").read_text()
+# create_site.sh as it was before it ran harbor: harbor site create is compared with it in tests/test_sites_create.py
+CREATE = (APACHE.parent / "tests/legacy/create_site.sh").read_text()
 
 
 class UnicodeScriptTests(unittest.TestCase):

@@ -103,7 +103,7 @@ console.log(JSON.stringify(sortedEnvironments(input).map((env) => env.binding)))
 
     def test_copy_dialog_shows_the_destination(self):
         self.assertIn('id="copy-site-path"', (APP / "templates/index.html").read_text())
-        self.assertIn('`Copied to /var/www/${field("target").value.trim() || "…"}`', (APP / "static/app.js").read_text())
+        self.assertIn('`${field("move_here").checked ? "Moved" : "Copied"} to /var/www/${field("target").value.trim() || "…"}`', (APP / "static/app.js").read_text())
 
     def test_site_deleted_on_its_server_is_shown_and_only_publish_and_delete_remain(self):
         source = (APP / "static/app.js").read_text()
