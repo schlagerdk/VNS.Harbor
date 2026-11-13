@@ -132,6 +132,8 @@ class AfterUpdateTests(unittest.TestCase):
     def test_other_paths_with_vns_in_them_are_not_vns(self):
         (self.root / "etc/systemd/system").mkdir(parents=True)
         (self.root / "etc/systemd/system/shop.dk.service").write_text("RootDirectory=/var/lib/vns-roots/shop.dk\nBindPaths=/var/lib/vns/x\n")
+        (self.root / "etc/apache2/conf-available").mkdir(parents=True)
+        (self.root / "etc/apache2/conf-available/vns-offline.conf").write_text("Alias /vns-offline/ /var/lib/vns/offline/\nErrorDocument 503 /vns-offline/x\n")
         system, _ = self.after_update()
         self.assertFalse((self.root / "vns").exists())
 

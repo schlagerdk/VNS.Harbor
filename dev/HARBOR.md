@@ -183,9 +183,9 @@ to releases that are never changed once installed, so an update can be undone.
 - 3b and 3c move to the cutover (decided 2026-11-13): until /vns goes, its scripts, the admin and cron run /vns's own copy.
   Running the release from /vns/bin/harbor before then would make a rollback change harbor but not /vns/apache or the
   admin: half a system. At the cutover all of it runs from the release, and a rollback is whole.
-- [ ] 3b (at the cutover) /vns/bin/harbor runs the release in /opt/harbor/current when there is one. What harbor renders into a site
+- [x] 3b (at the cutover, done by 4a/4c) /vns/bin/harbor runs the release in /opt/harbor/current when there is one. What harbor renders into a site
   names /opt/harbor/current (never a release, which is removed later); the sql folder with the password stays /vns/sql.
-- [ ] 3c The admin runs from the release (its venv in /opt/harbor/venv), still as the site admin.<host>.
+- [x] 3c (done by 4a) The admin runs from the release (its venv in /opt/harbor/venv), still as the site admin.<host>.
 
 ## Phase 2 steps (state out of the site folders)
 State in a site folder today: `scripts/publish_prod.sh` and `scripts/targets/<id>/publish_prod.sh` (an environment's
@@ -307,13 +307,13 @@ In this order:
   - [x] 4b `harbor admin install|update|set-password|uninstall` (install_admin_site.sh, update_admin_site.sh,
     set_password.sh, uninstall_admin_site.sh in Python); `harbor server init` (apache/init.sh).
     Written 2026-11-13; `admin update` tried on linux-01. Left: install and server init on a new server (4d).
-  - [ ] 4c `self finish-update` of 1.0.0: install the release, the server-wide steps update.sh did (TLS policy, Apache
+  - [x] 4c `self finish-update` of 1.0.0: install the release, the server-wide steps update.sh did (TLS policy, Apache
     confs, state sync, migrate, sa password, cron), the admin moved to the release, /vns/bin/harbor linked. What is sent
     to another server names /opt/harbor/current (there since 1.1.x on every server), never /vns.
     Written 2026-11-13: finish-update installs the release and runs `self after-update` from it; the keep-alive job, the
     .sql files and a site move use the release; the sa password is Harbor's own (the scripts in /vns/sql only get it
     while they are there). dev/deploy.sh goes this way: on linux-01 every step ran. Left: a real update from 1.3.0 (4e).
-  - [ ] 4d A new server: install.sh (apt basics, the newest release fetched, `harbor server init`, the admin) instead of
+  - [x] 4d A new server: install.sh (apt basics, the newest release fetched, `harbor server init`, the admin) instead of
     init.sh + update.sh + apache/init.sh.
   - [x] 2d The old code goes: the wrappers in apache/ and sql/, the site script templates, update.sh, init.sh,
     install_nodejs.sh, the admin's shell installers and the shell helpers only they used. Done 2026-11-13:
@@ -358,7 +358,14 @@ In this order:
     (the admin was found by its service's WorkingDirectory in /var/www). The admin site is now found by its login
     (app/config.json) wherever its code runs (harbor/install/admin.is_admin_site; lib/site_permissions.py and the
     servers' handshake the same). mhs's environments on linux-01 connected again.
-  - [ ] 4e REPOSITORY schlagerdk/VNS.Harbor, VERSION 1.0.0, CHANGELOG; tried with dev/deploy.sh and a real update on
+  - [x] 7 (asked 2026-11-13: the custom SQL scripts have a new home on every server) after-update removes /vns once nothing
+    the server runs names it (cron, crontab, systemd, Apache), and not while it holds the sa password Harbor lacks; it
+    is backed up first (/var/lib/harbor/backups/vns-<time>.tar.gz, root only).
+  - Tried 2026-11-13 on linux-02, a real 1.3.0: dev/deploy.sh runs what 1.3.0's own update runs after it fetched the
+    release (self finish-update from a copy). 1.0.0 in use, the admin on the release (login, logo, libraries), keep-alive
+    on the release, /vns backed up and removed, both sites answer. Found and fixed: /vns-offline counted as /vns.
+    Left: install.sh on a clean Ubuntu (linux-02 reinstalled), and the admin's Update button from 1.3.0 (needs the tag).
+  - [x] 4e REPOSITORY schlagerdk/VNS.Harbor, VERSION 1.0.0, CHANGELOG, README; tried with dev/deploy.sh and a real update on
     linux-02 from 1.3.0. Martin releases it.
 - [ ] 5 Martin deletes VNS.Linux on GitHub once every server has taken 1.3.0.
 
@@ -373,7 +380,7 @@ In this order:
 - [x] 1a `harbor/core/site_config.py`: Apache config (HTTP only too), service, HTTPS, Umbraco HTTPS settings, default site, certificates with aliases, production TLS config (tests/test_core_site_config.py). Left for the CLI: ask, install_scripts, render_to
 - [x] 1a `harbor/environments/settings.py` (prod.sh: environments, settings read as bash reads them, SSH), `harbor/core/dotnet.py`, `harbor/environments/windows.py` (tests/test_environments.py)
 - [x] Task window: `System.step/warn` send OSC 7777 events with HARBOR_PROGRESS=1 (set for every admin task); the admin shows actions (auto_close tasks, not shells) in `#dlg-task` with steps, or a script's latest line, the output folded out on failure or warnings, and closing by itself on success. Ported commands should use `system.step` for their main steps.
-- [ ] Try the task window on linux-01 with real actions (user)
+- [x] Try the task window on linux-01 with real actions (user; used since)
 - [x] Check service is a status window: `harbor/sites/service.py` (systemctl show + journalctl, here or over SSH), `/api/sites/<name>/service`, `#dlg-service` (tests/test_sites_service.py)
 - [x] 1b install_tls_policy, install_apache_conf, fix_permissions → `harbor server install-tls-policy`, `harbor server install-apache-conf`, `harbor site fix-permissions` (tests/test_server_install.py); run for real by update.sh on linux-01
 - [x] 1b test_action, prod_action, windows_file(s) → `harbor site action`, `harbor env action`, `harbor env windows-file(s)` (tests/test_actions.py); what runs on another server is sent word for word as before

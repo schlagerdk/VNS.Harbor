@@ -154,7 +154,7 @@ VNS = "/vns"
 # Where something the server runs could still name /vns: cron, services, Apache
 NAMED_IN = ("/etc/cron.d", "/etc/crontab", "/var/spool/cron/crontabs", "/etc/systemd/system", "/etc/apache2/sites-available",
             "/etc/apache2/conf-available")
-NAMES_VNS = re.compile(r"(?<![\w./-])/vns(/|\b)")
+NAMES_VNS = re.compile(r"(?<![\w./-])/vns(?=/|\s|[\"']|$)", re.M)
 
 
 def names_vns(system):
