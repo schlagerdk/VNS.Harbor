@@ -287,7 +287,12 @@ In this order:
   admin's Update and its check, and update.sh without a source, use it. (tests/test_self_update.py,
   apache/tests/test_system_update.py; on linux-02 `harbor self update --ref v1.2.2` from VNS.Linux worked.)
   VERSION 1.3.0 with its CHANGELOG: Martin releases it, the last VNS.Linux release.
-- [ ] 3 Martin renames the folder to VNS.Harbor and links it to https://github.com/schlagerdk/VNS.Harbor.
+- Released: 1.3.0 by Martin; every server runs it (2026-11-13). Checked on test-01: Harbor 1.3.0, the sa password used
+  from Harbor, both cron jobs run harbor, 21 sites answer.
+- [x] 3 Martin renames the folder to VNS.Harbor and links it to https://github.com/schlagerdk/VNS.Harbor.
+  Done 2026-11-13: folder renamed, origin is VNS.Harbor, main pushed there without tags.
+  **Only main goes there, never the v1.x tags**: a server on VNS 1.3.0 takes any release in VNS.Harbor as newer, so an
+  old tag there would be installed again and again. Harbor's own versions start at v1.0.0 (cutover step 4).
 - [ ] 2d + 4 The old code goes (wrappers, script templates, tests/legacy, update.sh/init.sh); Harbor and the admin run
   from /opt/harbor (3b, 3c); Harbor 1.0.0 released from VNS.Harbor.
 - [ ] 5 Martin deletes VNS.Linux on GitHub once every server has taken 1.3.0.
