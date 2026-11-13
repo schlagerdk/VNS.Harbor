@@ -367,7 +367,7 @@ In this order:
     Left: install.sh on a clean Ubuntu (linux-02 reinstalled), and the admin's Update button from 1.3.0 (needs the tag).
   - [x] 4e REPOSITORY schlagerdk/VNS.Harbor, VERSION 1.0.0, CHANGELOG, README; tried with dev/deploy.sh and a real update on
     linux-02 from 1.3.0. Martin releases it.
-- [ ] 5 Martin deletes VNS.Linux on GitHub once every server has taken 1.3.0.
+- [x] 5 Martin deletes VNS.Linux on GitHub once every server has taken 1.3.0. Done 2026-11-13.
 
 ## Phase 1 steps
 - [x] Package skeleton: `harbor/`, `bin/harbor`, `harbor/core/system.py` (System, RecordingSystem), `harbor/cli.py`
