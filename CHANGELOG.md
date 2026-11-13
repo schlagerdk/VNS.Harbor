@@ -4,16 +4,25 @@ All notable changes to VNS.Linux are listed here, newest first.
 
 ## [1.2.0] - 2026-11-13
 
-The bridge to VNS Harbor: this update installs Harbor and moves every site over to it.
-
 ### Features
 
-- Harbor, the `harbor` command, does the work of every script; it is installed as releases in /opt/harbor that can be rolled back
-- Every site is migrated: Harbor holds its environments' settings, Sync setup and publish status, and Harbor's own scripts and .vns-publish leave the site folder after a backup; a site's own scripts stay where they are
-- Server tools: SQL Server, sqlcmd, the sa password, the backup jobs, .NET and Node.js, installed, updated and removed from the admin
-- Servers: other servers added once with a password and reached with Harbor's own key, with their versions, and Harbor installed, updated or removed there
-- Users get a Linux user of their own: Files and Terminal per site through a group per site, a terminal locked to their sites, and SFTP with a password or keys
-- The VNS.Harbor package for Umbraco 17+: the Backend button logs straight in, and a VNS Harbor dashboard syncs settings and data to the environments, also on other servers and Windows
+- SFTP per user: their sites' folders and nothing else, as their own Linux user, with a password or public keys set in the admin; the SSH server gets Harbor's settings only while a user has SFTP, checked before it is reloaded
+- Harbor is installed as releases in /opt/harbor (current, the three newest kept, rollback) by every update, and harbor is on the PATH; paths that are kept elsewhere name /opt/harbor/current, never a release
+- The site tools (service, Apache config, logs, certificate, packages, environment, publish) and clearing an environment's logs are harbor commands; the site templates only call them, and an environment's clear-logs script no longer holds a password
+- Harbor keeps its own copy of the sites' state, passwords apart and readable only by root, and every update brings it up to date; a new site is Development and publishes to _development by default
+- Move_env, move_site and the sql scripts now run harbor, tested against the scripts they replace; the sa password stays where set_sa_password.sh and updates keep it, and sqlcmd gets it in its environment
+- Register_env, remote_site, adopt_site, carry_snippets, sync_env and data_sync now run harbor, tested against the scripts they replace
+- Copy site on this server can also move it, with Remove it here afterwards and Stop the site here while copying, so a site can get a new folder and binding; change_binding, change_binding_prod and create_site now run harbor, tested against the scripts they replace
+- Start of VNS Harbor: the harbor package with the shared helpers of lib/common.sh, set_servername.sh as its first command, tests that compare each with the script it replaces and run on Linux, and tools to deploy and test a working copy on a test server
+- Copying or migrating to another server can set up HTTPS, with DNS for every site that goes checked against that server; each gets its certificate once it runs there, and one whose DNS does not point there yet stays on HTTP
+
+### Fixes
+
+- The old tests that failed on GitHub match the code again, and the package update test no longer asks NuGet, so a push no longer fails
+
+### Other
+
+- Building for harbor
 
 ## [1.1.16] - 2026-11-13
 
