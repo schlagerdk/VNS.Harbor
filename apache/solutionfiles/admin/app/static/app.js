@@ -6012,7 +6012,7 @@ function askAddServer() {
 	button.classList.add("primary");
 	const field = (label, props) => el("label", {}, label, el("input", { autocomplete: "off", spellcheck: false, ...props }));
 	$("#server-action-fields").replaceChildren(
-		field("Name", { name: "name", required: true, pattern: "[a-z0-9][a-z0-9\\-]{0,62}", placeholder: "linux-02", maxLength: 63 }),
+		field("Name", { name: "name", required: true, pattern: "[a-z0-9][a-z0-9\\-]{0,62}", placeholder: "A short name for it, such as web-01", maxLength: 63 }),
 		el("div", { className: "ns-grid server-address-row" },
 			field("Address", { name: "host", required: true, placeholder: "IP or host name", maxLength: 253 }),
 			field("SSH port", { name: "port", value: "22", required: true, inputMode: "numeric", pattern: "[0-9]{1,5}" })),
@@ -6020,6 +6020,16 @@ function askAddServer() {
 			field("Login", { name: "user", value: "root", required: true, maxLength: 32 }),
 			field("Password", { name: "password", type: "password", autocomplete: "new-password", placeholder: "Used once, not kept", maxLength: 256 })),
 		el("p", { className: "hint", textContent: "Leave the password empty when Harbor's key is in ~/.ssh/authorized_keys there already. A login other than root needs passwordless sudo." }));
+	// A name as the server knows it: lower case, letters, digits and -, made so as it is typed (KIKAYO becomes kikayo)
+	const name = form.elements.name;
+	name.title = "Lower case letters, digits and -, such as web-01";
+	name.oninput = () => {
+		const at = name.selectionStart;
+		name.value = name.value.toLowerCase().replace(/[^a-z0-9-]+/g, "-");
+		name.setSelectionRange(at, at);
+		name.setCustomValidity("");
+	};
+	name.oninvalid = () => name.setCustomValidity("Use lower case letters, digits and -, starting with a letter or digit, such as web-01.");
 	form.onsubmit = (event) => {
 		event.preventDefault();
 		const values = form.elements;
