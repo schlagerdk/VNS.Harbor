@@ -8,6 +8,8 @@
 # A migration stops the sites here and removes their services and Apache configs once the new server runs them, and
 # VNS_MOVE_DELETE_LOCAL=y also deletes their files. A copy leaves them as they are; VNS_COPY_STOP=y stops them while
 # they are copied. If a step fails, the sites here run as before and what was made on the new server is removed.
+# VNS_MOVE_FOLDER, _BINDING and _PROJECT give the site a new folder, binding and project name there, as Copy site does
+# here. A new project name is built there, and only a site without environments can get one, as they run its build.
 # The new server needs the same VNS version: move_site.sh --receive <folder> <SQL server> sets the sites up there.
 set -euo pipefail
 [[ $EUID -eq 0 ]] || exec sudo "$0" "$@"
@@ -25,6 +27,28 @@ receive() {
 	local _incoming=$1 _sqlServer=${2:-} _conf _name _binding _working _folder _units=() _unit _script
 	[[ -d ${_incoming} ]] || { echo "${_incoming} was not found." >&2; exit 1; }
 	trap release_port_reservation EXIT
+	# The site gets its new folder, binding or project name, like a copy here. Its environments in its folder follow.
+	local _from _to _toBinding _toProject="" _build="" _file
+	if [[ -f ${_incoming}/rename ]]; then
+		{ read -r _from; read -r _to; read -r _toBinding; read -r _toProject || true; } <"${_incoming}/rename"
+		validate_site_name "${_from}"
+		validate_site_name "${_to}"
+		echo "Rename ${_from} to ${_to} (${_toBinding})"
+		local _args=(--conf "${_incoming}/${_from}.conf")
+		[[ ! -f ${_incoming}/${_from}.service ]] || _args+=(--service "${_incoming}/${_from}.service")
+		[[ -z ${_toProject} ]] || _args+=(--project "${_toProject}")
+		python3 lib/copy_site.py rename "${_rootPath}/${_from}" "${_rootPath}/${_to}" "${_toBinding}" "${_args[@]}"
+		if [[ ${_from} != "${_to}" ]]; then
+			mv "${_incoming}/${_from}.conf" "${_incoming}/${_to}.conf"
+			[[ ! -f ${_incoming}/${_from}.service ]] || mv "${_incoming}/${_from}.service" "${_incoming}/${_to}.service"
+			for _file in "${_incoming}"/*.conf "${_incoming}"/*.service; do
+				[[ -f ${_file} ]] || continue
+				FROM="${_rootPath}/${_from}/" TO="${_rootPath}/${_to}/" perl -pi -e 's{\Q$ENV{FROM}\E}{$ENV{TO}}g' "${_file}"
+			done
+		fi
+		# A new project name has no build yet
+		[[ -z ${_toProject} ]] || _build=${_to}
+	fi
 	for _conf in "${_incoming}"/*.conf; do
 		[[ -f ${_conf} ]] || continue
 		_name=$(basename "${_conf}" .conf)
@@ -65,7 +89,14 @@ receive() {
 				python3 lib/sql_startup.py "${_serviceName}" || echo "Could not make ${_serviceName} wait for SQL Server at boot." >&2
 			fi
 			systemctl enable "${_serviceName}" >/dev/null 2>&1
-			systemctl start "${_serviceName}"
+			if [[ ${_name} == "${_build}" ]]; then
+				echo "Build ${_toProject}"
+				_script=${_siteRoot}/scripts/publish.sh
+				[[ -f ${_script} ]] || _script=${_siteRoot}/scripts/publish_local.sh
+				bash "${_script}" || { echo "${_name} could not be built on this server." >&2; exit 1; }
+			else
+				systemctl start "${_serviceName}"
+			fi
 			_units+=("${_serviceName}")
 		fi
 		release_port_reservation
@@ -112,9 +143,31 @@ unset VNS_MOVE_PASSWORD
 [[ -n ${_host} ]] || { echo "Enter the new server." >&2; exit 1; }
 [[ ${_sshPort} =~ ^[0-9]+$ ]] || { echo "The SSH port must be a number." >&2; exit 1; }
 
-# The sites that go: the site, and its environments on this server. Their names are their folders, services and configs.
+# The site's name, binding and project on the new server
+_oldBinding=$(awk '$1 == "ServerName" { print $2; exit }' "${_configPath}")
+_newSite=${VNS_MOVE_FOLDER:-${_site}}
+validate_site_name "${_newSite}"
+_newBinding=${VNS_MOVE_BINDING:-${_oldBinding}}
+validate_binding "${_newBinding}"
+_newProject=${VNS_MOVE_PROJECT:-}
+_projects=("${_siteRoot}"/*.csproj)
+if [[ -n ${_newProject} && -f ${_projects[0]} && ${_newProject} == "$(basename "${_projects[0]}" .csproj)" ]]; then _newProject=""; fi
+if [[ -n ${_newProject} ]]; then
+	validate_project_name "${_newProject}"
+	if [[ -n $(prod_targets) ]]; then
+		echo "${_site} has environments, which run the build it makes, so its project cannot get a new name." >&2
+		exit 1
+	fi
+fi
+_rename=0
+[[ ${_newSite} == "${_site}" && ${_newBinding,,} == "${_oldBinding,,}" && -z ${_newProject} ]] || _rename=1
+
+# The sites that go: the site, and its environments on this server. Their names are their folders, services and configs,
+# here and on the new server, where the site can have another.
 _names=("${_site}")
+_newNames=("${_newSite}")
 _folders=("${_siteRoot}")
+_newFolders=("${_rootPath}/${_newSite}")
 _httpScripts=()
 _kept=()
 for _id in $(prod_targets); do
@@ -126,11 +179,16 @@ for _id in $(prod_targets); do
 		_kept+=("${PROD_BINDING} on ${PROD_IP}")
 		continue
 	fi
-	_httpScripts+=("$(dirname "${_prodScript}")/publish_prod.sh")
-	[[ ! -f ${_apacheSites}/${PROD_FOLDER}.conf ]] || _names+=("${PROD_FOLDER}")
+	_script="$(dirname "${_prodScript}")/publish_prod.sh"
+	_httpScripts+=("${_rootPath}/${_newSite}/${_script#"${_siteRoot}"/}")
+	if [[ -f ${_apacheSites}/${PROD_FOLDER}.conf ]]; then
+		_names+=("${PROD_FOLDER}")
+		_newNames+=("${PROD_FOLDER}")
+	fi
 	# One in the site's folder goes with it
 	if [[ ${_root} != "${_siteRoot}"/* && -d ${_root} ]]; then
 		_folders+=("${_root}")
+		_newFolders+=("${_root}")
 	fi
 done
 
@@ -155,14 +213,15 @@ copy_to_new_server() {
 echo "Check ${_host}"
 _check="set -e; test -f /vns/apache/move_site.sh || { echo 'VNS on ${_host} must be updated first: /vns/update.sh' >&2; exit 1; }"
 _check+="; test \"\$(uname -m)\" = $(printf %q "$(uname -m)") || { echo '${_host} has another CPU architecture than this server, so the builds cannot run there.' >&2; exit 1; }"
-for _name in "${_names[@]}"; do
+for _index in "${!_names[@]}"; do
+	_name=${_newNames[_index]}
 	_unit=$(normalize_dns_name "${_name}" unit)
 	_check+="; ! test -e $(printf %q "${_systemdFolder}/${_unit}.service") -o -e $(printf %q "${_apacheSites}/${_name}.conf") || { echo $(printf %q "${_name} already exists on ${_host}.") >&2; exit 1; }"
-	if grep -qs '^ExecStart=.*/usr/lib/dotnet/dotnet ' "${_systemdFolder}/${_unit}.service"; then
+	if grep -qs '^ExecStart=.*/usr/lib/dotnet/dotnet ' "${_systemdFolder}/$(normalize_dns_name "${_names[_index]}" unit).service"; then
 		_check+="; test -x /usr/lib/dotnet/dotnet || { echo '.NET is not installed on ${_host}.' >&2; exit 1; }"
 	fi
 done
-for _folder in "${_folders[@]}"; do
+for _folder in "${_newFolders[@]}"; do
 	_check+="; ! test -e $(printf %q "${_folder}") || { echo $(printf %q "${_folder} already exists on ${_host}.") >&2; exit 1; }"
 done
 on_new_server "bash -c $(printf %q "${_check}")"
@@ -182,13 +241,13 @@ undo() {
 		echo "The ${_verb,,} failed, so ${_site} runs here as before." >&2
 		if ((_started)); then
 			echo "Remove what was made on ${_host}" >&2
-			for _name in "${_names[@]}"; do
+			for _name in "${_newNames[@]}"; do
 				_unit=$(normalize_dns_name "${_name}" unit)
 				_cleanup+="systemctl stop $(printf %q "${_unit}") 2>/dev/null; systemctl disable $(printf %q "${_unit}") 2>/dev/null; "
 				_cleanup+="rm -f $(printf %q "${_systemdFolder}/${_unit}.service") $(printf %q "/etc/apache2/sites-enabled/${_name}.conf") $(printf %q "${_apacheSites}/${_name}.conf"); "
 				_cleanup+="rm -rf $(printf %q "${_rootsFolder}/${_name}"); "
 			done
-			for _folder in "${_folders[@]}"; do _cleanup+="rm -rf $(printf %q "${_folder}"); "; done
+			for _folder in "${_newFolders[@]}"; do _cleanup+="rm -rf $(printf %q "${_folder}"); "; done
 			_cleanup+="rm -rf $(printf %q "${_incoming}"); systemctl daemon-reload; apache2ctl configtest >/dev/null 2>&1 && systemctl reload apache2; true"
 			on_new_server "bash -c $(printf %q "${_cleanup}")" || echo "Could not clean up ${_host}. Remove the sites there by hand." >&2
 		fi
@@ -207,6 +266,7 @@ for _name in "${_names[@]}"; do
 	[[ ! -f ${_systemdFolder}/${_unit}.service ]] || cp "${_systemdFolder}/${_unit}.service" "${_staging}/${_name}.service"
 done
 ((${#_httpScripts[@]} == 0)) || printf '%s\n' "${_httpScripts[@]}" >"${_staging}/http-scripts"
+((!_rename)) || printf '%s\n' "${_site}" "${_newSite}" "${_newBinding}" "${_newProject}" >"${_staging}/rename"
 
 if [[ -z ${_copy} || ${VNS_COPY_STOP:-} == y ]]; then
 	echo "Stop the sites here, so their databases and files stay consistent while they are copied"
@@ -220,10 +280,11 @@ if [[ -z ${_copy} || ${VNS_COPY_STOP:-} == y ]]; then
 fi
 
 _started=1
-for _folder in "${_folders[@]}"; do
-	echo "Copy ${_folder} to ${_host}"
+for _index in "${!_folders[@]}"; do
+	_folder=${_newFolders[_index]}
+	echo "Copy ${_folders[_index]} to ${_host}:${_folder}"
 	on_new_server "mkdir -p $(printf %q "${_folder}")"
-	copy_to_new_server "${_folder}/" "${_folder}/"
+	copy_to_new_server "${_folders[_index]}/" "${_folder}/"
 done
 on_new_server "mkdir -p $(printf %q "${_incoming}")"
 copy_to_new_server "${_staging}/" "${_incoming}/"
@@ -234,7 +295,7 @@ unset SSHPASS
 
 if [[ -n ${_copy} ]]; then
 	for _unit in ${_stopped[@]+"${_stopped[@]}"}; do systemctl start "${_unit}"; done
-	echo "${_site} is copied to ${_host}. It is not changed here."
+	echo "${_site} is copied to ${_host} as ${_newSite} (${_newBinding}). It is not changed here."
 else
 	echo "Remove the sites here"
 	for _name in "${_names[@]}"; do
@@ -256,9 +317,9 @@ else
 	else
 		echo "The files are kept here: ${_folders[*]}"
 	fi
-	echo "${_site} has moved to ${_host}. A certificate on this server is not removed."
+	echo "${_site} has moved to ${_host} as ${_newSite} (${_newBinding}). A certificate on this server is not removed."
 fi
-echo "On ${_host} the sites answer on HTTP: ${_names[*]}. When DNS points there, use Issue certificate on each of them."
+echo "On ${_host} the sites answer on HTTP: ${_newNames[*]}. When DNS points there, use Issue certificate on each of them."
 if ((${#_kept[@]})); then
 	echo "Environments on other servers are not moved; ${_site} still publishes to them: ${_kept[*]}"
 fi

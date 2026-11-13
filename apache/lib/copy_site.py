@@ -201,8 +201,6 @@ def prepare(source_name, target_name, binding, port="", web_root=Path("/var/www"
     target_service = services / (service_name(target_name) + ".service")
     if source.is_symlink() or not source.is_dir() or not conf.is_file():
         raise ValueError("The source must be a local site with an Apache configuration.")
-    if (source / "scripts/publish_prod.sh").exists() or any(source.glob("scripts/targets/*/publish_prod.sh")):
-        raise ValueError("Sites with a production target cannot be copied.")
     if target.exists() or target.is_symlink() or target_conf.exists() or target_service.exists():
         raise ValueError("The destination folder, configuration or service already exists.")
     if any(service_name(path.name) == service_name(target_name) for path in web_root.iterdir() if path.is_dir()):
@@ -215,21 +213,7 @@ def prepare(source_name, target_name, binding, port="", web_root=Path("/var/www"
         if re.search(r"(?mi)^\s*(?:ServerName|ServerAlias)\s+.*(?<!\S)" + re.escape(binding) + r"(?!\S)", path.read_text()):
             raise ValueError("The new binding is already used by an Apache site.")
     service_text = service.read_text() if service.is_file() else ""
-    old_project = old_dll = ""
-    project_names = []
-    if project:
-        if not PROJECT_RE.fullmatch(project):
-            raise ValueError("Invalid project name. Use letters, numbers, dots, hyphens or underscores.")
-        projects = sorted(source.glob("*.csproj"))
-        if len(projects) != 1:
-            raise ValueError("The source needs exactly one project to rename it.")
-        old_project = projects[0].stem
-        if project == old_project:
-            project = ""
-        else:
-            running = re.search(r"([^\s/\"']+)\.dll(?=[\s\"']|$)", service_text)
-            old_dll = running[1] if running else old_project
-            project_names = [old_project, old_dll]
+    project = renamed_project(source, project, service_text)[0]
     if database or connection is not None:
         if connection is not None:
             if not isinstance(connection, dict) or set(connection) != {"server", "database", "username", "password"}:
@@ -257,13 +241,18 @@ def prepare(source_name, target_name, binding, port="", web_root=Path("/var/www"
                         changes += 1
         if not changes:
             raise ValueError("No SQL database connection strings were found to change.")
-    ports = set(re.findall(r"(?:localhost|127\.0\.0\.1):(\d+)", text + service_text))
-    if service_text and (len(ports) != 1 or not port.isdigit()):
+    if service_text and not port.isdigit():
         raise ValueError("A service copy requires one identifiable HTTP port and a new allocated port.")
-    old_port = next(iter(ports), "")
-    https = bool(re.search(r"(?mi)^\s*SSLEngine\s+on\b", text))
-    # bin and obj hold the old name and are made again by the build
-    skip = (lambda folder, names: [name for name in names if name in ("bin", "obj")] if Path(folder) == source else []) if project else None
+    # The environments stay with the source: the copy is a site of its own. One in the site's folder is not copied.
+    environments = {folder for folder in environment_folders(source) if folder.parent == source or source in folder.parents}
+
+    def skip(folder, names):
+        skipped = [name for name in names if Path(folder) / name in environments]
+        # bin and obj hold the old name and are made again by the build
+        if project and Path(folder) == source:
+            skipped += [name for name in names if name in ("bin", "obj")]
+        return skipped
+
     shutil.copytree(source, target, symlinks=True, copy_function=shutil.copy2, ignore=skip)
     os.chown(target, source.stat().st_uid, source.stat().st_gid)
     for path in target.rglob("*"):
@@ -274,12 +263,94 @@ def prepare(source_name, target_name, binding, port="", web_root=Path("/var/www"
             if link == str(source) or link.startswith(str(source) + "/"):
                 path.unlink()
                 path.symlink_to(str(target) + link[len(str(source)):])
+    drop_environments(target)
+    conf_text, new_service, https = rewrite_copy(source, target, binding, text, service_text, port,
+                                                 database=database, connection=connection, project=project)
+    target_conf.write_text(conf_text)
+    if service_text:
+        target_service.write_text(new_service)
+    return https
+
+
+def renamed_project(source, project, service_text):
+    """The new project name, with the old project and dll names, or no name when it stays"""
+    if not project:
+        return "", "", "", []
+    if not PROJECT_RE.fullmatch(project):
+        raise ValueError("Invalid project name. Use letters, numbers, dots, hyphens or underscores.")
+    projects = sorted(source.glob("*.csproj"))
+    if len(projects) != 1:
+        raise ValueError("The source needs exactly one project to rename it.")
+    old_project = projects[0].stem
+    if project == old_project:
+        return "", "", "", []
+    running = re.search(r"([^\s/\"']+)\.dll(?=[\s\"']|$)", service_text)
+    old_dll = running[1] if running else old_project
+    return project, old_project, old_dll, [old_project, old_dll]
+
+
+def environment_folders(site_root):
+    """The folders of a site's environments on this server, from their settings"""
+    folders = []
+    for script in [site_root / "scripts/publish_prod.sh", *sorted(site_root.glob("scripts/targets/*/publish_prod.sh"))]:
+        if script.is_file() and not script.is_symlink():
+            match = re.search(r"""(?m)^PROD_LOCAL_PATH=['"]?([^'"\s]+)""", script.read_text())
+            if match:
+                folders.append(Path(os.path.normpath(match[1])))
+    return folders
+
+
+def drop_environments(target):
+    """A copy here is a site of its own: the source's environments, their status and sync settings are left out,
+    and the scripts that Add environment renamed are put back"""
+    scripts = target / "scripts"
+    shutil.rmtree(scripts / "targets", ignore_errors=True)
+    for name in ("publish_prod.sh", "sync_prod.sh", "clear_logs_prod.sh"):
+        (scripts / name).unlink(missing_ok=True)
+    for name in ("publish", "clear_logs"):
+        local = scripts / f"{name}_local.sh"
+        if local.is_file() and not (scripts / f"{name}.sh").exists():
+            local.rename(scripts / f"{name}.sh")
+    status = target / ".vns-publish"
+    for path in [status / "prod.json", *status.glob("target-*.json")]:
+        path.unlink(missing_ok=True)
+    settings = scripts / "data_sync.json"
+    if settings.is_file() and not settings.is_symlink():
+        try:
+            data = json.loads(settings.read_text(encoding="utf-8"))
+        except ValueError:
+            data = None
+        if isinstance(data, dict):
+            data = {key: value for key, value in data.items() if key == "main"}
+            settings.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
+def rewrite_copy(source, target, binding, text, service_text, port="", database="", connection=None, project=""):
+    """A copied folder in target, rewritten from the source's name to its own: its scripts, settings, Apache config
+    and service. The source is the site's path where it came from, and need not exist here. Returns the Apache
+    config, the service and whether it has HTTPS."""
+    original = re.search(r"(?m)^\s*ServerName\s+(\S+)", text)
+    if not original:
+        raise ValueError("The source Apache configuration has no ServerName.")
+    original_binding = original[1]
+    ports = set(re.findall(r"(?:localhost|127\.0\.0\.1):(\d+)", text + service_text))
+    if service_text and len(ports) != 1:
+        raise ValueError("A service copy requires one identifiable HTTP port.")
+    old_port = next(iter(ports), "")
+    port = port or old_port
+    https = bool(re.search(r"(?mi)^\s*SSLEngine\s+on\b", text))
+    project, old_project, old_dll, project_names = renamed_project(target, project, service_text)
+    # An environment's settings name its own server, folder and binding, which stay: only an environment in the
+    # site's folder follows the folder
+    for path in [*(target / "scripts").glob("*_prod.sh"), *(target / "scripts/targets").glob("*/*.sh")]:
+        if not path.is_symlink() and path.is_file():
+            path.write_text(path.read_text().replace(str(source) + "/", str(target) + "/"))
     for path in (target / "scripts").glob("*.sh"):
-        if path.is_symlink():
+        if path.is_symlink() or path.name.endswith("_prod.sh"):
             continue
         content = rewrite(path.read_text(), source, target, binding, old_port, port)
-        if original_binding[1] not in (source_name, service_name(source_name)):
-            content = re.sub(r"(?<![\w.-])" + re.escape(original_binding[1]) + r"(?![\w.-])", binding, content)
+        if original_binding not in (source.name, service_name(source.name)):
+            content = re.sub(r"(?<![\w.-])" + re.escape(original_binding) + r"(?![\w.-])", binding, content)
         content = re.sub(r"(?m)^(_binding=).*$", lambda m: m[1] + binding, content)
         if project:
             content = rename_project_references(content, project_names, project)
@@ -322,21 +393,20 @@ def prepare(source_name, target_name, binding, port="", web_root=Path("/var/www"
         path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
     text = rewrite(text, source, target, binding, old_port, port)
     text = re.sub(r"(?m)^(\s*ServerName\s+)\S+", lambda m: m[1] + binding, text)
-    text = re.sub(r"(?m)^\s*ServerAlias[^\n]*\n?", "", text)
+    # The aliases belong to the source, unless the copy keeps its binding on another server
+    if binding.lower() != original_binding.lower():
+        text = re.sub(r"(?m)^\s*ServerAlias[^\n]*\n?", "", text)
     if https:
         text = re.sub(r"(?m)^(\s*SSLCertificateFile\s+).*$",
-                      lambda m: m[1] + f"/etc/ssl/certs/{target_name}_ecc/fullchain.cer", text)
+                      lambda m: m[1] + f"/etc/ssl/certs/{target.name}_ecc/fullchain.cer", text)
         text = re.sub(r"(?m)^(\s*SSLCertificateKeyFile\s+).*$",
-                      lambda m: m[1] + f"/etc/ssl/certs/{target_name}_ecc/{target_name}.key", text)
-    target_conf.write_text(text)
+                      lambda m: m[1] + f"/etc/ssl/certs/{target.name}_ecc/{target.name}.key", text)
     new_service = rewrite(service_text, source, target, binding, old_port, port) if service_text else ""
     if project:
         new_service = rename_project_references(new_service, project_names, project)
         working = re.search(r"(?m)^WorkingDirectory=(.+)$", new_service)
         rename_project(target, old_project, old_dll, project, Path(working[1].strip()) if working else target)
-    if service_text:
-        target_service.write_text(new_service)
-    return https
+    return text, new_service, https
 
 
 if __name__ == "__main__":
@@ -352,6 +422,28 @@ if __name__ == "__main__":
             print(repoint_local_sql(sys.argv[2], sys.argv[3]))
         except (OSError, ValueError) as exc:
             sys.exit(f"Could not change the SQL connection: {exc}")
+        sys.exit(0)
+    if len(sys.argv) >= 2 and sys.argv[1] == "rename":
+        # A copy that arrived on another server, in its new folder: rewritten like a copy here, without copying again
+        parser = argparse.ArgumentParser(prog="copy_site.py rename")
+        parser.add_argument("source", help="the site's folder where it came from")
+        parser.add_argument("target", help="the folder it is in now")
+        parser.add_argument("binding")
+        parser.add_argument("--conf", required=True)
+        parser.add_argument("--service", default="")
+        parser.add_argument("--project", default="")
+        args = parser.parse_args(sys.argv[2:])
+        try:
+            conf = Path(args.conf)
+            service = Path(args.service) if args.service else None
+            text, new_service, _ = rewrite_copy(Path(args.source), Path(args.target), normalize_dns_name(args.binding, fully_qualified=True),
+                                                conf.read_text(), service.read_text() if service and service.is_file() else "",
+                                                project=args.project)
+            conf.write_text(text)
+            if service and service.is_file():
+                service.write_text(new_service)
+        except (OSError, ValueError) as exc:
+            parser.exit(1, f"Could not rename the copy: {exc}\n")
         sys.exit(0)
     parser = argparse.ArgumentParser()
     parser.add_argument("source")

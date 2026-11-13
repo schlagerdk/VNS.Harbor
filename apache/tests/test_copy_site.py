@@ -3,6 +3,8 @@ import json
 import os
 from pathlib import Path
 import sys
+import shutil
+import subprocess
 import tempfile
 import unittest
 
@@ -143,16 +145,74 @@ class CopySiteTests(unittest.TestCase):
         self.assertNotIn("ServerAlias", conf)
         self.assertEqual((self.configs / "source.test.conf").read_text(), before)
 
-    def test_production_and_collisions_are_rejected_before_copy(self):
-        prod = self.source / "scripts/publish_prod.sh"
-        prod.touch()
-        with self.assertRaisesRegex(ValueError, "production"):
-            self.prepare()
-        self.assertFalse((self.web / "target.test").exists())
-        prod.unlink()
+    def test_collisions_are_rejected_before_copy(self):
         (self.web / "target.test").mkdir()
         with self.assertRaisesRegex(ValueError, "already exists"):
             self.prepare()
+
+    def test_copy_of_a_site_with_environments_is_a_site_of_its_own(self):
+        scripts = self.source / "scripts"
+        (scripts / "publish.sh").rename(scripts / "publish_local.sh")
+        (scripts / "clear_logs_local.sh").write_text("# clear\n")
+        (scripts / "targets/production").mkdir(parents=True)
+        (scripts / "targets/production/publish_prod.sh").write_text(f"PROD_LOCAL_PATH='{self.source}/_production'\nPROD_FOLDER='prod'\n")
+        (scripts / "targets/live").mkdir()
+        (scripts / "targets/live/publish_prod.sh").write_text("PROD_IP='10.0.0.5'\nPROD_FOLDER='live'\n")
+        (scripts / "publish_prod.sh").write_text("PROD_IP='10.0.0.6'\n")
+        (scripts / "data_sync.json").write_text(json.dumps({"main": {"enabled": True}, "production": {"enabled": True}}))
+        (self.source / "_production").mkdir()
+        (self.source / "_production/App.dll").write_text("the environment's build")
+        (self.source / ".vns-publish").mkdir()
+        for name in ("test.json", "prod.json", "target-production.json"):
+            (self.source / ".vns-publish" / name).write_text("{}")
+        self.prepare()
+        target = self.web / "target.test"
+        self.assertFalse((target / "scripts/targets").exists())
+        self.assertFalse((target / "scripts/publish_prod.sh").exists())
+        self.assertFalse((target / "_production").exists())
+        self.assertTrue((target / "scripts/publish.sh").exists())
+        self.assertIn(str(target), (target / "scripts/publish.sh").read_text())
+        self.assertTrue((target / "scripts/clear_logs.sh").exists())
+        self.assertEqual(sorted(path.name for path in (target / ".vns-publish").iterdir()), ["test.json"])
+        self.assertEqual(json.loads((target / "scripts/data_sync.json").read_text()), {"main": {"enabled": True}})
+        # The source keeps everything
+        self.assertTrue((scripts / "targets/production/publish_prod.sh").exists())
+        self.assertTrue((self.source / "_production/App.dll").exists())
+
+    def test_copy_on_another_server_is_renamed_in_its_new_folder(self):
+        new = self.web / "renamed.test"
+        shutil.copytree(self.source, new)
+        conf = self.root / "incoming.conf"
+        service = self.root / "incoming.service"
+        conf.write_text((self.configs / "source.test.conf").read_text())
+        service.write_text((self.services / "source.test.service").read_text())
+        old = str(self.source)
+        result = subprocess.run([sys.executable, str(LIB / "copy_site.py"), "rename", old, str(new), "new.example.test",
+                                 "--conf", str(conf), "--service", str(service)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(f"WorkingDirectory={new}", service.read_text())
+        self.assertIn("/var/lib/vns-roots/renamed.test", service.read_text())
+        self.assertIn("localhost:4000", service.read_text())
+        self.assertIn("ServerName new.example.test", conf.read_text())
+        self.assertNotIn("ServerAlias", conf.read_text())
+        self.assertIn(str(new), (new / "scripts/publish.sh").read_text())
+        self.assertIn("https://new.example.test", (new / "appsettings.json").read_text())
+
+    def test_environments_keep_their_servers_and_one_in_the_folder_follows_it(self):
+        new = self.web / "renamed.test"
+        shutil.copytree(self.source, new)
+        (new / "scripts/publish_prod.sh").write_text("PROD_IP='10.0.0.5'\nPROD_FOLDER='source.test'\nPROD_BINDING='source.test'\n")
+        (new / "scripts/targets/staging").mkdir(parents=True)
+        (new / "scripts/targets/staging/publish_prod.sh").write_text(f"PROD_LOCAL_PATH='{self.source}/_staging'\nPROD_FOLDER='staging-source.test'\n")
+        copy_site.rewrite_copy(self.source, new, "new.example.test", (self.configs / "source.test.conf").read_text(), "")
+        self.assertEqual((new / "scripts/publish_prod.sh").read_text(), "PROD_IP='10.0.0.5'\nPROD_FOLDER='source.test'\nPROD_BINDING='source.test'\n")
+        self.assertEqual((new / "scripts/targets/staging/publish_prod.sh").read_text(), f"PROD_LOCAL_PATH='{new}/_staging'\nPROD_FOLDER='staging-source.test'\n")
+
+    def test_same_binding_on_another_server_keeps_the_aliases(self):
+        conf = self.root / "incoming.conf"
+        conf.write_text((self.configs / "source.test.conf").read_text())
+        text = copy_site.rewrite_copy(self.source, self.source, "source.test", conf.read_text(), "")[0]
+        self.assertIn("ServerAlias alias.test", text)
 
     def test_https_gets_new_certificate_paths_and_unicode_folder(self):
         conf = self.configs / "source.test.conf"

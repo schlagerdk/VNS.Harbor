@@ -78,6 +78,20 @@ class PublicAddressTests(unittest.TestCase):
         self.assertEqual(calls, [])
 
 
+
+class HeaderAddressTests(unittest.TestCase):
+    """The server's internal and external address in the header, for administrators, copied with a click"""
+    source = (Path(__file__).resolve().parents[1] / "solutionfiles/admin/app/static/app.js").read_text()
+    html = (Path(__file__).resolve().parents[1] / "solutionfiles/admin/app/templates/index.html").read_text()
+
+    def test_header_has_the_addresses_for_administrators_only(self):
+        self.assertIn('<div id="server-ips" class="server-ips" role="group" aria-label="Server addresses" hidden></div>', self.html)
+        self.assertIn("if (!currentUser.admin) {\n\t\tbox.hidden = true;", self.source)
+
+    def test_external_is_where_dns_should_point_and_a_click_copies(self):
+        self.assertIn('const external = data.address && !privateIPv4(data.address) ? data.address : "";', self.source)
+        self.assertIn("await copyText(address, document.body);", self.source)
+
 if __name__ == "__main__":
     unittest.main()
 

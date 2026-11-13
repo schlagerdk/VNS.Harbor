@@ -95,6 +95,54 @@ function applyAccess() {
 	$("#sql-add-connection").hidden = !currentUser.manage_connections;
 	// A user with only one of the two has nothing to choose in Preferences
 	$("#menu-preferences").hidden = !currentUser.admin && !(currentUser.web && currentUser.sql);
+	showServerAddresses();
+}
+// The server's internal and external address in the header, for administrators. A click copies one.
+function privateIPv4(address) {
+	return /^(10\.|127\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\.)/.test(address);
+}
+async function showServerAddresses() {
+	const box = $("#server-ips");
+	if (!currentUser.admin) {
+		box.hidden = true;
+		return;
+	}
+	let data;
+	try {
+		data = await loadServerAddress();
+	} catch {
+		return;
+	}
+	const ipv4 = (data.addresses || []).filter((address) => !address.includes(":"));
+	const internal = ipv4.find(privateIPv4) || "";
+	// What DNS should point to: the public address set in Preferences, the one found, or a public one of its own
+	const external = data.address && !privateIPv4(data.address) ? data.address : "";
+	const items = [];
+	if (internal && internal !== external) items.push(["Internal", internal]);
+	if (external) items.push([internal ? "External" : "IP", external]);
+	if (!items.length && ipv4[0]) items.push(["IP", ipv4[0]]);
+	// Read again with the access now and then: the buttons stay, so a click that just copied keeps showing it
+	const key = JSON.stringify(items);
+	if (box.dataset.key === key) return;
+	box.dataset.key = key;
+	box.replaceChildren(...items.map(([label, address]) => {
+		const name = el("span", { className: "server-ip-label", textContent: label });
+		const button = el("button", { type: "button", className: "server-ip", title: `${label} address. Click to copy` },
+			name, el("span", { className: "server-ip-value", textContent: address }));
+		let timer = null;
+		button.onclick = () => run(async () => {
+			await copyText(address, document.body);
+			button.classList.add("copied");
+			name.textContent = "Copied";
+			clearTimeout(timer);
+			timer = setTimeout(() => {
+				button.classList.remove("copied");
+				name.textContent = label;
+			}, 1400);
+		});
+		return button;
+	}));
+	box.hidden = !items.length;
 }
 // An administrator can change a user's access while their page is open: it is read again now and then, and the page
 // follows at once, out of a part the user no longer has and with the buttons they now have
@@ -1647,11 +1695,9 @@ function envPanel(site, env) {
 	if (currentUser.admin && isTarget(env) && (env.mode === "local" && env.exists !== false || env.mode === "windows" || env.mode === "remote" && !missing)) addManage("Copy site", () => openCreateProdDialog(site, env, true));
 	// An environment in a folder of its own can become a separate site again
 	if (currentUser.admin && isTarget(env) && env.separate) addManage("Move out…", () => releaseEnvironment(site, env));
-	// The main site: to a new folder here when it has no environments, and with them to another server (administrators),
+	// The main site: to a new folder here, without its environments, or with them to another server (administrators),
 	// where it can also be migrated
-	const copyHere = !hasProd(site);
-	const copyToServer = currentUser.admin && Boolean(env.unit || env.apache);
-	if (!isTarget(env) && !site.admin && !site.managed_by && (copyHere || copyToServer)) addManage("Copy site", () => copySite(site, env));
+	if (!isTarget(env) && !site.admin && !site.managed_by) addManage("Copy site", () => copySite(site, env));
 	// An environment on Windows is only removed here: its IIS site and files stay on the server
 	if (hasProd(site) && !site.admin && env.mode === "windows") addManage("Remove environment", () => deleteSite(site, "prod", env), "push-right");
 	else if (hasProd(site) && !site.admin) addManage("Delete site", () => deleteSite(site, isTarget(env) ? "prod" : "test", env), "danger");
@@ -1927,9 +1973,10 @@ async function copySite(site, main) {
 	form.reset();
 	$("#copy-site-icon").replaceChildren(svgIcon("file"));
 	const field = (name) => form.elements.namedItem(name);
-	// Only what can be done, and what the user may do: a site with environments is only copied to another server,
-	// which takes them along, and only administrators copy or migrate to another server
-	const here = !hasProd(site);
+	// Only what the user may do: copying here needs Create sites (the button is left out without it), and only
+	// administrators copy or migrate to another server. A copy here leaves the environments out; one to another server takes them along.
+	const here = true;
+	$("#copy-no-environments").hidden = !hasProd(site);
 	const server = currentUser.admin && Boolean(main && (main.unit || main.apache));
 	$("#copy-here-card").hidden = !here;
 	field("destination")[0].disabled = !here;
@@ -1967,6 +2014,26 @@ async function copySite(site, main) {
 	});
 	$("#copy-server-list").replaceChildren(...items);
 	const kept = site.environments.some((env) => isTarget(env) && env.mode !== "local");
+	// On the new server it keeps its folder, binding and project unless they are changed. Its environments run the
+	// build it makes, so only a site without them can get a new project name.
+	field("server_folder").value = siteLabel(site);
+	field("server_binding").value = (main && bindingLabel(main)) || siteLabel(site);
+	field("server_project").value = site.project || "";
+	const serverProject = Boolean(site.project) && !hasProd(site);
+	$("#copy-server-project-row").hidden = !serverProject;
+	let serverBindingEdited = false;
+	const showServerPath = () => {
+		$("#copy-server-path").textContent = `On the new server: /var/www/${field("server_folder").value.trim() || "…"}`;
+	};
+	// The binding follows the folder while they are the same and the binding is not edited
+	let previousFolder = field("server_folder").value;
+	field("server_folder").oninput = () => {
+		if (!serverBindingEdited && field("server_binding").value === previousFolder) field("server_binding").value = field("server_folder").value;
+		previousFolder = field("server_folder").value;
+		showServerPath();
+	};
+	field("server_binding").oninput = () => { serverBindingEdited = true; };
+	showServerPath();
 
 	const update = () => {
 		const toServer = field("destination").value === "server";
@@ -1977,6 +2044,7 @@ async function copySite(site, main) {
 		$("#copy-server").disabled = !toServer;
 		field("project").required = hasProject && !toServer;
 		field("project").disabled = !hasProject || toServer;
+		field("server_project").disabled = !serverProject || !toServer;
 		const newConnection = hasSqlConnection && field("change_connection").checked;
 		sqlFields.hidden = !newConnection;
 		sqlFields.disabled = !newConnection;
@@ -2029,6 +2097,8 @@ async function copySite(site, main) {
 					const removing = field("remove_here").checked;
 					payload = { kind: "move_site", site: site.name, host: field("host").value.trim(), ssh_port: field("ssh_port").value,
 						user: field("user").value.trim(), password: field("ssh_password").value, copy: !removing,
+						folder: field("server_folder").value.trim(), binding: field("server_binding").value.trim(),
+						project: serverProject ? field("server_project").value.trim() : "",
 						delete_local: removing && field("delete_local").checked ? "y" : "n", stop_source: !removing && field("stop_source").checked };
 				} else {
 					payload = { kind: "copy_site", site: site.name, target: field("target").value.trim(), binding: field("binding").value.trim() };
@@ -4474,6 +4544,7 @@ preferencesForm.onsubmit = (event) => {
 		if (currentUser.admin && preferencesForm.elements.public_address.value.trim() !== (serverAddress?.public || "")) {
 			await api("/api/preferences", { method: "PUT", json: { public_address: preferencesForm.elements.public_address.value.trim() } });
 			serverAddress = null;
+			showServerAddresses();
 		}
 		if (keepAliveInstalled && currentUser.admin) {
 			if (!Number.isInteger(interval) || interval < 1 || interval > 1440) throw new Error("The interval must be a whole number from 1 to 1440 minutes.");

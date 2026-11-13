@@ -46,6 +46,7 @@
     <button type="button" id="search-clear" class="search-clear" aria-label="Clear search" title="Clear search"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button>
   </div>
   <span class="spacer"></span>
+  <div id="server-ips" class="server-ips" role="group" aria-label="Server addresses" hidden></div>
   <button id="btn-dock" class="ghost" title="Terminals (Ctrl+`)" hidden>⌨<span class="btn-label"> Terminals</span> <span id="term-count" class="count" hidden></span></button>
   <div class="user">
     <button id="btn-settings" class="ghost" title="Server" aria-label="Server" aria-haspopup="true">⚙<span class="btn-label"> Server</span> <span id="system-update-badge" class="badge system-update-available" hidden>Update available</span></button>
@@ -400,6 +401,7 @@
         <p class="hint">The project file and dll get this name, and the copy is built. Namespaces in the code are not changed.</p>
       </div>
       <p class="hint" id="copy-site-path"></p>
+      <p class="hint copy-no-environments" id="copy-no-environments" hidden>The copy is a site of its own: its environments are not copied, and you can add environments to it afterwards.</p>
       <p class="hint copy-dns-hint">For HTTPS, the new binding must point to this server.</p>
       <div class="copy-options">
         <label class="sync-option copy-option sql" aria-controls="copy-sql-fields"><input name="change_connection" type="checkbox"><span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg></span><span class="sync-option-text"><span class="sync-option-title">Change SQL connection strings</span><span class="sync-option-sub">Point the copy at another database. Nothing is created in SQL Server</span></span></label>
@@ -422,6 +424,16 @@
         <label>SSH username <input name="user" required autocomplete="username" value="root"></label>
         <label>SSH password <input name="ssh_password" type="password" autocomplete="new-password" placeholder="Leave empty to use an SSH key"></label>
       </div>
+      <div class="ns-section">On the new server</div>
+      <div class="ns-grid">
+        <label>Folder<input name="server_folder" required autocomplete="off" spellcheck="false"></label>
+        <label>Binding<input name="server_binding" required autocomplete="off" spellcheck="false"></label>
+      </div>
+      <div id="copy-server-project-row" hidden>
+        <label>Project name<input name="server_project" autocomplete="off" spellcheck="false" maxlength="128" pattern="[A-Za-z0-9][A-Za-z0-9._\-]*"></label>
+        <p class="hint">A new name renames the project file and dll, and the site is built on the new server. Namespaces in the code are not changed.</p>
+      </div>
+      <p class="hint" id="copy-server-path"></p>
       <div class="ns-section">What goes</div>
       <ul id="copy-server-list" class="move-site-list"></ul>
       <p class="hint move-site-http"><strong>Set up with HTTP.</strong> DNS may not point to the new server yet, so no certificates are issued there. When it does, use Issue certificate on each site.</p>

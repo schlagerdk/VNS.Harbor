@@ -1137,6 +1137,7 @@ def site_info(name, states):
         "display_name": display_dns_name(name),
         "kind": kind,
         "has_project": bool(projects),
+        "project": os.path.splitext(os.path.basename(projects[0]))[0] if len(projects) == 1 else "",
         "managed_by": managed_by(name),
         "updates": updates,
         "package_updates": package_updates,
@@ -2902,8 +2903,9 @@ def build_command(data):
         source = site_arg(data)
         if managed_by(source):
             abort(400, "This site is an environment of a main site on another server. Make the copy from there.")
-        if source == ADMIN_SITE or target_ids(os.path.join(WEB_ROOT, source)):
-            abort(400, "Admin sites and sites with production targets cannot be copied.")
+        # A site with environments is copied without them: the copy is a site of its own
+        if source == ADMIN_SITE:
+            abort(400, "The admin site cannot be copied.")
         target = dns_name(data.get("target", ""), "site name")
         binding = dns_name(data.get("binding", ""), "binding", fully_qualified=True)
         if any(service_name(name) == service_name(target) for name in site_dirs()):
@@ -3276,7 +3278,24 @@ def api_term():
                 extra_env["VNS_COPY_SQL"] = json.dumps(connection)
     if payload.get("kind") == "move_site":
         host, user, password, port = ssh_login(payload)
+        # Its folder, binding and project name on the new server. Environments run the build it makes, so only a
+        # site without them can get a new project name.
+        site = payload["site"]
+        folder = dns_name(payload.get("folder") or site, "folder name")
+        binding = dns_name(payload.get("binding") or conf_binding(site), "binding", fully_qualified=True)
+        project = payload.get("project") or ""
+        if project:
+            if not isinstance(project, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", project):
+                abort(400, "Invalid project name")
+            projects = glob.glob(os.path.join(glob.escape(os.path.join(WEB_ROOT, site)), "*.csproj"))
+            if len(projects) != 1:
+                abort(400, "The site needs exactly one project to rename it")
+            if os.path.splitext(os.path.basename(projects[0]))[0] == project:
+                project = ""
+            elif target_ids(os.path.join(WEB_ROOT, site)):
+                abort(400, "A site with environments keeps its project name, as they run the build it makes")
         extra_env = {"VNS_MOVE_IP": host, "VNS_MOVE_USER": user, "VNS_MOVE_PASSWORD": password, "VNS_MOVE_SSH_PORT": port,
+                     "VNS_MOVE_FOLDER": folder, "VNS_MOVE_BINDING": binding, "VNS_MOVE_PROJECT": project,
                      "VNS_MOVE_COPY": "1" if payload.get("copy") else "",
                      "VNS_MOVE_DELETE_LOCAL": "y" if not payload.get("copy") and payload.get("delete_local") == "y" else "n",
                      "VNS_COPY_STOP": "y" if payload.get("copy") and payload.get("stop_source") else "n"}

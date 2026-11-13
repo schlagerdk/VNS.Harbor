@@ -145,8 +145,7 @@ class AdminTests(unittest.TestCase):
     app = (APACHE / "solutionfiles/admin/app/app.py").read_text()
 
     def test_main_site_has_one_copy_dialog_for_this_server_and_another(self):
-        self.assertIn('if (!isTarget(env) && !site.admin && !site.managed_by && (copyHere || copyToServer)) addManage("Copy site", () => copySite(site, env));', self.source)
-        self.assertIn("const copyToServer = currentUser.admin && Boolean(env.unit || env.apache);", self.source)
+        self.assertIn('if (!isTarget(env) && !site.admin && !site.managed_by) addManage("Copy site", () => copySite(site, env));', self.source)
         self.assertNotIn("openMoveSiteDialog", self.source)
         html = (APACHE / "solutionfiles/admin/app/templates/index.html").read_text()
         self.assertIn('name="destination" value="server"', html)
@@ -163,6 +162,23 @@ class AdminTests(unittest.TestCase):
     def test_environment_to_another_server_starts_with_http(self):
         self.assertIn('extra_env["VNS_PROD_HTTPS"] = "n"', self.app)
         self.assertIn("const otherServer = moving && !same", self.source)
+
+    def test_new_server_can_get_a_new_folder_binding_and_project(self):
+        self.assertIn('folder: field("server_folder").value.trim(), binding: field("server_binding").value.trim(),', self.source)
+        self.assertIn("const serverProject = Boolean(site.project) && !hasProd(site);", self.source)
+        self.assertIn('"VNS_MOVE_FOLDER": folder, "VNS_MOVE_BINDING": binding, "VNS_MOVE_PROJECT": project,', self.app)
+        self.assertIn("A site with environments keeps its project name", self.app)
+
+    def test_renamed_site_is_rewritten_on_the_new_server_and_built_with_a_new_project(self):
+        script = (APACHE / "move_site.sh").read_text()
+        self.assertIn('python3 lib/copy_site.py rename "${_rootPath}/${_from}" "${_rootPath}/${_to}"', script)
+        self.assertIn('[[ -z ${_toProject} ]] || _build=${_to}', script)
+        self.assertIn('copy_to_new_server "${_folders[_index]}/" "${_folder}/"', script)
+        self.assertIn('for _name in "${_newNames[@]}"; do', script)
+
+    def test_copy_here_of_a_site_with_environments_says_they_stay(self):
+        self.assertIn('$("#copy-no-environments").hidden = !hasProd(site);', self.source)
+        self.assertNotIn("sites with production targets cannot be copied", self.app)
 
     def test_only_what_the_user_may_do_is_offered(self):
         self.assertIn("const server = currentUser.admin && Boolean(main && (main.unit || main.apache));", self.source)
