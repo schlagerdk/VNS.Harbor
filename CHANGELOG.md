@@ -4,13 +4,9 @@ All notable changes to VNS.Linux are listed here, newest first.
 
 ## [1.3.0] - 2026-11-13
 
-The last release of VNS.Linux: from now on servers update from VNS Harbor's own releases (github.com/schlagerdk/VNS.Harbor).
-
 ### Features
 
-- Harbor updates itself from GitHub (harbor self update), and the release it fetches installs itself, so an update never depends on the updater the server had; the admin's Update and update.sh use it
-- Harbor keeps the sa password itself, and the backup and log shrink jobs run harbor, so they no longer need the scripts in /vns/sql (custom cron jobs stay as they are)
-- The admin runs harbor itself, never the scripts in /vns/apache that only called it
+- Harbor keeps the sa password itself and the backup and log shrink jobs run harbor, so they no longer need the scripts in /vns/sql; every update moves both over (custom jobs stay as they are)
 
 ## [1.2.2] - 2026-11-13
 
