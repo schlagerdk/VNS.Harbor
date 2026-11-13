@@ -2,6 +2,12 @@
 
 All notable changes to VNS.Linux are listed here, newest first.
 
+## [1.2.2] - 2026-11-13
+
+### Fixes
+
+- A server's name in Add server is made lower case with - as it is typed (KIKAYO becomes kikayo), and a name that is not valid says what it must be
+
 ## [1.2.1] - 2026-11-13
 
 ### Fixes
