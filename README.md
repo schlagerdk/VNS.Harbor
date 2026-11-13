@@ -7,9 +7,6 @@ Production) on this server, other Linux servers or IIS on Windows.
 It is one command, `harbor`, and a web admin that runs it. Harbor runs as root; the sites run as `www-data`, each in a
 sandbox of its own, and builds run as the unprivileged user `vns-build`.
 
-VNS Harbor 1.0 replaces VNS.Linux (the scripts in `/vns`). A server on VNS.Linux 1.3.0 updates to Harbor like any
-other update.
-
 ## Installation
 
 On a new Ubuntu server, as root:
@@ -54,7 +51,7 @@ date (`harbor self after-update`):
 - the sa password and the backup jobs
 - the admin site
 
-A server that comes from VNS.Linux is moved over in the same update:
+A server that still has the scripts in `/vns` is moved over in the same update:
 
 - every site is migrated: its settings go into Harbor, and its scripts folder goes
 - the admin runs from the release
@@ -89,7 +86,7 @@ A site has no scripts of its own: what it does (publish, sync, clear logs, its s
 | `users` | A Linux user for each admin user: site folders, a locked-down terminal, SFTP |
 | `admin` | The admin site: install, update, set-password, uninstall |
 | `self` | Harbor itself: update, releases, rollback |
-| `migrate` | Moves a site from VNS.Linux's scripts into Harbor |
+| `migrate` | Moves a site that still has scripts in its folder into Harbor |
 
 ## The admin
 
@@ -123,6 +120,6 @@ A new Umbraco site gets the package; the source is in `nuget/`, with its own REA
 ## Development
 
 - `tests/` and `tests/admin/`: run them on a Linux test server with `dev/test.sh [host] [module ...]` (bash and the programs as on the servers). GitHub runs them on every push.
-- `tests/legacy/` is VNS.Linux's scripts as they were. Many tests compare harbor with them, and they are never part of a release.
+- `tests/legacy/` is the scripts Harbor replaced, as they were. Many tests compare harbor with them, and they are never part of a release.
 - `dev/deploy.sh [host]` installs this working copy on a test server the way an update does.
 - `dev/HARBOR.md` is the plan: what is done, and why.

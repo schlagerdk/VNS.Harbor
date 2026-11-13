@@ -36,7 +36,7 @@ class SystemUpdateTests(unittest.TestCase):
                        read_text=lambda path: Path(path).read_text() if Path(path).is_file() else "", re=re,
                        subprocess=Mock(run=self.run, SubprocessError=subprocess.SubprocessError),
                        SYSTEM_UPDATE_LOCK=threading.Lock(), SYSTEM_UPDATE_CACHE={},
-                       time=Mock(monotonic=self.clock), GITHUB_REPO="schlagerdk/VNS.Linux", INSTALLED_FROM="schlagerdk/VNS.Linux",
+                       time=Mock(monotonic=self.clock), GITHUB_REPO="schlagerdk/another", INSTALLED_FROM="schlagerdk/another",
                        installed_version=lambda: self.version, github_releases=lambda: self.releases,
                        release_versions=lambda: [release["version"] for release in self.releases or []] if self.tags is None else self.tags,
                        commit_details=lambda installed, latest: {"compare_url": "compare", "latest_commit": {"subject": "fix: x"}},
@@ -88,9 +88,9 @@ class SystemUpdateTests(unittest.TestCase):
         self.assertEqual(result["releases"][0]["notes"], "")
 
     def test_from_vns_linux_to_vns_harbor(self):
-        """Installed from VNS.Linux, updated from VNS.Harbor: any release there is newer, as Harbor starts its own versions,
+        """Installed from another repository, updated from VNS.Harbor: any release there is newer, as Harbor starts its own versions,
         and before its first release there is nothing to update to, never its branch"""
-        self.ns.update(GITHUB_REPO="schlagerdk/VNS.Harbor", INSTALLED_FROM="schlagerdk/VNS.Linux")
+        self.ns.update(GITHUB_REPO="schlagerdk/VNS.Harbor", INSTALLED_FROM="schlagerdk/another")
         self.marker.write_text(self.installed)
         self.version = "1.3.0"
         self.tags = []

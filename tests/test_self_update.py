@@ -19,13 +19,13 @@ TAGS = "".join(f"{'a' * 40}\trefs/tags/v{version}\n" for version in ("1.0.0", "1
 class NewerTests(unittest.TestCase):
     def test_another_repository_makes_any_release_newer(self):
         versions = ["1.1.0", "1.0.0"]
-        self.assertEqual(update.newer(versions, "1.3.0", "schlagerdk/VNS.Linux"), ["1.1.0", "1.0.0"], "Harbor's own versions start again")
+        self.assertEqual(update.newer(versions, "1.3.0", "schlagerdk/another"), ["1.1.0", "1.0.0"], "Harbor's own versions start again")
         self.assertEqual(update.newer(versions, "1.0.0", update.REPOSITORY), ["1.1.0"])
         self.assertEqual(update.newer(versions, "1.1.0", update.REPOSITORY), [])
 
     def test_the_installed_repository(self):
         with tempfile.TemporaryDirectory() as folder:
-            self.assertEqual(update.installed_repository(folder), "schlagerdk/VNS.Linux", "VNS 1.x had no REPOSITORY")
+            self.assertEqual(update.installed_repository(folder), update.OTHER, "the scripts before Harbor had no REPOSITORY")
             Path(folder, "REPOSITORY").write_text("schlagerdk/VNS.Harbor\n")
             self.assertEqual(update.installed_repository(folder), "schlagerdk/VNS.Harbor")
         self.assertEqual((ROOT / "REPOSITORY").read_text().strip(), "schlagerdk/VNS.Harbor", "this code's own")
@@ -46,7 +46,7 @@ class UpdateTests(unittest.TestCase):
 
     def test_the_newest_release_installs_itself(self):
         system = RecordingSystem(root=Path("/"), answers={"git ls-remote": TAGS, "git clone": self.fetched(), "git -C": "b" * 40})
-        with mock.patch.object(update, "installed_repository", return_value="schlagerdk/VNS.Linux"):
+        with mock.patch.object(update, "installed_repository", return_value="schlagerdk/another"):
             self.assertEqual(main(["self", "update"], system), 0, system.said)
         clone = next(command for command in system.commands if command.startswith("git clone"))
         self.assertIn("--branch v1.1.0 https://github.com/schlagerdk/VNS.Harbor.git", clone)
@@ -142,6 +142,9 @@ class AfterUpdateTests(unittest.TestCase):
         self.assertTrue(any("harbor migrate --dry-run" in line for line in system.said), system.said)
         self.assertTrue(any(command.endswith("server cron upgrade") for command in system.commands))
         moved.assert_called_once()
+        # /vns stays: the update did not work in full
+        self.assertTrue((self.root / "vns").is_dir())
+        self.assertTrue(any("stays until an update has worked in full" in line for line in system.said), system.said)
 
 
 if __name__ == "__main__":

@@ -1,14 +1,14 @@
 """Harbor updates itself from its releases on GitHub (cutover step 2c of dev/HARBOR.md).
 
-  REPOSITORY           where updates come from: VNS Harbor's repository (since VNS.Linux 1.3.0)
-  <install>/REPOSITORY where the installed code came from (schlagerdk/VNS.Linux for VNS 1.x)
+  REPOSITORY           where updates come from: VNS Harbor's repository
+  <install>/REPOSITORY where the installed code came from
 
 An update is finished by the code it brings, never by the code that runs it: `self update` fetches the release and runs
 `harbor self finish-update` from the fetched copy. An updater replaced by the update it runs is what kept 1.2.0 from
 moving a server on 1.1.x over; this way a release always installs itself as it means to.
 
-When the installed code came from another repository (VNS 1.x), any release in REPOSITORY is newer, as VNS Harbor
-starts its own versions. Without a release there, nothing is updated: never a branch.
+When the installed code came from another repository (the scripts in /vns before Harbor 1.0), any release in
+REPOSITORY is newer, as VNS Harbor starts its own versions. Without a release there, nothing is updated: never a branch.
 """
 import json
 import os
@@ -23,14 +23,15 @@ from harbor.core.system import Stop
 
 # HARBOR_UPDATE_REPOSITORY points a test at another repository
 REPOSITORY = os.environ.get("HARBOR_UPDATE_REPOSITORY") or "schlagerdk/VNS.Harbor"
-LEGACY = "schlagerdk/VNS.Linux"
+# The installed code came from somewhere else when it does not say where
+OTHER = "other"
 VERSION = re.compile(r"[0-9]+\.[0-9]+\.[0-9]+")
 
 
 def installed_repository(root=INSTALL):
     path = Path(root) / "REPOSITORY"
     found = path.read_text().strip() if path.is_file() else ""
-    return found or LEGACY
+    return found or OTHER
 
 
 def installed_version(root=INSTALL):
@@ -109,9 +110,11 @@ def finish_update(system, source):
 
 
 def attempt(system, text, *argv):
-    """A step that is reported when it fails, and the update goes on"""
-    if not system.run(*argv, check=False).ok:
-        system.warn(text)
+    """A step that is reported when it fails, and the update goes on. Whether it worked."""
+    if system.run(*argv, check=False).ok:
+        return True
+    system.warn(text)
+    return False
 
 
 def after_update(system):
@@ -122,17 +125,18 @@ def after_update(system):
     from harbor.install.release import COMMAND
     from harbor.server.init import INITIALIZED
     harbor = str(BIN)
+    worked = []
     system.step("Update the server-wide Apache configs")
-    attempt(system, "The shared TLS policy was not installed.", "python3", harbor, "server", "install-tls-policy")
-    attempt(system, "The server-wide Apache configs were not installed.", "python3", harbor, "server", "install-apache-conf")
+    worked.append(attempt(system, "The shared TLS policy was not installed.", "python3", harbor, "server", "install-tls-policy"))
+    worked.append(attempt(system, "The server-wide Apache configs were not installed.", "python3", harbor, "server", "install-apache-conf"))
     if system.path("/etc/cron.d/vns-keep-alive").is_file() or system.path(INITIALIZED).is_file():
         # The keep-alive job runs the release in use, no longer /vns
-        attempt(system, "The keep-alive job was not updated.", "python3", f"{LIB}/keep_alive.py", "--install")
+        worked.append(attempt(system, "The keep-alive job was not updated.", "python3", f"{LIB}/keep_alive.py", "--install"))
     system.step("Bring the sites up to date")
-    attempt(system, "Harbor's copy of the sites' state was not updated.", "python3", harbor, "state", "sync")
-    attempt(system, "Not every site was migrated: sudo harbor migrate --dry-run tells why.", "python3", harbor, "migrate")
-    attempt(system, "The sa password was not kept in Harbor.", "python3", harbor, "sql", "import-sa-password")
-    attempt(system, "The backup jobs were not changed to harbor commands.", "python3", harbor, "server", "cron", "upgrade")
+    worked.append(attempt(system, "Harbor's copy of the sites' state was not updated.", "python3", harbor, "state", "sync"))
+    worked.append(attempt(system, "Not every site was migrated: sudo harbor migrate --dry-run tells why.", "python3", harbor, "migrate"))
+    worked.append(attempt(system, "The sa password was not kept in Harbor.", "python3", harbor, "sql", "import-sa-password"))
+    worked.append(attempt(system, "The backup jobs were not changed to harbor commands.", "python3", harbor, "server", "cron", "upgrade"))
     # VNS 1.x stays in /vns (its custom scripts are there), but its harbor is the one in use: anything that still calls
     # /vns/bin/harbor runs this release
     legacy = system.path("/vns/bin/harbor")
@@ -146,7 +150,11 @@ def after_update(system):
         admin.update(system, name)
     if not sites:
         system.say("No admin site was found to update.")
-    remove_vns(system)
+    # /vns goes only when all of the update worked: else it stays for the next update to try again
+    if all(worked):
+        remove_vns(system)
+    elif system.path(VNS).is_dir():
+        system.warn(f"{VNS} stays until an update has worked in full: see what failed above.")
 
 
 # ---- /vns, where VNS 1.x lived (phase 7)

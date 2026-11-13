@@ -3,7 +3,7 @@
 # or into a local folder when PROD_LOCAL_PATH is set (e.g. a second copy of the site on this server).
 # The Release build goes to a temporary folder, so the local publish folder is left untouched.
 # Creates the folder, systemd service, Apache config and (unless PROD_HTTPS=n) certificate on the target if they are missing.
-# Requirements on prod: VNS.Linux apache/init.sh has been run, and the login is root or has passwordless sudo.
+# Requirements on prod: VNS apache/init.sh has been run, and the login is root or has passwordless sudo.
 # With HTTPS, DNS for PROD_BINDING must point to the target server before the certificate can be issued.
 # With PROD_LOCAL_PATH use a PROD_FOLDER and PROD_BINDING that differ from the site it is published from.
 _self=$(realpath "$0")

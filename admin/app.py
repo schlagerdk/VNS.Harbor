@@ -1648,7 +1648,7 @@ def _update_source():
         from harbor.install import update as harbor_update
         return harbor_update.REPOSITORY, harbor_update.installed_repository(HARBOR_DIR)
     except (ImportError, OSError):
-        return "schlagerdk/VNS.Linux", "schlagerdk/VNS.Linux"
+        return "schlagerdk/VNS.Harbor", ""
 
 
 GITHUB_REPO, INSTALLED_FROM = _update_source()
