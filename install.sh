@@ -5,7 +5,8 @@
 #
 # The base setup (time zone, updates, the few packages Harbor itself needs), the newest release of Harbor in
 # /opt/harbor, then the server made ready for sites (harbor server init: Apache, acme.sh, .NET, keep-alive) and,
-# if wanted, the admin site (harbor admin install). HARBOR_REF=v1.2.3 installs that release instead.
+# if wanted, the admin site (harbor admin install). HARBOR_REF=v1.2.3 installs that release instead, and
+# HARBOR_REF=main the newest code on main (to try it before a release).
 # Run again, it only brings what is missing; a server that has Harbor is updated from the admin, or harbor self update.
 set -euo pipefail
 
@@ -38,7 +39,7 @@ apt-get autoremove -y
 echo "== VNS Harbor"
 ref=${HARBOR_REF:-$(git ls-remote --tags --refs "${REPOSITORY}" 'v*' | awk '{sub("refs/tags/", "", $2); print $2}' |
 	grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1 || true)}
-if [[ ! ${ref} =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+if [[ ${ref} != main && ! ${ref} =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
 	echo "No release of VNS Harbor was found${ref:+: ${ref}}." >&2
 	exit 1
 fi
