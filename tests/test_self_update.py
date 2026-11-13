@@ -1,4 +1,5 @@
 """harbor self update: the newest release on GitHub, installed by its own code (cutover step 2c)"""
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -64,27 +65,56 @@ class UpdateTests(unittest.TestCase):
         self.assertIn("up to date", system.said[-1])
         self.assertEqual(main(["self", "update", "--ref", "main"], RecordingSystem(root=Path("/"))), 1)
 
-    def test_an_older_release_is_installed_as_its_update_sh_did(self):
-        system = RecordingSystem(root=Path("/"), answers={"git clone": self.fetched(finishes=False), "git -C": "b" * 40})
-        with mock.patch.object(update, "admin_site", return_value="admin.example.test"):
-            self.assertEqual(main(["self", "update", "--ref", "v1.2.2"], system), 0, system.said)
-        self.assertTrue(any(command.startswith("bash ") and "harbor-update-" in command and command.endswith("/source") for command in system.commands))
-        self.assertEqual(system.commands[-1], "bash /vns/apache/update_admin_site.sh admin.example.test")
 
 
 class FinishTests(unittest.TestCase):
-    def test_update_sh_then_the_admin_and_a_failure_stops_it(self):
-        with tempfile.TemporaryDirectory() as folder:
-            source = Path(folder)
-            (source / "update.sh").write_text("")
+    def test_the_release_is_installed_then_finishes_from_where_it_is_installed(self):
+        from harbor.install import release
+        with tempfile.TemporaryDirectory() as folder, mock.patch.object(release, "install") as install:
             system = RecordingSystem(root=Path("/"))
-            with mock.patch.object(update, "admin_site", return_value="admin.example.test"):
-                update.finish_update(system, source)
-            self.assertEqual(system.commands, [f"bash {source}/update.sh {source}", "bash /vns/apache/update_admin_site.sh admin.example.test"])
-            system = RecordingSystem(root=Path("/"), answers={f"bash {source}/update.sh": Result(7)})
-            with mock.patch.object(update, "admin_site", return_value="admin.example.test"), self.assertRaises(Exception):
-                update.finish_update(system, source)
-            self.assertEqual(system.commands, [f"bash {source}/update.sh {source}"], "the admin is not updated after a failure")
+            update.finish_update(system, folder)
+            install.assert_called_once_with(system, folder)
+            # Never from the fetched copy, which is removed: what it writes down names /opt/harbor/current
+            self.assertEqual(system.commands, ["python3 /opt/harbor/current/bin/harbor self after-update"])
+            system = RecordingSystem(root=Path("/"), answers={"python3 /opt/harbor/current/bin/harbor": Result(7)})
+            with self.assertRaises(Exception) as stopped:
+                update.finish_update(system, folder)
+            self.assertEqual(stopped.exception.code, 7)
+
+
+class AfterUpdateTests(unittest.TestCase):
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.root = Path(folder.name)
+        (self.root / "vns/bin").mkdir(parents=True)
+        (self.root / "vns/bin/harbor").write_text("#!/usr/bin/python3\n")
+        admin = self.root / "var/www/admin.example.test/app"
+        admin.mkdir(parents=True)
+        (admin / "config.json").write_text('{"secret_key": "x"}')
+        (self.root / "var/www/shop.dk").mkdir()
+
+    def after_update(self, answers=None):
+        from harbor.install import admin
+        system = RecordingSystem(root=self.root, answers=answers or {})
+        with mock.patch.dict("os.environ", {"VNS_WEB_ROOT": "/var/www"}), mock.patch.object(admin, "update") as moved:
+            update.after_update(system)
+        return system, moved
+
+    def test_every_step_and_the_admin_moved_to_the_release(self):
+        system, moved = self.after_update()
+        harbor = [command.split("bin/harbor ", 1)[1] for command in system.commands if "bin/harbor " in command]
+        self.assertEqual(harbor, ["server install-tls-policy", "server install-apache-conf", "state sync", "migrate",
+                                  "sql import-sa-password", "server cron upgrade"])
+        moved.assert_called_once_with(system, "admin.example.test")
+        # VNS 1.x stays, but its harbor is the one in use
+        self.assertEqual(os.readlink(self.root / "vns/bin/harbor"), "/usr/local/bin/harbor")
+
+    def test_a_failed_step_is_told_and_the_rest_runs(self):
+        system, moved = self.after_update({"python3": lambda argv: Result(1 if "migrate" in argv else 0)})
+        self.assertTrue(any("harbor migrate --dry-run" in line for line in system.said), system.said)
+        self.assertTrue(any(command.endswith("server cron upgrade") for command in system.commands))
+        moved.assert_called_once()
 
 
 if __name__ == "__main__":

@@ -69,7 +69,7 @@ def check(system):
 
 
 def update(system, ref=""):
-    """The newest release (or ref, such as v1.0.0) fetched and installed by its own code"""
+    """The newest release (or ref, such as v1.0.0) fetched and installed by its own code (its self finish-update)"""
     if ref and not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", ref):
         raise Stop(f"Not a release: {ref}")
     if not ref:
@@ -88,10 +88,6 @@ def update(system, ref=""):
         if not (source / "bin/harbor").is_file():
             raise Stop(f"{ref} has no bin/harbor: it is not a release of Harbor.")
         system.step(f"Install {ref}")
-        if not (source / "harbor/install/update.py").is_file():
-            # A release from before 1.3.0 cannot finish itself: it is installed as its own update.sh did
-            finish_update(system, source)
-            return
         # The fetched code finishes the update, as it means to
         result = system.run("python3", str(source / "bin/harbor"), "self", "finish-update", str(source), check=False)
         if not result.ok:
@@ -100,35 +96,56 @@ def update(system, ref=""):
         shutil.rmtree(folder, ignore_errors=True)
 
 
-def admin_site(system):
-    """The admin site on this server (the service that runs /var/www/<site>/app with gunicorn)"""
-    services = system.path("/etc/systemd/system")
-    for path in sorted(services.glob("*.service")) if services.is_dir() else []:
-        try:
-            text = path.read_text(errors="replace")
-        except OSError:
-            continue
-        match = re.search(r"(?m)^WorkingDirectory=/var/www/([^/\n]+)/app$", text)
-        if match and "gunicorn" in text:
-            return match[1]
-    return ""
-
-
 def finish_update(system, source):
-    """This release, installed from a copy of it (run from that copy by `self update`). VNS 1.x still lives in /vns:
-    its update.sh puts it there and installs Harbor, and the admin site gets the new code."""
-    source = Path(source)
-    if (source / "update.sh").is_file():
-        # With the source given, update.sh copies it to /vns and installs Harbor; it never fetches again
-        system.run("bash", str(source / "update.sh"), str(source))
-        admin = admin_site(system)
-        if admin:
-            system.step(f"Update the admin site {admin}")
-            system.run("bash", "/vns/apache/update_admin_site.sh", admin)
-        else:
-            system.say("No admin site was found to update.")
-        return
-    raise Stop("This release has no installer for this server yet.")
+    """This release, installed from a copy of it (run from that copy by `self update`): the release made the one in use,
+    then the rest done by the installed release itself (`self after-update`), so what it writes down names
+    /opt/harbor/current and never the copy, which is removed"""
+    from harbor.install import release
+    system.step("Install the release in /opt/harbor")
+    release.install(system, source)
+    result = system.run("python3", f"{release.CURRENT}/bin/harbor", "self", "after-update", check=False)
+    if not result.ok:
+        raise Stop("", result.returncode or 1)
+
+
+def attempt(system, text, *argv):
+    """A step that is reported when it fails, and the update goes on"""
+    if not system.run(*argv, check=False).ok:
+        system.warn(text)
+
+
+def after_update(system):
+    """The server brought up to the release in use: what update.sh and update_admin_site.sh did for VNS 1.x, and the
+    move from /vns (cutover step 4). Each step is harmless to repeat."""
+    from harbor.core.paths import BIN, LIB
+    from harbor.install import admin
+    from harbor.install.release import COMMAND
+    from harbor.server.init import INITIALIZED
+    harbor = str(BIN)
+    system.step("Update the server-wide Apache configs")
+    attempt(system, "The shared TLS policy was not installed.", "python3", harbor, "server", "install-tls-policy")
+    attempt(system, "The server-wide Apache configs were not installed.", "python3", harbor, "server", "install-apache-conf")
+    if system.path("/etc/cron.d/vns-keep-alive").is_file() or system.path(INITIALIZED).is_file():
+        # The keep-alive job runs the release in use, no longer /vns
+        attempt(system, "The keep-alive job was not updated.", "python3", f"{LIB}/keep_alive.py", "--install")
+    system.step("Bring the sites up to date")
+    attempt(system, "Harbor's copy of the sites' state was not updated.", "python3", harbor, "state", "sync")
+    attempt(system, "Not every site was migrated: sudo harbor migrate --dry-run tells why.", "python3", harbor, "migrate")
+    attempt(system, "The sa password was not kept in Harbor.", "python3", harbor, "sql", "import-sa-password")
+    attempt(system, "The backup jobs were not changed to harbor commands.", "python3", harbor, "server", "cron", "upgrade")
+    # VNS 1.x stays in /vns (its custom scripts are there), but its harbor is the one in use: anything that still calls
+    # /vns/bin/harbor runs this release
+    legacy = system.path("/vns/bin/harbor")
+    if legacy.exists() and not legacy.is_symlink():
+        legacy.unlink()
+        legacy.symlink_to(COMMAND)
+        system.say(f"/vns/bin/harbor runs {COMMAND} now.")
+    sites = admin.admin_sites(system)
+    for name in sites:
+        system.step(f"Update the admin site {name}")
+        admin.update(system, name)
+    if not sites:
+        system.say("No admin site was found to update.")
 
 
 def describe(system):

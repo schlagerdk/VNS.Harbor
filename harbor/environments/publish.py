@@ -23,7 +23,7 @@ from harbor.core.paths import APACHE, BIN
 SCHEMA_FILES = ("appsettings-schema.json", "appsettings-schema.usync.json", "appsettings-schema.Umbraco.Cms.json", "umbraco-package-schema.json")
 
 PREPARE = r'''set -euo pipefail
-source /vns/apache/lib/common.sh
+source /opt/harbor/current/apache/lib/common.sh 2>/dev/null || source /vns/apache/lib/common.sh
 unit=$(normalize_dns_name "${SITE}" unit)
 root=${ROOT}
 docroot=${root}/wwwroot
@@ -36,7 +36,7 @@ if [[ -f ${conf} ]]; then
 fi
 certdir=/etc/ssl/certs/${BINDING}_ecc
 acme=/etc/acmesh/acme.sh
-source /vns/apache/lib/common.sh
+source /opt/harbor/current/apache/lib/common.sh 2>/dev/null || source /vns/apache/lib/common.sh
 
 if [[ -e ${service} ]] && ! grep -qx "WorkingDirectory=${root}" "${service}"; then
 	echo "Service ${SITE} already exists and runs from a different folder. Use another PROD_FOLDER (and PROD_BINDING)." >&2
@@ -266,6 +266,7 @@ release_port_reservation
 '''
 
 START = r'''set -euo pipefail
+source /opt/harbor/current/apache/lib/common.sh 2>/dev/null || source /vns/apache/lib/common.sh
 dir=${ROOT}
 # The Apache config decides the scheme and binding: they stay correct if they are changed on the server
 configured_binding=$(awk '$1 == "ServerName" { print $2; exit }' "/etc/apache2/sites-available/${SITE}.conf" 2>/dev/null || true)
@@ -284,10 +285,10 @@ for file in "${dir}"/appsettings*.json; do
 	fi
 done
 chown -R www-data:www-data "${dir}"
-python3 /vns/apache/lib/sql_startup.py "${SITE}"
-systemctl start "$(python3 /vns/apache/lib/domain_names.py "${SITE}" unit)"
+python3 "${_apacheDir}/lib/sql_startup.py" "${SITE}"
+systemctl start "$(python3 "${_apacheDir}/lib/domain_names.py" "${SITE}" unit)"
 sleep 2
-systemctl status "$(python3 /vns/apache/lib/domain_names.py "${SITE}" unit)" --no-pager
+systemctl status "$(python3 "${_apacheDir}/lib/domain_names.py" "${SITE}" unit)" --no-pager
 '''
 
 

@@ -14,7 +14,9 @@ import sys
 from werkzeug.security import generate_password_hash
 
 BASE = os.path.dirname(os.path.abspath(__file__))
-CONFIG_PATH = os.environ.get("VNS_ADMIN_CONFIG", os.path.join(BASE, "config.json"))
+# Beside the code when it was copied into the admin site (VNS 1.x), in the admin site's app folder from a release
+DATA = os.environ.get("HARBOR_ADMIN_DATA") or BASE
+CONFIG_PATH = os.environ.get("VNS_ADMIN_CONFIG", os.path.join(DATA, "config.json"))
 MIN_PASSWORD = 12
 
 

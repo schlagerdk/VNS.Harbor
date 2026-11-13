@@ -20,7 +20,7 @@ id vns-test >/dev/null 2>&1 || useradd --system --create-home --shell /usr/sbin/
 chown -R vns-test: "${source}"
 # The admin's tests need Flask: the admin site's own Python has it
 python=/usr/bin/python3
-for candidate in /var/www/*/venv/bin/python3; do
+for candidate in /opt/harbor/venv/bin/python3 /var/www/*/venv/bin/python3; do
 	[[ -x ${candidate} ]] && "${candidate}" -c "import flask" 2>/dev/null && { python=${candidate}; break; }
 done
 modules=("$@")

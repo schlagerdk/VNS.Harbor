@@ -12,10 +12,10 @@ import tempfile
 from zoneinfo import ZoneInfo
 
 from harbor.core.system import Stop
-from harbor.core.paths import SQL
+from harbor.core.paths import SA_SCRIPTS, SQL
 
-SQL_DIR = SQL
-TEMPLATES = SQL_DIR / "scripts"
+SQL_DIR = SA_SCRIPTS
+TEMPLATES = SQL / "scripts"
 SQLCMD = "/opt/mssql-tools18/bin/sqlcmd"
 BACKUPS = "/var/opt/mssql/backup"
 PLACEHOLDER = "@SA_PASSWORD@"
@@ -36,7 +36,7 @@ def sa_password(system=None):
         saved = read_json(system.path(SA_SECRET))
         if isinstance(saved, dict) and saved.get("sa_password"):
             return saved["sa_password"]
-    raise Stop(f"The sa password is not set in {SQL_DIR}: run {SQL_DIR}/set_sa_password.sh, or set it under Server tools in the admin")
+    raise Stop("The sa password is not set: set it under Server tools in the admin, or with harbor sql set-sa-password")
 
 
 def sqlcmd(system, sql, *options, stop_on_error=True, capture=False):
@@ -199,13 +199,7 @@ def shrink_logs(system):
 
 
 
-CRON = ("0 */4 * * * /vns/sql/cron/shrink_logs.sh >> /var/log/sql_shrink_logs.log 2>&1",
-        "15 */4 * * * /vns/sql/cron/backup_everything.sh >> /var/log/sql_backup_everything.log 2>&1")
-
-
 def add_to_crontab(system):
-    """The log shrink and the backup in root's crontab, each added to what is there"""
-    for line in CRON:
-        current = system.run("crontab", "-l", check=False, capture=True)
-        existing = current.stdout if current.ok else ""
-        system.run("crontab", "-", input=existing + line + "\n")
+    """The log shrink and the backup in root's crontab, as harbor commands (harbor server cron on)"""
+    from harbor.server.tools import cron
+    cron(system, True)

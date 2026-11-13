@@ -95,7 +95,9 @@ class CronTests(Server):
         self.assertEqual(self.crontab, CUSTOM + "\n")
 
     def test_old_jobs_are_upgraded_to_harbor(self):
-        from harbor.sql.databases import CRON as OLD
+        # The jobs as VNS 1.x added them
+        OLD = ("0 */4 * * * /vns/sql/cron/shrink_logs.sh >> /var/log/sql_shrink_logs.log 2>&1",
+               "15 */4 * * * /vns/sql/cron/backup_everything.sh >> /var/log/sql_backup_everything.log 2>&1")
         self.crontab = OLD[0] + "\n" + CUSTOM + "\n" + OLD[1] + "\n"
         main(["server", "cron", "upgrade"], self.system())
         self.assertEqual(self.crontab.splitlines(), [

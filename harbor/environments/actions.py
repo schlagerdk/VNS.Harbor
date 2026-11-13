@@ -21,7 +21,7 @@ EDITABLE = re.compile(r"web\.config|appsettings(\.[A-Za-z0-9_-]+)?\.json")
 ISSUE_CERTIFICATE = r'''set -euo pipefail
 acme=/etc/acmesh/acme.sh
 certdir=/etc/ssl/certs/${BINDING}_ecc
-source /vns/apache/lib/common.sh
+source /opt/harbor/current/apache/lib/common.sh 2>/dev/null || source /vns/apache/lib/common.sh
 unit=$(normalize_dns_name "${SITE}" unit)
 conf=/etc/apache2/sites-available/${SITE}.conf
 [[ -x ${acme} ]] || { echo "acme.sh not found (${acme}). Run apache/init.sh there first." >&2; exit 1; }
@@ -58,7 +58,7 @@ echo "Certificate installed in ${certdir}"
 '''
 
 CHANGE_ENVIRONMENT = r'''set -euo pipefail
-source /vns/apache/lib/common.sh
+source /opt/harbor/current/apache/lib/common.sh 2>/dev/null || source /vns/apache/lib/common.sh
 unit=$(normalize_dns_name "${SITE}" unit)
 service=/etc/systemd/system/${unit}.service
 [[ -f ${service} ]] || { echo "Service file not found: ${service}. Publish to production first." >&2; exit 1; }

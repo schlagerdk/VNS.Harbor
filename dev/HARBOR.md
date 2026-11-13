@@ -294,7 +294,32 @@ In this order:
   **Only main goes there, never the v1.x tags**: a server on VNS 1.3.0 takes any release in VNS.Harbor as newer, so an
   old tag there would be installed again and again. Harbor's own versions start at v1.0.0 (cutover step 4).
 - [ ] 2d + 4 The old code goes (wrappers, script templates, tests/legacy, update.sh/init.sh); Harbor and the admin run
-  from /opt/harbor (3b, 3c); Harbor 1.0.0 released from VNS.Harbor.
+  from /opt/harbor (3b, 3c); Harbor 1.0.0 released from VNS.Harbor. A server on 1.3.0 runs `harbor self update`, which
+  fetches 1.0.0 and runs its own `self finish-update`: that is what moves a server over, so it must do all of it.
+  Decided (2026-11-13): /vns stays on the servers as it is (custom scripts in /vns/sql and their cron lines live there),
+  but nothing of Harbor's uses it any more; /vns/bin/harbor becomes a link to /usr/local/bin/harbor, so anything left
+  that calls it runs the current Harbor. Removing /vns is phase 7.
+  - [x] 4a The admin runs from the release: code in /opt/harbor/current/apache/solutionfiles/admin/app, its Python in
+    /opt/harbor/venv, its data (config.json, audit.log, sql-connections.json, system-update.*, static/vendor) where it
+    was, /var/www/<admin>/app (HARBOR_ADMIN_DATA in the service). The apache folder is the release's, never config's.
+    Done 2026-11-13 (tests/test_admin_site.py); on linux-01 with dev/deploy.sh: the admin runs from the release. The old
+    code and venv in /var/www/<admin> are left as they were (unused).
+  - [x] 4b `harbor admin install|update|set-password|uninstall` (install_admin_site.sh, update_admin_site.sh,
+    set_password.sh, uninstall_admin_site.sh in Python); `harbor server init` (apache/init.sh).
+    Written 2026-11-13; `admin update` tried on linux-01. Left: install and server init on a new server (4d).
+  - [ ] 4c `self finish-update` of 1.0.0: install the release, the server-wide steps update.sh did (TLS policy, Apache
+    confs, state sync, migrate, sa password, cron), the admin moved to the release, /vns/bin/harbor linked. What is sent
+    to another server names /opt/harbor/current (there since 1.1.x on every server), never /vns.
+    Written 2026-11-13: finish-update installs the release and runs `self after-update` from it; the keep-alive job, the
+    .sql files and a site move use the release; the sa password is Harbor's own (the scripts in /vns/sql only get it
+    while they are there). dev/deploy.sh goes this way: on linux-01 every step ran. Left: a real update from 1.3.0 (4e).
+  - [ ] 4d A new server: install.sh (apt basics, the newest release fetched, `harbor server init`, the admin) instead of
+    init.sh + update.sh + apache/init.sh.
+  - [ ] 2d The old code goes: the wrappers in apache/ and sql/, the site script templates, tests/legacy and the parity
+    tests, update.sh, init.sh, update_admin_site.sh and the rest; every site is migrated, so the paths for a site with
+    scripts go too.
+  - [ ] 4e REPOSITORY schlagerdk/VNS.Harbor, VERSION 1.0.0, CHANGELOG; tried with dev/deploy.sh and a real update on
+    linux-02 from 1.3.0. Martin releases it.
 - [ ] 5 Martin deletes VNS.Linux on GitHub once every server has taken 1.3.0.
 
 ## Phase 1 steps

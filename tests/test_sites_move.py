@@ -35,7 +35,7 @@ APPSETTINGS = '{\n  "Umbraco": {\n    "CMS": {\n      "Global": {"UseHttps": tru
 REWRITE = r'''import re, sys
 here, new, text = sys.argv[1:4]
 text = text.replace(here, new)
-print(re.sub(r"(?<![\w.])(/etc/|/var/www|/var/lib/vns|/usr/lib/dotnet|/vns/|/run/lock)", lambda m: new + m[1], text), end="")
+print(re.sub(r"(?<![\w.])(/etc/|/var/www|/var/lib/vns|/usr/lib/dotnet|/vns/|/run/lock|/usr/local/bin/)", lambda m: new + m[1], text), end="")
 '''
 
 
@@ -100,9 +100,13 @@ class MoveSiteTests(unittest.TestCase):
                                       f'\tsed -i "s|{folder / "here"}|{new}|g" "${{_incoming}}"/*')
             (new / "vns/apache/move_site.sh").write_text(receive)
         else:
-            (new / "vns/apache/move_site.sh").write_text(
-                f'shift; incoming=${{1#{new}}}\nexec python3 -c "import sys; sys.path.insert(0, \'{ROOT}\'); from harbor.core.system import System; '
+            # The new server's harbor: harbor site receive <folder> <SQL server>
+            harbor = new / "usr/local/bin/harbor"
+            harbor.parent.mkdir(parents=True)
+            harbor.write_text(
+                f'#!/bin/bash\nshift 2; incoming=${{1#{new}}}\nexec python3 -c "import sys; sys.path.insert(0, \'{ROOT}\'); from harbor.core.system import System; '
                 f'from harbor.cli import main; sys.exit(main([\'site\', \'receive\', sys.argv[1], sys.argv[2]], System(root=\'{new}\')))" "$incoming" "$2"\n')
+            harbor.chmod(0o755)
         return folder, here, new
 
     def programs(self, folder, here, new):
@@ -126,7 +130,7 @@ class MoveSiteTests(unittest.TestCase):
         found = {}
         for path in sorted(server.rglob("*")):
             name = str(path.relative_to(server))
-            if name.startswith(("vns/", "run/")) or name in ("common.sh",):
+            if name.startswith(("vns/", "run/", "usr/local/")) or name in ("common.sh",):
                 continue
             if path.is_symlink():
                 found[name] = "-> " + os.readlink(path)

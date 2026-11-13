@@ -23,5 +23,8 @@ INSTALL = install_root()
 APACHE = INSTALL / "apache"
 LIB = APACHE / "lib"
 BIN = INSTALL / "bin/harbor"
-# The sql folder whose scripts hold the sa password (set_sa_password.sh, update.sh): /vns/sql until phase 7
-SQL = Path("/vns/sql") if os.path.isdir("/vns/sql") and RELEASES in PACKAGE_ROOT.parents else INSTALL / "sql"
+# The .sql files Harbor runs: this installation's own
+SQL = INSTALL / "sql"
+# The sql folder whose scripts hold the sa password: /vns/sql of VNS 1.x while it is there (its custom scripts, such
+# as clean_umbraco7_db.sh, still read the password from themselves), else this installation's
+SA_SCRIPTS = Path("/vns/sql") if os.path.isdir("/vns/sql") and RELEASES in PACKAGE_ROOT.parents else SQL

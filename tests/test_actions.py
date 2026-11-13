@@ -10,6 +10,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
+from tests.harness import sent_today  # noqa: E402
 
 from harbor.cli import main  # noqa: E402
 from harbor.core.system import RecordingSystem, Result  # noqa: E402
@@ -153,7 +154,7 @@ class EnvironmentActionTests(unittest.TestCase):
                 self.assertEqual(system.commands[0], " ".join(["sshpass", "-e", name, *argv]), args)
                 self.assertEqual(system.environments[0], {"SSHPASS": "s3 cret"})
                 self.assertEqual(variables, {"SSHPASS": "s3 cret"})
-                self.assertEqual(system.inputs[0], sent, args)
+                self.assertEqual(system.inputs[0], sent_today(sent), args)
                 self.assertEqual((self.target / "publish_prod.sh").read_text(), settings_after, args)
 
     def test_windows_refuses_a_certificate_and_changes_web_config(self):

@@ -3,7 +3,7 @@ import os
 import tempfile
 import unittest
 
-from tests.harness import APACHE, Server, harbor_commands
+from tests.harness import APACHE, Server, harbor_commands, sent_today
 from tests.test_core_bindings import NEEDS_BASH_4
 from tests.test_environments import Fake, split_call
 from harbor.cli import main
@@ -96,7 +96,7 @@ class DeleteSiteTests(unittest.TestCase):
             (server.folder / "old-bin/ssh").chmod(0o755)
         result, system = self.compare("shop.dk", "y", "prod", target="staging", environment="remote")
         # The script's paths point into its root in the test; on a server they are the same as harbor's
-        self.assertEqual(system.inputs[0], open(stdin).read().replace(str(self.old.root), ""))
+        self.assertEqual(system.inputs[0], sent_today(open(stdin).read().replace(str(self.old.root), "")))
 
     def test_ubuntus_default_site(self):
         def html(server, legacy=False):

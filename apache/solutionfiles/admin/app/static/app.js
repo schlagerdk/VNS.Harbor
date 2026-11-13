@@ -5942,11 +5942,25 @@ $("#servers-close").onclick = () => serversDialog.close();
 $("#servers-refresh").onclick = () => openServers();
 $("#servers-add").onclick = () => askAddServer();
 
+// A release's version: 1.3.0 of 1.3.0-05abd71e5e08-dev. Builds of the same version (a test build here) are not an update.
+function releaseVersion(name) {
+	return String(name || "").split("-")[0].split(".").map((part) => parseInt(part, 10) || 0);
+}
+
+function compareVersions(a, b) {
+	for (let index = 0; index < Math.max(a.length, b.length); index++) {
+		const difference = (a[index] || 0) - (b[index] || 0);
+		if (difference) return difference;
+	}
+	return 0;
+}
+
 function serverCard(item, release) {
 	const harbor = item.harbor && item.harbor.name;
-	const current = harbor && harbor === release;
+	const order = harbor && release ? compareVersions(releaseVersion(release), releaseVersion(harbor)) : 0;
+	const current = harbor && order <= 0;
 	const state = !item.reachable ? ["Not reachable", "bad"] : !item.compatible ? ["Cannot run Harbor", "bad"]
-		: !harbor ? ["No Harbor", "warn"] : current ? ["Up to date", "ok"] : ["Update available", "warn"];
+		: !harbor ? ["No Harbor", "warn"] : order < 0 ? ["Newer than this server", "ok"] : current ? ["Up to date", "ok"] : ["Update available", "warn"];
 	const rows = item.reachable ? [
 		toolRow("System", `${item.os || "—"} · Python ${item.python || "—"}`),
 		toolRow("Harbor", harbor || "Not installed", { on: Boolean(harbor) }),

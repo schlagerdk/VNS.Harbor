@@ -308,7 +308,8 @@ def move_site(system, name):
 
     # ---- before anything is stopped: the new server must be ready, and have none of the sites
     system.step(f"Check {host}")
-    check = f"set -e; test -f /vns/apache/move_site.sh || {{ echo 'VNS on {host} must be updated first: /vns/update.sh' >&2; exit 1; }}"
+    # The new server's own harbor sets the sites up (harbor site receive)
+    check = f"set -e; test -x /usr/local/bin/harbor || {{ echo {bash_quote(f'{host} has no Harbor: install it there under Server → Servers.')} >&2; exit 1; }}"
     check += (f"; test \"$(uname -m)\" = {bash_quote(system.output('uname', '-m'))} || {{ echo '{host} has another CPU architecture than this server, "
               "so the builds cannot run there.' >&2; exit 1; }")
     for old, new in zip(names, new_names):
@@ -320,9 +321,6 @@ def move_site(system, name):
             check += f"; test -x /usr/lib/dotnet/dotnet || {{ echo '.NET is not installed on {host}.' >&2; exit 1; }}"
     for folder in new_folders:
         check += f"; ! test -e {bash_quote(folder)} || {{ echo {bash_quote(f'{folder} already exists on {host}.')} >&2; exit 1; }}"
-    if settings.migrated(system, site.site_root):
-        # A migrated site's settings are in Harbor: only a server with Harbor can take them
-        check += (f"; command -v harbor >/dev/null || {{ echo {bash_quote(f'{host} has no Harbor, which {site.name} needs: install it there under Server → Servers.')} >&2; exit 1; }}")
     try:
         on_new_server(f"bash -c {bash_quote(check)}")
     except CommandFailed as error:
@@ -374,11 +372,7 @@ def move_site(system, name):
         on_new_server(f"mkdir -p {bash_quote(incoming)}")
         copy_to_new_server(f"{staging}/", f"{incoming}/")
         system.step(f"Set up the sites on {host}")
-        if settings.migrated(system, site.site_root):
-            # Its settings came in Harbor's state: the new server's own harbor sets it up (it was checked to have one)
-            on_new_server(f"harbor site receive {bash_quote(incoming)} {bash_quote(sql_server)}")
-        else:
-            on_new_server(f"bash /vns/apache/move_site.sh --receive {bash_quote(incoming)} {bash_quote(sql_server)}")
+        on_new_server(f"/usr/local/bin/harbor site receive {bash_quote(incoming)} {bash_quote(sql_server)}")
         done = True
     except BaseException as error:
         if not done:

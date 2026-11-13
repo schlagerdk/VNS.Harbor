@@ -175,7 +175,7 @@ def sa_prompt(system):
     if given_sa_password():
         return given_sa_password()
     while True:
-        password = system.ask("Enter the sa password you set during SQL Server setup so the SQL scripts can be updated: ", secret=True)
+        password = system.ask("Enter the sa password you set during SQL Server setup, so Harbor can use it: ", secret=True)
         confirm = system.ask("Repeat password: ", secret=True)
         if not password:
             system.warn("Password cannot be empty")
@@ -188,13 +188,12 @@ def sa_prompt(system):
 
 
 def set_sa_password(system, folder=None, assume_yes=None):
-    """Set the sa password in every script in sql/ that uses it, also those in cron/: after the sql folder was copied
-    again, so the scripts hold the placeholder once more, or after the sa password was changed on the server"""
+    """The sa password in Harbor's secrets, after it was changed on the server. The scripts of VNS 1.x in /vns/sql that
+    still hold it (the custom ones, such as clean_umbraco7_db.sh) get it too, while they are there."""
     folder = Path(folder or SQL_DIR)
-    scripts = sa_scripts(system, folder)
-    if not scripts:
-        raise Stop(f"No script in {folder} uses the sa password.")
-    system.say("Scripts that use the sa password:\n" + "\n".join(f"  {path.relative_to(folder)}" for path in scripts) + "\n")
+    scripts = sa_scripts(system, folder) if folder.is_dir() else []
+    if scripts:
+        system.say("Scripts that use the sa password:\n" + "\n".join(f"  {path.relative_to(folder)}" for path in scripts) + "\n")
     password = sa_prompt(system)
     # The password goes in the environment, so it is not shown in the process list
     sqlcmd = SQLCMD if system.path(SQLCMD).is_file() else shutil.which("sqlcmd")
@@ -202,18 +201,21 @@ def set_sa_password(system, folder=None, assume_yes=None):
         if system.run(sqlcmd, "-C", "-S", "LOCALHOST", "-U", "sa", "-l", "10", "-b", "-Q", "SET NOCOUNT ON; SELECT 1",
                       env={"SQLCMDPASSWORD": password}, check=False, capture=True).ok:
             system.say("The password works on the local SQL Server.")
-        elif not confirm(system, "The local SQL Server did not accept the password. Set it in the scripts anyway? [y/N]: ",
+        elif not confirm(system, "The local SQL Server did not accept the password. Keep it anyway? [y/N]: ",
                          assume_yes if assume_yes is not None else (False if given_sa_password() else None)):
             system.say("Nothing was changed.")
             raise Stop("", 1)
     else:
         system.say("sqlcmd is not installed, so the password is not checked against the server.")
-    sa_apply(password, folder)
     save_sa_password(system, password)
-    # The scripts now hold the password: only their owner and group may read them
-    for path in scripts:
-        path.chmod(path.stat().st_mode & ~0o007)
-    system.say(f"The sa password is set in {len(scripts)} script(s). Others can no longer read them.")
+    if scripts:
+        sa_apply(password, folder)
+        # The scripts now hold the password: only their owner and group may read them
+        for path in scripts:
+            path.chmod(path.stat().st_mode & ~0o007)
+        system.say(f"The sa password is set in Harbor and in {len(scripts)} script(s). Others can no longer read them.")
+    else:
+        system.say("The sa password is set in Harbor.")
 
 
 # ---- SQL Server
@@ -279,10 +281,12 @@ def install_server(system, edition="", with_tools=None, assume_yes=None):
         system.run("systemctl", "status", "mssql-server", "--no-pager", check=False)
         server_installed = True
 
-    placeholder = any("'@SA_PASSWORD@'" in path.read_text(errors="replace") for path in SQL_DIR.rglob("*.sh") if path.is_file())
-    if server_installed or placeholder:
+    from harbor.sql.databases import SA_SECRET
+    from harbor.state.store import read_json
+    if server_installed or not (read_json(system.path(SA_SECRET)) or {}).get("sa_password"):
         password = sa_prompt(system)
-        sa_apply(password)
+        if SQL_DIR.is_dir():
+            sa_apply(password)
         save_sa_password(system, password)
 
     if confirm(system, "Install SQL command-line tools (sqlcmd)? [y/N]: ", with_tools):
@@ -305,7 +309,7 @@ def update_server(system, assume_yes=None):
     if not any(line.startswith("mssql-server/") for line in upgradable.splitlines()):
         system.say("SQL Server is already up to date")
     else:
-        system.say("Update available. Take a backup first - e.g. /vns/sql/cron/backup_everything.sh")
+        system.say("Update available. Take a backup first - e.g. harbor sql backup-everything")
         if not confirm(system, "Update now? The service is restarted. [y/N]: ", assume_yes):
             system.say("Aborted")
             raise Stop("", 1)

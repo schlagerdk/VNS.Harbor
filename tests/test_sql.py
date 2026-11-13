@@ -80,7 +80,7 @@ class PasswordTests(unittest.TestCase):
         # harbor works on the sql folder it is installed beside: here it is given a copy
         system = RecordingSystem(root=self.folder, replies=[PASSWORD, PASSWORD])
         server.set_sa_password(system, new)
-        self.assertIn("is set in 9 script(s)", system.said[-1])
+        self.assertIn("and in 9 script(s)", system.said[-1])
         for name in WRAPPED:
             self.assertIn(f"-U sa -P {quoted(PASSWORD)} -i", (new / name).read_text())
             self.assertEqual((new / name).stat().st_mode & 0o007, 0)
@@ -192,7 +192,7 @@ class DatabaseTests(unittest.TestCase):
     def test_without_the_password_set(self):
         system = RecordingSystem(root=self.folder / "harbor")
         self.assertEqual(main(["sql", "shrink-logs"], system), 1)
-        self.assertIn("set_sa_password.sh", system.said[-1])
+        self.assertIn("harbor sql set-sa-password", system.said[-1])
         self.assertEqual([command for command in system.commands if "sqlcmd" in command], [])
 
 

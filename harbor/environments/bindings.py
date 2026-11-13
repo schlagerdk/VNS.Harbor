@@ -12,7 +12,7 @@ from harbor.environments import settings
 from harbor.environments.actions import environment_of, set_setting
 
 CHANGE_BINDING = r'''set -euo pipefail
-source /vns/apache/lib/common.sh
+source /opt/harbor/current/apache/lib/common.sh 2>/dev/null || source /vns/apache/lib/common.sh
 unit=$(normalize_dns_name "${SITE}" unit)
 conf=/etc/apache2/sites-available/${SITE}.conf
 acme=/etc/acmesh/acme.sh
@@ -149,7 +149,7 @@ def change_binding(system, name="", new_binding="", aliases=None, yes=False, tar
         raise Stop(str(error)) from None
     config = f"/etc/apache2/sites-available/{environment.FOLDER}.conf"
     try:
-        old_aliases = settings.remote_exec(system, environment, f"bash -c 'source /vns/apache/lib/common.sh; server_aliases_from_config {config} {old_binding}'",
+        old_aliases = settings.remote_exec(system, environment, f"bash -c 'source /opt/harbor/current/apache/lib/common.sh 2>/dev/null || source /vns/apache/lib/common.sh; server_aliases_from_config {config} {old_binding}'",
                                            capture=True).stdout.strip()
     except CommandFailed as error:
         raise Stop("", error.result.returncode or 1) from None

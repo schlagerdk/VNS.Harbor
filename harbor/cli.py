@@ -298,9 +298,29 @@ def _backoffice_link(args, system):
     system.say(backoffice.login_link(system, args.site, args.environment, args.who))
 
 
+def _server_init(args, system):
+    from harbor.server.init import init
+    init(system)
+
+
+def _admin(args, system):
+    from harbor.install import admin
+    if args.command == "install":
+        admin.install(system, args.site, args.binding, args.user, args.https, args.allow)
+    elif args.command == "update":
+        admin.update(system, args.site)
+    elif args.command == "set-password":
+        admin.set_password(system, args.site)
+    elif args.command == "uninstall":
+        admin.uninstall(system, args.site, args.delete_certificate)
+
+
 def _self(args, system):
     from harbor.install import release
-    if args.command == "install":
+    if args.command == "after-update":
+        from harbor.install import update
+        update.after_update(system)
+    elif args.command == "install":
         release.install(system, args.source)
     elif args.command == "rollback":
         release.rollback(system)
@@ -352,9 +372,11 @@ def parser():
     command = server.add_parser("install-tls-policy", help="the shared TLS policy (was install_tls_policy.sh)")
     command.add_argument("--start-if-stopped", action="store_true")
     command.set_defaults(handler=_tls_policy)
+    command = server.add_parser("init", help="make a new server ready for sites: Apache, acme.sh, .NET, templates, keep-alive (was apache/init.sh)")
+    command.set_defaults(handler=_server_init)
     command = server.add_parser("status", help="SQL Server, sqlcmd, the sa password, cron jobs, .NET and Node.js here, as JSON")
     command.set_defaults(handler=_server_status)
-    command = server.add_parser("cron", help="the backup and log shrink jobs in root's crontab: on, off, or upgrade (from /vns/sql/cron to harbor)")
+    command = server.add_parser("cron", help="the backup and log shrink jobs in root's crontab: on, off, or upgrade (from the scripts of VNS 1.x to harbor)")
     command.add_argument("state", choices=("on", "off", "upgrade"))
     command.set_defaults(handler=_server_cron)
     command = server.add_parser("dotnet", help="install a .NET channel (SDK and ASP.NET Core runtime), or update it to its newest patch")
@@ -538,12 +560,33 @@ def parser():
     command = users.add_parser("mounts", help="the sites in the SFTP folders again, as after the last sync (at boot)")
     command.set_defaults(handler=_users_sftp)
 
+    admin = groups.add_parser("admin", help="the admin site, run from the Harbor release in use").add_subparsers(dest="command", required=True, metavar="<command>")
+    command = admin.add_parser("install", help="add the admin site (the password from VNS_ADMIN_PASSWORD, or asked for) (was install_admin_site.sh)")
+    command.add_argument("site", nargs="?", default="", help="its folder in /var/www")
+    command.add_argument("binding", nargs="?", default="")
+    command.add_argument("user", nargs="?", default="", help="the first user's name")
+    command.add_argument("https", nargs="?", default="", help="y or n")
+    command.add_argument("--allow", default=None, help="the IP addresses or ranges allowed in, separated by spaces (empty: everyone)")
+    command.set_defaults(handler=_admin)
+    command = admin.add_parser("update", help="run the admin site from the release in use, with its Python and libraries up to date")
+    command.add_argument("site", nargs="?", default="")
+    command.set_defaults(handler=_admin)
+    command = admin.add_parser("set-password", help="a new password for the admin site's first login; signs everyone out")
+    command.add_argument("site", nargs="?", default="")
+    command.set_defaults(handler=_admin)
+    command = admin.add_parser("uninstall", help="remove the admin site: files, login, service and Apache config")
+    command.add_argument("site", nargs="?", default="")
+    command.add_argument("delete_certificate", nargs="?", default="", help="y to revoke and remove its certificate")
+    command.set_defaults(handler=_admin)
+
     own = groups.add_parser("self", help="Harbor itself: its releases in /opt/harbor").add_subparsers(dest="command", required=True, metavar="<command>")
     command = own.add_parser("update", help="update to the newest release on GitHub (or --ref vX.Y.Z); the release installs itself")
     command.add_argument("--ref", default="")
     command.set_defaults(handler=_self)
     command = own.add_parser("finish-update", help="install this copy of a release (run by self update from the copy it fetched)")
     command.add_argument("source")
+    command.set_defaults(handler=_self)
+    command = own.add_parser("after-update", help="bring the server up to the release in use (run by finish-update)")
     command.set_defaults(handler=_self)
     command = own.add_parser("check", help="the installed version, and the releases on GitHub that are newer, as JSON")
     command.set_defaults(handler=_self)

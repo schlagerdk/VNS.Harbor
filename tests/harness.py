@@ -152,3 +152,18 @@ def harbor_commands(system):
 def without_temporary(commands):
     """Commands with the temporary files they name (mktemp's or Python's) as TEMP"""
     return [TEMPORARY.sub("TEMP", line) for line in commands]
+
+
+def sent_today(script):
+    """What a frozen script sent to another server, as harbor sends it now: common.sh from the Harbor release in use
+    there, /vns only when it has none (a difference on purpose: /vns goes with the cutover)"""
+    return script.replace("source /vns/apache/lib/common.sh",
+                          "source /opt/harbor/current/apache/lib/common.sh 2>/dev/null || source /vns/apache/lib/common.sh")
+
+
+def as_frozen(script):
+    """What harbor sent to another server, as the frozen script sent it: the other way of sent_today, for a script
+    whose commands are compared as they ran (the start of a publish also sources common.sh now, for _apacheDir)"""
+    today = "source /opt/harbor/current/apache/lib/common.sh 2>/dev/null || source /vns/apache/lib/common.sh"
+    script = script.replace(today + "\ndir=${ROOT}\n", "dir=${ROOT}\n").replace(today, "source /vns/apache/lib/common.sh")
+    return re.sub(r'python3 "\$\{_apacheDir\}/lib/([\w.]+)"', r"python3 /vns/apache/lib/\1", script)

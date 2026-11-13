@@ -14,6 +14,7 @@ from harbor.core.system import RecordingSystem, Result  # noqa: E402
 from tests.test_actions import legacy_script  # noqa: E402
 from tests.test_core_bindings import NEEDS_BASH_4  # noqa: E402
 from tests.test_environments import Fake, split_call  # noqa: E402
+from tests.harness import sent_today  # noqa: E402
 
 ALIASES = "www.shop.dk old.shop.dk"
 
@@ -73,8 +74,8 @@ class EnvironmentBindingTests(unittest.TestCase):
         self.assertEqual((self.target / "publish_prod.sh").read_text(), after, args)
         self.assertEqual(len(system.commands), len(calls), (system.commands, calls))
         for command, (name, argv, variables) in zip(system.commands, calls):
-            self.assertEqual(command, " ".join(["sshpass", "-e", name, *argv]), args)
-        self.assertEqual(next((sent for sent in system.inputs if sent), None), sent, args)
+            self.assertEqual(command, sent_today(" ".join(["sshpass", "-e", name, *argv])), args)
+        self.assertEqual(next((sent for sent in system.inputs if sent), None), sent and sent_today(sent), args)
         return result, system
 
     def test_new_binding_and_aliases_are_sent_and_saved(self):

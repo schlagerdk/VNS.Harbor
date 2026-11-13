@@ -210,6 +210,10 @@ def run(config=CONFIG, state=STATE):
 
 def install(config=CONFIG, cron=Path("/etc/cron.d/vns-keep-alive")):
     script = Path(__file__).resolve()
+    # From a Harbor release it is named through /opt/harbor/current, so the job runs the release in use
+    release = re.fullmatch(r"/opt/harbor/releases/[^/]+/(.+)", str(script))
+    if release:
+        script = Path("/opt/harbor/current") / release[1]
     if re.search(r"\s|%", str(script)):
         raise ValueError("Cron installation requires a repository path without spaces or percent signs")
     config.parent.mkdir(parents=True, exist_ok=True)

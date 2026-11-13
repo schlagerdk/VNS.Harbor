@@ -1,7 +1,7 @@
 #!/bin/bash
 # Usage: dev/deploy.sh [host]   (default linux-01)
 # Puts this working copy, as it is and without a commit or a release, on a test server the way an update does:
-# it is copied to the server and installed with its own update.sh, then the admin site gets the new code.
+# it is copied to the server and installed by its own `harbor self finish-update`, which also moves the admin site.
 # The server is reached with `ssh <host>` as root. Nothing on this machine is changed.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -30,26 +30,9 @@ label=$3
 # As a git checkout: readable by all, executables kept executable, owned by root (macOS's rsync ignores --chmod)
 chown -R root:root "${source}"
 chmod -R go+rX,go-w "${source}"
-bash "${source}/update.sh" "${source}" 2> >(grep -v "has no Git metadata" >&2)
-printf '%s\n' "${revision}" >/vns/.vns-version
-printf '%s\n' "${label}" >/vns/.vns-dev
-# The release in /opt/harbor, made from what is now in /vns (a working copy: copied again every time)
-python3 /vns/bin/harbor self install /vns
-admin=$(python3 - <<'PY'
-import glob, re
-for path in glob.glob("/etc/systemd/system/*.service"):
-    text = open(path).read()
-    match = re.search(r"^WorkingDirectory=/var/www/([^/\n]+)/app$", text, re.M)
-    if match and "gunicorn" in text:
-        print(match.group(1))
-        break
-PY
-)
-if [[ -n ${admin} ]]; then
-	echo "Update the admin site ${admin}"
-	bash /vns/apache/update_admin_site.sh "${admin}"
-else
-	echo "No admin site was found to update." >&2
-fi
+# The commit it is built on, and that it is a test build: the release is then always copied again
+printf '%s\n' "${revision}" >"${source}/.vns-version"
+printf '%s\n' "${label}" >"${source}/.vns-dev"
+python3 "${source}/bin/harbor" self finish-update "${source}"
 echo "Installed: ${label}"
 REMOTE

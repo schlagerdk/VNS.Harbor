@@ -20,7 +20,7 @@ from harbor.core.templates import Site
 from harbor.environments import settings
 
 REMOVE_REMOTE = r'''set -euo pipefail
-source /vns/apache/lib/common.sh
+source /opt/harbor/current/apache/lib/common.sh 2>/dev/null || source /vns/apache/lib/common.sh
 validate_site_name "${SITE}"
 unit=$(normalize_dns_name "${SITE}" unit)
 [[ ${BINDING} =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$ ]] || { echo "Invalid remote binding." >&2; exit 1; }

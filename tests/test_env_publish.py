@@ -11,7 +11,7 @@ import unittest
 
 from harbor.cli import main
 from harbor.core.system import Result
-from tests.harness import APACHE, LEGACY, Server
+from tests.harness import APACHE, LEGACY, Server, as_frozen
 from tests.test_core_bindings import NEEDS_BASH_4
 
 TEMPLATE = LEGACY / "solutionfiles/csharp/prod-scripts/publish_prod.sh"
@@ -129,7 +129,7 @@ esac
         self.assertEqual(code, result.returncode, (result.stdout, result.stderr, system.said))
         mine = self.state(server, log)
         self.assertEqual(mine[0], legacy[0], "the files")
-        self.assertEqual(mine[1], legacy[1], "what ran as root where the environment is")
+        self.assertEqual(as_frozen(mine[1]), legacy[1], "what ran as root where the environment is")
         return result, system, server
 
     def state(self, server, log):

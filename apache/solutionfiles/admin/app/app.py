@@ -33,18 +33,27 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import ptyprocess
-from flask import Flask, abort, g, has_request_context, jsonify, redirect, render_template, request, send_file, session
+from flask import Flask, abort, g, has_request_context, jsonify, redirect, render_template, request, send_file, send_from_directory, session
 from flask_sock import Sock
 from werkzeug.exceptions import HTTPException
 from werkzeug.security import check_password_hash, generate_password_hash
 
 BASE = os.path.dirname(os.path.abspath(__file__))
-CONFIG_PATH = os.environ.get("VNS_ADMIN_CONFIG", os.path.join(BASE, "config.json"))
+# What the admin writes (its login, audit log, SQL connections, update state, downloaded libraries): beside the code when
+# it was copied into the admin site (VNS 1.x), in the admin site's app folder when it runs from a Harbor release
+DATA = os.environ.get("HARBOR_ADMIN_DATA") or BASE
+CONFIG_PATH = os.environ.get("VNS_ADMIN_CONFIG", os.path.join(DATA, "config.json"))
 with open(CONFIG_PATH) as _f:
     cfg = json.load(_f)
 
 WEB_ROOT = os.path.realpath(cfg.get("web_root", "/var/www"))
-APACHE_DIR = cfg["apache_dir"]
+# From a release, the apache folder is that release's own (this app is in apache/solutionfiles/admin/app), so the
+# admin and Harbor are always the same version; copied into a site, config.json names it
+APACHE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(BASE))) if os.environ.get("HARBOR_ADMIN_DATA") else cfg["apache_dir"]
+# A release is named through /opt/harbor/current, as harbor names it (harbor/core/paths.py): what the admin writes or
+# runs never names a release that is removed later
+if re.match(r"/opt/harbor/releases/[^/]+/apache$", APACHE_DIR):
+    APACHE_DIR = "/opt/harbor/current/apache"
 _files_spec = importlib.util.spec_from_file_location("vns_remote_files", os.path.join(APACHE_DIR, "lib", "remote_files.py"))
 _files_module = importlib.util.module_from_spec(_files_spec)
 _files_spec.loader.exec_module(_files_module)
@@ -82,7 +91,7 @@ SQL_HELPER = os.path.join(os.path.dirname(APACHE_DIR), "sql", "lib", "admin.py")
 _sql_spec = importlib.util.spec_from_file_location("vns_sql_admin", SQL_HELPER)
 _sql_module = importlib.util.module_from_spec(_sql_spec)
 _sql_spec.loader.exec_module(_sql_module)
-SQL_CONNECTIONS = os.path.join(BASE, "sql-connections.json")
+SQL_CONNECTIONS = os.path.join(DATA, "sql-connections.json")
 SQL_LOCK = threading.Lock()
 APACHE_SITES = "/etc/apache2/sites-available"
 APACHE_ENABLED = "/etc/apache2/sites-enabled"
@@ -98,6 +107,12 @@ app.config.update(
     MAX_CONTENT_LENGTH=500 * 1024 * 1024,
 )
 sock = Sock(app)
+
+
+@app.route("/static/vendor/<path:name>")
+def vendor_file(name):
+    """The downloaded front-end libraries (xterm.js, Monaco): kept with the admin's data, as a release never changes"""
+    return send_from_directory(os.path.join(DATA, "static", "vendor"), name)
 
 NAME_RE = re.compile(r"^[^\W_](?:(?:[^\W_]|-)*[^\W_])?(?:\.[^\W_](?:(?:[^\W_]|-)*[^\W_])?)*$")
 BINDING_RE = re.compile(r"^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$")
@@ -1584,8 +1599,8 @@ SYSTEM_UPDATE_CACHE = {}
 @app.route("/api/system-update/run", methods=["GET", "POST"])
 def api_run_system_update():
     require_admin()
-    path = Path(BASE) / "system-update.json"
-    log = Path(BASE) / "system-update.log"
+    path = Path(DATA) / "system-update.json"
+    log = Path(DATA) / "system-update.log"
     with SYSTEM_UPDATE_LOCK:
         state = json.loads(path.read_text()) if path.exists() else {"status": "idle"}
         if request.method == "GET":
@@ -1643,6 +1658,18 @@ def installed_version():
     """The version in VERSION of the installed VNS, or empty for an installation from before versions"""
     text = read_text(os.path.join(os.path.dirname(APACHE_DIR), "VERSION")).strip()
     return text if re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", text) else ""
+
+
+def installed_revision():
+    """The commit the installed code is: the release's (release.json), or .vns-version beside the admin (VNS 1.x)"""
+    try:
+        release = json.loads(read_text(os.path.join(os.path.dirname(APACHE_DIR), "release.json")) or "{}")
+    except ValueError:
+        release = {}
+    if release.get("revision"):
+        return release["revision"]
+    path = Path(DATA) / ".vns-version"
+    return path.read_text().strip() if path.exists() else ""
 
 
 def version_key(value):
@@ -1747,8 +1774,7 @@ def api_system_update():
         if request.args.get("refresh") != "1" and SYSTEM_UPDATE_CACHE and time.monotonic() - SYSTEM_UPDATE_CACHE["checked_at"] < 60:
             return jsonify(**SYSTEM_UPDATE_CACHE["result"])
         try:
-            path = Path(BASE) / ".vns-version"
-            installed = path.read_text().strip() if path.exists() else ""
+            installed = installed_revision()
             if installed and not re.fullmatch(r"[0-9a-f]{40}", installed):
                 raise ValueError("Invalid installed version marker")
             version = installed_version()
@@ -2477,7 +2503,7 @@ def require_sql(identifier, database, action):
 
 # ------------------------------------------------------------------- audit log
 
-AUDIT_LOG = os.path.join(BASE, "audit.log")
+AUDIT_LOG = os.path.join(DATA, "audit.log")
 AUDIT_LOCK = threading.Lock()
 
 

@@ -31,7 +31,8 @@ class SystemUpdateTests(unittest.TestCase):
         self.app = Flask(__name__)
         self.run = Mock(return_value=Mock(stdout=self.latest + "\tHEAD\n"))
         self.clock = Mock(return_value=1000)
-        self.ns = dict(app=self.app, jsonify=jsonify, request=request, Path=Path, BASE=str(self.root), re=re,
+        self.ns = dict(app=self.app, jsonify=jsonify, request=request, Path=Path, BASE=str(self.root), DATA=str(self.root), APACHE_DIR=str(self.root / "apache"), json=json, os=os,
+                       read_text=lambda path: Path(path).read_text() if Path(path).is_file() else "", re=re,
                        subprocess=Mock(run=self.run, SubprocessError=subprocess.SubprocessError),
                        SYSTEM_UPDATE_LOCK=threading.Lock(), SYSTEM_UPDATE_CACHE={},
                        time=Mock(monotonic=self.clock), GITHUB_REPO="schlagerdk/VNS.Linux", INSTALLED_FROM="schlagerdk/VNS.Linux",
@@ -43,7 +44,7 @@ class SystemUpdateTests(unittest.TestCase):
         self.releases = None
         self.tags = None
         nodes = [node for node in ast.parse((APP / "app.py").read_text()).body
-                 if isinstance(node, ast.FunctionDef) and node.name == "api_system_update"]
+                 if isinstance(node, ast.FunctionDef) and node.name in ("api_system_update", "installed_revision")]
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "system updates", "exec"), self.ns)
         add_target_helpers(self.ns)
         self.client = self.app.test_client()
