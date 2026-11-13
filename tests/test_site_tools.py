@@ -1,14 +1,16 @@
 """The tools a site's scripts folder had (phase 2d): each template as it was (tests/legacy/solutionfiles), rendered for a
 site on the fake server, against its harbor command. And the templates now: wrappers that call harbor."""
+import json
 import os
 from pathlib import Path
 import re
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 from harbor.cli import main
-from harbor.core.system import Result
+from harbor.core.system import RecordingSystem, Result
 from harbor.core.templates import Site, render
 from tests.harness import APACHE, LEGACY, Server, harbor_commands
 from tests.test_core_bindings import NEEDS_BASH_4
@@ -51,8 +53,8 @@ class SiteToolTests(unittest.TestCase):
 
     def legacy(self, template, *args, stdin=""):
         self.old.log.write_text("")
-        site = Site("shop.dk", project_name="Shop", publish_folder="_publish", build_config="Debug", apache_dir=str(self.old.legacy_apache()))
-        text = self.old.redirect(render((TEMPLATES / template).read_text(), site))
+        site = Site("shop.dk", project_name="Shop", publish_folder="_publish", build_config="Debug", harbor_dir=str(self.old.legacy_apache()))
+        text = self.old.redirect(render((TEMPLATES / template).read_text(), site).replace("@APACHE_DIR@", site.harbor_dir))
         text = text.replace('[[ $EUID -ne 0 ]] && exec sudo "$0" "$@"', "").replace('[[ $EUID -eq 0 ]] || exec sudo "$0" "$@"', "")
         script = self.old.root / "var/www/shop.dk/scripts" / Path(template).name
         script.parent.mkdir(exist_ok=True)
@@ -105,6 +107,41 @@ class SiteToolTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse((self.new.root / "var/www/shop.dk/App_Plugins").exists())
         self.assertTrue(any("dotnet publish Shop.csproj -c Release -p:PublishDir=_publish" in line for line in system.commands))
+
+
+class ConfigurationTests(unittest.TestCase):
+    """Staging and Production are Release builds, Development and Test Debug: the site's environment decides"""
+
+    def publish(self, environment, saved="Debug", given=""):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        root = Path(folder.name)
+        (root / "var/www/shop.dk").mkdir(parents=True)
+        (root / "etc/systemd/system").mkdir(parents=True)
+        lines = "[Service]\nWorkingDirectory=/var/www/shop.dk/_publish\n" + (f"Environment=ASPNETCORE_ENVIRONMENT={environment}\n" if environment else "")
+        (root / "etc/systemd/system/shop.dk.service").write_text(lines)
+        state = root / "var/lib/harbor/sites/shop.dk"
+        state.mkdir(parents=True)
+        (state / "migrated.json").write_text("{}")
+        (state / "site.json").write_text(json.dumps({"configuration": saved}))
+        system = RecordingSystem(root=root)
+        with mock.patch.dict(os.environ, {"VNS_WEB_ROOT": "/var/www"}):
+            os.environ.pop("VNS_PUBLISH_TRACKED", None)
+            self.assertEqual(main(["site", "publish", "shop.dk", *([given] if given else [])], system), 0, system.said)
+        return system.commands[0].split(" site publish shop.dk ", 1)[1].split()[0]
+
+    def test_the_environment_decides(self):
+        for environment, expected in (("Production", "Release"), ("Staging", "Release"), ("Test", "Debug"), ("Development", "Debug")):
+            with self.subTest(environment=environment):
+                self.assertEqual(self.publish(environment), expected)
+        self.assertEqual(self.publish("Production", saved="Debug"), "Release", "what the site was made with comes second")
+
+    def test_without_an_environment_what_it_was_made_with(self):
+        self.assertEqual(self.publish("", saved="Release"), "Release")
+        self.assertEqual(self.publish("", saved="Debug"), "Debug")
+
+    def test_one_given_is_used(self):
+        self.assertEqual(self.publish("Production", given="Debug"), "Debug")
 
 
 if __name__ == "__main__":

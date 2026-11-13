@@ -19,7 +19,8 @@ from tests.test_core_site_config import Server  # noqa: E402
 from tests.test_environments import Fake, split_call  # noqa: E402
 
 LEGACY = ROOT / "tests/legacy"
-APACHE = ROOT / "apache"
+# The Harbor installation (what was the apache folder: lib/ and the templates)
+APACHE = ROOT
 SERVICE = ("[Unit]\nDescription=Running .NET Core [shop.dk]\n[Service]\nWorkingDirectory={root}/var/www/shop.dk/_publish\n"
            "ExecStart=/usr/lib/dotnet/dotnet /var/www/shop.dk/_publish/Shop.dll --urls \"http://127.0.0.1:4010\"\n"
            "Environment=ASPNETCORE_ENVIRONMENT=Test\nEnvironment=DOTNET_ENVIRONMENT=Test\n")

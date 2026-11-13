@@ -20,7 +20,7 @@ from harbor.core.site_config import (configure_umbraco_https, default_site, inst
 from harbor.core.system import CommandFailed, Stop
 from harbor.core.templates import Site, render
 from harbor.server.apache import own_name
-from harbor.core.paths import APACHE
+from harbor.core.paths import LIB, SITE_TEMPLATES
 
 # The admin site reads these: the Umbraco version a site gets when none is given
 DEFAULT_UMBRACO_VERSION = "18.3.1"
@@ -28,7 +28,7 @@ DEFAULT_UMBRACO13_VERSION = "13.16.4"
 DOTNET_VERSION = "net10.0"
 NEW_PUBLISH_FOLDER = "_development"
 
-SOLUTION = APACHE / "solutionfiles"
+SOLUTION = SITE_TEMPLATES
 SCHEMA_FILES = ("appsettings-schema.json", "appsettings-schema.Umbraco.Cms.json", "appsettings-schema.usync.json", "umbraco-package-schema.json")
 TEMPLATE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
@@ -96,9 +96,9 @@ class Creation:
     def publish(self, site, project):
         """The build into the publish folder, as the admin's Publish shows it"""
         system = self.system
-        system.run("python3", f"{site.apache_dir}/lib/publish_status.py", "run", site.site_root, "test", "python3",
-                   f"{site.apache_dir}/lib/build_as.py", "--", "dotnet", "publish", project, "-c", site.build_config,
-                   f"-p:PublishDir={site.publish_folder}", f"-p:CustomAfterMicrosoftCommonTargets={site.apache_dir}/lib/publish.targets",
+        system.run("python3", f"{site.harbor_dir}/lib/publish_status.py", "run", site.site_root, "test", "python3",
+                   f"{site.harbor_dir}/lib/build_as.py", "--", "dotnet", "publish", project, "-c", site.build_config,
+                   f"-p:PublishDir={site.publish_folder}", f"-p:CustomAfterMicrosoftCommonTargets={site.harbor_dir}/lib/publish.targets",
                    "--runtime", runtime_identifier(system.output("uname", "-m")), "--self-contained", "false", "--nologo", cwd=site.site_root)
 
     def ask_first(self):

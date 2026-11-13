@@ -56,7 +56,7 @@ The rules are the same as in the Harbor admin: which environments may send, whic
 
 ### Who may use it
 
-The package creates the Umbraco user group **VNS Harbor** (alias `vnsHarbor`). The group is empty at first. Add the users who may sync. Everyone else sees no sync buttons, and the API refuses their requests.
+Administrators (the Umbraco group **Administrators**) may always sync. The package also creates the user group **VNS Harbor** (alias `vnsHarbor`), empty at first: add the other users who may sync. Everyone else sees no sync buttons, and the API refuses their requests.
 
 ### Access to Harbor
 

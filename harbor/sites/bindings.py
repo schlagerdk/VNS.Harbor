@@ -186,7 +186,7 @@ def change_binding(system, name="", new_binding="", aliases=None, yes=False):
                 new_config = config.read_text()
                 site.binding = new_binding
                 site.doc_root = site.site_root
-                config.write_text(replace_server_aliases(render(read_template(f"{site.apache_dir}/solutionfiles/common/apache-temp.conf.tpl"), site), new_aliases))
+                config.write_text(replace_server_aliases(render(read_template(f"{site.harbor_dir}/templates/sites/common/apache-temp.conf.tpl"), site), new_aliases))
                 if not system.run("apache2ctl", "configtest", check=False).ok or not system.run("systemctl", "reload", "apache2", check=False).ok:
                     fail()
                 system.step(f"Issue certificate for {' '.join(domains)}")

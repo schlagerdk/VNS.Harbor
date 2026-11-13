@@ -438,7 +438,7 @@ def parser():
     command.add_argument("incoming")
     command.add_argument("sql_server", nargs="?", default="")
     command.set_defaults(handler=_receive_sites)
-    # The tools a site's scripts folder had (apache/solutionfiles/*/scripts)
+    # The tools a site's scripts folder had (the site templates of VNS 1.x)
     for name, text in (("check-service", "the service's status (was check_service.sh)"),
                        ("restart-service", "restart the service and see that it runs (was restart_service.sh)"),
                        ("edit-conf", "edit the Apache config, then test and reload (was edit_conf.sh)"),

@@ -27,13 +27,13 @@ class ReleaseTests(unittest.TestCase):
     def source(self, revision, version="1.2.0", dev=False):
         source = self.folder / f"source-{revision}"
         shutil.rmtree(source, ignore_errors=True)
-        for part in ("bin", "harbor", "apache/lib", "apache/tests", "sql", "tests", "nuget"):
+        for part in ("bin", "harbor", "admin", "lib", "templates", "harbor/tests", "tests", "nuget"):
             (source / part).mkdir(parents=True)
         (source / "bin/harbor").write_text("#!/usr/bin/python3\n")
         (source / "bin/harbor").chmod(0o700)
         (source / "harbor/cli.py").write_text(f"# {revision}\n")
-        (source / "apache/lib/common.sh").write_text("")
-        (source / "apache/tests/test_x.py").write_text("")
+        (source / "lib/common.sh").write_text("")
+        (source / "harbor/tests/test_x.py").write_text("")
         (source / "VERSION").write_text(version + "\n")
         (source / ".vns-version").write_text(revision * 40 + "\n" if len(revision) == 1 else revision + "\n")
         if dev:
@@ -54,9 +54,9 @@ class ReleaseTests(unittest.TestCase):
         installed = self.root / "opt/harbor/releases" / name
         self.assertEqual(self.current(), f"releases/{name}")
         self.assertEqual(os.readlink(self.root / "usr/local/bin/harbor"), "/opt/harbor/current/bin/harbor")
-        self.assertTrue((installed / "apache/lib/common.sh").is_file())
+        self.assertTrue((installed / "lib/common.sh").is_file())
         # Only what Harbor runs: no tests, no NuGet package
-        self.assertFalse((installed / "apache/tests").exists())
+        self.assertFalse((installed / "harbor/tests").exists())
         self.assertFalse((installed / "tests").exists())
         self.assertFalse((installed / "nuget").exists())
         self.assertEqual(json.loads((installed / "release.json").read_text())["version"], "1.2.0")

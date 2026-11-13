@@ -50,9 +50,9 @@ class RemoteSiteTests(unittest.TestCase):
         self.fake.log.write_text("")
         self.sent.unlink(missing_ok=True)
         # The script reads its helpers in lib/ from the folder it runs in: the real apache folder
-        text = legacy_script("remote_site.sh", self.folder, self.web).replace("cat lib/", f"cat {ROOT}/apache/lib/")
+        text = legacy_script("remote_site.sh", self.folder, self.web).replace("cat lib/", f"cat {ROOT}/lib/")
         result = subprocess.run(["/bin/bash", "-c", text, "remote_site.sh", "shop.dk", action], capture_output=True, text=True, input="",
-                                env=self.fake.env() | {"VNS_TARGET": "production"} | (env or {}), cwd=ROOT / "apache")
+                                env=self.fake.env() | {"VNS_TARGET": "production"} | (env or {}), cwd=ROOT)
         calls = [split_call(line) for line in self.fake.calls() if line.startswith("ssh ")]
         return result, calls, self.sent.read_text() if self.sent.exists() else None
 

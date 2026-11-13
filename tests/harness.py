@@ -12,7 +12,8 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
-APACHE = ROOT / "apache"
+# The Harbor installation (what was the apache folder: lib/ and the templates)
+APACHE = ROOT
 LEGACY = ROOT / "tests/legacy"
 sys.path.insert(0, str(ROOT))
 
@@ -46,7 +47,19 @@ class Server:
         copy = self.folder / f"{self.root.name}-apache"
         if copy.exists():
             return copy
-        shutil.copytree(APACHE, copy, ignore=shutil.ignore_patterns("tests", "__pycache__", "*.pyc"))
+        # The apache folder of VNS 1.x, made from Harbor's: its lib, its templates as solutionfiles and conf, and harbor
+        # beside it (domain_names.py runs it from there)
+        ignore = shutil.ignore_patterns("__pycache__", "*.pyc")
+        shutil.copytree(ROOT / "lib", copy / "lib", ignore=ignore)
+        shutil.copytree(ROOT / "templates/sites", copy / "solutionfiles", ignore=ignore)
+        shutil.copytree(ROOT / "templates/apache", copy / "conf")
+        for name in ("harbor", "bin"):
+            (copy / name).symlink_to(ROOT / name)
+        # Harbor's own names for the same folders, which lib/common.sh uses now
+        (copy / "templates").mkdir()
+        for name, folder in (("sites", "solutionfiles"), ("apache", "conf")):
+            (copy / "templates" / name).symlink_to(copy / folder)
+        (copy / "templates/sql").symlink_to(ROOT / "templates/sql")
         for frozen in LEGACY.glob("*.sh"):
             shutil.copy(frozen, copy / frozen.name)
         for frozen in (LEGACY / "lib").glob("*"):
@@ -160,14 +173,14 @@ def sent_today(script):
     """What a frozen script sent to another server, as harbor sends it now: common.sh from the Harbor release in use
     there, /vns only when it has none (a difference on purpose: /vns goes with the cutover)"""
     return script.replace("source /vns/apache/lib/common.sh",
-                          "source /opt/harbor/current/apache/lib/common.sh 2>/dev/null || source /vns/apache/lib/common.sh") \
+                          "source /opt/harbor/current/lib/common.sh 2>/dev/null || source /vns/apache/lib/common.sh") \
         .replace("Run apache/init.sh there first.", "Run harbor server init there first.")
 
 
 def as_frozen(script):
     """What harbor sent to another server, as the frozen script sent it: the other way of sent_today, for a script
     whose commands are compared as they ran (the start of a publish also sources common.sh now, for _apacheDir)"""
-    today = "source /opt/harbor/current/apache/lib/common.sh 2>/dev/null || source /vns/apache/lib/common.sh"
+    today = "source /opt/harbor/current/lib/common.sh 2>/dev/null || source /vns/apache/lib/common.sh"
     script = script.replace(today + "\ndir=${ROOT}\n", "dir=${ROOT}\n").replace(today, "source /vns/apache/lib/common.sh").replace("Run harbor server init there first.", "Run apache/init.sh there first.")
     return re.sub(r'python3 "\$\{_apacheDir\}/lib/([\w.]+)"', r"python3 /vns/apache/lib/\1", script)
 

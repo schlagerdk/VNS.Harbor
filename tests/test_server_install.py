@@ -15,7 +15,8 @@ from harbor.core.system import RecordingSystem, Result  # noqa: E402
 from tests.test_core_bindings import NEEDS_BASH_4  # noqa: E402
 
 LEGACY = ROOT / "tests/legacy"
-APACHE = ROOT / "apache"
+# The Harbor installation (what was the apache folder: lib/ and the templates)
+APACHE = ROOT
 PROGRAMS = ("a2enmod", "a2enconf", "a2disconf", "a2dismod", "a2query", "apache2ctl", "systemctl")
 
 
@@ -44,7 +45,9 @@ class Server:
 
     def legacy(self, script, *args, env=None, apache_ctl=True):
         text = (LEGACY / script).read_text().replace('cd "$(dirname "$0")"', f"cd {shlex.quote(str(APACHE))}")
-        text = text.replace('"$(dirname "$0")/conf/', f'"{APACHE}/conf/')
+        text = text.replace('"$(dirname "$0")/conf/', f'"{APACHE}/templates/apache/')
+        # Its configs, which it named conf/ beside it, are Harbor's templates/apache now
+        text = text.replace('"conf/${_name}.conf"', f'"{APACHE}/templates/apache/${{_name}}.conf"')
         text = text.replace("/etc/", f"{self.root}/etc/").replace("/var/lib/vns", f"{self.root}/var/lib/vns")
         path = ["/usr/bin", "/bin"] if not apache_ctl else [str(self.bin), "/usr/bin", "/bin"]
         if not apache_ctl:

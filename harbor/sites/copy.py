@@ -1,6 +1,6 @@
 """Copy a site to a new folder here, with its own service, port and Apache config. From copy_site.sh.
 
-apache/lib/copy_site.py copies the files and rewrites them to the new name; it also runs on other servers (move_site.sh),
+lib/copy_site.py copies the files and rewrites them to the new name; it also runs on other servers (move_site.sh),
 so it stays where it is and harbor calls it.
 """
 import importlib.util

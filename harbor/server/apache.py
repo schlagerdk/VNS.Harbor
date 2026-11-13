@@ -6,7 +6,7 @@ import shutil
 import tempfile
 
 from harbor.core.system import CommandFailed, Stop
-from harbor.core.paths import APACHE
+from harbor.core.paths import INSTALL
 
 NAME = re.compile(r"[A-Za-z0-9.-]+")
 SERVERNAME_CONF = "/etc/apache2/conf-available/vns-servername.conf"
@@ -53,7 +53,8 @@ def set_servername(system):
 
 
 # ---- install_apache_conf.sh and install_tls_policy.sh
-APACHE_SOURCE = APACHE
+# The Harbor installation the configs come from (templates/apache, and lib/app_offline.htm)
+APACHE_SOURCE = INSTALL
 SERVER_WIDE = ("vns-offline", "vns-headers")
 
 
@@ -78,7 +79,7 @@ def install_apache_conf(system, source=APACHE_SOURCE):
         install_file(Path(source) / "lib/app_offline.htm", system.path("/var/lib/vns/offline/app_offline.htm"))
         system.run("a2enmod", "-q", "headers", capture=True)
         for name in SERVER_WIDE:
-            install_file(Path(source) / f"conf/{name}.conf", available / f"{name}.conf")
+            install_file(Path(source) / f"templates/apache/{name}.conf", available / f"{name}.conf")
             system.run("a2enconf", "-q", name, capture=True)
         if not system.run("apache2ctl", "configtest", check=False).ok:
             system.warn("Apache did not accept the server-wide configs; the previous ones are kept.")
@@ -105,7 +106,7 @@ def install_tls_policy(system, start_if_stopped=False, source=APACHE_SOURCE):
         return
     if not has_ctl or not has_dir:
         raise Stop("Incomplete Apache installation; cannot install TLS policy.")
-    source_conf = Path(source) / "conf/vns-tls.conf"
+    source_conf = Path(source) / "templates/apache/vns-tls.conf"
     available = system.path("/etc/apache2/conf-available/vns-tls.conf")
     enabled = system.path("/etc/apache2/conf-enabled/vns-tls.conf")
     backup = available.with_name(f"vns-tls.conf.vns-backup-{os.getpid()}")

@@ -1,6 +1,6 @@
 """Harbor installed as releases (phase 3a of dev/HARBOR.md).
 
-  /opt/harbor/releases/<version>/   bin, harbor, apache and sql, as a copy of the repository has them; never changed
+  /opt/harbor/releases/<version>/   bin, harbor, admin, lib and templates, as a copy of the repository has them; never changed
   /opt/harbor/current               the release in use
   /usr/local/bin/harbor             current/bin/harbor
 
@@ -23,7 +23,7 @@ CURRENT = f"{ROOT}/current"
 COMMAND = "/usr/local/bin/harbor"
 KEEP = 3
 # What Harbor runs; the rest of a repository (tests, dev tools, the NuGet package) is not part of a release
-PARTS = ("bin", "harbor", "apache", "sql", "VERSION", "REPOSITORY")
+PARTS = ("bin", "harbor", "admin", "lib", "templates", "VERSION", "REPOSITORY")
 LEFT_OUT = ("tests", "__pycache__", "*.pyc", ".DS_Store")
 
 

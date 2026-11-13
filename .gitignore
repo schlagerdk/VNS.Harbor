@@ -13,3 +13,10 @@ apache/solutionfiles/admin/app/audit.log
 # The VNS.Harbor package's build output
 nuget/bin/
 nuget/obj/
+
+# What the admin writes when it runs from a working copy (tests): never part of the code
+admin/config.json
+admin/audit.log
+admin/sql-connections.json
+admin/system-update.*
+admin/static/vendor/

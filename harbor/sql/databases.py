@@ -3,7 +3,7 @@ clean_umbraco7_db.sh and cron/delete_old_2dm_data.sh are custom scripts for some
 
 sqlcmd gets the sa password in SQLCMDPASSWORD, not on its command line (the scripts used -P), so it is not in the
 process list. The wrappers in sql/ hold the password, as set_sa_password.sh and updates set it there, and pass it on.
-The SQL is sql/scripts/*.sql, rendered to a file of its own for each run (the scripts edited some of them in place).
+The SQL is templates/sql/*.sql, rendered to a file of its own for each run (the scripts edited some of them in place).
 """
 from datetime import datetime
 import os
@@ -15,7 +15,7 @@ from harbor.core.system import Stop
 from harbor.core.paths import SA_SCRIPTS, SQL
 
 SQL_DIR = SA_SCRIPTS
-TEMPLATES = SQL / "scripts"
+TEMPLATES = SQL
 SQLCMD = "/opt/mssql-tools18/bin/sqlcmd"
 BACKUPS = "/var/opt/mssql/backup"
 PLACEHOLDER = "@SA_PASSWORD@"

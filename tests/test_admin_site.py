@@ -47,13 +47,14 @@ class AdminUpdateTests(unittest.TestCase):
         system = RecordingSystem(root=self.root)
         self.assertEqual(main(["admin", "update"], system), 0, system.said)
         text = self.service.read_text()
-        self.assertIn("WorkingDirectory=/opt/harbor/current/apache/solutionfiles/admin/app\n", text)
+        self.assertIn("WorkingDirectory=/opt/harbor/current/admin\n", text)
         self.assertIn("Environment=HARBOR_ADMIN_DATA=/var/www/admin.example.test/app\n", text)
         self.assertIn("ExecStart=/opt/harbor/venv/bin/gunicorn ", text)
         self.assertIn("--bind 127.0.0.1:4007 app:app", text, "its port is kept")
         self.assertNotIn("@", text)
         config = json.loads((self.app / "config.json").read_text())
-        self.assertEqual((config["user"], config["apache_dir"]), ("admin", "/opt/harbor/current/apache"))
+        self.assertEqual(config["user"], "admin")
+        self.assertNotIn("apache_dir", config, "the admin finds Harbor beside itself")
         self.assertEqual((self.app / "audit.log").read_text(), "kept\n")
         self.assertEqual(oct((self.app / "config.json").stat().st_mode & 0o777), "0o600")
         self.assertEqual(system.commands[-3:], ["systemctl daemon-reload", "systemctl enable admin.example.test",
@@ -69,7 +70,7 @@ class AdminAppTests(unittest.TestCase):
     """The admin's code finds its data and the release's apache folder"""
 
     def test_from_a_release_the_apache_folder_is_its_own(self):
-        text = (ROOT / "apache/solutionfiles/admin/app/app.py").read_text()
+        text = (ROOT / "admin/app.py").read_text()
         self.assertIn('DATA = os.environ.get("HARBOR_ADMIN_DATA") or BASE', text)
         for name in ("sql-connections.json", "audit.log", "system-update.json"):
             self.assertNotIn(f'os.path.join(BASE, "{name}")', text)

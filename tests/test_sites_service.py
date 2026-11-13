@@ -62,9 +62,9 @@ class ServiceTests(unittest.TestCase):
                            Environment(IP="10.0.0.5", USER="root", FOLDER="shop.dk", BINDING="shop.dk"))
 
     def test_the_admin_shows_it_in_a_window(self):
-        app = (ROOT / "apache/solutionfiles/admin/app/static/app.js").read_text()
+        app = (ROOT / "admin/static/app.js").read_text()
         self.assertIn("? openServiceStatus(site, env)", app)
-        self.assertIn('@app.route("/api/sites/<name>/service")', (ROOT / "apache/solutionfiles/admin/app/app.py").read_text())
+        self.assertIn('@app.route("/api/sites/<name>/service")', (ROOT / "admin/app.py").read_text())
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""The tools a site's scripts folder had: from the templates in apache/solutionfiles/*/scripts (phase 2d).
+"""The tools a site's scripts folder had: from the site templates of VNS 1.x (phase 2d).
 
 Each template now calls one of these, with the site's name (and, for publish, the build configuration it was made with)
 baked in when it was rendered, so a site's scripts hold nothing else. Scripts rendered before keep working as they are
@@ -15,7 +15,7 @@ from harbor.core.dotnet import runtime_identifier
 from harbor.core.site_config import ACME, ACME_SERVER, require_acme
 from harbor.core.system import CommandFailed, Stop
 from harbor.sites.actions import site_named
-from harbor.core.paths import APACHE, BIN
+from harbor.core.paths import BIN, LIB
 
 SCHEMA_FILES = ("appsettings-schema.json", "appsettings-schema.usync.json", "appsettings-schema.Umbraco.Cms.json", "umbraco-package-schema.json")
 
@@ -31,6 +31,19 @@ def working_folder(system, site):
     text = service.read_text() if service.is_file() else ""
     working = next((line[len("WorkingDirectory="):] for line in text.splitlines() if line.startswith("WorkingDirectory=")), "")
     return working.rstrip("/") or site.site_root
+
+
+def service_environment(system, site):
+    """The ASP.NET Core environment the site's service runs with (Development, Test, Staging, Production), or nothing"""
+    service = system.path(site.service_path)
+    text = service.read_text() if service.is_file() else ""
+    return next((line[len("Environment=ASPNETCORE_ENVIRONMENT="):].strip() for line in text.splitlines()
+                 if line.startswith("Environment=ASPNETCORE_ENVIRONMENT=")), "")
+
+
+def configuration_for(environment):
+    """Staging and Production are Release builds; Development and Test are Debug builds"""
+    return "Release" if environment in ("Staging", "Production") else "Debug" if environment else ""
 
 
 def restart_apache(system):
@@ -148,6 +161,7 @@ def publish(system, name, configuration="", folder="", environment_name=""):
     """The site built into its publish folder and started again; recorded as published when it worked. folder and
     environment_name are what a very old publish script had (update_admin_site.sh keeps them when it upgrades it)."""
     site = site_named(system, name)
+    configuration_given = configuration
     # A migrated site (phase 6) has no publish script to hold them: what it held is in Harbor's state
     from harbor.environments import settings
     if settings.migrated(system, site.site_root):
@@ -156,14 +170,15 @@ def publish(system, name, configuration="", folder="", environment_name=""):
         configuration = configuration or saved.get("configuration", "")
         folder = folder or saved.get("folder", "")
         environment_name = environment_name or saved.get("environment_name", "")
-    configuration = configuration or "Debug"
+    # The environment the site runs as decides, when it has one; what the site was made with, before it
+    configuration = configuration_given or configuration_for(environment_name or service_environment(system, site)) or configuration or "Debug"
     if configuration not in ("Debug", "Release"):
         raise Stop("Usage: publish.sh [Debug|Release]")
     if os.environ.get("VNS_PUBLISH_TRACKED") != "test":
         # Run again inside publish_status.py, which records the publish when it works
         harbor = BIN
         extra = [*(["--folder", folder] if folder else []), *(["--environment-name", environment_name] if environment_name else [])]
-        result = system.run("python3", str(APACHE / "lib/publish_status.py"), "run", site.site_root, "test", "python3", str(harbor), "site",
+        result = system.run("python3", str(LIB / "publish_status.py"), "run", site.site_root, "test", "python3", str(harbor), "site",
                             "publish", site.name, configuration, *extra, check=False)
         if not result.ok:
             raise Stop("", result.returncode)
@@ -182,9 +197,9 @@ def publish(system, name, configuration="", folder="", environment_name=""):
         stopped = True
         system.step(f"Publish ({configuration})")
         shutil.rmtree(system.path(f"{working}/runtimes"), ignore_errors=True)
-        system.run("python3", str(APACHE / "lib/build_as.py"), "--", "dotnet", "publish", project.name, "-c", configuration, f"-p:PublishDir={folder}",
+        system.run("python3", str(LIB / "build_as.py"), "--", "dotnet", "publish", project.name, "-c", configuration, f"-p:PublishDir={folder}",
                    *([f"-p:EnvironmentName={environment_name}"] if environment_name else []),
-                   f"-p:CustomAfterMicrosoftCommonTargets={APACHE}/lib/publish.targets", "--runtime", runtime_identifier(system.output("uname", "-m")),
+                   f"-p:CustomAfterMicrosoftCommonTargets={LIB}/publish.targets", "--runtime", runtime_identifier(system.output("uname", "-m")),
                    "--self-contained", "false", "--nologo", cwd=site.site_root)
         system.say("Delete bin")
         shutil.rmtree(system.path(f"{site.site_root}/bin"), ignore_errors=True)
@@ -195,7 +210,7 @@ def publish(system, name, configuration="", folder="", environment_name=""):
                     system.path(f"{base}/{schema}").unlink(missing_ok=True)
             shutil.rmtree(system.path(f"{site.site_root}/App_Plugins"), ignore_errors=True)
         system.run("chown", "-R", "www-data:www-data", folder, cwd=site.site_root)
-        system.run("python3", str(APACHE / "lib/sql_startup.py"), unit)
+        system.run("python3", str(LIB / "sql_startup.py"), unit)
         system.run("systemctl", "start", unit)
         stopped = False
     except CommandFailed as error:

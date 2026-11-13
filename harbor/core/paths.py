@@ -1,8 +1,15 @@
-"""Where Harbor is: the folders it runs its helpers, templates and scripts from (phase 3).
+"""Where Harbor is. A release (and a working copy) holds:
+
+  bin/harbor   the command
+  harbor/      the program
+  admin/       the admin site
+  lib/         helpers that the program, the admin and the sites' services run (some also on other servers)
+  templates/   what Harbor puts on a server: sites/ (a site's Apache config, service and starting files),
+               admin/ (the admin site's), apache/ (the server-wide Apache configs) and sql/ (the SQL it runs)
 
 From a release in /opt/harbor/releases/<version> they are named through /opt/harbor/current, the release in use, so
-what is kept elsewhere (scripts rendered into a site, a service's drop-in, a cron line) never names a release that is
-removed later. Anywhere else (/vns, a working copy, a test) they are the package's own folders.
+what is kept elsewhere (a cron line, a service, a command sent to another server) never names a release that is
+removed later. Anywhere else (a working copy, a test) they are the copy's own folders.
 """
 import os
 from pathlib import Path
@@ -20,11 +27,13 @@ def install_root():
 
 
 INSTALL = install_root()
-APACHE = INSTALL / "apache"
-LIB = APACHE / "lib"
 BIN = INSTALL / "bin/harbor"
-# The .sql files Harbor runs: this installation's own
-SQL = INSTALL / "sql"
-# The sql folder whose scripts hold the sa password: /vns/sql of VNS 1.x while it is there (its custom scripts, such
-# as clean_umbraco7_db.sh, still read the password from themselves), else this installation's
-SA_SCRIPTS = Path("/vns/sql") if os.path.isdir("/vns/sql") and RELEASES in PACKAGE_ROOT.parents else SQL
+ADMIN = INSTALL / "admin"
+LIB = INSTALL / "lib"
+TEMPLATES = INSTALL / "templates"
+SITE_TEMPLATES = TEMPLATES / "sites"
+# The SQL Harbor runs (backups, log shrinks, databases)
+SQL = TEMPLATES / "sql"
+# Where VNS 1.x kept scripts that hold the sa password: its custom scripts there, such as clean_umbraco7_db.sh, still
+# read it from themselves, so they get it when it changes, while they are there
+SA_SCRIPTS = Path("/vns/sql")

@@ -18,12 +18,12 @@ from harbor.core.dotnet import runtime_identifier
 from harbor.core.system import CommandFailed, Stop
 from harbor.environments import settings
 from harbor.sites.actions import site_named
-from harbor.core.paths import APACHE, BIN
+from harbor.core.paths import BIN, LIB
 
 SCHEMA_FILES = ("appsettings-schema.json", "appsettings-schema.usync.json", "appsettings-schema.Umbraco.Cms.json", "umbraco-package-schema.json")
 
 PREPARE = r'''set -euo pipefail
-source /opt/harbor/current/apache/lib/common.sh 2>/dev/null || source /vns/apache/lib/common.sh
+source /opt/harbor/current/lib/common.sh 2>/dev/null || source /vns/apache/lib/common.sh
 unit=$(normalize_dns_name "${SITE}" unit)
 root=${ROOT}
 docroot=${root}/wwwroot
@@ -36,7 +36,7 @@ if [[ -f ${conf} ]]; then
 fi
 certdir=/etc/ssl/certs/${BINDING}_ecc
 acme=/etc/acmesh/acme.sh
-source /opt/harbor/current/apache/lib/common.sh 2>/dev/null || source /vns/apache/lib/common.sh
+source /opt/harbor/current/lib/common.sh 2>/dev/null || source /vns/apache/lib/common.sh
 
 if [[ -e ${service} ]] && ! grep -qx "WorkingDirectory=${root}" "${service}"; then
 	echo "Service ${SITE} already exists and runs from a different folder. Use another PROD_FOLDER (and PROD_BINDING)." >&2
@@ -266,7 +266,7 @@ release_port_reservation
 '''
 
 START = r'''set -euo pipefail
-source /opt/harbor/current/apache/lib/common.sh 2>/dev/null || source /vns/apache/lib/common.sh
+source /opt/harbor/current/lib/common.sh 2>/dev/null || source /vns/apache/lib/common.sh
 dir=${ROOT}
 # The Apache config decides the scheme and binding: they stay correct if they are changed on the server
 configured_binding=$(awk '$1 == "ServerName" { print $2; exit }' "/etc/apache2/sites-available/${SITE}.conf" 2>/dev/null || true)
@@ -309,7 +309,7 @@ def publish_environment(system, name, target="prod", project="", local_publish="
     if tracked != scope and not dry_run:
         # Run again inside publish_status.py, which records the publish when it works
         harbor = BIN
-        result = system.run("python3", str(APACHE / "lib/publish_status.py"), "run", site.site_root, scope, "python3", str(harbor), "env",
+        result = system.run("python3", str(LIB / "publish_status.py"), "run", site.site_root, scope, "python3", str(harbor), "env",
                             "publish", site.name, *(["--project", project] if project else []),
                             *(["--local-publish", local_publish] if local_publish else []), env={"VNS_TARGET": target}, check=False)
         if not result.ok:
@@ -403,8 +403,8 @@ class Publish:
                 self.exclude_local_target()
             if not self.migrate_only:
                 system.step("Publish (Release)")
-                system.run("python3", str(APACHE / "lib/build_as.py"), "--", "dotnet", "publish", f"{self.project}.csproj", "-c", "Release",
-                           f"-p:PublishDir={output}", f"-p:CustomAfterMicrosoftCommonTargets={APACHE}/lib/publish.targets", "--runtime", identifier,
+                system.run("python3", str(LIB / "build_as.py"), "--", "dotnet", "publish", f"{self.project}.csproj", "-c", "Release",
+                           f"-p:PublishDir={output}", f"-p:CustomAfterMicrosoftCommonTargets={LIB}/publish.targets", "--runtime", identifier,
                            "--self-contained", "false", "--nologo", cwd=site.site_root)
                 if not Path(output, f"{self.project}.dll").is_file():
                     raise Stop(f"Publish failed: {self.project}.dll not found in the output")

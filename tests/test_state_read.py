@@ -15,7 +15,7 @@ from harbor.environments import settings  # noqa: E402
 
 
 def helper(name):
-    spec = importlib.util.spec_from_file_location(f"vns_{name}", ROOT / "apache/lib" / f"{name}.py")
+    spec = importlib.util.spec_from_file_location(f"vns_{name}", ROOT / "lib" / f"{name}.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module

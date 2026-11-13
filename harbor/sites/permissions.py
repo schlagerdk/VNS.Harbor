@@ -1,5 +1,5 @@
 """Fix permissions: the folder a site runs from owned by www-data, as fix_permissions.sh. The work is done by
-apache/lib/site_permissions.py, which also runs over SSH on a server that has no harbor."""
+lib/site_permissions.py, which also runs over SSH on a server that has no harbor."""
 from pathlib import Path
 import shlex
 

@@ -19,9 +19,9 @@ from harbor.core.site_config import (default_site, install_apache_config, instal
 from harbor.core.system import CommandFailed, Stop
 from harbor.core.templates import Site, render
 from harbor.server.apache import own_name
-from harbor.core.paths import APACHE
+from harbor.core.paths import LIB, SITE_TEMPLATES
 
-SOLUTION = APACHE / "solutionfiles"
+SOLUTION = SITE_TEMPLATES
 
 
 def install_missing_scripts(system, site, *kinds):
@@ -167,10 +167,10 @@ def setup_site(system, name="", binding="", certificate="", environment=""):
                 else:
                     system.step(f"Build the project into {publish}")
                     identifier = runtime_identifier(system.output("uname", "-m"))
-                    system.run("python3", str(APACHE / "lib/publish_status.py"), "run", site.site_root, "test", "python3",
-                               str(APACHE / "lib/build_as.py"), "--", "dotnet", "publish", f"{site.site_root}/{project}.csproj",
+                    system.run("python3", str(LIB / "publish_status.py"), "run", site.site_root, "test", "python3",
+                               str(LIB / "build_as.py"), "--", "dotnet", "publish", f"{site.site_root}/{project}.csproj",
                                "-c", site.build_config, f"-p:PublishDir={publish}",
-                               f"-p:CustomAfterMicrosoftCommonTargets={APACHE}/lib/publish.targets", "--runtime", identifier,
+                               f"-p:CustomAfterMicrosoftCommonTargets={LIB}/publish.targets", "--runtime", identifier,
                                "--self-contained", "false", "--nologo", cwd=site.site_root)
             # The service runs as www-data and writes inside the folder it runs from
             system.run("chown", "-R", "www-data:www-data", site.publish_root)

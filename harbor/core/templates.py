@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 
 from harbor.core.names import normalize_dns_name
-from harbor.core.paths import APACHE
+from harbor.core.paths import INSTALL
 
 ADMIN_MAIL = "mhs@vns.dk"
 
@@ -25,8 +25,8 @@ class Site:
     admin_mail: str = ADMIN_MAIL
     build_config: str = ""
     environment: str = ""
-    # The apache folder of this installation (/vns/apache on a server), which the scripts of a site run
-    apache_dir: str = str(APACHE)
+    # The Harbor installation (/opt/harbor/current on a server): its lib and templates
+    harbor_dir: str = str(INSTALL)
     csharp_kind: str = ""
     access_rules: str = ""
 
@@ -84,7 +84,6 @@ def render(text, site):
         ("@ADMIN_MAIL@", site.admin_mail),
         ("@BUILD_CONFIG@", site.build_config or "Debug"),
         ("@ENVIRONMENT@", site.environment or "Test"),
-        ("@APACHE_DIR@", site.apache_dir),
         ("@CSHARP_KIND@", site.csharp_kind),
         ("@ACCESS_RULES@", site.access_rules or "Require all granted"),
     ]

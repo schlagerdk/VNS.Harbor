@@ -13,14 +13,14 @@ import tempfile
 
 from harbor.core.system import CommandFailed, Stop
 from harbor.environments.windows import Share
-from harbor.core.paths import APACHE
+from harbor.core.paths import LIB
 
 SCHEMA_FILES = ("appsettings-schema.json", "appsettings-schema.usync.json", "appsettings-schema.Umbraco.Cms.json", "umbraco-package-schema.json")
 
 
 def helper(system, name, *args):
-    """apache/lib/<name> with the arguments: what it prints, its reasons shown as they come"""
-    result = system.run("python3", str(APACHE / "lib" / name), *args, check=False, capture=True)
+    """lib/<name> with the arguments: what it prints, its reasons shown as they come"""
+    result = system.run("python3", str(LIB / name), *args, check=False, capture=True)
     if result.stderr.strip():
         system.warn(result.stderr.rstrip("\n"))
     return result
@@ -49,8 +49,8 @@ def publish_windows(system, site, environment, project, local_publish, dry_run=F
 
         # Built here first, so the site stays up if the build fails
         system.step("Publish (Release, win-x64)")
-        system.run("python3", str(APACHE / "lib/build_as.py"), "--", "dotnet", "publish", f"{project}.csproj", "-c", "Release", f"-p:PublishDir={output}/",
-                   f"-p:EnvironmentName={environment.other.get('ENVIRONMENT', '')}", f"-p:CustomAfterMicrosoftCommonTargets={APACHE}/lib/publish.targets",
+        system.run("python3", str(LIB / "build_as.py"), "--", "dotnet", "publish", f"{project}.csproj", "-c", "Release", f"-p:PublishDir={output}/",
+                   f"-p:EnvironmentName={environment.other.get('ENVIRONMENT', '')}", f"-p:CustomAfterMicrosoftCommonTargets={LIB}/publish.targets",
                    "--runtime", "win-x64", "--self-contained", "false", "--nologo", cwd=site.site_root)
         if not (output / f"{project}.dll").is_file():
             raise Stop(f"Publish failed: {project}.dll not found in the output")

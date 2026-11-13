@@ -136,7 +136,7 @@ class AdminScriptTests(unittest.TestCase):
         node = subprocess.run(["which", "node"], capture_output=True, text=True).stdout.strip()
         if not node:
             self.skipTest("node is not installed")
-        result = subprocess.run([node, "--check", str(ROOT / "apache/solutionfiles/admin/app/static/app.js")], capture_output=True, text=True)
+        result = subprocess.run([node, "--check", str(ROOT / "admin/static/app.js")], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
 
 

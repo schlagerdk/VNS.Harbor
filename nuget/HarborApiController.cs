@@ -12,12 +12,14 @@ namespace VNS.Harbor;
 
 /// <summary>
 /// The dashboard's way to Harbor: what this site may sync to, starting a sync, and its steps. The site asks Harbor with
-/// its own token (vns-harbor.json); only members of the VNS Harbor user group may.
+/// its own token (vns-harbor.json); only administrators and members of the VNS Harbor user group may.
 /// </summary>
 [VersionedApiBackOfficeRoute("vns-harbor")]
 [ApiExplorerSettings(GroupName = "VNS Harbor")]
 public sealed class HarborApiController(IWebHostEnvironment host, IBackOfficeSecurityAccessor security, IHttpClientFactory clients): ManagementApiControllerBase {
-	private bool Allowed => security.BackOfficeSecurity?.CurrentUser?.Groups.Any(group => group.Alias == HarborGroup.Alias) == true;
+	// Administrators, and the users added to the VNS Harbor group
+	private bool Allowed => security.BackOfficeSecurity?.CurrentUser?.Groups.Any(group => group.Alias is HarborGroup.Alias or AdministratorsAlias) == true;
+	private const string AdministratorsAlias = Umbraco.Cms.Core.Constants.Security.AdminGroupAlias;
 
 	[HttpGet("status")]
 	public async Task<IActionResult> Status() {

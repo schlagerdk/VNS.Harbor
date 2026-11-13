@@ -107,7 +107,7 @@ def install_service(system, site, template):
     system.run("systemctl", "daemon-reload")
     if re.search(r"(?m)^ExecStart=.*/dotnet ", text):
         # Only lets the site wait for a local SQL Server at boot: if it fails, the site is still set up
-        if not system.run("python3", f"{site.apache_dir}/lib/sql_startup.py", site.service_name, check=False).ok:
+        if not system.run("python3", f"{site.harbor_dir}/lib/sql_startup.py", site.service_name, check=False).ok:
             system.warn(f"Could not make {site.service_name} wait for SQL Server at boot; it starts without waiting.")
     system.run("systemctl", "enable", site.service_name)
     system.run("systemctl", "restart", site.service_name)
@@ -166,7 +166,7 @@ def issue_certificate(system, site, binding):
     domains = certificate_domains(config.read_text() if config.is_file() else "", binding, str(site.config_path))
     system.say("Create temporary HTTP-only config for certificate validation")
     system.path(site.doc_root).mkdir(parents=True, exist_ok=True)
-    text = render(read_template(f"{site.apache_dir}/solutionfiles/common/apache-temp.conf.tpl"), site)
+    text = render(read_template(f"{site.harbor_dir}/templates/sites/common/apache-temp.conf.tpl"), site)
     if len(domains) > 1:
         text = replace_server_aliases(text, domains[1:])
     config.write_text(text)

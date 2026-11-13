@@ -17,7 +17,8 @@ from harbor.core.system import RecordingSystem  # noqa: E402
 from harbor.core.templates import Site  # noqa: E402
 from tests.test_core_bindings import COMMON, NEEDS_BASH_4  # noqa: E402
 
-APACHE = ROOT / "apache"
+# The Harbor installation (what was the apache folder: lib/ and the templates)
+APACHE = ROOT
 LOGGED = ("apache2ctl", "a2ensite", "a2enmod", "systemctl")
 
 
@@ -47,7 +48,7 @@ class Server:
         common = self.root / "common.sh"
         common.write_text(COMMON.read_text().replace("/etc/", f"{self.root}/etc/"))
         script = (f"source {shlex.quote(str(common))}\n_apacheDir={shlex.quote(str(APACHE))}\n"
-                  f"_solutionFolder={shlex.quote(str(APACHE / 'solutionfiles'))}\n_rootPath={self.root}/var/www\n{snippet}")
+                  f"_solutionFolder={shlex.quote(str(APACHE / 'templates/sites'))}\n_rootPath={self.root}/var/www\n{snippet}")
         result = subprocess.run(["bash", "-c", script, "bash", *map(str, args)], capture_output=True, text=True,
                                 env=os.environ | {"PATH": f"{self.root}/bin:{os.environ['PATH']}"} | (env or {}))
         return result
@@ -68,7 +69,7 @@ class SiteConfigTests(unittest.TestCase):
         self.old = Server(folder.name, "old")
         self.new = Server(folder.name, "new")
         self.system = RecordingSystem(root=self.new.root)
-        self.site = Site("shop.dk", binding="shop.dk", project_name="Shop", port_http="4010", apache_dir=str(APACHE),
+        self.site = Site("shop.dk", binding="shop.dk", project_name="Shop", port_http="4010", harbor_dir=str(APACHE),
                          doc_root="/var/www/shop.dk/_publish/wwwroot", root_path="/var/www")
 
     def same(self, result):
@@ -88,13 +89,13 @@ class SiteConfigTests(unittest.TestCase):
                     path.unlink()
                 server.log.write_text("")
             self.system.commands.clear()
-            template = APACHE / "solutionfiles/csharp/umbraco/apache.conf.tpl"
+            template = APACHE / "templates/sites/csharp/umbraco/apache.conf.tpl"
             result = self.old.bash(self.site_vars() + f'_createCertificate={certificate}; install_apache_config "$1"', template)
             site_config.install_apache_config(self.system, self.site, template, certificate=certificate == "y")
             self.same(result)
 
     def test_service_waits_for_sql_server_when_it_runs_dotnet(self):
-        template = APACHE / "solutionfiles/csharp/service.tpl"
+        template = APACHE / "templates/sites/csharp/service.tpl"
         result = self.old.bash(self.site_vars() + 'install_service "$1"', template)
         site_config.install_service(self.system, self.site, template)
         self.same(result)

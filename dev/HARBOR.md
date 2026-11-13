@@ -331,6 +331,23 @@ In this order:
     (github.com/schlagerdk/VNS.Umbraco/tree/v18/docs): icon.png and LICENSE.md taken from there, a README.md of its own
     (asked 2026-11-13). Done: nuget/docs, packed at the root of the .nupkg as VNS.Umbraco does. The package version is
     still 17.0.6: a new one is needed before it goes to nuget.org (Martin).
+  - [x] 4g A clean layout (asked 2026-11-13): bin/harbor, harbor/, admin/, lib/, templates/{sites,admin,apache,sql},
+    tests/ (tests/admin for the admin's); paths in harbor/core/paths.py. Done: what is sent to another server sources
+    /opt/harbor/current/lib/common.sh, else /vns/apache/lib/common.sh (a server on VNS 1.x). On linux-01: the admin
+    runs from /opt/harbor/current/admin, keep-alive from lib/, a site made, deleted and published.
+  - [x] 4k Site publish: the site's environment decides the build (asked 2026-11-13): Staging and Production are
+    Release, Development and Test Debug; without one, what the site was made with (tests/test_site_tools.py).
+  - [x] 4l A NuGet package added without a version gets the newest stable one from nuget.org, never Version="*"
+    (added without a restore, dotnet wrote *) (asked 2026-11-13; tests/admin/test_package_versions.py).
+  - [x] 4m VNS.Harbor package 18.0.1: Umbraco's Administrators may always use the dashboard, beside the VNS Harbor group.
+  - [ ] 4h Branding (asked 2026-11-13): a VNS Harbor logo for the header, the login and elsewhere; the VNS logo moves
+    from the header to the bottom of the page and the login as "Powered by VNS" (as "Created by VNS" on vns.dk).
+  - [ ] 4i The terminal's scrollbar (task and shell windows) styled for the dark theme: thin and dim, not the light
+    browser default (asked 2026-11-13, screenshot of a publish).
+  - [x] 4j Found on test-01 (2026-11-13): every C# publish failed (the build user could not write Umbraco's schema files):
+    a site folder closed to others (8b2) before it was built has the ACL group::r-x, and chmod g+w only changes the
+    mask. lib/build_as.py now sets the group's own entry (setfacl -m g::rwx) before each build
+    (tests/admin/test_build_as.py). test-01 was fixed by hand until this is released.
   - [ ] 4e REPOSITORY schlagerdk/VNS.Harbor, VERSION 1.0.0, CHANGELOG; tried with dev/deploy.sh and a real update on
     linux-02 from 1.3.0. Martin releases it.
 - [ ] 5 Martin deletes VNS.Linux on GitHub once every server has taken 1.3.0.

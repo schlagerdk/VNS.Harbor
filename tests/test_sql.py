@@ -1,7 +1,7 @@
 """harbor sql against the scripts in sql/ (frozen in tests/legacy/sql).
 
 The database tools run against a fake sqlcmd on both sides: what is compared is the SQL it is given (rendered from
-sql/scripts), how it is called, and the backup folder's permissions. The script passed the sa password with -P; harbor
+templates/sql), how it is called, and the backup folder's permissions. The script passed the sa password with -P; harbor
 passes it in SQLCMDPASSWORD. The wrappers keep the password where set_sa_password.sh and update.sh find it.
 """
 import os
@@ -25,7 +25,6 @@ from tests.test_environments import Fake  # noqa: E402
 LEGACY = ROOT / "tests/legacy/sql"
 # /vns/sql as VNS 1.3.0 left it on the servers: the wrappers that hold the sa password, and the custom scripts
 VNS_SQL = ROOT / "tests/legacy/vns-sql"
-SQL = ROOT / "sql"
 PASSWORD = "s3cr'et pw"
 WRAPPED = ("create_db.sh", "copy_db.sh", "restore_db.sh", "drop_db.sh", "list_dbs.sh", "cron/backup_everything.sh", "cron/shrink_logs.sh")
 # Custom scripts for some servers, kept as they are outside harbor; they hold the password the old way
@@ -48,7 +47,7 @@ class PasswordTests(unittest.TestCase):
     def copy(self, name):
         target = self.folder / name
         shutil.copytree(VNS_SQL, target)
-        shutil.copytree(SQL / "scripts", target / "scripts")
+        shutil.copytree(ROOT / "templates/sql", target / "scripts")
         return target
 
     def test_the_password_set_the_old_way_reaches_sqlcmd(self):
@@ -102,8 +101,10 @@ class DatabaseTests(unittest.TestCase):
         # The scripts as they were, with the password set and their paths in the fake server
         self.sql = self.folder / "sql"
         shutil.copytree(LEGACY, self.sql)
-        for name in ("lib", "scripts"):
-            shutil.copytree(SQL / name, self.sql / name, ignore=shutil.ignore_patterns("__pycache__"), dirs_exist_ok=True)
+        # Its helpers and SQL as they are now (the sql folder of VNS 1.x had them in lib/ and scripts/)
+        shutil.copy(ROOT / "lib/backup_files.py", self.sql / "lib/backup_files.py")
+        shutil.copy(ROOT / "lib/sql_admin.py", self.sql / "lib/admin.py")
+        shutil.copytree(ROOT / "templates/sql", self.sql / "scripts")
         self.fake = Fake(self.folder, variables=("SQLCMDPASSWORD",))
         self.sent = self.folder / "sent.sql"
         self.fake.program("sqlcmd", f'while (($#)); do [[ $1 == -i ]] && cat "$2" >>"{self.sent}"; shift; done\n'

@@ -16,9 +16,9 @@ def git(*argv):
 
 
 def main():
-    """Every .sh that has ever been in the site templates (apache/solutionfiles, moved and deleted ones too), by name"""
+    """Every .sh that has ever been in the site templates (apache/solutionfiles, now templates/sites; moved and deleted ones too), by name"""
     found = {}
-    log = git("log", "--all", "--name-only", "--format=@%H", "--", "apache/solutionfiles", "apache/templates", "solutionfiles").split("\n")
+    log = git("log", "--all", "--name-only", "--format=@%H", "--", "apache/solutionfiles", "apache/templates", "solutionfiles", "templates/sites").split("\n")
     commit = None
     for line in log:
         if line.startswith("@"):

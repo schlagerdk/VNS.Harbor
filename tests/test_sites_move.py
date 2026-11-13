@@ -22,7 +22,8 @@ from tests.test_core_bindings import NEEDS_BASH_4  # noqa: E402
 from tests.test_environments import Fake  # noqa: E402
 
 LEGACY = ROOT / "tests/legacy"
-APACHE = ROOT / "apache"
+# The Harbor installation (what was the apache folder: lib/ and the templates)
+APACHE = ROOT
 HOST = "new.example.test"
 SERVER_PATHS = ("/etc/", "/var/www", "/var/lib/vns", "/usr/lib/dotnet", "/vns/", "/run/lock")
 SERVICE = ("[Unit]\nDescription=Running .NET Core [{name}]\n[Service]\nWorkingDirectory={root}\n"

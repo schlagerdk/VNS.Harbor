@@ -26,7 +26,7 @@ done
 modules=("$@")
 if ((${#modules[@]} == 0)); then
 	cd "${source}"
-	mapfile -t modules < <(ls apache/tests/test_*.py tests/test_*.py | sed 's|\.py$||; s|/|.|g')
+	mapfile -t modules < <(ls tests/test_*.py tests/admin/test_*.py | sed 's|\.py$||; s|/|.|g')
 fi
 cd "${source}"
 runuser -u vns-test -- env HOME=/home/vns-test PATH=/usr/local/bin:/usr/bin:/bin "${python}" -m unittest "${modules[@]}"

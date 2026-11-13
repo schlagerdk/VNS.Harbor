@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <PackageId>VNS.Harbor</PackageId>
-    <Version>18.0.0</Version>
+    <Version>18.0.1</Version>
     <Authors>VNS</Authors>
     <Description>VNS Harbor in Umbraco: log in from the Harbor admin, and sync settings and data to the site's environments.</Description>
     <PackageTags>umbraco;umbraco-marketplace;vns;harbor</PackageTags>

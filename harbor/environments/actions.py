@@ -13,7 +13,7 @@ from harbor.core.system import Stop
 from harbor.environments import settings
 from harbor.environments.windows import Share
 from harbor.sites.actions import choose_environment, site_named
-from harbor.core.paths import APACHE, LIB
+from harbor.core.paths import INSTALL, LIB
 
 WINDOWS_FILES = LIB / "windows_files.py"
 EDITABLE = re.compile(r"web\.config|appsettings(\.[A-Za-z0-9_-]+)?\.json")
@@ -21,7 +21,7 @@ EDITABLE = re.compile(r"web\.config|appsettings(\.[A-Za-z0-9_-]+)?\.json")
 ISSUE_CERTIFICATE = r'''set -euo pipefail
 acme=/etc/acmesh/acme.sh
 certdir=/etc/ssl/certs/${BINDING}_ecc
-source /opt/harbor/current/apache/lib/common.sh 2>/dev/null || source /vns/apache/lib/common.sh
+source /opt/harbor/current/lib/common.sh 2>/dev/null || source /vns/apache/lib/common.sh
 unit=$(normalize_dns_name "${SITE}" unit)
 conf=/etc/apache2/sites-available/${SITE}.conf
 [[ -x ${acme} ]] || { echo "acme.sh not found (${acme}). Run harbor server init there first." >&2; exit 1; }
@@ -58,7 +58,7 @@ echo "Certificate installed in ${certdir}"
 '''
 
 CHANGE_ENVIRONMENT = r'''set -euo pipefail
-source /opt/harbor/current/apache/lib/common.sh 2>/dev/null || source /vns/apache/lib/common.sh
+source /opt/harbor/current/lib/common.sh 2>/dev/null || source /vns/apache/lib/common.sh
 unit=$(normalize_dns_name "${SITE}" unit)
 service=/etc/systemd/system/${unit}.service
 [[ -f ${service} ]] || { echo "Service file not found: ${service}. Publish to production first." >&2; exit 1; }
@@ -116,7 +116,7 @@ def change_environment(system, name, target="prod", given=""):
     if environment.windows:
         share = Share(system, environment).connect()
         system.step(f"Set {chosen} in web.config")
-        share.set_environment(chosen, str(APACHE))
+        share.set_environment(chosen, str(INSTALL))
         system.say(f"Now: {chosen} (web.config). IIS restarts the app.")
     else:
         system.step(f"Restart {environment.FOLDER} as {chosen}")

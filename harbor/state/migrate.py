@@ -23,7 +23,6 @@ import tarfile
 from pathlib import Path
 import re
 
-from harbor.core.paths import APACHE
 from harbor.core.templates import Site
 from harbor.environments import settings
 from harbor.core.system import Stop
@@ -33,7 +32,7 @@ BACKUPS = "/var/lib/harbor/backups"
 TARGET_SCRIPTS = ("publish_prod.sh", "sync_prod.sh", "clear_logs_prod.sh")
 
 
-# The tools a site's scripts folder had, by kind (the templates in apache/solutionfiles/*/scripts of VNS 1.x): a site
+# The tools a site's scripts folder had, by kind (the site templates of VNS 1.x): a site
 # keeps their names in its site.json, and the admin shows them as its actions and runs the harbor command each called
 SITE_SCRIPTS = {
     "common": ("edit_conf.sh", "issue_certificat.sh", "restart_apache.sh"),

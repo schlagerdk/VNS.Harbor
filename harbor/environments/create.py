@@ -19,7 +19,7 @@ from harbor.core.names import normalize_dns_name, normalize_site_name, service_n
 from harbor.core.system import CommandFailed, Stop
 from harbor.environments import settings
 from harbor.sites.create import ask
-from harbor.core.paths import APACHE, BIN
+from harbor.core.paths import BIN, LIB
 
 # The settings an environment has, as its publish_prod.sh held them: rendered with the values, then read as bash reads
 # them (settings.parse), so a value is quoted and kept exactly as before
@@ -307,7 +307,7 @@ def adopt_windows(system, main, request, no_publish):
             return has_files, request.environment
         if not has_web_config:
             raise Stop(f"{request.smb_share} holds a site without a web.config, so it cannot be adopted. Empty the folder, or choose another.")
-        described = system.run("python3", str(APACHE / "lib/windows_prod.py"), "describe", str(web_config), capture=True, check=False)
+        described = system.run("python3", str(LIB / "windows_prod.py"), "describe", str(web_config), capture=True, check=False)
         if not described.ok:
             if described.stderr.strip():
                 system.warn(described.stderr.rstrip("\n"))

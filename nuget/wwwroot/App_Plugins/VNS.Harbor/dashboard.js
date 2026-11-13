@@ -124,7 +124,7 @@ export default class VnsHarborDashboard extends UmbElementMixin(LitElement) {
 		if (!state) return html`<uui-loader-bar></uui-loader-bar>`;
 		let body;
 		if (state.failed) body = this.#notice("icon-alert", "VNS Harbor could not be asked", "The site could not read its own connection to Harbor.");
-		else if (!state.allowed) body = this.#notice("icon-lock", "No access to VNS Harbor", "An administrator can give you access by adding you to the VNS Harbor user group.");
+		else if (!state.allowed) body = this.#notice("icon-lock", "No access to VNS Harbor", "An administrator can give you access by adding you to the VNS Harbor user group. Administrators have access.");
 		else if (!state.connected) body = this.#notice("icon-plug", "Not connected to Harbor", "This site is not connected to the Harbor that manages it yet. It is connected when Harbor publishes it.");
 		else if (!state.reachable) body = this.#notice("icon-wifi", "Harbor cannot be reached", html`To sync from here, this site needs access to Harbor at <code>${state.harbor}</code> over HTTPS. The sync buttons are off until it has.`);
 		else if (!state.site.destinations.length) body = this.#notice("icon-settings", "Nothing to sync to", "Sync setup in Harbor does not let this site send settings or data to any of its environments.");

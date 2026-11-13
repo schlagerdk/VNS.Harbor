@@ -12,7 +12,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-APP = ROOT / "apache/solutionfiles/admin/app/app.py"
+APP = ROOT / "admin/app.py"
 
 
 def functions(*names, **namespace):
@@ -39,7 +39,7 @@ class TokenTests(unittest.TestCase):
 
 class DestinationTests(unittest.TestCase):
     def test_only_what_sync_setup_allows(self):
-        spec = importlib.util.spec_from_file_location("vns_data_sync", ROOT / "apache/lib/data_sync.py")
+        spec = importlib.util.spec_from_file_location("vns_data_sync", ROOT / "lib/data_sync.py")
         data_sync = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(data_sync)
         web = Path(tempfile.mkdtemp())

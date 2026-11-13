@@ -15,7 +15,7 @@ from harbor.core.system import RecordingSystem  # noqa: E402
 from harbor.core.templates import Site, render  # noqa: E402
 from tests.test_core_bindings import COMMON, bash  # noqa: E402
 
-TEMPLATES = sorted(path for path in (ROOT / "apache/solutionfiles").rglob("*")
+TEMPLATES = sorted(path for path in (ROOT / "templates/sites").rglob("*")
                    if path.is_file() and (path.suffix == ".tpl" or path.parent.name.endswith("scripts")))
 
 
@@ -23,7 +23,7 @@ class RenderTests(unittest.TestCase):
     FULL = dict(name="shop.example.dk", binding="www.shop.example.dk", project_name="Shop", publish_folder="_publish",
                 doc_root="/var/www/shop.example.dk/_publish/wwwroot", port_http="4012", dotnet_version="10.0",
                 umbraco_version="17.1.0", admin_mail="it@example.dk", build_config="Release", environment="Production",
-                apache_dir="/vns/apache", csharp_kind="umbraco", access_rules="Require ip 10.0.0.0/8")
+                csharp_kind="umbraco", access_rules="Require ip 10.0.0.0/8")
 
     def legacy(self, template, values):
         assignments = "\n".join(f"{key}={value!r}" for key, value in values.items())
@@ -40,9 +40,8 @@ class RenderTests(unittest.TestCase):
 
     def test_every_template_renders_as_the_script_does(self):
         self.assertGreater(len(TEMPLATES), 8)
-        apache_dir = str(COMMON.parent.parent)
         for values in (self.FULL, dict(name="blog.dk"), dict(name="æblé.dk", publish_folder=".", port_http="4100")):
-            site = Site(**values, apache_dir=apache_dir) if "apache_dir" not in values else Site(**{**values, "apache_dir": apache_dir})
+            site = Site(**values)
             for template in TEMPLATES:
                 code, output, errors = self.legacy(template, self.variables(values))
                 self.assertEqual(code, 0, errors)

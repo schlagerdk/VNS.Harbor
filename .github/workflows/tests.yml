@@ -16,4 +16,4 @@ jobs:
       - name: Install what the admin's tests import
         run: pip install flask
       - name: Run every test
-        run: python -m unittest $(ls apache/tests/test_*.py tests/test_*.py | sed 's|\.py$||; s|/|.|g')
+        run: python -m unittest $(ls tests/test_*.py tests/admin/test_*.py | sed 's|\.py$||; s|/|.|g')

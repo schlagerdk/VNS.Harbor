@@ -1,6 +1,6 @@
 """The admin site, run from the Harbor release in use (cutover step 4a of dev/HARBOR.md).
 
-  /opt/harbor/current/apache/solutionfiles/admin/app   its code: the release's, so the admin and harbor are one version
+  /opt/harbor/current/admin   its code: the release's, so the admin and harbor are one version
   /opt/harbor/venv                                      its Python (Flask, gunicorn), the same for every release
   /var/www/<admin>/app                                  what it writes: config.json (the login), audit.log,
                                                         sql-connections.json, system-update.*, static/vendor
@@ -28,8 +28,8 @@ from harbor.install.release import CURRENT, ROOT
 from harbor.server.init import INITIALIZED
 
 VENV = f"{ROOT}/venv"
-APP = f"{CURRENT}/apache/solutionfiles/admin/app"
-TEMPLATES = Path(__file__).resolve().parents[2] / "apache/solutionfiles/admin"
+APP = f"{CURRENT}/admin"
+TEMPLATES = Path(__file__).resolve().parents[2] / "templates/admin"
 MIN_PASSWORD = 12
 USER = re.compile(r"[A-Za-z0-9._@-]{1,64}")
 ADDRESS = re.compile(r"[0-9A-Fa-f:.]+(/[0-9]{1,3})?")
@@ -153,8 +153,9 @@ def update(system, name=""):
     download_vendor(system, data)
     config_path = f"{data}/config.json"
     config = json.loads(system.path(config_path).read_text())
-    if config.get("apache_dir") != f"{CURRENT}/apache":
-        config["apache_dir"] = f"{CURRENT}/apache"
+    # The admin finds Harbor beside itself: the folder VNS 1.x named here is not used
+    if "apache_dir" in config:
+        del config["apache_dir"]
         write_config(system, config_path, config)
     site.port_http = service_port(system, site)
     system.step(f"Restart the admin site {name}")
@@ -234,7 +235,7 @@ def install(system, name="", binding="", user="", https="", allowed=None):
         download_vendor(system, data)
         system.step("Create the login")
         system.run(f"{VENV}/bin/python", f"{APP}/manage.py", "init", "--user", user, "--admin-site", name,
-                   "--web-root", site.root_path, "--apache-dir", f"{CURRENT}/apache", *([] if https else ["--insecure-cookies"]),
+                   "--web-root", site.root_path, *([] if https else ["--insecure-cookies"]),
                    env={"VNS_ADMIN_PASSWORD": password, "HARBOR_ADMIN_DATA": str(system.path(data))}, cwd=APP)
         system.run("chown", "-R", "root:root", data)
         system.run("chmod", "700", data)

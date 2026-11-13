@@ -7,7 +7,7 @@
     merged: content and media are added and updated, never deleted. The destination is restarted, and uSync imports
     the data at startup.
 
-apache/lib/data_sync.py decides who may sync what; the admin uses it too, so it stays where it is and harbor loads it.
+lib/data_sync.py decides who may sync what; the admin uses it too, so it stays where it is and harbor loads it.
 """
 import importlib.util
 import os

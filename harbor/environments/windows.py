@@ -78,14 +78,14 @@ class Share:
             raise RuntimeError(f"FAILED: could not remove app_offline.htm. The site stays offline until it is deleted from {self.environment.WINDOWS_SHARE}.")
         self.offline = False
 
-    def set_environment(self, name, apache_dir):
+    def set_environment(self, name, harbor_dir):
         """Change the environment in web.config on the server. IIS restarts the app when the file changes."""
         with tempfile.TemporaryDirectory() as folder:
             local = f"{folder}/web.config"
             if not self.rclone("copyto", f"{self.target}/web.config", local, check=False).ok:
                 raise RuntimeError(f"Could not read web.config in {self.environment.WINDOWS_SHARE}. Publish to production first.")
             try:
-                self.system.run("python3", f"{apache_dir}/lib/windows_prod.py", "set-environment", local, name)
+                self.system.run("python3", f"{harbor_dir}/lib/windows_prod.py", "set-environment", local, name)
                 self.rclone("copyto", local, f"{self.target}/web.config")
             except CommandFailed as error:
                 raise RuntimeError(str(error)) from None
