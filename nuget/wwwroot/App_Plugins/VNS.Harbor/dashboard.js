@@ -125,7 +125,7 @@ export default class VnsHarborDashboard extends UmbElementMixin(LitElement) {
 		return COLORS[(name || "").toLowerCase()] || "var(--uui-color-text-alt)";
 	}
 
-	// One sync to every environment that may receive it, when there are more than one
+	// One sync to every environment that may receive it, when there are more than one: at the right, settings rightmost
 	#everywhere(destinations) {
 		const settings = destinations.filter((destination) => destination.settings);
 		const data = destinations.filter((destination) => (destination.data || []).length);
@@ -135,8 +135,8 @@ export default class VnsHarborDashboard extends UmbElementMixin(LitElement) {
 			<div><strong>All environments</strong><span>${settings.length > 1 ? `Settings to ${settings.map((item) => item.environment).join(", ")}` : ""}${
 				settings.length > 1 && data.length > 1 ? " · " : ""}${data.length > 1 ? `data to ${data.map((item) => item.environment).join(", ")}` : ""}</span></div>
 			<div class="actions">
-				${settings.length > 1 ? html`<uui-button look="primary" label="Sync settings to all" ?disabled=${this._busy} @click=${() => this.#sync(all, "settings")}>Sync settings to all</uui-button>` : nothing}
 				${data.length > 1 ? html`<uui-button look="primary" color="positive" label="Sync data to all" ?disabled=${this._busy} @click=${() => this.#sync(all, "data")}>Sync data to all</uui-button>` : nothing}
+				${settings.length > 1 ? html`<uui-button look="primary" label="Sync settings to all" ?disabled=${this._busy} @click=${() => this.#sync(all, "settings")}>Sync settings to all</uui-button>` : nothing}
 			</div>
 		</div>`;
 	}
