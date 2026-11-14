@@ -1,6 +1,6 @@
 # VNS Harbor
 
-VNS Harbor for Umbraco 18. Its versions follow Umbraco's: VNS.Harbor 18.3.1 is for Umbraco 18.3.1 and newer, and a fourth number (18.3.1.2) is a fix of the package for the same Umbraco. It links an Umbraco site to VNS Harbor, the server admin that hosts and publishes it.
+VNS Harbor for Umbraco 18. Its versions follow Umbraco's: VNS.Harbor 18.3.1 is for Umbraco 18.3.1 and newer, and a fourth number (18.3.1.3) is a fix of the package for the same Umbraco. It links an Umbraco site to VNS Harbor, the server admin that hosts and publishes it.
 
 - **Log in from Harbor:** the Backend button in the Harbor admin opens the site's backoffice already logged in, with no Umbraco password stored or sent.
 - **Sync from the backoffice:** the dashboard sends this site's settings and data to its other environments (Development, Test, Staging, Production) through Harbor, and shows each step as it runs.
@@ -50,6 +50,8 @@ The **VNS Harbor** dashboard is a tab in the Content section. From there an edit
 - see the environments this site may sync to
 - sync settings to one environment or to all of them. Settings are document types, templates, views, CSS and scripts.
 - sync data to one environment or to all of them. Data is merged, so nothing is deleted on the environment.
+- sync everything to one environment: settings first, then data
+- see on each environment, and in a sync as it runs, which way it goes (such as Production → Staging)
 - follow the sync's steps as Harbor runs them
 
 The rules are the same as in the Harbor admin: which environments may send, which may receive, and what each takes part in. The sync itself runs in Harbor, never in the site. The site runs as `www-data` and has no rights to run anything as root.

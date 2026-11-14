@@ -2312,7 +2312,12 @@ def harbor_api_site():
     site, source = g.harbor_site
     if not os.path.isdir(os.path.join(WEB_ROOT, site)):
         return error("The site is not on this server", 404)
-    return jsonify(site=site, environment=source, destinations=harbor_api_destinations(site, source))
+    # The environment it syncs from by name, as its destinations are named: "Development → Production" in the dashboard
+    if source == "main":
+        name = main_environment(site)
+    else:
+        name = (parse_prod(os.path.join(WEB_ROOT, site), source) or {}).get("PROD_ENVIRONMENT") or source
+    return jsonify(site=site, environment=source, environment_name=name, destinations=harbor_api_destinations(site, source))
 
 
 @app.route(HARBOR_API + "sync", methods=["POST"])

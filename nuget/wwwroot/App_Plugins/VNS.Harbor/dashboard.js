@@ -38,26 +38,44 @@ export default class VnsHarborDashboard extends UmbElementMixin(LitElement) {
 		this._state = ok ? body : { allowed: false, failed: true };
 	}
 
+	// One sync, or settings and then data (Sync everything), in one task: data waits until the settings are there
 	async #sync(destination, what) {
+		const kinds = Array.isArray(what) ? what : [what];
+		const names = { settings: "Settings", data: "Data" };
+		const label = kinds.length > 1 ? "Sync everything" : `Sync ${kinds[0]}`;
 		this._busy = true;
-		this._task = { title: `${what === "settings" ? "Settings" : "Data"} to ${destination.environment}`, steps: [], running: true };
-		const started = await this.#call("sync", { method: "POST", body: JSON.stringify({ destination: destination.id, what }) });
-		if (!started.ok) {
-			this._task = { ...this._task, running: false, failed: true, message: started.body?.error || "Harbor did not start the sync." };
-			this._busy = false;
-			return;
-		}
-		const id = started.body.task;
-		while (true) {
-			await new Promise((resolve) => setTimeout(resolve, 1500));
-			const { ok, body } = await this.#call("task/" + id);
-			if (!ok) {
-				this._task = { ...this._task, running: false, failed: true, message: "Harbor did not answer." };
+		// From where to where, shown above the steps; with more than one kind, each has its own heading in the steps
+		this._task = { title: label, from: this.#from(), to: destination.environment, steps: [], running: true };
+		let done = [];
+		for (const kind of kinds) {
+			if (kinds.length > 1) done = [...done, { type: "heading", text: names[kind] }];
+			this._task = { ...this._task, steps: done };
+			const started = await this.#call("sync", { method: "POST", body: JSON.stringify({ destination: destination.id, what: kind }) });
+			if (!started.ok) {
+				this._task = { ...this._task, running: false, failed: true, message: started.body?.error || "Harbor did not start the sync." };
 				break;
 			}
-			this._task = { ...this._task, steps: body.steps || [], running: body.running, failed: !body.running && body.exit !== 0 };
-			if (!body.running) break;
+			const id = started.body.task;
+			let body;
+			while (true) {
+				await new Promise((resolve) => setTimeout(resolve, 1500));
+				const answer = await this.#call("task/" + id);
+				if (!answer.ok) {
+					this._task = { ...this._task, running: false, failed: true, message: "Harbor did not answer." };
+					break;
+				}
+				body = answer.body;
+				this._task = { ...this._task, steps: [...done, ...(body.steps || [])], running: true };
+				if (!body.running) break;
+			}
+			if (this._task.failed) break;
+			done = this._task.steps;
+			if (body.exit !== 0) {
+				this._task = { ...this._task, running: false, failed: true };
+				break;
+			}
 		}
+		if (!this._task.failed) this._task = { ...this._task, running: false };
 		this._busy = false;
 	}
 
@@ -78,14 +96,33 @@ export default class VnsHarborDashboard extends UmbElementMixin(LitElement) {
 				? html`${link("Frontend", destination.url, destination.binding)}${link("Backend", destination.url + "umbraco", destination.binding + "/umbraco")}`
 				: html`<span class="label">${destination.binding || destination.id}</span>`}</div>
 			<div class="actions">
-				${destination.settings ? html`<uui-button look="primary" ?disabled=${this._busy}
+				<div class="route" title=${`From this site (${this.#from()}) to ${destination.environment}`}>
+					<span class="from" style="--tone:${this.#tone(this.#from())}">${this.#from()}</span>
+					<span class="arrow" aria-hidden="true">→</span>
+					<span class="to">${destination.environment}</span>
+				</div>
+				${destination.settings ? html`<uui-button look="primary" label="Sync settings" ?disabled=${this._busy}
 					title="Document types, templates, views, css and scripts"
 					@click=${() => this.#sync(destination, "settings")}>Sync settings</uui-button>` : nothing}
-				${kinds ? html`<uui-button look="primary" color="positive" ?disabled=${this._busy}
+				${kinds ? html`<uui-button look="primary" color="positive" label=${`Sync ${kinds}`} ?disabled=${this._busy}
 					title=${`Merges ${kinds}: nothing is deleted there`}
 					@click=${() => this.#sync(destination, "data")}>Sync ${kinds}</uui-button>` : nothing}
+				${destination.settings && kinds ? html`<hr class="divider">
+					<uui-button look="primary" class="everything" label="Sync everything" ?disabled=${this._busy}
+						title=${`Settings, then ${kinds}`}
+						@click=${() => this.#sync(destination, ["settings", "data"])}>Sync everything</uui-button>` : nothing}
 			</div>
 		</div>`;
+	}
+
+	// The environment this site is, by name: Harbor tells it (an older Harbor only its id)
+	#from() {
+		const site = this._state.site;
+		return site.environment_name || (site.environment === "main" ? "This site" : site.environment.charAt(0).toUpperCase() + site.environment.slice(1));
+	}
+
+	#tone(name) {
+		return COLORS[(name || "").toLowerCase()] || "var(--uui-color-text-alt)";
 	}
 
 	// One sync to every environment that may receive it, when there are more than one
@@ -93,13 +130,13 @@ export default class VnsHarborDashboard extends UmbElementMixin(LitElement) {
 		const settings = destinations.filter((destination) => destination.settings);
 		const data = destinations.filter((destination) => (destination.data || []).length);
 		if (settings.length < 2 && data.length < 2) return nothing;
-		const all = { id: "all", environment: "all environments" };
+		const all = { id: "all", environment: "All environments" };
 		return html`<div class="everywhere">
 			<div><strong>All environments</strong><span>${settings.length > 1 ? `Settings to ${settings.map((item) => item.environment).join(", ")}` : ""}${
 				settings.length > 1 && data.length > 1 ? " · " : ""}${data.length > 1 ? `data to ${data.map((item) => item.environment).join(", ")}` : ""}</span></div>
 			<div class="actions">
-				${settings.length > 1 ? html`<uui-button look="primary" ?disabled=${this._busy} @click=${() => this.#sync(all, "settings")}>Sync settings to all</uui-button>` : nothing}
-				${data.length > 1 ? html`<uui-button look="primary" color="positive" ?disabled=${this._busy} @click=${() => this.#sync(all, "data")}>Sync data to all</uui-button>` : nothing}
+				${settings.length > 1 ? html`<uui-button look="primary" label="Sync settings to all" ?disabled=${this._busy} @click=${() => this.#sync(all, "settings")}>Sync settings to all</uui-button>` : nothing}
+				${data.length > 1 ? html`<uui-button look="primary" color="positive" label="Sync data to all" ?disabled=${this._busy} @click=${() => this.#sync(all, "data")}>Sync data to all</uui-button>` : nothing}
 			</div>
 		</div>`;
 	}
@@ -108,11 +145,19 @@ export default class VnsHarborDashboard extends UmbElementMixin(LitElement) {
 		const task = this._task;
 		if (!task) return nothing;
 		const status = task.running ? "Running" : task.failed ? "Failed" : "Done";
+		const last = task.steps.length - 1;
 		return html`<uui-box headline=${task.title} class="task">
 			<uui-tag slot="header-actions" color=${task.running ? "default" : task.failed ? "danger" : "positive"} look="primary">${status}</uui-tag>
-			${task.running && !task.steps.length ? html`<uui-loader-bar></uui-loader-bar>` : nothing}
-			<ol class="steps">${task.steps.map((step, index) => html`<li class=${step.type === "warn" ? "warn" : index === task.steps.length - 1 && task.running ? "current" : ""}>
-				${index === task.steps.length - 1 && task.running ? html`<uui-loader-circle></uui-loader-circle>` : html`<uui-icon name=${step.type === "warn" ? "icon-alert" : "icon-check"}></uui-icon>`}
+			<div class="route task-route">
+				<span class="from" style="--tone:${this.#tone(task.from)}">${task.from}</span>
+				<span class="arrow" aria-hidden="true">→</span>
+				<span style="--tone:${this.#tone(task.to)}" class="from">${task.to}</span>
+			</div>
+			${task.running && !task.steps.filter((step) => step.type !== "heading").length ? html`<uui-loader-bar></uui-loader-bar>` : nothing}
+			<ol class="steps">${task.steps.map((step, index) => step.type === "heading"
+				? html`<li class="heading">${step.text}</li>`
+				: html`<li class=${step.type === "warn" ? "warn" : index === last && task.running ? "current" : ""}>
+				${index === last && task.running ? html`<uui-loader-circle></uui-loader-circle>` : html`<uui-icon name=${step.type === "warn" ? "icon-alert" : "icon-check"}></uui-icon>`}
 				<span>${step.text}</span></li>`)}</ol>
 			${task.message ? html`<p class="message">${task.message}</p>` : nothing}
 			${!task.running && !task.failed ? html`<p class="message">uSync on the destination imports what it received as it starts.</p>` : nothing}
@@ -146,6 +191,13 @@ export default class VnsHarborDashboard extends UmbElementMixin(LitElement) {
 			box-shadow: var(--uui-shadow-depth-1); }
 		.destination .actions { display: grid; grid-template-columns: 1fr; margin-top: auto; padding-top: var(--uui-size-space-3); }
 		.destination .actions uui-button { width: 100%; }
+		.route { display: flex; align-items: center; gap: 8px; margin-bottom: var(--uui-size-space-1); font-size: 0.75rem; font-weight: 700;
+			letter-spacing: 0.06em; text-transform: uppercase; color: var(--tone); }
+		.route .from { color: var(--tone); }
+		.route .arrow { color: var(--uui-color-text-alt); font-size: 1rem; letter-spacing: 0; }
+		.divider { width: 100%; margin: var(--uui-size-space-3) 0; border: 0; border-top: 1px dashed var(--uui-color-border-emphasis); }
+		uui-button.everything { --uui-button-background-color: #6f4fc7; --uui-button-background-color-hover: #5d3fb3;
+			--uui-button-contrast: #fff; --uui-button-contrast-hover: #fff; }
 		.everywhere { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--uui-size-space-4);
 			background: var(--uui-color-surface); border: 1px solid var(--uui-color-border); border-radius: var(--uui-border-radius);
 			padding: var(--uui-size-space-4) var(--uui-size-space-5); box-shadow: var(--uui-shadow-depth-1); }
@@ -171,6 +223,10 @@ export default class VnsHarborDashboard extends UmbElementMixin(LitElement) {
 		.steps li uui-icon { color: var(--uui-color-positive); }
 		.steps li.warn uui-icon, .steps li.warn { color: var(--uui-color-warning-emphasis); }
 		.steps li.current { font-weight: 600; }
+		.steps li.heading { margin-top: var(--uui-size-space-3); font-size: 0.75rem; font-weight: 700; letter-spacing: 0.06em;
+			text-transform: uppercase; color: var(--uui-color-text-alt); }
+		.steps li.heading:first-child { margin-top: 0; }
+		.task-route { margin-bottom: var(--uui-size-space-4); font-size: 0.85rem; }
 		.message { margin: var(--uui-size-space-3) 0 0; color: var(--uui-color-text-alt); }
 		code { background: var(--uui-color-surface-alt); padding: 1px 5px; border-radius: 3px; }
 	`;
