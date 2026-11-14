@@ -34,5 +34,34 @@ class GroupMayWriteTests(unittest.TestCase):
             self.assertFalse(allowed.called)
 
 
+class FreshPackageListsTests(unittest.TestCase):
+    """A version uploaded to nuget.org minutes ago is not in NuGet's cached lists (NU1102 on test-01)"""
+    def setUp(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        self.root = Path(folder.name)
+        self.project = self.root / "site"
+        self.home = self.root / "home"
+        self.project.mkdir()
+        (self.project / "site.csproj").write_text("""<Project Sdk="Microsoft.NET.Sdk.Web"><ItemGroup>
+            <PackageReference Include="Umbraco.Cms" Version="18.3.1" />
+            <PackageReference Include="VNS.Harbor" Version="18.3.1.4" />
+            <PackageReference Include="Floating" Version="18.*" />
+            <PackageReference Include="Ranged" Version="[18.3.1, 19.0.0)" />
+        </ItemGroup></Project>""")
+        (self.home / ".nuget/packages/umbraco.cms/18.3.1").mkdir(parents=True)
+        self.cache = self.home / ".local/share/NuGet/http-cache"
+        self.cache.mkdir(parents=True)
+
+    def test_a_version_not_there_yet_reads_the_lists_anew(self):
+        self.assertEqual(build_as.fresh_package_lists(self.project, self.home), ["VNS.Harbor 18.3.1.4"])
+        self.assertFalse(self.cache.exists())
+
+    def test_the_lists_stay_when_every_version_is_there(self):
+        (self.home / ".nuget/packages/vns.harbor/18.3.1.4").mkdir(parents=True)
+        self.assertEqual(build_as.fresh_package_lists(self.project, self.home), [])
+        self.assertTrue(self.cache.is_dir())
+
+
 if __name__ == "__main__":
     unittest.main()

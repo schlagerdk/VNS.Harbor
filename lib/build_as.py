@@ -13,6 +13,7 @@ following or copying symbolic links, so a build cannot make root write anywhere 
 import grp
 import os
 import pwd
+import re
 import secrets
 import shutil
 import stat
@@ -132,6 +133,38 @@ def copy_out(staging, target):
             shutil.copy2(source, destination, follow_symlinks=False)
 
 
+# NuGet keeps the package lists it has read for 30 minutes: a version uploaded since is not found (NU1102)
+HTTP_CACHES = (".local/share/NuGet/http-cache", ".local/share/NuGet/v3-cache")
+PACKAGE_REFERENCE = re.compile(r"""<PackageReference\b[^>]*?\bInclude\s*=\s*["']([^"']+)["'][^>]*?\bVersion\s*=\s*["']([^"'*\[\](),]+)["']""", re.I | re.S)
+
+
+def missing_packages(project, packages=None):
+    """The exact package versions the project names (its .csproj files and Directory.Packages.props) that the build
+    user does not have yet"""
+    packages = Path(packages or HOME / ".nuget/packages")
+    files = [*Path(project).glob("*.csproj"), *[path for path in (Path(project) / "Directory.Packages.props",) if path.is_file()]]
+    wanted = set()
+    for path in files:
+        try:
+            text = path.read_text(errors="replace")
+        except OSError:
+            continue
+        wanted.update((name.strip(), version.strip()) for name, version in PACKAGE_REFERENCE.findall(text))
+    return sorted(f"{name} {version}" for name, version in wanted if not (packages / name.lower() / version.lower()).is_dir())
+
+
+def fresh_package_lists(project, home=None):
+    """The package lists are read anew when the project names a version the build user has not got: it may have been
+    uploaded since the lists were read (VNS.Harbor 18.3.1.4 on test-01). Other builds keep using them."""
+    home = Path(home or HOME)
+    missing = missing_packages(project, home / ".nuget/packages")
+    if not missing:
+        return []
+    for cache in HTTP_CACHES:
+        shutil.rmtree(home / cache, ignore_errors=True)
+    return missing
+
+
 def environment():
     dotnet = os.environ.get("DOTNET_ROOT") or "/usr/lib/dotnet"
     return {"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", "HOME": str(HOME), "DOTNET_CLI_HOME": str(HOME),
@@ -147,6 +180,7 @@ def command_for(command, cwd="."):
         return list(command), None
     account = ensure_user()
     prepare(Path(cwd).resolve(), account, set())
+    fresh_package_lists(Path(cwd).resolve())
     return ["runuser", "-u", USER, "--", *command], environment()
 
 
@@ -157,6 +191,7 @@ def run(command, cwd=".", capture=False, timeout=None):
         return subprocess.run(command, cwd=cwd, capture_output=capture, text=capture, timeout=timeout)
     account = ensure_user()
     project = Path(cwd).resolve()
+    fresh_package_lists(project)
     command = list(command)
     target = None
     staging = None

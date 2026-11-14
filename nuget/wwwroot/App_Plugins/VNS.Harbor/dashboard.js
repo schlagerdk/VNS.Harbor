@@ -121,6 +121,26 @@ export default class VnsHarborDashboard extends UmbElementMixin(LitElement) {
 		return site.environment_name || (site.environment === "main" ? "This site" : site.environment.charAt(0).toUpperCase() + site.environment.slice(1));
 	}
 
+	// This site itself: what Sync setup lets it send and receive. Receiving is marked: others may overwrite it there.
+	#thisSite() {
+		const site = this._state.site;
+		const setup = site.setup;
+		const name = this.#from();
+		const list = (part) => [...(part.settings ? ["settings"] : []), ...(part.data || [])];
+		const sends = setup ? list(setup.sends) : [];
+		const receives = setup ? list(setup.receives) : [];
+		const key = name.toLowerCase();
+		return html`<div class="this-site" style="--tone:${this.#tone(name)}">
+			<span class="badge"><uui-icon name=${ICONS[key] || "icon-server"}></uui-icon></span>
+			<div class="who"><span class="label">This site</span><strong>${name}</strong></div>
+			${setup ? html`<div class="flow"><span class="label">Sends</span><span>${sends.length ? sends.join(" · ") : "nothing"}</span></div>
+				<div class="flow ${receives.length ? "receives" : "none"}"><span class="label">Receives</span>
+					<span>${receives.length ? receives.join(" · ") : "nothing"}</span></div>
+				${receives.length ? html`<p class="overwrite"><uui-icon name="icon-alert"></uui-icon>Other environments may overwrite this site's ${
+					receives.length > 1 ? receives.slice(0, -1).join(", ") + " and " + receives.at(-1) : receives[0]}.</p>` : nothing}` : nothing}
+		</div>`;
+	}
+
 	#tone(name) {
 		return COLORS[(name || "").toLowerCase()] || "var(--uui-color-text-alt)";
 	}
@@ -173,7 +193,7 @@ export default class VnsHarborDashboard extends UmbElementMixin(LitElement) {
 		else if (!state.connected) body = this.#notice("icon-plug", "Not connected to Harbor", "This site is not connected to the Harbor that manages it yet. It is connected when Harbor publishes it.");
 		else if (!state.reachable) body = this.#notice("icon-wifi", "Harbor cannot be reached", html`To sync from here, this site needs access to Harbor at <code>${state.harbor}</code> over HTTPS. The sync buttons are off until it has.`);
 		else if (!state.site.destinations.length) body = this.#notice("icon-settings", "Nothing to sync to", "Sync setup in Harbor does not let this site send settings or data to any of its environments.");
-		else body = html`${this.#everywhere(state.site.destinations)}<div class="destinations">${state.site.destinations.map((destination) => this.#destination(destination))}</div>${this.#taskView()}`;
+		else body = html`${this.#thisSite()}<h3 class="section">Sync to</h3>${this.#everywhere(state.site.destinations)}<div class="destinations">${state.site.destinations.map((destination) => this.#destination(destination))}</div>${this.#taskView()}`;
 		return html`<div class="page">
 			<header><h2>VNS Harbor</h2><p>Sync this site's settings or data to its environments. Data is merged: nothing is deleted there.</p></header>
 			${body}
@@ -204,6 +224,18 @@ export default class VnsHarborDashboard extends UmbElementMixin(LitElement) {
 		.everywhere strong { display: block; font-size: 1.05rem; }
 		.everywhere span { color: var(--uui-color-text-alt); font-size: 0.9rem; }
 		.everywhere .actions { margin-top: 0; }
+		.this-site { display: flex; flex-wrap: wrap; align-items: center; gap: var(--uui-size-space-3) var(--uui-size-space-6);
+			background: var(--uui-color-surface); border: 1px solid var(--uui-color-border); border-left: 4px solid var(--tone);
+			border-radius: var(--uui-border-radius); padding: var(--uui-size-space-4) var(--uui-size-space-5); box-shadow: var(--uui-shadow-depth-1); }
+		.this-site .who, .this-site .flow { display: grid; gap: 2px; }
+		.this-site .who strong { font-size: 1.1rem; }
+		.this-site .flow span:last-child { font-size: 0.95rem; }
+		.this-site .flow.none span:last-child { color: var(--uui-color-text-alt); }
+		.this-site .flow.receives span:last-child { color: #a86b00; font-weight: 700; }
+		.this-site .overwrite { flex-basis: 100%; display: flex; align-items: center; gap: 8px; margin: 0; padding: 8px 12px;
+			border-radius: var(--uui-border-radius); background: #fff4dc; color: #7a4f00; font-size: 0.9rem; }
+		.section { margin: var(--uui-size-space-3) 0 calc(var(--uui-size-space-4) * -1); font-size: 0.75rem; font-weight: 700;
+			letter-spacing: 0.06em; text-transform: uppercase; color: var(--uui-color-text-alt); }
 		.name { display: flex; align-items: center; gap: 12px; font-weight: 700; font-size: 1.1rem; }
 		.badge { width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; flex: none;
 			background: color-mix(in srgb, var(--tone) 16%, transparent); color: var(--tone); font-size: 1.35rem; }

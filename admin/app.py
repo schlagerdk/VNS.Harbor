@@ -2317,7 +2317,21 @@ def harbor_api_site():
         name = main_environment(site)
     else:
         name = (parse_prod(os.path.join(WEB_ROOT, site), source) or {}).get("PROD_ENVIRONMENT") or source
-    return jsonify(site=site, environment=source, environment_name=name, destinations=harbor_api_destinations(site, source))
+    return jsonify(site=site, environment=source, environment_name=name, setup=harbor_api_setup(site, source),
+                   destinations=harbor_api_destinations(site, source))
+
+
+def harbor_api_setup(site, source):
+    """What Sync setup lets the site itself send and receive, so the dashboard can show it (a Development that
+    receives data by mistake is seen there)"""
+    try:
+        own = _data_sync_module.clean(_data_sync_module.load(os.path.join(WEB_ROOT, site)).get(source), source)
+    except ValueError:
+        return None
+    data = [kind for kind in _data_sync_module.KINDS if own[kind]] if own["enabled"] else []
+    return {"sends": {"settings": own["settings_send"], "data": data if own["send"] else []},
+            # The main site never receives settings
+            "receives": {"settings": own["settings_receive"] and source != "main", "data": data if own["receive"] else []}}
 
 
 @app.route(HARBOR_API + "sync", methods=["POST"])

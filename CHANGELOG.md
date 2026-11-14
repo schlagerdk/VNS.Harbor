@@ -2,6 +2,16 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.6] - 2026-11-14
+
+### Features
+
+- The VNS Harbor dashboard in Umbraco (VNS.Harbor 18.3.1.5) shows what this site itself sends and receives, with a warning when other environments may overwrite it, and Sync to above the environments it syncs to
+
+### Fixes
+
+- A build that names a package version uploaded minutes ago reads NuGet's package lists anew, instead of failing with "Unable to find package" until NuGet's cache runs out
+
 ## [1.0.5] - 2026-11-14
 
 ### Features
