@@ -159,5 +159,15 @@ esac
                 self.assertEqual((server.root / "remote/var/www/shop.dk/appsettings.json").read_text() == "{}", not first)
 
 
+class BuildConfigurationTests(unittest.TestCase):
+    def test_as_the_main_site_by_its_environment(self):
+        """mhs on linux-01: Test was published as Release, as every environment was"""
+        from types import SimpleNamespace
+        from harbor.environments.publish import build_configuration
+        for name, configuration in (("Development", "Debug"), ("Test", "Debug"), ("Staging", "Release"), ("Production", "Release"), ("", "Release")):
+            with self.subTest(name=name):
+                self.assertEqual(build_configuration(SimpleNamespace(other={"ENVIRONMENT": name})), configuration)
+
+
 if __name__ == "__main__":
     unittest.main()

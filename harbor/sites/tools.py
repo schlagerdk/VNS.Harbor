@@ -195,7 +195,9 @@ def publish(system, name, configuration="", folder="", environment_name=""):
         system.step(f"Stop {unit}")
         system.run("systemctl", "stop", unit)
         stopped = True
-        system.step(f"Publish ({configuration})")
+        # Which site, as it reads in Publish all among its environments
+        named = environment_name or service_environment(system, site)
+        system.step(f"Publish {site.name} ({named + ', ' if named else ''}{configuration})")
         shutil.rmtree(system.path(f"{working}/runtimes"), ignore_errors=True)
         system.run("python3", str(LIB / "build_as.py"), "--", "dotnet", "publish", project.name, "-c", configuration, f"-p:PublishDir={folder}",
                    *([f"-p:EnvironmentName={environment_name}"] if environment_name else []),

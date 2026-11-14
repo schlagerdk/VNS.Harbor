@@ -79,6 +79,13 @@ class PublishBothTests(unittest.TestCase):
         self.assertNotIn(str((self.scripts / "publish_local.sh").resolve()), argv)
         self.assertEqual(argv[-1], str((self.scripts / "publish_prod.sh").resolve()))
 
+    def test_environments_go_the_way_the_work_goes(self):
+        """mhs on linux-01 published Production, Staging, Test: by their names"""
+        environments = {"production": "Production", "staging": "Staging", "test": "Test", "dev2": "Development", "other": ""}
+        self.ns["parse_prod"] = lambda root, target="prod": {"PROD_ENVIRONMENT": environments[target]}
+        self.assertEqual(self.ns["environment_order"]("/var/www/example.test", sorted(environments)),
+                         ["dev2", "test", "staging", "production", "other"])
+
     def test_missing_or_escaping_scripts_are_rejected(self):
         with self.assertRaises(BadRequest):
             self.command()

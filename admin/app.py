@@ -731,6 +731,18 @@ def target_ids(root):
     return [name for name in settings.target_ids(System(), root) if TARGET_RE.match(name)]
 
 
+ENVIRONMENT_ORDER = ("development", "test", "staging", "production")
+
+
+def environment_order(root, targets):
+    """Environments in the order the work goes, by the environment they are: Development, Test, Staging, Production
+    (others last), then by name"""
+    def key(target):
+        name = ((parse_prod(root, target) or {}).get("PROD_ENVIRONMENT") or "").lower()
+        return (ENVIRONMENT_ORDER.index(name) if name in ENVIRONMENT_ORDER else len(ENVIRONMENT_ORDER), target)
+    return sorted(targets, key=key)
+
+
 def target_scope(target):
     return "prod" if target == "prod" else "target-" + target
 
@@ -3459,8 +3471,9 @@ def build_command(data):
             abort(400, "Unknown script")
         for target in targets:
             build_command({"kind": "script", "site": site, "script": "publish_prod.sh", "target": target})
-        # A user publishes to the environments they have access to; the others are left as they are
-        active = allowed_targets(site, publishable_targets(site, root), "publish")
+        # A user publishes to the environments they have access to; the others are left as they are. In the order
+        # the work goes: the main site, then Development, Test, Staging and Production
+        active = environment_order(root, allowed_targets(site, publishable_targets(site, root), "publish"))
         if not active and not main_too:
             abort(400, "No environment to publish to: they no longer exist on their servers")
         return ("Publish all: " if main_too else "Publish environments: ") + site, [

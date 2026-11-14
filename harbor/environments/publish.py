@@ -292,6 +292,13 @@ systemctl status "$(python3 "${_apacheDir}/lib/domain_names.py" "${SITE}" unit)"
 '''
 
 
+
+def build_configuration(environment):
+    """Development and Test are Debug builds, Staging and Production Release builds, as the main site's are; an
+    environment without a name is built as Release"""
+    from harbor.sites.tools import configuration_for
+    return configuration_for(environment.other.get("ENVIRONMENT", "")) or "Release"
+
 class Failed(Exception):
     def __init__(self, code=1):
         super().__init__()
@@ -402,8 +409,10 @@ class Publish:
             if self.local:
                 self.exclude_local_target()
             if not self.migrate_only:
-                system.step("Publish (Release)")
-                system.run("python3", str(LIB / "build_as.py"), "--", "dotnet", "publish", f"{self.project}.csproj", "-c", "Release",
+                configuration = build_configuration(environment)
+                named = environment.other.get("ENVIRONMENT", "")
+                system.step(f"Publish {environment.FOLDER} ({named + ', ' if named else ''}{configuration})")
+                system.run("python3", str(LIB / "build_as.py"), "--", "dotnet", "publish", f"{self.project}.csproj", "-c", configuration,
                            f"-p:PublishDir={output}", f"-p:CustomAfterMicrosoftCommonTargets={LIB}/publish.targets", "--runtime", identifier,
                            "--self-contained", "false", "--nologo", cwd=site.site_root)
                 if not Path(output, f"{self.project}.dll").is_file():

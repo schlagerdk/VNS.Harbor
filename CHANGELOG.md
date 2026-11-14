@@ -2,6 +2,14 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.7] - 2026-11-14
+
+### Fixes
+
+- An environment is built as its main site would be: Development and Test as Debug, Staging and Production as Release (every environment was built as Release), also on Windows
+- Publish all publishes in the order the work goes: the main site, then Development, Test, Staging and Production (it went by the environments' names)
+- Each publish says which site it is building and as what, such as "Publish staging-shop.dk (Staging, Release)"
+
 ## [1.0.6] - 2026-11-14
 
 ### Features
