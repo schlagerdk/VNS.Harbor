@@ -6,18 +6,13 @@ All notable changes to VNS Harbor are listed here, newest first.
 
 ### Features
 
-- The VNS Harbor tab is only shown when there is something to sync (VNS.Harbor 18.3.1.3)
-
-### Other
-
-- Chore: VNS.Harbor 18.3.1.4, with the tab only shown when there is something to sync
+- The VNS Harbor tab (VNS.Harbor 18.3.1.4) is only in the Content section when there is something to sync: with nothing Sync setup lets the site send, it is not shown. A site Harbor does not answer for keeps the tab, so the dashboard can tell why
 
 ## [1.0.4] - 2026-11-14
 
 ### Features
 
 - The VNS Harbor dashboard in Umbraco (VNS.Harbor 18.3.1.3) shows which way a sync goes, such as Production → Staging, on each environment and in the sync as it runs, and has Sync everything (settings, then data) where both may go
-- The VNS Harbor tab (VNS.Harbor 18.3.1.4) is only in the Content section when there is something to sync: with nothing Sync setup lets the site send, it is not shown
 
 ## [1.0.3] - 2026-11-14
 
