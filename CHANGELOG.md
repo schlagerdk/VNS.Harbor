@@ -2,6 +2,16 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.5] - 2026-11-14
+
+### Features
+
+- The VNS Harbor tab is only shown when there is something to sync (VNS.Harbor 18.3.1.3)
+
+### Other
+
+- Chore: VNS.Harbor 18.3.1.4, with the tab only shown when there is something to sync
+
 ## [1.0.4] - 2026-11-14
 
 ### Features
