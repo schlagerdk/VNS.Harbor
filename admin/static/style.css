@@ -810,8 +810,6 @@ dialog.wide.system-update-dialog { width: min(720px, 92vw); }
 .settings-footer .settings-version { margin: 0; padding: 0; border: 0; color: var(--muted); font-size: 12px; text-align: left; }
 .settings-uptodate { color: var(--green); font-size: 12px; }
 .settings-footer #settings-update { width: auto; padding: 5px 10px; font-size: 12px; }
-#settings-rollback { display: flex; align-items: center; gap: 6px; margin-top: 4px; color: var(--muted); font-size: 12px; }
-#settings-rollback:hover { color: #d29922; }
 .menu button.menu-danger:hover { background: rgba(248, 81, 73, .12); }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 .preferences-interval { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }

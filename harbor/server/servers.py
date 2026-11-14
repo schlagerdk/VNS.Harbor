@@ -272,4 +272,8 @@ def install(system, name):
         remote(system, entry, f"sh -c 'rm -rf {there} && mv {RELEASES}/.{release}.new {there}'")
     system.step(f"Use Harbor {release} on {name}")
     remote(system, entry, f"python3 {there}/bin/harbor self use {release}", capture=False)
+    # Then the server is brought up to the release, as an update there does: its sites, its admin, and the old
+    # installation removed when nothing uses it
+    system.step(f"Bring {name} up to Harbor {release}")
+    remote(system, entry, f"python3 {CURRENT}/bin/harbor self after-update", capture=False)
     system.say(f"{name} runs Harbor {release}.")

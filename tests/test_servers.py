@@ -93,7 +93,9 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(main(["servers", "install", "two"], system), 0, system.said)
         rsync = next(command for command in system.commands if command.startswith("rsync"))
         self.assertIn(f"{release}/ root@10.0.0.2:/opt/harbor/releases/.1.2.0-abc.new/", rsync)
-        self.assertTrue(system.commands[-1].endswith("python3 /opt/harbor/releases/1.2.0-abc/bin/harbor self use 1.2.0-abc"))
+        self.assertTrue(system.commands[-2].endswith("python3 /opt/harbor/releases/1.2.0-abc/bin/harbor self use 1.2.0-abc"))
+        # Then brought up to it there, as an update there does (kikayo kept the old installation without it)
+        self.assertTrue(system.commands[-1].endswith("python3 /opt/harbor/current/bin/harbor self after-update"), system.commands[-1])
         # There already: only made current
         system = self.system(ssh=lambda argv: json.dumps(STATUS) if argv[-1] == "python3 -" else "")
         main(["servers", "install", "two"], system)

@@ -2,6 +2,14 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.3] - 2026-11-14
+
+### Fixes
+
+- Update in the Servers window brings the other server up to the release, as an update there does: its sites, its admin, and the old installation removed when nothing uses it
+- Roll back is only in the Servers window, also for this server, so it is not clicked by mistake in the settings menu
+- The VNS Harbor dashboard is fetched again with each version of the package (VNS.Harbor 18.3.1.2): a browser kept the old one for days and showed sync buttons Sync setup does not allow
+
 ## [1.0.2] - 2026-11-14
 
 ### Features

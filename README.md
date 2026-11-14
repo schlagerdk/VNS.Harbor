@@ -65,8 +65,8 @@ sudo harbor self update --ref v1.0.0
 
 An update fetches the release from GitHub and lets that release install itself (`harbor self finish-update`). The
 release is copied whole to `/opt/harbor/releases/<version>` and made the one in use (`/opt/harbor/current`); the three
-newest are kept, and a rollback goes back to the one before, the admin with it: **Roll back to …** in the settings menu
-(or in the Servers window for another server), or `sudo harbor self rollback`. The release then brings the server up to
+newest are kept, and a rollback goes back to the one before, the admin with it: **Roll back to …** on a server's card in
+the Servers window, or `sudo harbor self rollback`. The release then brings the server up to
 date (`harbor self after-update`):
 
 - the server-wide Apache configs and the keep-alive job
