@@ -6,7 +6,7 @@ All notable changes to VNS Harbor are listed here, newest first.
 
 ### Features
 
-- The VNS Harbor dashboard in Umbraco (VNS.Harbor 18.3.1.3) shows which way a sync goes, such as Production → Staging, on each environment and in the sync as it runs, and has Sync everything (settings, then data) where both may go
+- The VNS Harbor dashboard in Umbraco (VNS.Harbor 18.3.1.4) shows which way a sync goes, such as Production → Staging, on each environment and in the sync as it runs, and has Sync everything (settings, then data) where both may go
 
 ## [1.0.3] - 2026-11-14
 
