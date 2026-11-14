@@ -45,7 +45,8 @@ Every other link is refused and sends you to the normal login. Harbor logs each 
 
 ## The dashboard
 
-The **VNS Harbor** dashboard is a tab in the Content section. From there an editor can:
+The **VNS Harbor** dashboard is a tab in the Content section. It is only there when Sync setup lets the site send
+something to one of its environments. From there an editor can:
 
 - see the environments this site may sync to
 - sync settings to one environment or to all of them. Settings are document types, templates, views, CSS and scripts.

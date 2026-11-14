@@ -14,9 +14,11 @@ class PackageVersionTests(unittest.TestCase):
         version = re.search(r"<Version>([^<]+)</Version>", (NUGET / "VNS.Harbor.csproj").read_text())[1]
         manifest = json.loads((NUGET / "wwwroot/App_Plugins/VNS.Harbor/umbraco-package.json").read_text())
         self.assertEqual(manifest["version"], version)
-        for extension in manifest["extensions"]:
-            if extension.get("element", "").endswith(".js") or "?v=" in extension.get("element", ""):
-                self.assertTrue(extension["element"].endswith(f".js?v={version}"), extension["element"])
+        # Every script it loads: the dashboard (element) and the condition that hides it (api)
+        scripts = [extension[key] for extension in manifest["extensions"] for key in ("element", "api", "js") if key in extension]
+        self.assertTrue(scripts)
+        for script in scripts:
+            self.assertTrue(script.endswith(f".js?v={version}"), script)
 
 
 if __name__ == "__main__":
