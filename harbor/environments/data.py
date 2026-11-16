@@ -140,7 +140,7 @@ class DataSync:
         return settings.remote_exec(self.system, environment, f"compgen -G {shlex.quote(environment.root)}'/uSync/*/Content/*' >/dev/null",
                                     check=False, capture=True).ok
 
-    def settings_behind(self, destination):
+    def settings_behind(self, destination, source="main", kinds=("content", "media")):
         """Why the destination's settings are not those of the main site, or "": data is only merged into a site whose
         document types match. Only data is sent; Sync settings (or Sync everything) sends the settings first.
         A destination that may not receive settings (Sync setup) keeps its own, which must already match."""
@@ -151,7 +151,7 @@ class DataSync:
             self.rules.settings_allowed(self.config(), "main", destination)
         except ValueError:
             return ""
-        return history.settings_behind(self.system, self.site, destination)
+        return history.settings_behind(self.system, self.site, destination, source=source, kinds=tuple(kinds))
 
     def sync_one(self, source, destination, dry_run, settings_first=False):
         """One destination: the data merged in, then a restart to import it. The settings must be in sync first; with
@@ -168,11 +168,11 @@ class DataSync:
                 if str(error):
                     system.warn(str(error))
                 raise Failed() from None
-        behind = self.settings_behind(destination)
+        behind = self.settings_behind(destination, source, kinds)
         if behind and settings_first:
             system.step(f"Settings from {display_name(system, self.site, 'main')} to {destination_name}: {behind[0].lower() + behind[1:]}")
             sync("main", destination)
-            behind = "" if dry_run else self.settings_behind(destination)
+            behind = "" if dry_run else self.settings_behind(destination, source, kinds)
         if behind:
             system.warn(f"{behind}. Sync settings first, or use Sync everything: data is only merged into a site with the same document types.")
             raise Failed()

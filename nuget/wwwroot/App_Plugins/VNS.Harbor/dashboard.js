@@ -224,8 +224,7 @@ export default class VnsHarborDashboard extends UmbElementMixin(LitElement) {
 				title=${behind ? `${behind}. Sync settings first.` : data ? `Merges ${kinds}: nothing is deleted there` : `Nothing has changed in the ${kinds} here since they were synced there`}
 				@click=${() => this.#sync(destination, "data")}>${data ? `Sync ${kinds}` : `${capitalKinds} up to date`}</uui-button>
 				${!data ? html`<div class="anyway-row">${anyway(`Sync ${kinds} anyway`, "data")}</div>` : nothing}` : nothing}
-			${kinds && data && behind ? html`<p class="settings-first"><uui-icon name="icon-alert"></uui-icon>Sync settings first: ${
-				destination.settings ? "data only goes to a site with the same document types" : behind}</p>` : nothing}
+			${kinds && data && behind ? html`<p class="settings-first"><uui-icon name="icon-alert"></uui-icon><span>Sync settings first: ${behind}.</span></p>` : nothing}
 			${destination.settings && kinds ? html`<hr class="divider">
 				<uui-button look="primary" class="everything" label="Sync everything" ?disabled=${this._busy || !everything.length}
 					title=${everything.length === 2 ? `Settings, then ${kinds}` : everything[0] === "settings" ? `Only the settings: the ${kinds} are up to date` : `Only the ${kinds}: the settings are up to date`}

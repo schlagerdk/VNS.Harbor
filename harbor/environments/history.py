@@ -117,22 +117,35 @@ def local_folder(system, site, site_id):
     return environment.root if environment.LOCAL_PATH and not environment.windows else ""
 
 
-def settings_behind(system, site, destination, main_prints=None):
-    """Why a site's settings are not those of the main site, or "": data is only merged into a site whose document
-    types match (harbor env data-sync, and the sync buttons in the admin and the dashboard). site is the Site; the
-    caller checks first that the destination may receive settings at all."""
+def settings_behind(system, site, destination, main_prints=None, source="main", kinds=("content", "media")):
+    """Why data from source may not go to destination before the settings (harbor env data-sync, and the sync buttons
+    in the admin and the dashboard), or "": when the main site's settings have changed since they were synced there,
+    and the content or media that changed on source uses some of them (harbor/environments/dependencies.py). Changed
+    settings that no changed content uses do not hold the data back. site is the Site; the caller checks first that
+    the destination may receive settings at all."""
+    from harbor.environments import dependencies
     from harbor.environments.sync import display_name
+    main_folder = local_folder(system, site, "main")
     if main_prints is None:
-        folder = local_folder(system, site, "main")
-        main_prints = {"settings": fingerprint(system.path(folder), "settings")} if folder and system.path(folder).is_dir() else {}
+        main_prints = {"settings": fingerprint(system.path(main_folder), "settings")} if main_folder and system.path(main_folder).is_dir() else {}
     found = between(system, site.name, "main", destination, ["settings"], main_prints)["settings"]
     if found["changed"] is False:
         return ""
     main_name, destination_name = display_name(system, site, "main"), display_name(system, site, destination)
-    if found["changed"]:
-        return f"{main_name} has settings that are not synced to {destination_name}"
-    # Never synced there as far as Harbor knows, or only failed: one settings sync makes it known
-    return f"Settings have not been synced from {main_name} to {destination_name} yet"
+    if found["changed"] is None:
+        # Never synced there as far as Harbor knows, or only failed: one settings sync makes it known
+        return f"Settings have not been synced from {main_name} to {destination_name} yet"
+    # The settings have changed: only what the changed content and media use holds the data back
+    data_folder = local_folder(system, site, source)
+    if main_folder and data_folder and system.path(main_folder).is_dir() and system.path(data_folder).is_dir():
+        data_sent = {}
+        for kind in kinds:
+            data_sent.update(dependencies.sent(system, site.name, source, destination, kind) or {})
+        why = dependencies.reasons(system.path(main_folder), system.path(data_folder),
+                                   dependencies.sent(system, site.name, "main", destination, "settings"), data_sent, list(kinds), destination_name)
+        if why is not None:
+            return "; ".join(why[:2]) + (f" (and {len(why) - 2} more)" if len(why) > 2 else "")
+    return f"{main_name} has settings that are not synced to {destination_name}"
 
 
 def between(system, site, source, destination, kinds, now=None):

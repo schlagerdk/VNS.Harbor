@@ -275,9 +275,10 @@ def sync_environments(system, name, source_id, to, data="", dry_run=False):
             raise Stop(f"Nothing to sync in {source}.")
 
         # What is sent, kept with each sync, so the dashboard can tell whether the source has changed since
-        from harbor.environments import history
+        from harbor.environments import dependencies, history
         kinds = history.kinds_of(data)
         prints = history.fingerprints(source, kinds) if not dry_run else {}
+        sent_files = dependencies.manifest(source, kinds) if not dry_run else {}
         failed = 0
         for target in destinations:
             if sync.missing(target):
@@ -294,6 +295,8 @@ def sync_environments(system, name, source_id, to, data="", dry_run=False):
                 continue
             if not dry_run:
                 history.record(system, site.name, source_id, target, kinds, True, prints)
+                # Each file as it was sent: what changes after it is compared with this (dependencies.py)
+                dependencies.keep(system, site.name, source_id, target, kinds, sent_files)
     finally:
         if work:
             shutil.rmtree(work, ignore_errors=True)

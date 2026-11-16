@@ -61,6 +61,11 @@ something to one of its environments or receive something from one. From there a
 - on a site that receives, see the same for the environments that sync to it (Receives from)
 - see the newest syncs from and to this site: when, which way, what, who started them and whether they worked
 
+Data waits for the settings only when the content or media that changed uses settings that have changed since
+they were synced there: a page on a new template, or a document type or data type that a changed page uses (also
+through compositions and the element types of blocks). The dashboard tells which, such as "Offer uses the template
+Campaign". Sync everything sends the settings first.
+
 Whether a site has changed since its last sync is known when its files are on the Harbor server: the main site and
 its environments in a folder there. For an environment on another server or on Windows the dashboard shows when it
 was synced, but not whether it has changed since.

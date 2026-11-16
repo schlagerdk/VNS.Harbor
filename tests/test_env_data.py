@@ -98,12 +98,13 @@ class DataSyncTests(SyncTests):
         self.assertNotEqual(code, 0)
         self.assertTrue(any("have not been synced" in line and "Sync settings first" in line for line in system.said), system.said)
         self.assertFalse((self.web / "shop.dk/_staging/uSync/v17/Content/item.config").exists())
-        # Synced, then changed on the main site: behind again
+        # Synced, then a setting changed on the main site that no changed content uses: the data may go
+        # (tests/test_sync_dependencies.py has the settings that do hold it back)
         self.sync_settings_first()
         (self.web / "shop.dk/_publish/uSync/v17/DataTypes/item.config").write_text("<changed/>")
         code, system, _ = self.harbor(["env", "data-sync", "shop.dk", "sync", "main", "staging"], answers=self.answers())
-        self.assertNotEqual(code, 0)
-        self.assertTrue(any("not synced to" in line for line in system.said), system.said)
+        self.assertEqual(code, 0, system.said)
+        self.assertTrue((self.web / "shop.dk/_staging/uSync/v17/Content/item.config").exists())
 
     def test_sync_everything_sends_the_settings_first(self):
         """--settings-first (Sync everything): the settings where they are behind, then the data, in one task"""

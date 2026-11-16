@@ -2406,12 +2406,12 @@ def add_sync_history(site, here, destinations, sources):
     config = _data_sync_module.load(os.path.join(WEB_ROOT, site))
     for item in destinations:
         item["history"] = history.between(system, site, here, item["id"], kinds(item), mine)
-        item["settings_behind"] = settings_behind(system, site, item["id"], config) if item["data"] else ""
+        item["settings_behind"] = settings_behind(system, site, item["id"], config, here, item["data"]) if item["data"] else ""
     for item in sources:
         item["history"] = history.between(system, site, item["id"], here, kinds(item), current_prints(site, item["id"]))
 
 
-def settings_behind(system, site, destination, config):
+def settings_behind(system, site, destination, config, source="main", kinds=("content", "media")):
     """Why data may not go to destination yet (its settings are behind the main site's), or "": as harbor env
     data-sync decides it. A destination that may not receive settings keeps its own."""
     from harbor.environments import history
@@ -2422,7 +2422,7 @@ def settings_behind(system, site, destination, config):
         _data_sync_module.settings_allowed(config, "main", destination)
     except ValueError:
         return ""
-    return history.settings_behind(system, site_named(system, site), destination, current_prints(site, "main"))
+    return history.settings_behind(system, site_named(system, site), destination, current_prints(site, "main"), source=source, kinds=tuple(kinds))
 
 
 def recent_syncs(site, here, count=10):
@@ -2472,7 +2472,7 @@ def harbor_api_sync():
         # Data to all goes where the settings are in sync; harbor refuses the others
         from harbor.core.system import System
         config = _data_sync_module.load(os.path.join(WEB_ROOT, site))
-        names = [name for name in names if not settings_behind(System(), site, name, config)]
+        names = [name for name in names if not settings_behind(System(), site, name, config, source, allowed[name]["data"])]
     if not names or any(name not in allowed or not allowed[name]["settings" if what == "settings" else "data"] for name in names):
         return error("This site may not sync that there. Sync setup in Harbor decides.", 403)
     payload = ({"kind": "sync_env", "site": site, "source": source, "destination": ",".join(names)} if what == "settings"
@@ -4349,7 +4349,7 @@ def sync_status(site):
             except ValueError:
                 continue
             found[destination] = {"history": history.between(system, site, source, destination, kinds, mine),
-                                  "settings_behind": settings_behind(system, site, destination, config)}
+                                  "settings_behind": settings_behind(system, site, destination, config, source, kinds)}
         else:
             found[destination] = {"history": history.between(system, site, source, destination, ["settings"], mine)}
     try:

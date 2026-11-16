@@ -13,7 +13,7 @@ All notable changes to VNS Harbor are listed here, newest first.
 
 ### Changes
 
-- Sync data sends only content and media, and only to a site whose settings are those of the main site: Sync settings first, or Sync everything (settings where they are behind, then data). A data sync to a site whose settings are behind is refused, from the admin, Umbraco and harbor env data-sync alike
+- Sync data sends only content and media. It waits for the settings only when the content or media that changed uses settings that have changed since they were synced there: a page on a new template, or a document type or data type a changed page uses (also through compositions and block element types). A new data type nobody uses holds nothing back. The reason is shown, such as "Offer uses the template Campaign". Sync everything (or harbor env data-sync --settings-first) sends the settings first. The rule holds in the admin, Umbraco and the CLI alike
 - A sync's steps name the environments as the admin does: Production, not production
 - The dashboard in Umbraco is called VNS Harbor Sync, its tab and its user group too; the package keeps its name. A user group made before keeps its name and alias
 - What this site sends and receives is written with capitals: Settings · Content · Media, or Nothing
