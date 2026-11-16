@@ -2916,29 +2916,118 @@ function openSyncDialog(site, source, data = false) {
 	$("#sync-destination").replaceChildren(...cards);
 	cards[0].querySelector("input").checked = true;
 	$("#sync-select-all").hidden = cards.length < 2;
+	syncStatus = null;
+	syncForced = false;
+	$("#sync-settings-first").checked = false;
+	$("#sync-settings-first-row").hidden = true;
+	$("#sync-anyway-row").hidden = true;
+	$("#sync-recent").hidden = true;
 	updateSyncSelection();
 	syncDialog.showModal();
+	// When each was last synced, and what has not been sent: as the dashboard in Umbraco shows it
+	const asked = syncForm.dataset.source + syncForm.dataset.data;
+	api(`/api/sites/${encodeURIComponent(site.name)}/sync-status?source=${encodeURIComponent(syncForm.dataset.source)}&kind=${data ? "data" : "settings"}`)
+		.then((status) => {
+			if (!syncDialog.open || syncForm.dataset.source + syncForm.dataset.data !== asked) return;
+			syncStatus = status;
+			applySyncStatus(true);
+		})
+		.catch((error) => console.error(error));
 }
+let syncStatus = null;
+let syncForced = false;
+const syncKindNames = { settings: "Settings", content: "Content", media: "Media" };
+function syncAgo(time) {
+	const seconds = Math.max(0, (Date.now() - new Date(time).getTime()) / 1000);
+	if (seconds < 60) return "just now";
+	if (seconds < 3600) return `${Math.round(seconds / 60)} min ago`;
+	if (seconds < 86400) return `${Math.round(seconds / 3600)} h ago`;
+	if (seconds < 172800) return "yesterday";
+	if (seconds < 30 * 86400) return `${Math.round(seconds / 86400)} days ago`;
+	return formatDate(time);
+}
+// Up to date: every kind synced there, and the source has not changed since
+const syncUpToDate = (info) => Object.values(info?.history || {}).every((found) => found.last?.ok === true && found.changed === false)
+	&& Object.keys(info?.history || {}).length > 0;
+// Each card gets its status; what is up to date, or whose settings are behind, is not chosen unless asked for
+function applySyncStatus(choose = false) {
+	if (!syncStatus) return;
+	const first = $("#sync-settings-first").checked;
+	let anyCurrent = false, anyBehind = false;
+	for (const input of syncChoices()) {
+		const card = input.closest("label");
+		const info = syncStatus.destinations[input.value];
+		card.querySelector(".sync-status")?.remove();
+		if (!info) continue;
+		const current = syncUpToDate(info);
+		const behind = info.settings_behind || "";
+		anyCurrent ||= current;
+		anyBehind ||= Boolean(behind);
+		const rows = Object.entries(info.history).map(([kind, found]) => {
+			const last = found.last;
+			const [state, text] = !last ? ["never", "Never synced"] : !last.ok ? ["failed", "Last sync failed"]
+				: found.changed === true ? ["changed", "Changes not synced"] : found.changed === false ? ["current", "Up to date"] : ["unknown", ""];
+			return el("span", { className: "sync-status-row " + state, title: last ? `${formatDate(last.time)}${last.who ? " by " + last.who : ""}` : "" },
+				el("span", { className: "sync-status-kind", textContent: syncKindNames[kind] || kind }),
+				el("span", { className: "sync-status-when", textContent: last ? syncAgo(last.time) : "" }),
+				text ? el("span", { className: "sync-status-pill", textContent: text }) : "");
+		});
+		if (behind) rows.push(el("span", { className: "sync-status-row behind" }, el("span", { className: "sync-status-pill", textContent: first ? "Settings go first" : "Sync settings first" })));
+		card.append(el("span", { className: "sync-status" }, ...rows));
+		card.title = behind && !first ? `${behind}. Data only goes to a site with the same document types.` : "";
+		const blocked = (current && !syncForced) || (behind && !first);
+		card.classList.toggle("up-to-date", current && !syncForced);
+		card.classList.toggle("settings-behind", Boolean(behind) && !first);
+		input.disabled = Boolean(blocked);
+		if (blocked) input.checked = false;
+	}
+	// The first that has something to sync is chosen, when the dialog opens
+	if (choose && !syncChoices().some((input) => input.checked)) {
+		const open = syncChoices().find((input) => !input.disabled);
+		if (open) open.checked = true;
+	}
+	$("#sync-anyway-row").hidden = !anyCurrent || syncForced;
+	$("#sync-settings-first-row").hidden = !syncForm.dataset.data || !anyBehind;
+	renderSyncRecent();
+	updateSyncSelection();
+}
+function renderSyncRecent() {
+	const recent = syncStatus?.recent || [];
+	const box = $("#sync-recent");
+	box.hidden = !recent.length;
+	const kinds = (list) => list.map((kind) => syncKindNames[kind] || kind).join(", ");
+	box.replaceChildren(el("div", { className: "sync-recent-title", textContent: "Recent syncs" }),
+		el("table", {}, ...recent.slice(0, 5).map((entry) => el("tr", { className: entry.ok ? "" : "failed" },
+			el("td", { className: "muted", textContent: syncAgo(entry.time), title: formatDate(entry.time) }),
+			el("td", { textContent: `${entry.from} → ${entry.to}` }),
+			el("td", { textContent: kinds(entry.kinds || []) }),
+			el("td", { className: "muted", textContent: entry.who || "" }),
+			el("td", { className: "sync-recent-result", textContent: entry.ok ? "✓" : "Failed" })))));
+}
+$("#sync-anyway").onclick = () => { syncForced = true; applySyncStatus(true); };
+$("#sync-settings-first").onchange = () => applySyncStatus(true);
 $("#sync-cancel").onclick = () => syncDialog.close();
 const syncChoices = () => [...$("#sync-destination").querySelectorAll("input[name=destination]")];
 function updateSyncSelection() {
 	const chosen = syncChoices().filter((input) => input.checked).length;
-	const all = chosen === syncChoices().length;
+	const all = chosen === syncChoices().filter((input) => !input.disabled).length;
 	$("#sync-select-all").textContent = all ? "Select none" : "Select all";
 	const verb = syncForm.dataset.data ? "Sync data" : "Sync";
 	$("#sync-submit").textContent = chosen > 1 ? `${verb} to ${chosen} sites` : verb;
 	$("#sync-submit").disabled = chosen === 0;
 }
 $("#sync-select-all").onclick = () => {
-	const all = syncChoices().every((input) => input.checked);
-	for (const input of syncChoices()) input.checked = !all;
+	const open = syncChoices().filter((input) => !input.disabled);
+	const all = open.every((input) => input.checked);
+	for (const input of open) input.checked = !all;
 	updateSyncSelection();
 };
 syncForm.onsubmit = (event) => {
 	event.preventDefault();
 	const destination = syncChoices().filter((input) => input.checked).map((input) => input.value);
 	if (!destination.length) return;
-	const data = { kind: syncForm.dataset.data ? "data_sync" : "sync_env", site: syncForm.dataset.site, source: syncForm.dataset.source, destination };
+	const data = { kind: syncForm.dataset.data ? "data_sync" : "sync_env", site: syncForm.dataset.site, source: syncForm.dataset.source, destination,
+		...(syncForm.dataset.data && $("#sync-settings-first").checked ? { settings_first: true } : {}) };
 	run(async () => {
 		await openTask(data);
 		syncDialog.close();

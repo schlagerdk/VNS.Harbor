@@ -2329,8 +2329,119 @@ def harbor_api_site():
         name = main_environment(site)
     else:
         name = (parse_prod(os.path.join(WEB_ROOT, site), source) or {}).get("PROD_ENVIRONMENT") or source
+    destinations = harbor_api_destinations(site, source)
+    sources = harbor_api_sources(site, source)
+    try:
+        add_sync_history(site, source, destinations, sources)
+        recent = recent_syncs(site, source)
+    except (ImportError, OSError, ValueError) as exc:
+        app.logger.error("Sync history of %s could not be read: %s", site, exc)
+        recent = []
     return jsonify(site=site, environment=source, environment_name=name, setup=harbor_api_setup(site, source),
-                   destinations=harbor_api_destinations(site, source))
+                   destinations=destinations, sources=sources, recent=recent)
+
+
+def environment_name(site, site_id):
+    """An environment of a site by name, as the dashboard shows it: the main site by the environment it runs as"""
+    if site_id == "main":
+        return main_environment(site)
+    return (parse_prod(os.path.join(WEB_ROOT, site), site_id) or {}).get("PROD_ENVIRONMENT") or site_id
+
+
+def harbor_api_sources(site, destination):
+    """The sites that may sync to this one, and what: the dashboard shows when they last did, and whether they have
+    changed since (harbor_api_destinations seen from the other side)"""
+    root = os.path.join(WEB_ROOT, site)
+    config = _data_sync_module.load(root)
+    found = []
+    for source in ["main", *target_ids(root)]:
+        if source == destination:
+            continue
+        try:
+            kinds = _data_sync_module.kinds(config, source, destination)
+        except ValueError:
+            kinds = []
+        try:
+            _data_sync_module.settings_allowed(config, source, destination)
+            settings_allowed = True
+        except ValueError:
+            settings_allowed = False
+        if kinds or settings_allowed:
+            found.append({"id": source, "environment": environment_name(site, source), "settings": settings_allowed, "data": kinds})
+    order = ["development", "test", "staging", "production"]
+    found.sort(key=lambda item: (order.index(item["environment"].lower()) if item["environment"].lower() in order else len(order), item["id"]))
+    return found
+
+
+SYNC_PRINTS = {}
+SYNC_PRINTS_LOCK = threading.Lock()
+
+
+def current_prints(site, site_id):
+    """What a site has now, by kind ({} when its files are not on this server). Kept 30 seconds: the dashboard and
+    the condition that shows its tab ask at once."""
+    from harbor.core.system import System
+    from harbor.environments import history
+    from harbor.sites.actions import site_named
+    key = (site, site_id)
+    with SYNC_PRINTS_LOCK:
+        cached = SYNC_PRINTS.get(key)
+        if cached and time.monotonic() - cached[0] < 30:
+            return cached[1]
+    system = System()
+    folder = history.local_folder(system, site_named(system, site), site_id)
+    prints = history.fingerprints(system.path(folder)) if folder and system.path(folder).is_dir() else {}
+    with SYNC_PRINTS_LOCK:
+        SYNC_PRINTS[key] = (time.monotonic(), prints)
+    return prints
+
+
+def add_sync_history(site, here, destinations, sources):
+    """Each destination and source with its last syncs and whether the sending site has changed since"""
+    from harbor.core.system import System
+    from harbor.environments import history
+    system = System()
+    kinds = lambda item: (["settings"] if item["settings"] else []) + list(item["data"])  # noqa: E731
+    mine = current_prints(site, here) if destinations else {}
+    config = _data_sync_module.load(os.path.join(WEB_ROOT, site))
+    for item in destinations:
+        item["history"] = history.between(system, site, here, item["id"], kinds(item), mine)
+        item["settings_behind"] = settings_behind(system, site, item["id"], config) if item["data"] else ""
+    for item in sources:
+        item["history"] = history.between(system, site, item["id"], here, kinds(item), current_prints(site, item["id"]))
+
+
+def settings_behind(system, site, destination, config):
+    """Why data may not go to destination yet (its settings are behind the main site's), or "": as harbor env
+    data-sync decides it. A destination that may not receive settings keeps its own."""
+    from harbor.environments import history
+    from harbor.sites.actions import site_named
+    if destination == "main":
+        return ""
+    try:
+        _data_sync_module.settings_allowed(config, "main", destination)
+    except ValueError:
+        return ""
+    return history.settings_behind(system, site_named(system, site), destination, current_prints(site, "main"))
+
+
+def recent_syncs(site, here, count=10):
+    """The newest syncs from or to this site, with the environments by name"""
+    from harbor.core.system import System
+    from harbor.environments import history
+    names = {}
+    found = []
+    for entry in history.entries(System(), site):
+        if here not in (entry.get("from"), entry.get("to")):
+            continue
+        for key in ("from", "to"):
+            if entry.get(key) not in names:
+                names[entry.get(key)] = environment_name(site, entry.get(key))
+        found.append({"time": entry.get("time"), "from": names[entry.get("from")], "to": names[entry.get("to")],
+                      "kinds": entry.get("kinds", []), "ok": entry.get("ok"), "who": entry.get("who", "")})
+        if len(found) == count:
+            break
+    return found
 
 
 def harbor_api_setup(site, source):
@@ -2357,15 +2468,24 @@ def harbor_api_sync():
         return error("Choose settings or data.", 400)
     # all: every environment that may receive it from this site
     names = [item for item, found in allowed.items() if found["settings" if what == "settings" else "data"]] if destination == "all" else [destination]
+    if destination == "all" and what == "data":
+        # Data to all goes where the settings are in sync; harbor refuses the others
+        from harbor.core.system import System
+        config = _data_sync_module.load(os.path.join(WEB_ROOT, site))
+        names = [name for name in names if not settings_behind(System(), site, name, config)]
     if not names or any(name not in allowed or not allowed[name]["settings" if what == "settings" else "data"] for name in names):
         return error("This site may not sync that there. Sync setup in Harbor decides.", 403)
     payload = ({"kind": "sync_env", "site": site, "source": source, "destination": ",".join(names)} if what == "settings"
                else {"kind": "data_sync", "site": site, "source": source, "destination": ",".join(names)})
     title, argv, cwd = build_command(payload)
+    # Who started it, for the history: the Umbraco user the package names
+    who = data.get("who") if isinstance(data.get("who"), str) else ""
+    who = re.sub(r"[\x00-\x1f]", "", who).strip()[:80]
     with SESSIONS_LOCK:
         if sum(1 for s in SESSIONS.values() if s.running) >= MAX_SESSIONS:
             return error("Harbor is busy. Try again in a moment.", 503)
-        session_obj = TermSession(title + " (from Umbraco)", argv, cwd, None, auto_close=True, sites=terminal_activity_sites(payload),
+        session_obj = TermSession(title + " (from Umbraco)", argv, cwd, {"HARBOR_SYNC_WHO": f"{who} (Umbraco)" if who else "Umbraco"},
+                                  auto_close=True, sites=terminal_activity_sites(payload),
                                   scope=terminal_scope(payload), targets=terminal_targets(payload), owner=access.ROOT, locked=True)
         session_obj.process = True
         session_obj.harbor_site = (site, source)
@@ -3603,7 +3723,9 @@ def build_command(data):
                 _data_sync_module.kinds(config, source, destination)
             except ValueError as exc:
                 abort(400, str(exc))
-        return "Sync data: " + site, [*harbor_argv("data_sync.sh"), site, "sync", source, ",".join(destinations)], HARBOR_DIR
+        # Sync everything: the settings first where they are behind, in the same task
+        first = ["--settings-first"] if data.get("settings_first") is True else []
+        return "Sync data: " + site, [*harbor_argv("data_sync.sh"), site, "sync", source, ",".join(destinations), *first], HARBOR_DIR
     if kind == "sync_env":
         site = site_arg(data)
         source = data.get("source", "")
@@ -3963,6 +4085,10 @@ def authorize_task(data):
         need(data.get("source") or "main", "sync_data")
         for env in str(data.get("destination", "")).split(","):
             need(env.strip(), "sync_data")
+            # The settings first: from the main site, as Sync settings would
+            if data.get("settings_first") is True:
+                need("main", "sync_settings")
+                need(env.strip(), "sync_settings")
     elif kind == "sync_env":
         need(data.get("source") or "main", "sync_settings")
         if data.get("destination") == "all":
@@ -4052,6 +4178,9 @@ def api_term():
                                for value in connection.values())):
                     abort(400, "Enter SQL server, database, username and password.")
                 extra_env["VNS_COPY_SQL"] = json.dumps(connection)
+    if payload.get("kind") in ("sync_env", "data_sync"):
+        # Who started it, for the sync history the dashboard in Umbraco shows
+        extra_env = {**(extra_env or {}), "HARBOR_SYNC_WHO": (me() or {}).get("username", "")}
     if payload.get("kind") == "move_site":
         host, user, password, port = ssh_login(payload)
         # Its folder, binding and project name on the new server. Environments run the build it makes, so only a
@@ -4189,6 +4318,45 @@ def save_data_sync(site):
         app.logger.error("Could not save data sync settings for %s: %s", site, exc)
         abort(400, str(exc))
     return jsonify(settings=settings)
+
+
+@app.route("/api/sites/<site>/sync-status")
+def sync_status(site):
+    """For the Sync dialog: each destination's last syncs from the source, whether the source has changed since, and
+    (for data) whether its settings are behind; and the newest syncs from or to the source. As the dashboard in
+    Umbraco shows them (harbor/environments/history.py)."""
+    if site not in site_dirs():
+        abort(400, "Unknown site")
+    source = data_sync_id(site, request.args.get("source") or "main")
+    kind = request.args.get("kind") or "settings"
+    if kind not in ("settings", "data"):
+        abort(400, "Choose settings or data")
+    if not access.can(me(), site, source, "sync_data" if kind == "data" else "sync_settings"):
+        abort(403, "You do not have access to do this.")
+    from harbor.core.system import System
+    from harbor.environments import history
+    system = System()
+    root = os.path.join(WEB_ROOT, site)
+    config = _data_sync_module.load(root)
+    mine = current_prints(site, source)
+    found = {}
+    for destination in ["main", *target_ids(root)]:
+        if destination == source:
+            continue
+        if kind == "data":
+            try:
+                kinds = _data_sync_module.kinds(config, source, destination)
+            except ValueError:
+                continue
+            found[destination] = {"history": history.between(system, site, source, destination, kinds, mine),
+                                  "settings_behind": settings_behind(system, site, destination, config)}
+        else:
+            found[destination] = {"history": history.between(system, site, source, destination, ["settings"], mine)}
+    try:
+        recent = recent_syncs(site, source)
+    except (OSError, ValueError):
+        recent = []
+    return jsonify(destinations=found, recent=recent)
 
 
 @app.route("/api/sites/<site>/config/<kind>", methods=["GET", "POST"])

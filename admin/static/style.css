@@ -704,6 +704,30 @@ a.btn-link .ico { width: 13px; height: 13px; flex: none; }
 .sync-choice .tc-sub { overflow-wrap: anywhere; }
 .sync-choice.env-all { --env-tone: var(--green); grid-column: 1 / -1; min-height: 0; }
 .sync-chips { display: flex; gap: 6px; margin-top: 6px; }
+/* Each destination's last syncs, as the dashboard in Umbraco shows them */
+.sync-status { display: grid; gap: 3px; margin-top: 8px; font-size: 12px; }
+.sync-status-row { display: flex; align-items: center; gap: 8px; }
+.sync-status-kind { min-width: 56px; color: var(--text); font-weight: 600; }
+.sync-status-when { color: var(--muted); white-space: nowrap; }
+.sync-status-pill { margin-left: auto; padding: 0 7px; border-radius: 999px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+.sync-status-row.current .sync-status-pill { background: rgba(63, 185, 80, .15); color: var(--green); }
+.sync-status-row.changed .sync-status-pill, .sync-status-row.behind .sync-status-pill { background: rgba(210, 153, 34, .16); color: #d29922; }
+.sync-status-row.failed .sync-status-pill { background: rgba(248, 81, 73, .15); color: var(--red); }
+.sync-status-row.never .sync-status-pill { background: rgba(255, 255, 255, .06); color: var(--muted); }
+.sync-choice.up-to-date, .sync-choice.settings-behind { opacity: .6; cursor: not-allowed; }
+.sync-choice.up-to-date::after { content: "Nothing to sync"; position: absolute; top: 10px; right: 12px; color: var(--green); font-size: 11px; font-weight: 700; }
+.sync-anyway-row { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin: 10px 0 0; font-size: 12px; }
+dialog .sync-settings-first { display: flex; flex-direction: row; align-items: flex-start; gap: 10px; margin: 14px 0 0; padding: 10px 12px; border: 1px solid rgba(210, 153, 34, .35); border-radius: 10px; background: rgba(210, 153, 34, .08); cursor: pointer; text-align: left; }
+dialog .sync-settings-first input { flex: none; width: 16px; height: 16px; min-height: 0; margin: 2px 0 0; padding: 0; }
+.sync-settings-first span { display: grid; gap: 2px; }
+.sync-settings-first small { color: var(--muted); }
+.sync-recent { margin-top: 14px; font-size: 12px; }
+.sync-recent-title { margin-bottom: 6px; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+.sync-recent table { width: 100%; border-collapse: collapse; }
+.sync-recent td { padding: 4px 8px 4px 0; border-top: 1px solid var(--line); white-space: nowrap; }
+.sync-recent tr:first-child td { border-top: 0; }
+.sync-recent-result { text-align: right; color: var(--green); }
+.sync-recent tr.failed .sync-recent-result { color: var(--red); }
 .sync-chip { padding: 1px 8px; border-radius: 999px; background: color-mix(in srgb, var(--env-tone) 16%, transparent); color: var(--env-tone); font-size: 11px; font-weight: 600; text-transform: capitalize; }
 @media (max-width: 440px) { .sync-choices { grid-template-columns: 1fr; } }
 dialog.newsite .sync-options ~ .hint { margin-top: 12px; }

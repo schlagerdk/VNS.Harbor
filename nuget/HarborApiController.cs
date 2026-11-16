@@ -42,7 +42,9 @@ public sealed class HarborApiController(IWebHostEnvironment host, IBackOfficeSec
 		if (!Allowed || connection is null) {
 			return Forbid();
 		}
-		var (status, body) = await Ask(connection, HttpMethod.Post, "sync", new { destination = request.Destination, what = request.What });
+		// Who asked, for Harbor's sync history: the Umbraco user, by name
+		var who = security.BackOfficeSecurity?.CurrentUser?.Name ?? "";
+		var (status, body) = await Ask(connection, HttpMethod.Post, "sync", new { destination = request.Destination, what = request.What, who });
 		return StatusCode(status == 0 ? StatusCodes.Status502BadGateway : status, body);
 	}
 

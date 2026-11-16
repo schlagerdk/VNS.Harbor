@@ -178,6 +178,18 @@ def in_environment_order(system, site, ids):
     return sorted(ids, key=rank)
 
 
+def display_name(system, site, site_id):
+    """A site by the environment it is, as the admin and the dashboard name it: Production, not production. The main
+    site by the environment its service runs as, or "the main site"."""
+    if site_id == "main":
+        from harbor.sites.tools import service_environment
+        return service_environment(system, site) or "the main site"
+    try:
+        return settings.load(system, site.site_root, site_id).other.get("ENVIRONMENT") or site_id
+    except settings.SettingsError:
+        return site_id
+
+
 def sync_environments(system, name, source_id, to, data="", dry_run=False):
     if dry_run:
         system.say("DRY RUN: nothing is changed on the destinations.")
@@ -221,7 +233,7 @@ def sync_environments(system, name, source_id, to, data="", dry_run=False):
             if check.ok:
                 allowed.append(target)
             elif to == "all":
-                system.say(f"{target}: skipped, {reason}")
+                system.say(f"{display_name(system, site, target)}: skipped, {reason}")
             else:
                 raise Stop(f"{reason}. Change it in Sync setup.")
         if not allowed:
@@ -236,7 +248,7 @@ def sync_environments(system, name, source_id, to, data="", dry_run=False):
         else:
             work = tempfile.mkdtemp()
             source = work
-            system.step(f"Copy {sync.what} from {source_id}")
+            system.step(f"Copy {sync.what} from {display_name(system, site, source_id)}")
             try:
                 sync.pull(source_id, source)
             except CommandFailed as error:
@@ -262,17 +274,26 @@ def sync_environments(system, name, source_id, to, data="", dry_run=False):
         if not mirror:
             raise Stop(f"Nothing to sync in {source}.")
 
+        # What is sent, kept with each sync, so the dashboard can tell whether the source has changed since
+        from harbor.environments import history
+        kinds = history.kinds_of(data)
+        prints = history.fingerprints(source, kinds) if not dry_run else {}
         failed = 0
         for target in destinations:
             if sync.missing(target):
-                system.say(f"{target}: SKIPPED (the site no longer exists on the server)")
+                system.say(f"{display_name(system, site, target)}: SKIPPED (the site no longer exists on the server)")
                 continue
-            system.step(f"Sync {sync.what} to {target}")
+            system.step(f"Sync {sync.what} to {display_name(system, site, target)}")
             try:
                 sync.push(target, source, mirror, files)
             except (Failed, Stop):
-                system.warn(f"{target}: FAILED")
+                system.warn(f"{display_name(system, site, target)}: FAILED")
                 failed += 1
+                if not dry_run:
+                    history.record(system, site.name, source_id, target, kinds, False, prints)
+                continue
+            if not dry_run:
+                history.record(system, site.name, source_id, target, kinds, True, prints)
     finally:
         if work:
             shutil.rmtree(work, ignore_errors=True)

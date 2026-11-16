@@ -19,7 +19,7 @@ import tempfile
 from harbor.core.names import service_name
 from harbor.core.system import CommandFailed, Stop
 from harbor.environments import settings
-from harbor.environments.sync import Sync, sync_environments
+from harbor.environments.sync import Sync, display_name, sync_environments
 from harbor.environments.windows import Share
 from harbor.sites.actions import site_named
 from harbor.core.paths import LIB
@@ -140,12 +140,27 @@ class DataSync:
         return settings.remote_exec(self.system, environment, f"compgen -G {shlex.quote(environment.root)}'/uSync/*/Content/*' >/dev/null",
                                     check=False, capture=True).ok
 
-    def sync_one(self, source, destination, dry_run):
-        """One destination: settings from the main site, then the data merged in, then a restart to import it"""
+    def settings_behind(self, destination):
+        """Why the destination's settings are not those of the main site, or "": data is only merged into a site whose
+        document types match. Only data is sent; Sync settings (or Sync everything) sends the settings first.
+        A destination that may not receive settings (Sync setup) keeps its own, which must already match."""
+        from harbor.environments import history
+        if destination == "main":
+            return ""
+        try:
+            self.rules.settings_allowed(self.config(), "main", destination)
+        except ValueError:
+            return ""
+        return history.settings_behind(self.system, self.site, destination)
+
+    def sync_one(self, source, destination, dry_run, settings_first=False):
+        """One destination: the data merged in, then a restart to import it. The settings must be in sync first; with
+        settings_first (Sync everything) they are synced first when they are behind."""
         system = self.system
         kinds = self.kinds(source, destination)
-        system.step(f"{destination}: {' and '.join(kinds)} from {source}. Nothing is deleted on {destination}.")
-
+        # The sites by the environment they are, as the admin and the dashboard name them
+        source_name, destination_name = display_name(system, self.site, source), display_name(system, self.site, destination)
+        system.step(f"{destination_name}: {' and '.join(kinds)} from {source_name}. Nothing is deleted on {destination_name}.")
         def sync(*args, **options):
             try:
                 sync_environments(system, self.site.name, *args, dry_run=dry_run, **options)
@@ -153,31 +168,27 @@ class DataSync:
                 if str(error):
                     system.warn(str(error))
                 raise Failed() from None
-        # Settings first, so the document types match, unless Sync setup says the destination does not take them
-        if destination != "main":
-            try:
-                self.rules.settings_allowed(self.config(), "main", destination)
-                allowed, reason = True, ""
-            except ValueError as error:
-                allowed, reason = False, str(error)
-            if allowed:
-                system.step(f"Settings from the main site to {destination}")
-                sync("main", destination)
-            else:
-                system.say(f"Settings are not synced first: {reason}. Its document types must already match.")
-        system.step(f"Data from {source} to {destination}")
+        behind = self.settings_behind(destination)
+        if behind and settings_first:
+            system.step(f"Settings from {display_name(system, self.site, 'main')} to {destination_name}: {behind[0].lower() + behind[1:]}")
+            sync("main", destination)
+            behind = "" if dry_run else self.settings_behind(destination)
+        if behind:
+            system.warn(f"{behind}. Sync settings first, or use Sync everything: data is only merged into a site with the same document types.")
+            raise Failed()
+        system.step(f"Data from {source_name} to {destination_name}")
         sync(source, destination, data=",".join(kinds))
         if dry_run:
-            system.say(f"DRY RUN: {destination} is not restarted.")
+            system.say(f"DRY RUN: {destination_name} is not restarted.")
             return
         # The destination imports what it received at startup. Its settings are applied again on the way, so a
         # destination edited by hand still imports.
-        system.step(f"Import on {destination}")
+        system.step(f"Import on {destination_name}")
         try:
             self.apply_settings(destination, force=True)
         except (CommandFailed, Stop):
             raise Failed() from None
-        system.say(f"uSync on {destination} imports the data as it starts. Its log in the backoffice shows the result.")
+        system.say(f"uSync on {destination_name} imports the data as it starts. Its log in the backoffice shows the result.")
 
 
 def data_sync(system, name, action, source="", destinations="", option=""):
@@ -197,8 +208,8 @@ def data_sync(system, name, action, source="", destinations="", option=""):
         system.say("Done.")
         return
     if action != "sync":
-        raise Stop("Usage: data_sync.sh <site> settings <main|environment> | sync <from> <to> [--dry-run]")
-    if option not in ("", "--dry-run"):
+        raise Stop("Usage: data_sync.sh <site> settings <main|environment> | sync <from> <to> [--dry-run|--settings-first]")
+    if option not in ("", "--dry-run", "--settings-first"):
         raise Stop(f"Unknown option: {option}")
     dry_run = option == "--dry-run"
     data.valid(source)
@@ -221,7 +232,7 @@ def data_sync(system, name, action, source="", destinations="", option=""):
     failed = []
     for destination in named:
         try:
-            data.sync_one(source, destination, dry_run)
+            data.sync_one(source, destination, dry_run, settings_first=option == "--settings-first")
         except Failed:
             system.warn(f"{destination}: FAILED")
             failed.append(destination)

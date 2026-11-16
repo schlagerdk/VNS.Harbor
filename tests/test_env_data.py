@@ -39,25 +39,32 @@ class DataSyncTests(SyncTests):
         self.fake.program("systemctl", "")
         self.fake.program("chown", "")
 
+    def real(self, program):
+        def run(argv, stdin=None):
+            # A path on the server, not one harbor already gave under the fake server's folder
+            argv = [re.sub(r"(?<![\w.-])/var/www", str(self.web), arg) for arg in argv[1:]]
+            # With the fake server's programs, as the script had them
+            done = subprocess.run([program, *argv], capture_output=True, text=True, input=stdin, env=self.fake.env())
+            return Result(done.returncode, done.stdout, done.stderr)
+        return run
+
+    def answers(self):
+        return {"rsync": self.real("/usr/bin/rsync"), "python3": self.real("python3"),
+                # As root here: the tests run as a user
+                "sudo": lambda argv, stdin: self.real(argv[1])(argv[1:], stdin)}
+
+    def sync_settings_first(self, destination="staging"):
+        """Data only goes to a site whose settings are in sync: harbor syncs them, and keeps that in its history"""
+        code, system, _ = self.harbor(["env", "sync", "shop.dk", "main", destination], answers=self.answers())
+        self.assertEqual(code, 0, system.said)
+
     def compare(self, *args):
         before = self.snapshot()
         result, _, _, _ = self.legacy("data_sync.sh", "shop.dk", *args)
         legacy_files = self.snapshot()
         restarts = [line.rsplit(" |", 1)[0] for line in self.fake.calls() if line.startswith("systemctl ")]
         self.restore(before)
-
-        def real(program):
-            def run(argv, stdin=None):
-                # A path on the server, not one harbor already gave under the fake server's folder
-                argv = [re.sub(r"(?<![\w.-])/var/www", str(self.web), arg) for arg in argv[1:]]
-                # With the fake server's programs, as the script had them
-                done = subprocess.run([program, *argv], capture_output=True, text=True, input=stdin, env=self.fake.env())
-                return Result(done.returncode, done.stdout, done.stderr)
-            return run
-        code, system, _ = self.harbor(["env", "data-sync", "shop.dk", *args],
-                                      answers={"rsync": real("/usr/bin/rsync"), "python3": real("python3"),
-                                               # As root here: the tests run as a user
-                                               "sudo": lambda argv, stdin: real(argv[1])(argv[1:], stdin)})
+        code, system, _ = self.harbor(["env", "data-sync", "shop.dk", *args], answers=self.answers())
         self.assertEqual(code, result.returncode, (result.stdout, result.stderr, system.said))
         self.assertEqual(self.snapshot(), legacy_files)
         # Here or in an environment on this server (through sudo bash -c), as the fake systemctl saw them
@@ -74,13 +81,41 @@ class DataSyncTests(SyncTests):
                 self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_data_to_an_environment(self):
+        # The script synced the settings first: harbor sends only the data, to a site whose settings are in sync
+        self.sync_settings_first()
         for option in ("--dry-run", ""):
             with self.subTest(option=option):
                 result, system = self.compare("sync", "main", "staging", *([option] if option else []))
                 self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertFalse(any(line.startswith("Sync settings") for line in system.said), system.said)
         staging = self.web / "shop.dk/_staging"
         self.assertTrue((staging / "uSync/v17/Content/item.config").is_file())
-        self.assertTrue((staging / "uSync/v17/DataTypes/item.config").is_file(), "settings came first")
+        self.assertTrue((staging / "uSync/v17/DataTypes/item.config").is_file(), "the settings synced first")
+
+    def test_no_data_to_a_site_whose_settings_are_behind(self):
+        """Data merged into other document types gives problems there: Sync settings (or Sync everything) first"""
+        code, system, _ = self.harbor(["env", "data-sync", "shop.dk", "sync", "main", "staging"], answers=self.answers())
+        self.assertNotEqual(code, 0)
+        self.assertTrue(any("have not been synced" in line and "Sync settings first" in line for line in system.said), system.said)
+        self.assertFalse((self.web / "shop.dk/_staging/uSync/v17/Content/item.config").exists())
+        # Synced, then changed on the main site: behind again
+        self.sync_settings_first()
+        (self.web / "shop.dk/_publish/uSync/v17/DataTypes/item.config").write_text("<changed/>")
+        code, system, _ = self.harbor(["env", "data-sync", "shop.dk", "sync", "main", "staging"], answers=self.answers())
+        self.assertNotEqual(code, 0)
+        self.assertTrue(any("not synced to" in line for line in system.said), system.said)
+
+    def test_sync_everything_sends_the_settings_first(self):
+        """--settings-first (Sync everything): the settings where they are behind, then the data, in one task"""
+        code, system, _ = self.harbor(["env", "data-sync", "shop.dk", "sync", "main", "staging", "--settings-first"], answers=self.answers())
+        self.assertEqual(code, 0, system.said)
+        staging = self.web / "shop.dk/_staging"
+        self.assertTrue((staging / "uSync/v17/DataTypes/item.config").is_file())
+        self.assertTrue((staging / "uSync/v17/Content/item.config").is_file())
+        # In sync now: the next time only the data goes
+        code, system, _ = self.harbor(["env", "data-sync", "shop.dk", "sync", "main", "staging", "--settings-first"], answers=self.answers())
+        self.assertEqual(code, 0, system.said)
+        self.assertFalse(any(line.startswith("Settings from") for line in system.said), system.said)
 
     def test_without_content_written_by_usync(self):
         for path in (self.web / "shop.dk/_publish/uSync/v17/Content").iterdir():

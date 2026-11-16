@@ -648,9 +648,14 @@
     <fieldset class="environment-options sync-options">
       <legend>Sync to <button type="button" id="sync-select-all" class="cancel-link sync-select-all">Select all</button></legend>
       <div id="sync-destination" class="sync-choices"></div>
+      <p class="sync-anyway-row" id="sync-anyway-row" hidden><button type="button" id="sync-anyway" class="cancel-link">Also choose the ones that are up to date</button>
+        <span class="muted">Up to date means nothing has changed here since they were synced: choose them when something was changed there.</span></p>
     </fieldset>
+    <label class="sync-settings-first" id="sync-settings-first-row" hidden><input type="checkbox" id="sync-settings-first">
+      <span><strong>Sync settings first</strong><small id="sync-settings-first-text">Where they are behind, the settings go first: data only goes to a site with the same document types.</small></span></label>
     <p class="hint" id="sync-hint-settings">The uSync settings (document types, data types, templates, languages and the like), Views, css and scripts are mirrored. Content, media, dictionary and domains are never touched. A folder that is missing in the source is skipped.</p>
-    <p class="hint" id="sync-hint-data" hidden>Settings are first synced from the main site to the destination. Then content and media are merged into it: they are added and updated, never deleted. The destination restarts, and uSync imports the data at startup.</p>
+    <p class="hint" id="sync-hint-data" hidden>Content and media are merged into the destination: they are added and updated, never deleted. Its settings must be those of the main site first. The destination restarts, and uSync imports the data at startup.</p>
+    <div id="sync-recent" class="sync-recent" hidden></div>
     <menu><button type="button" id="sync-cancel" class="cancel-link">Cancel</button><button type="submit" id="sync-submit" class="primary">Sync</button></menu>
   </form>
 </dialog>

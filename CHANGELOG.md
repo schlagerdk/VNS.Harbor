@@ -4,9 +4,18 @@ All notable changes to VNS Harbor are listed here, newest first.
 
 ## [1.0.8] - 2026-11-16
 
+### Features
+
+- Sync history: Harbor keeps each sync (when, which way, what, who started it and whether it worked), and shows for each environment when settings, content and media were last synced there, and whether the source has changed since: Up to date, Changes not synced, Never synced or Last sync failed. In the admin's Sync dialogs and in the dashboard in Umbraco (VNS.Harbor 18.3.1.6), with the newest syncs
+- What is up to date is not synced again by mistake: its button is off, with Nothing to sync, and Sync anyway when something was changed on the destination
+- A site that only receives shows its tab in Umbraco too, with Receives from: when it last received, and what has not reached it yet
+- A sync in Umbraco closes by itself when it went well, unless Cancel stops it, and has a Close button
+
 ### Changes
 
-- The dashboard in Umbraco is called VNS Harbor Sync, its tab and its user group too (VNS.Harbor 18.3.1.6); the package keeps its name. A user group made before keeps its name and alias
+- Sync data sends only content and media, and only to a site whose settings are those of the main site: Sync settings first, or Sync everything (settings where they are behind, then data). A data sync to a site whose settings are behind is refused, from the admin, Umbraco and harbor env data-sync alike
+- A sync's steps name the environments as the admin does: Production, not production
+- The dashboard in Umbraco is called VNS Harbor Sync, its tab and its user group too; the package keeps its name. A user group made before keeps its name and alias
 - What this site sends and receives is written with capitals: Settings · Content · Media, or Nothing
 
 ## [1.0.7] - 2026-11-14

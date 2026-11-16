@@ -45,8 +45,8 @@ Every other link is refused and sends you to the normal login. Harbor logs each 
 
 ## The dashboard
 
-The **VNS Harbor Sync** dashboard is a tab in the Content section. It is only there when Sync setup lets the site send
-something to one of its environments. From there an editor can:
+The **VNS Harbor Sync** dashboard is a tab in the Content section. It is there when Sync setup lets the site send
+something to one of its environments or receive something from one. From there an editor can:
 
 - see what Sync setup lets this site itself send and receive. When it receives anything, other environments may
   overwrite it there, and the dashboard says so.
@@ -56,6 +56,14 @@ something to one of its environments. From there an editor can:
 - sync everything to one environment: settings first, then data
 - see on each environment, and in a sync as it runs, which way it goes (such as Production → Staging)
 - follow the sync's steps as Harbor runs them
+- see, for each environment, when settings, content and media were last synced there, and whether this site has
+  changed since (Changes not synced)
+- on a site that receives, see the same for the environments that sync to it (Receives from)
+- see the newest syncs from and to this site: when, which way, what, who started them and whether they worked
+
+Whether a site has changed since its last sync is known when its files are on the Harbor server: the main site and
+its environments in a folder there. For an environment on another server or on Windows the dashboard shows when it
+was synced, but not whether it has changed since.
 
 The rules are the same as in the Harbor admin: which environments may send, which may receive, and what each takes part in. The sync itself runs in Harbor, never in the site. The site runs as `www-data` and has no rights to run anything as root.
 
