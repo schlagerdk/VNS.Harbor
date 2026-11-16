@@ -262,14 +262,24 @@ class Move:
 
     # ---- to a remote Linux or Windows server
     def fetch_windows_source(self):
+        """What a Windows site has that its build does not: its settings, its SQLite database and its files. Of umbraco
+        only the database in umbraco/Data: logs, locks and TEMP are the running site's own, and a file IIS holds open
+        cannot be read. Filters, not --include with --exclude, whose order rclone does not promise."""
         share = self.share(self.source)
-        share.rclone("copy", share.target, self.content, "--exclude", "/appsettings-schema*.json", "--include", "/appsettings*.json",
-                     "--exclude", "*", "--modify-window", "2s", "--stats", "0")
-        for folder in ("umbraco", "uSync", "Views", "wwwroot", "App_Data"):
+        share.rclone("copy", share.target, self.content, "--filter", "- /appsettings-schema*.json", "--filter", "+ /appsettings*.json",
+                     "--filter", "- *", "--modify-window", "2s", "--stats", "0")
+        if share.rclone("lsf", f"{share.target}/umbraco/Data", "--max-depth", "1", check=False, capture=True).ok:
+            self.system.say("Copy the SQLite database (umbraco/Data)")
+            share.rclone("copy", f"{share.target}/umbraco/Data", f"{self.content}/umbraco/Data", "--max-depth", "1",
+                         *[argument for pattern in ("+ *.sqlite.db", "+ *.sqlite.db-wal", "+ *.sqlite.db-shm", "- *") for argument in ("--filter", pattern)],
+                         "--modify-window", "2s", "--stats", "0")
+        for folder in ("uSync", "Views", "wwwroot", "App_Data"):
             if not share.rclone("lsf", f"{share.target}/{folder}", "--max-depth", "1", check=False, capture=True).ok:
                 continue
             self.system.say(f"Copy {folder}")
-            share.rclone("copy", f"{share.target}/{folder}", f"{self.content}/{folder}", "--create-empty-src-dirs", "--modify-window", "2s", "--stats", "0")
+            share.rclone("copy", f"{share.target}/{folder}", f"{self.content}/{folder}", "--create-empty-src-dirs",
+                         *[argument for pattern in ("- /TEMP/**", "- /Logs/**", "- *.lock", "- *.partial", "+ **") for argument in ("--filter", pattern)],
+                         "--modify-window", "2s", "--stats", "0")
 
     def fetch_source(self):
         """The source's folder as rsync sees it"""

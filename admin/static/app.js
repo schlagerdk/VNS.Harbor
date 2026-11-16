@@ -1764,7 +1764,9 @@ function envPanel(site, env) {
 	}
 	// An environment on Windows is only removed here: its IIS site and files stay on the server
 	if (hasProd(site) && !site.admin && env.mode === "windows") addManage("Remove environment", () => deleteSite(site, "prod", env), "push-right");
-	else if (hasProd(site) && !site.admin) addManage("Delete site", () => deleteSite(site, isTarget(env) ? "prod" : "test", env), "danger");
+	// An environment is deleted on its own card. The main site only when it has none left: they are built from its
+	// project (harbor refuses it too)
+	else if (hasProd(site) && !site.admin && isTarget(env)) addManage("Delete site", () => deleteSite(site, "prod", env), "danger");
 	if (!hasProd(site) && !site.admin) addManage("Delete site", () => deleteSite(site, "all"), "danger");
 
 	// Its edge in the colour of its environment, as its badge

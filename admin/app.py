@@ -1327,7 +1327,8 @@ def site_info(name, states):
         environment["data_sync"] = _data_sync_module.clean(data_sync.get(site_id), site_id)
     # An environment moved from Windows and not taken over yet: Refresh from Windows and Take over on its card
     try:
-        moves = json.loads(Path(HARBOR_SITES, name, "windows-move.json").read_text())
+        with open(os.path.join(HARBOR_SITES, name, "windows-move.json"), encoding="utf-8") as stream:
+            moves = json.load(stream)
     except (OSError, ValueError):
         moves = {}
     for environment in environments:
@@ -3076,7 +3077,10 @@ def terminal_scope(payload):
 
 def terminal_auto_close(payload):
     kind = payload.get("kind")
-    if kind in ("shell", "create_site", "setup_site", "copy_site", "register_env", "create_prod", "sync_env", "data_sync", "data_sync_settings", "move_env", "move_site", "adopt_site", "release_site", "delete_site", "change_binding", "prod_action", "dotnet_package", "fix_permissions", "publish_both", "bulk", "update_package", "sql_action", "install_sql_tools", "server_tool", "servers"):
+    if kind in ("shell", "create_site", "setup_site", "copy_site", "register_env", "create_prod", "sync_env", "data_sync", "data_sync_settings", "move_env", "move_site", "adopt_site", "release_site", "delete_site", "change_binding", "prod_action", "dotnet_package", "fix_permissions", "publish_both", "bulk", "update_package", "sql_action", "install_sql_tools", "server_tool", "servers",
+                # Moving sites and environments from Windows: an action with its steps, not a terminal
+                "windows_import", "windows_refresh", "windows_refresh_all", "windows_take_over",
+                "windows_move", "windows_move_refresh", "windows_move_refresh_all", "windows_move_take_over"):
         return True
     if kind == "remote_tool":
         return payload.get("tool") == "shell"

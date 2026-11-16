@@ -2,6 +2,15 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.11] - 2026-11-16
+
+### Fixes
+
+- Copying or moving an environment from Windows fetches only the SQLite database from umbraco (umbraco/Data), never its logs, locks or TEMP: a file IIS holds open could not be read, and the copy failed. rclone gets filters, not --include with --exclude
+- Move from Windows, Import from Windows, Refresh and Take over run in a task window with their steps, not in a terminal
+- A main site with environments has no Delete site: they are built from its project, so they are deleted first, and harbor site delete says so when asked to delete the main site alone
+- The tests run on GitHub again (a site's details read the moves from Windows without Path)
+
 ## [1.0.10] - 2026-11-16
 
 ### Features

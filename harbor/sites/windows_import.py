@@ -29,11 +29,11 @@ from harbor.state.store import read_json, site_secrets, site_state, write_json
 
 # Not copied when a site is imported: builds and what the site writes while it runs
 LEFT_OUT = ("/bin/**", "/obj/**", "/*.dll", "/*.pdb", "/*.exe", "/runtimes/**", "/refs/**", "/web.config", "/app_offline.htm",
-            "/umbraco/Data/TEMP/**", "/umbraco/Logs/**", "/App_Data/TEMP/**", "/App_Data/Logs/**", "/.vs/**", "*.user")
+            "/umbraco/Data/TEMP/**", "/umbraco/Logs/**", "/App_Data/TEMP/**", "/App_Data/Logs/**", "/.vs/**", "*.user", "*.lock", "*.partial")
 # Not copied from a build on Windows: its binaries (the site is built here), IIS's own files, and what it writes as it runs
 BUILD_LEFT_OUT = ("*.dll", "*.exe", "*.pdb", "/*.runtimeconfig.json", "/*.deps.json", "/runtimes/**", "/refs/**",
                   "/web.config", "/app_offline.htm", "/umbraco/Data/TEMP/**", "/umbraco/Logs/**", "/App_Data/TEMP/**",
-                  "/App_Data/Logs/**", "/logs/**")
+                  "/App_Data/Logs/**", "/logs/**", "*.lock", "*.partial")
 # Not copied from the project a build is built from: its builds, its environments' folders and its own data
 PROJECT_LEFT_OUT = ("/bin/", "/obj/", "/_*/", "/node_modules/", "/.git/", "/umbraco/Data/", "/umbraco/Logs/", "/wwwroot/media/",
                     "/uSync/", "/appsettings*.json", "/vns-harbor.json")

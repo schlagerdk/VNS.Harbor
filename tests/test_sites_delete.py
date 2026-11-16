@@ -74,10 +74,15 @@ class DeleteSiteTests(unittest.TestCase):
         self.assertFalse((self.new.root / "var/www/shop.dk").exists())
         self.assertIn("All is removed!", system.said)
 
-    def test_the_site_itself_keeps_its_environment_folder(self):
-        result, system = self.compare("shop.dk", "n", "test")
+    def test_the_site_itself_goes_only_when_it_has_no_environments(self):
+        """Its environments are built from its project: the script deleted it and kept them, harbor refuses"""
+        make(self.new)
+        system = self.new.system()
+        self.assertEqual(main(["site", "delete", "shop.dk", "n", "test"], system), 1)
+        self.assertIn("has environments", system.said[-1])
+        self.assertIn("staging.shop.dk", system.said[-1])
+        self.assertTrue((self.new.root / "var/www/shop.dk/App.dll").exists(), "nothing deleted")
         self.assertTrue((self.new.root / "var/www/shop.dk/_staging/App.dll").exists())
-        self.assertFalse((self.new.root / "var/www/shop.dk/App.dll").exists())
 
     def test_one_environment_and_the_scripts_go_back(self):
         result, system = self.compare("shop.dk", "n", "prod", target="staging")
