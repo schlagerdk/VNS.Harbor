@@ -2332,10 +2332,11 @@ const profileForm = $("#form-profile");
 $("#menu-profile").onclick = () => {
 	$("#user-menu").hidden = true;
 	profileForm.reset();
-	const name = $("#menu-user").textContent;
+	const name = currentUser.username || $("#menu-user").textContent;
 	profileForm.username.value = name;
-	$("#profile-avatar").textContent = name.slice(0, 1).toUpperCase();
-	$("#profile-name").textContent = name;
+	profileForm.elements.name.value = currentUser.name || "";
+	$("#profile-avatar").textContent = (currentUser.name || name).slice(0, 1).toUpperCase();
+	$("#profile-name").textContent = currentUser.name || name;
 	$("#profile-role").textContent = currentUser.admin ? "Administrator" : "User";
 	profileDialog.showModal();
 	profileForm.current_password.focus();
@@ -2348,8 +2349,9 @@ profileForm.onsubmit = (event) => {
 		if (data.new_password !== data.repeat) throw new Error("The new passwords do not match.");
 		delete data.repeat;
 		const result = await api("/api/profile", { json: data });
-		$("#menu-user").textContent = result.user;
-		$("#btn-user").textContent = result.user.slice(0, 1).toUpperCase();
+		currentUser = { ...currentUser, username: result.user, name: result.name || "" };
+		$("#menu-user").textContent = result.name || result.user;
+		$("#btn-user").textContent = (result.name || result.user).slice(0, 1).toUpperCase();
 		profileDialog.close();
 		toast("Profile saved", "ok");
 	});
@@ -5530,7 +5532,8 @@ function renderUsers() {
 	$("#users-list").replaceChildren(...(users.length ? users.map((user) => el("button", { type: "button", className: "user-row" + (user.disabled ? " disabled" : ""),
 		onclick: () => openUserEditor(user) },
 		el("span", { className: "user-avatar", textContent: user.username.slice(0, 1).toUpperCase() }),
-		el("span", { className: "user-text" }, el("strong", { textContent: user.username }), el("small", { textContent: userSummary(user) + (user.linux ? ` · Linux user ${user.linux}` : "") })),
+		el("span", { className: "user-text" }, el("strong", { textContent: user.name || user.username }),
+			el("small", { textContent: (user.name ? user.username + " · " : "") + userSummary(user) + (user.linux ? ` · Linux user ${user.linux}` : "") })),
 		el("span", { className: "badge " + (user.role === "admin" ? "user-admin" : "user-user"), textContent: user.disabled ? "Locked" : user.role === "admin" ? "Administrator" : "User" }),
 		svgIcon("chevron"))) : [el("p", { className: "muted users-empty", textContent: "No other users yet. Add one to give someone their own login." })]));
 }
@@ -5662,10 +5665,11 @@ function connectionGrantRow(connection, grant) {
 function openUserEditor(user = null) {
 	userForm.reset();
 	userForm.dataset.id = user?.id || "";
-	$("#user-title").textContent = user ? user.username : "Add user";
+	$("#user-title").textContent = user ? user.name || user.username : "Add user";
 	$("#user-description").textContent = user ? "Change what they may do. It counts at once; a new password logs them out." : "They log in with this name and password.";
 	$("#user-error").textContent = "";
 	userForm.username.value = user?.username || "";
+	userForm.elements.name.value = user?.name || "";
 	userForm.password.required = !user;
 	userForm.password.placeholder = user ? "Leave empty to keep it" : "At least 12 characters";
 	userForm.querySelector(`input[name=role][value=${user?.role || "user"}]`).checked = true;
@@ -5717,7 +5721,7 @@ userForm.onsubmit = (event) => {
 			const grant = row.collect();
 			if (grant) connections[usersData.connections[index].id] = grant;
 		});
-		const body = { username: userForm.username.value.trim(), role: userForm.role.value, disabled: userForm.disabled.checked,
+		const body = { username: userForm.username.value.trim(), name: userForm.elements.name.value.trim(), role: userForm.role.value, disabled: userForm.disabled.checked,
 			web: userForm.web.checked, create_sites: userForm.create_sites.checked, sql: userForm.sql.checked,
 			manage_connections: userForm.manage_connections.checked, sites, connections, sftp: userForm.sftp.checked };
 		if (userForm.password.value) body.password = userForm.password.value;

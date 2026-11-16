@@ -57,7 +57,23 @@ def is_admin(user):
 
 
 def root_user(config):
-    return {"id": ROOT, "username": config.get("user", ""), "role": "admin", "root": True}
+    return {"id": ROOT, "username": config.get("user", ""), "name": config.get("name", ""), "role": "admin", "root": True}
+
+
+def clean_name(value):
+    """A user's name as others see it (the sync history, the menu): optional, one line, at most 80 characters"""
+    name = " ".join(str(value or "").split())
+    if len(name) > 80 or any(ord(char) < 32 for char in name):
+        raise ValueError("The name may be at most 80 characters.")
+    return name
+
+
+def label(config, user_id):
+    """A user by name, or by username when they have none; "" when there is no such user"""
+    if user_id == ROOT:
+        return config.get("name") or config.get("user", "")
+    user = next((item for item in config.get("users", []) if item.get("id") == user_id), None)
+    return (user.get("name") or user.get("username", "")) if user else ""
 
 
 def find(config, user_id):
@@ -178,6 +194,7 @@ def clean(data, existing=None, sites=None, connections=None):
     if not USERNAME_RE.match(username):
         raise ValueError("Use letters, numbers and . _ @ - for the username (max 64).")
     user["username"] = username
+    user["name"] = clean_name(data.get("name", existing.get("name", "")))
     role = data.get("role", existing.get("role", "user"))
     if role not in ("admin", "user"):
         raise ValueError("The role must be admin or user.")

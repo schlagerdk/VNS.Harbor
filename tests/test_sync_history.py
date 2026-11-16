@@ -64,6 +64,17 @@ class HistoryTests(unittest.TestCase):
         # Not on this server: not known
         self.assertIsNone(history.between(self.system, "shop.dk", "main", "production", ["settings"], {})["settings"]["changed"])
 
+    def test_a_harbor_user_is_kept_by_id(self):
+        """The admin names them as they are named now: a name set in Profile later shows in the history too"""
+        from unittest import mock
+        with mock.patch.dict("os.environ", {"HARBOR_SYNC_WHO": "anna@shop.dk (VNS Harbor)", "HARBOR_SYNC_WHO_ID": "u_anna"}):
+            history.record(self.system, "shop.dk", "main", "test", ["settings"], True, {"settings": "a"})
+        last = history.between(self.system, "shop.dk", "main", "test", ["settings"], {})["settings"]["last"]
+        self.assertEqual((last["who"], last["who_id"]), ("anna@shop.dk (VNS Harbor)", "u_anna"))
+        # One from Umbraco has a name, not a Harbor user
+        history.record(self.system, "shop.dk", "main", "test", ["settings"], True, {"settings": "a"}, who="Anna (Umbraco)")
+        self.assertNotIn("who_id", history.between(self.system, "shop.dk", "main", "test", ["settings"], {})["settings"]["last"])
+
     def test_a_failed_sync_is_the_last_but_not_what_was_sent(self):
         history.record(self.system, "shop.dk", "main", "test", ["content", "media"], True, {"content": "c", "media": "m"})
         history.record(self.system, "shop.dk", "main", "test", ["content", "media"], False, {"content": "c2", "media": "m"})

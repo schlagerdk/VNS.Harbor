@@ -796,6 +796,8 @@
       <label>Username <input name="username" required maxlength="64" autocomplete="off" spellcheck="false"></label>
       <label>Password <input name="password" type="password" minlength="12" maxlength="128" autocomplete="new-password"></label>
     </div>
+    <label>Name <span class="muted">(optional: shown in the sync history instead of the username)</span>
+      <input name="name" maxlength="80" autocomplete="off" placeholder="Anna Hansen"></label>
     <div class="ns-section">Role</div>
     <div class="type-cards user-roles">
       <label class="type-card"><input type="radio" name="role" value="user" checked><span class="tc-title">User</span><span class="tc-sub">Only what you choose below. A terminal only in the sites you give it, never the server's.</span></label>
@@ -915,7 +917,10 @@
       <span class="user-text"><strong id="profile-name"></strong><small id="profile-role"></small></span>
     </div>
     <div class="ns-section">Account</div>
-    <label>Username <input name="username" autocomplete="username" required spellcheck="false"></label>
+    <div class="ns-grid">
+      <label>Username <input name="username" autocomplete="username" required spellcheck="false"></label>
+      <label>Name <input name="name" maxlength="80" autocomplete="name" placeholder="Shown in the sync history"></label>
+    </div>
     <div class="ns-section">New password <span class="ns-section-note">optional</span></div>
     <div class="ns-grid">
       <label>New password <input name="new_password" type="password" autocomplete="new-password" minlength="12" placeholder="Leave empty to keep it"></label>

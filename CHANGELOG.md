@@ -2,6 +2,13 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.9] - 2026-11-16
+
+### Changes
+
+- Users have a name beside their username, set in Profile (or by an administrator in Users). The menu and the sync history show it, and a sync started in the Harbor admin is named as one from Umbraco is: who, and from where (Anna Hansen (VNS Harbor)). From now on the history names a Harbor user as they are named now: a name set or changed later shows on their syncs too
+- What is up to date has no button in the dashboard in Umbraco, only a line that says so and Sync … anyway (VNS.Harbor 18.3.1.7)
+
 ## [1.0.8] - 2026-11-16
 
 ### Features

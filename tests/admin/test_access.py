@@ -11,6 +11,20 @@ SITES = {"shop.dk": ["main", "prod", "staging"], "blog.dk": ["main"]}
 
 
 class AccessTests(unittest.TestCase):
+    def test_a_name_beside_the_username(self):
+        """Shown in the sync history instead of the username, as it is now"""
+        user = access.clean({"username": "anna@shop.dk", "name": "  Anna   Hansen ", "role": "user"})
+        self.assertEqual(user["name"], "Anna Hansen")
+        self.assertEqual(access.clean({"role": "user"}, existing=user)["name"], "Anna Hansen", "kept when not sent")
+        with self.assertRaises(ValueError):
+            access.clean({"username": "anna@shop.dk", "name": "x" * 81, "role": "user"})
+        config = {"user": "root@shop.dk", "name": "", "users": [user]}
+        self.assertEqual(access.label(config, user["id"]), "Anna Hansen")
+        self.assertEqual(access.label(config, access.ROOT), "root@shop.dk", "the username without a name")
+        config["name"] = "Martin"
+        self.assertEqual(access.label(config, access.ROOT), "Martin")
+        self.assertEqual(access.label(config, "u_gone"), "")
+
     def test_terminal_gives_files(self):
         user = access.clean({"username": "anna", "web": True, "sites": {"shop.dk": {"envs": ["main"], "actions": ["terminal", "logs"]}}},
                             sites={"shop.dk": ["main"]})

@@ -47,6 +47,9 @@ def record(system, site, source, destination, kinds, ok, prints, who=""):
     """One sync to one destination, kept with what was sent"""
     entry = {"time": datetime.now(timezone.utc).isoformat(timespec="seconds"), "from": source, "to": destination,
              "kinds": list(kinds), "ok": bool(ok), "who": who or os.environ.get("HARBOR_SYNC_WHO", "")}
+    # A Harbor user by id as well: the admin names them as they are named now
+    if os.environ.get("HARBOR_SYNC_WHO_ID") and not who:
+        entry["who_id"] = os.environ["HARBOR_SYNC_WHO_ID"]
     if ok:
         entry["fingerprints"] = {kind: prints.get(kind) for kind in kinds if prints.get(kind)}
     # The sync itself has worked or not: a history that cannot be written is told, never a failed sync
@@ -158,6 +161,6 @@ def between(system, site, source, destination, kinds, now=None):
         sent = next((entry for entry in history if kind in entry.get("kinds", []) and entry.get("ok")), None)
         current = (now or {}).get(kind)
         sent_print = (sent or {}).get("fingerprints", {}).get(kind)
-        found[kind] = {"last": {key: last.get(key) for key in ("time", "ok", "who")} if last else None,
+        found[kind] = {"last": {key: last.get(key) for key in ("time", "ok", "who", "who_id") if key in last} if last else None,
                        "changed": (current != sent_print) if current and sent_print else None}
     return found

@@ -327,7 +327,7 @@ def index():
     # A user without the Web Server starts on SQL Server, and the other way round
     if not access.is_admin(user):
         start = "sql" if (start == "sql" and user.get("sql")) or not user.get("web") else "sites"
-    return render_template("index.html", csrf=csrf_token(), admin_site=ADMIN_SITE, hostname=socket.gethostname(), user=user["username"],
+    return render_template("index.html", csrf=csrf_token(), admin_site=ADMIN_SITE, hostname=socket.gethostname(), user=user.get("name") or user["username"],
                            start_view=start, role="admin" if access.is_admin(user) else "user")
 
 
@@ -2405,10 +2405,10 @@ def add_sync_history(site, here, destinations, sources):
     mine = current_prints(site, here) if destinations else {}
     config = _data_sync_module.load(os.path.join(WEB_ROOT, site))
     for item in destinations:
-        item["history"] = history.between(system, site, here, item["id"], kinds(item), mine)
+        item["history"] = name_history(history.between(system, site, here, item["id"], kinds(item), mine))
         item["settings_behind"] = settings_behind(system, site, item["id"], config, here, item["data"]) if item["data"] else ""
     for item in sources:
-        item["history"] = history.between(system, site, item["id"], here, kinds(item), current_prints(site, item["id"]))
+        item["history"] = name_history(history.between(system, site, item["id"], here, kinds(item), current_prints(site, item["id"])))
 
 
 def settings_behind(system, site, destination, config, source="main", kinds=("content", "media")):
@@ -2425,6 +2425,26 @@ def settings_behind(system, site, destination, config, source="main", kinds=("co
     return history.settings_behind(system, site_named(system, site), destination, current_prints(site, "main"), source=source, kinds=tuple(kinds))
 
 
+def sync_who(entry):
+    """Who started a sync, as they are named now: a Harbor user by their name (or username), with VNS Harbor; one in
+    Umbraco as Harbor was told"""
+    user_id = entry.get("who_id") if isinstance(entry, dict) else ""
+    if user_id:
+        label = access.label(cfg, user_id)
+        if label:
+            return f"{label} (VNS Harbor)"
+    return (entry or {}).get("who", "")
+
+
+def name_history(history):
+    """The last syncs of a destination or source, with who started them as they are named now"""
+    for found in (history or {}).values():
+        if found.get("last"):
+            found["last"]["who"] = sync_who(found["last"])
+            found["last"].pop("who_id", None)
+    return history
+
+
 def recent_syncs(site, here, count=10):
     """The newest syncs from or to this site, with the environments by name"""
     from harbor.core.system import System
@@ -2438,7 +2458,7 @@ def recent_syncs(site, here, count=10):
             if entry.get(key) not in names:
                 names[entry.get(key)] = environment_name(site, entry.get(key))
         found.append({"time": entry.get("time"), "from": names[entry.get("from")], "to": names[entry.get("to")],
-                      "kinds": entry.get("kinds", []), "ok": entry.get("ok"), "who": entry.get("who", "")})
+                      "kinds": entry.get("kinds", []), "ok": entry.get("ok"), "who": sync_who(entry)})
         if len(found) == count:
             break
     return found
@@ -2635,8 +2655,12 @@ def api_profile():
     user = me()
     root = user.get("id") == access.ROOT
     if request.method == "GET":
-        return jsonify(user=user["username"])
+        return jsonify(user=user["username"], name=user.get("name", ""))
     data = request.get_json(silent=True) or {}
+    try:
+        display_name = access.clean_name(data.get("name", user.get("name", "")))
+    except ValueError as exc:
+        return error(str(exc))
     ip = client_ip()
     if login_locked(ip):
         return error("Too many failed attempts. Try again later.", 429)
@@ -2650,13 +2674,14 @@ def api_profile():
         return error("Invalid username. Use letters, numbers and . _ @ - (max 64).")
     if new_password and len(new_password) < 12:
         return error("The new password must be at least 12 characters.")
-    if name == user["username"] and not new_password:
+    if name == user["username"] and not new_password and display_name == user.get("name", ""):
         return error("Nothing to change.")
     with CONFIG_LOCK:
         if name != user["username"] and access.taken(cfg, name, None if root else user["id"]):
             return error("That username is taken.")
         if root:
             cfg["user"] = name
+            cfg["name"] = display_name
             if new_password:
                 cfg["password_hash"] = generate_password_hash(new_password)
                 # A new secret key signs out every other session; this one is re-signed below
@@ -2664,6 +2689,7 @@ def api_profile():
                 app.secret_key = cfg["secret_key"]
         else:
             user["username"] = name
+            user["name"] = display_name
             if new_password:
                 user["password_hash"] = generate_password_hash(new_password)
                 # The user's other sessions end; this one goes on with the new version
@@ -2673,7 +2699,7 @@ def api_profile():
     if not root:
         linux_users_changed()
     session["user"] = name
-    return jsonify(ok=True, user=name)
+    return jsonify(ok=True, user=name, name=display_name)
 
 
 # ------------------------------------------------------------------- users
@@ -2766,7 +2792,7 @@ def api_me():
     """Who is logged in and what they may do: the page shows only what can be used"""
     user = me()
     admin = access.is_admin(user)
-    return jsonify(id=user["id"], username=user["username"], admin=admin, root=user["id"] == access.ROOT,
+    return jsonify(id=user["id"], username=user["username"], name=user.get("name", ""), admin=admin, root=user["id"] == access.ROOT,
                    web=admin or bool(user.get("web")), sql=admin or bool(user.get("sql")),
                    create_sites=admin or bool(user.get("create_sites")), manage_connections=admin or bool(user.get("manage_connections")),
                    sites={} if admin else {site: {"envs": grant.get("envs", []), "new_envs": grant.get("new_envs", False),
@@ -4180,7 +4206,11 @@ def api_term():
                 extra_env["VNS_COPY_SQL"] = json.dumps(connection)
     if payload.get("kind") in ("sync_env", "data_sync"):
         # Who started it, for the sync history the dashboard in Umbraco shows
-        extra_env = {**(extra_env or {}), "HARBOR_SYNC_WHO": (me() or {}).get("username", "")}
+        # By id too: the history shows the user's name as it is now, also after they change it in Profile
+        user = me() or {}
+        who = user.get("name") or user.get("username", "")
+        extra_env = {**(extra_env or {}), "HARBOR_SYNC_WHO": f"{who} (VNS Harbor)" if who else "VNS Harbor",
+                     "HARBOR_SYNC_WHO_ID": user.get("id", "")}
     if payload.get("kind") == "move_site":
         host, user, password, port = ssh_login(payload)
         # Its folder, binding and project name on the new server. Environments run the build it makes, so only a
@@ -4348,10 +4378,10 @@ def sync_status(site):
                 kinds = _data_sync_module.kinds(config, source, destination)
             except ValueError:
                 continue
-            found[destination] = {"history": history.between(system, site, source, destination, kinds, mine),
+            found[destination] = {"history": name_history(history.between(system, site, source, destination, kinds, mine)),
                                   "settings_behind": settings_behind(system, site, destination, config, source, kinds)}
         else:
-            found[destination] = {"history": history.between(system, site, source, destination, ["settings"], mine)}
+            found[destination] = {"history": name_history(history.between(system, site, source, destination, ["settings"], mine))}
     try:
         recent = recent_syncs(site, source)
     except (OSError, ValueError):

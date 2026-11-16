@@ -174,15 +174,15 @@ export default class VnsHarborDashboard extends UmbElementMixin(LitElement) {
 		const link = (label, url, text) => html`<div class="link"><span class="label">${label}</span>
 			<a href=${url} target="_blank" rel="noopener" title=${text}><span class="address">${text}</span><uui-icon name="icon-out"></uui-icon></a></div>`;
 		return html`<div class="destination" style="--tone:${tone}">
-			<div class="name"><span class="badge"><uui-icon name=${ICONS[name] || "icon-server"}></uui-icon></span>${destination.environment}</div>
-			<div class="links">${destination.url
-				? html`${link("Frontend", destination.url, destination.binding)}${link("Backend", destination.url + "umbraco", destination.binding + "/umbraco")}`
-				: html`<span class="label">${destination.binding || destination.id}</span>`}</div>
-			<div class="route" title=${`From this site (${this.#from()}) to ${destination.environment}`}>
+			<div class="route route-top" title=${`From this site (${this.#from()}) to ${destination.environment}`}>
 				<span class="from" style="--tone:${this.#tone(this.#from())}">${this.#from()}</span>
 				<span class="arrow" aria-hidden="true">→</span>
 				<span class="to">${destination.environment}</span>
 			</div>
+			<div class="name"><span class="badge"><uui-icon name=${ICONS[name] || "icon-server"}></uui-icon></span>${destination.environment}</div>
+			<div class="links">${destination.url
+				? html`${link("Frontend", destination.url, destination.binding)}${link("Backend", destination.url + "umbraco", destination.binding + "/umbraco")}`
+				: html`<span class="label">${destination.binding || destination.id}</span>`}</div>
 			${this.#status(destination.history, this.#from(), false)}
 			<div class="actions">${this.#buttons(destination, kinds)}</div>
 		</div>`;
@@ -216,19 +216,25 @@ export default class VnsHarborDashboard extends UmbElementMixin(LitElement) {
 		// Sync everything: the settings where they are not up to date (or behind), then the data
 		const everything = [...(settings || behind ? ["settings"] : []), ...(data ? ["data"] : [])];
 		return html`
-			${destination.settings ? html`<uui-button look="primary" label=${settings ? "Sync settings" : "Settings up to date"} ?disabled=${this._busy || !settings}
-				title=${settings ? "Document types, templates, views, css and scripts" : "Nothing has changed in the settings here since they were synced there"}
-				@click=${() => this.#sync(destination, "settings")}>${settings ? "Sync settings" : "Settings up to date"}</uui-button>
-				${!settings ? html`<div class="anyway-row">${anyway("Sync settings anyway", "settings")}</div>` : nothing}` : nothing}
-			${kinds ? html`<uui-button look="primary" color="positive" label=${data ? `Sync ${kinds}` : `${capitalKinds} up to date`} ?disabled=${this._busy || !data || behind}
-				title=${behind ? `${behind}. Sync settings first.` : data ? `Merges ${kinds}: nothing is deleted there` : `Nothing has changed in the ${kinds} here since they were synced there`}
-				@click=${() => this.#sync(destination, "data")}>${data ? `Sync ${kinds}` : `${capitalKinds} up to date`}</uui-button>
-				${!data ? html`<div class="anyway-row">${anyway(`Sync ${kinds} anyway`, "data")}</div>` : nothing}` : nothing}
+			${destination.settings ? (settings ? html`<uui-button look="primary" label="Sync settings" ?disabled=${this._busy}
+				title="Document types, templates, views, css and scripts"
+				@click=${() => this.#sync(destination, "settings")}>Sync settings</uui-button>`
+				: this.#upToDate("Settings up to date", anyway("Sync anyway", "settings"))) : nothing}
+			${kinds ? (data ? html`<uui-button look="primary" color="positive" label=${`Sync ${kinds}`} ?disabled=${this._busy || behind}
+				title=${behind ? `${behind}. Sync settings first.` : `Merges ${kinds}: nothing is deleted there`}
+				@click=${() => this.#sync(destination, "data")}>Sync ${kinds}</uui-button>`
+				: this.#upToDate(`${capitalKinds} up to date`, anyway("Sync anyway", "data"))) : nothing}
 			${kinds && data && behind ? html`<p class="settings-first"><uui-icon name="icon-alert"></uui-icon><span>Sync settings first: ${behind}.</span></p>` : nothing}
 			${destination.settings && kinds ? html`<hr class="divider">
 				<uui-button look="primary" class="everything" label="Sync everything" ?disabled=${this._busy || !everything.length}
 					title=${everything.length === 2 ? `Settings, then ${kinds}` : everything[0] === "settings" ? `Only the settings: the ${kinds} are up to date` : `Only the ${kinds}: the settings are up to date`}
 					@click=${() => this.#sync(destination, everything, "Sync everything")}>Sync everything</uui-button>` : nothing}`;
+	}
+
+	// What is up to date has no button: a line that says so, and a link to sync it anyway
+	#upToDate(text, anyway) {
+		return html`<div class="up-to-date" title="Nothing has changed here since it was synced there">
+			<uui-icon name="icon-check"></uui-icon><span>${text}</span><span class="dot" aria-hidden="true">·</span>${anyway}</div>`;
 	}
 
 	// The environment this site is, by name: Harbor tells it (an older Harbor only its id)
@@ -342,13 +348,20 @@ export default class VnsHarborDashboard extends UmbElementMixin(LitElement) {
 		.destination { background: var(--uui-color-surface); border: 1px solid var(--uui-color-border); border-top: 3px solid var(--tone);
 			border-radius: var(--uui-border-radius); padding: var(--uui-size-space-5); display: flex; flex-direction: column; gap: var(--uui-size-space-3);
 			box-shadow: var(--uui-shadow-depth-1); }
-		.destination .actions { display: grid; grid-template-columns: 1fr; margin-top: auto; padding-top: var(--uui-size-space-3); }
+		/* The buttons start right under the status on every card, and Sync everything stands at the bottom of every card */
+		.destination .actions { flex: 1; display: flex; flex-direction: column; flex-wrap: nowrap; gap: var(--uui-size-space-2); margin-top: 0;
+			padding-top: var(--uui-size-space-3); }
 		.destination .actions uui-button { width: 100%; }
 		.route { display: flex; align-items: center; gap: 8px; margin-bottom: var(--uui-size-space-1); font-size: 0.75rem; font-weight: 700;
 			letter-spacing: 0.06em; text-transform: uppercase; color: var(--tone); }
 		.route .from { color: var(--tone); }
 		.route .arrow { color: var(--uui-color-text-alt); font-size: 1rem; letter-spacing: 0; }
-		.divider { width: 100%; margin: var(--uui-size-space-3) 0; border: 0; border-top: 1px dashed var(--uui-color-border-emphasis); }
+		/* The way a sync goes, first on the card, in a band of the destination's colour */
+		.route-top { margin: calc(var(--uui-size-space-5) * -1) calc(var(--uui-size-space-5) * -1) var(--uui-size-space-2);
+			justify-content: center; padding: 10px var(--uui-size-space-5); font-size: 0.85rem; background: color-mix(in srgb, var(--tone) 10%, transparent);
+			border-bottom: 1px solid color-mix(in srgb, var(--tone) 25%, transparent); }
+		.divider { width: 100%; margin: auto 0 var(--uui-size-space-2); padding-top: var(--uui-size-space-3); border: 0; border-bottom: 1px dashed var(--uui-color-border-emphasis); box-sizing: content-box; height: 0; }
+		.destination .actions .nothing-to-sync, .destination .actions .anyway-row { margin-top: 0; }
 		uui-button.everything { --uui-button-background-color: #6f4fc7; --uui-button-background-color-hover: #5d3fb3;
 			--uui-button-contrast: #fff; --uui-button-contrast-hover: #fff; }
 		.everywhere { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--uui-size-space-4);
@@ -370,7 +383,7 @@ export default class VnsHarborDashboard extends UmbElementMixin(LitElement) {
 		.section { margin: var(--uui-size-space-3) 0 calc(var(--uui-size-space-4) * -1); font-size: 0.75rem; font-weight: 700;
 			letter-spacing: 0.06em; text-transform: uppercase; color: var(--uui-color-text-alt); }
 		.name { display: flex; align-items: center; gap: 12px; font-weight: 700; font-size: 1.1rem; }
-		.status { list-style: none; margin: 0 0 var(--uui-size-space-3); padding: 0; display: grid; gap: 6px; font-size: 0.85rem; }
+		.status { list-style: none; margin: var(--uui-size-space-3) 0; padding: 0; display: grid; gap: 6px; font-size: 0.85rem; }
 		.status li { display: flex; align-items: center; gap: 8px; }
 		.status .kind { font-weight: 700; min-width: 64px; }
 		.status .when { color: var(--uui-color-text-alt); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -389,7 +402,11 @@ export default class VnsHarborDashboard extends UmbElementMixin(LitElement) {
 			font-weight: 400; text-decoration: underline; cursor: pointer; }
 		.anyway:disabled { color: var(--uui-color-disabled-contrast); cursor: default; }
 		.anyway-row { display: flex; justify-content: center; margin: 2px 0 var(--uui-size-space-2); }
-		.settings-first { display: flex; align-items: center; gap: 6px; margin: 4px 0 0; color: #7a4f00; font-size: 0.8rem; }
+		.up-to-date { box-sizing: border-box; min-height: 33px; display: flex; align-items: center; justify-content: center; gap: 6px; flex-wrap: wrap; padding: 2px 12px;
+			border: 1px dashed var(--uui-color-border-emphasis); border-radius: var(--uui-border-radius); color: var(--uui-color-text-alt);
+			font-size: 0.85rem; font-weight: 700; white-space: nowrap; }
+		.up-to-date uui-icon { color: var(--uui-color-positive); }
+		.settings-first { display: flex; align-items: center; gap: 6px; margin: 0; color: #7a4f00; font-size: 0.8rem; }
 		.task-end { display: flex; align-items: center; justify-content: space-between; gap: var(--uui-size-space-4); margin-top: var(--uui-size-space-4); }
 		.closing { display: flex; align-items: center; gap: 10px; color: var(--uui-color-text-alt); font-size: 0.85rem; }
 		.closing .bar { width: 120px; height: 4px; border-radius: 2px; background: var(--uui-color-border); overflow: hidden; }
