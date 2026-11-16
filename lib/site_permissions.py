@@ -76,7 +76,9 @@ def repair(root, service, uid, gid, web_root=Path("/var/www")):
 
 
 if __name__ == "__main__":
-    from domain_names import normalize_site_name, service_name
+    # Sent to another server (python3 -), the names come with it (harbor.core.names.standalone)
+    if "normalize_site_name" not in globals():
+        from domain_names import normalize_site_name, service_name
 
     site = os.environ["SITE"]
     normalize_site_name(site)

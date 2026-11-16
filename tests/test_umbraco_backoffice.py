@@ -146,6 +146,15 @@ class BackofficeTests(unittest.TestCase):
         self.assertEqual(backoffice.backoffice_user(self.system, "shop.dk"), "")
         self.assertTrue(backoffice.uses_package(self.system, backoffice.site_named(self.system, "shop.dk")))
 
+    def test_a_copy_without_its_project_has_the_package_by_its_dll(self):
+        """An environment managed from another server has only its build here: the package is seen in it"""
+        copy = self.root / "var/www/copy.dk"
+        copy.mkdir(parents=True)
+        site = backoffice.site_named(self.system, "copy.dk")
+        self.assertFalse(backoffice.uses_package(self.system, site), "no project, no dll: no Backoffice login there")
+        (copy / "VNS.Harbor.dll").write_text("")
+        self.assertTrue(backoffice.uses_package(self.system, site))
+
 
 class AdminScriptTests(unittest.TestCase):
     def test_the_admin_script_is_valid(self):

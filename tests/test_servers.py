@@ -218,10 +218,14 @@ class ServerTests(unittest.TestCase):
         known = self.root / "etc/harbor/ssh/known_hosts"
         known.parent.mkdir(parents=True)
         known.write_text("10.0.0.2 ssh-ed25519 AAAAold\n")
+        (self.root / "root/.ssh").mkdir(parents=True)
+        (self.root / "root/.ssh/known_hosts").write_text("10.0.0.2 ecdsa-sha2-nistp256 AAAAold\n")
         forget = "ssh-keygen -f /etc/harbor/ssh/known_hosts -R 10.0.0.2"
         system = self.system(ssh=lambda argv: "")
         self.assertEqual(self.add(system), 0, system.said)
         self.assertIn(forget, system.commands, "a new address: its old key goes before the first login")
+        self.assertIn("ssh-keygen -f /root/.ssh/known_hosts -R 10.0.0.2", system.commands,
+                      "and root's, which the environments on it use: a copy to a server set up again failed on its old key")
         system = self.system(ssh=lambda argv: "")
         with mock.patch.dict(os.environ, {"HARBOR_SSH_PASSWORD": "pw 1"}):
             self.assertEqual(main(["servers", "add", "three", "10.0.0.2"], system), 0, system.said)

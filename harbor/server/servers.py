@@ -187,12 +187,18 @@ def remote(system, entry, command, input=None, check=True, capture=True):
     return system.run(*ssh(entry), f"{entry['user']}@{entry['host']}", f"{sudo}{command}", input=input, check=check, capture=capture)
 
 
+# The environments reach their servers as root does (its known_hosts), the servers Harbor knows with Harbor's own
+ROOT_KNOWN_HOSTS = "/root/.ssh/known_hosts"
+
+
 def forget_host_key(system, host, port=22):
-    """The host key Harbor saw for a server, forgotten (ssh-keygen -R): it is learnt again at the next login"""
-    if not system.path(KNOWN_HOSTS).is_file():
-        return
-    for known in (host, f"[{host}]:{port}"):
-        system.run("ssh-keygen", "-f", KNOWN_HOSTS, "-R", known, check=False, capture=True)
+    """The host key seen for a server, forgotten (ssh-keygen -R) in Harbor's known_hosts and root's: it is learnt again
+    at the next login. Else a server set up again at the address stops every environment on it"""
+    for path in (KNOWN_HOSTS, ROOT_KNOWN_HOSTS):
+        if not system.path(path).is_file():
+            continue
+        for known in (host, f"[{host}]:{port}"):
+            system.run("ssh-keygen", "-f", path, "-R", known, check=False, capture=True)
 
 
 def add(system, name, host, user="root", port="22", password=""):

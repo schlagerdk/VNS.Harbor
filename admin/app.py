@@ -1210,6 +1210,12 @@ def setup_kind(root):
     return "html"
 
 
+def harbor_package(root, projects):
+    if projects:
+        return any(re.search(r'<PackageReference\s+Include="VNS\.Harbor"', read_text(path), re.I) for path in projects)
+    return any(os.path.isfile(os.path.join(root, folder, "VNS.Harbor.dll")) for folder in ("", "_publish"))
+
+
 def site_info(name, states):
     root = os.path.join(WEB_ROOT, name)
     conf = os.path.join(APACHE_SITES, name + ".conf")
@@ -1352,6 +1358,9 @@ def site_info(name, states):
         "windows_source": os.path.isfile(os.path.join(HARBOR_SITES, name, "windows-source.json")),
         "project": os.path.splitext(os.path.basename(projects[0]))[0] if len(projects) == 1 else "",
         "managed_by": managed_by(name),
+        # The VNS.Harbor package, which the Backend button logs in with: in the project, or in the build of a site
+        # without one here (an environment managed from another server)
+        "harbor_package": harbor_package(root, projects),
         "updates": updates,
         "package_updates": package_updates,
         "umbraco_version": umbraco,

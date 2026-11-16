@@ -149,7 +149,7 @@ class PublishStatusTests(unittest.TestCase):
         from lib.domain_names import display_dns_name, service_name
 
         nodes = [node for node in ast.parse((APP / "app.py").read_text()).body
-                 if isinstance(node, ast.FunctionDef) and node.name == "site_info"]
+                 if isinstance(node, ast.FunctionDef) and node.name in ("site_info", "harbor_package")]
         from lib import data_sync
         from lib import database_info
         ns = dict(os=os, glob=glob, re=re, _publish_module=tracking, _data_sync_module=data_sync, _database_module=database_info, default_site_name=lambda: "", setup_kind=lambda root: "html", WEB_ROOT=str(self.root.parent),

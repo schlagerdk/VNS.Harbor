@@ -177,7 +177,14 @@ class FixPermissionsTests(unittest.TestCase):
             self.assertTrue(system.commands[0].startswith("sshpass -e ssh -p 22 "))
             self.assertTrue(system.commands[0].endswith("deploy@10.0.0.5 sudo -n env SITE=shop.dk ROOT=/var/www/shop.dk python3 -"))
             self.assertEqual(system.environments[0], {"SSHPASS": "s3 cret"})
-            self.assertEqual(system.inputs[0], (APACHE / "lib/site_permissions.py").read_text())
+            # What is sent runs on its own: python3 - on a server without harbor failed on "No module named 'domain_names'"
+            sent = system.inputs[0]
+            self.assertIn((APACHE / "lib/site_permissions.py").read_text().split("if __name__")[0], sent)
+            import subprocess
+            ran = subprocess.run([sys.executable, "-I", "-"], input=sent, text=True, capture_output=True, cwd=folder,
+                                 env={"SITE": "shop.dk", "ROOT": str(Path(folder) / "missing"), "PATH": os.environ.get("PATH", "")})
+            self.assertNotIn("ModuleNotFoundError", ran.stderr)
+            self.assertNotIn("NameError", ran.stderr)
             self.assertEqual(main(["site", "fix-permissions", "shop.dk", "other"], RecordingSystem(root=folder)), 1)
             # An environment on Windows has no SSH: refused with the script's message, not a traceback
             (site / "scripts/targets/production/publish_prod.sh").write_text("PROD_TARGET=windows\nPROD_FOLDER='shop'\nPROD_BINDING='shop.dk'\n")

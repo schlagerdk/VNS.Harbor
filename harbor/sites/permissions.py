@@ -12,6 +12,12 @@ from harbor.core.paths import LIB
 HELPER = LIB / "site_permissions.py"
 
 
+def remote_helper():
+    """The helper as it runs over SSH (python3 -), with the names it needs"""
+    from harbor.core.names import standalone
+    return standalone(HELPER.read_text())
+
+
 def fix_permissions(system, name, scope="test", target="prod"):
     try:
         name = normalize_site_name(name)
@@ -29,6 +35,6 @@ def fix_permissions(system, name, scope="test", target="prod"):
             raise Stop("Invalid site name. Use a DNS name containing only letters, numbers, dots and hyphens.") from None
         system.step(f"Fix permissions of {environment.FOLDER} on {environment.description}")
         variables = f"SITE={shlex.quote(environment.FOLDER)} ROOT={shlex.quote(environment.root)}"
-        settings.remote_exec(system, environment, f"env {variables} python3 -", input=HELPER.read_text())
+        settings.remote_exec(system, environment, f"env {variables} python3 -", input=remote_helper())
     else:
         raise Stop("Scope must be test or prod.")

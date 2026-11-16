@@ -6,11 +6,13 @@ from pathlib import Path
 import re
 import subprocess
 import sys
-_spec = importlib.util.spec_from_file_location("vns_domain_names", Path(__file__).with_name("domain_names.py"))
-_domains = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_domains)
-normalize_site_name = _domains.normalize_site_name
-service_name = _domains.service_name
+# Sent to another server (python3 -c), the names come with it (harbor.core.names.standalone): there is no file beside
+if "normalize_site_name" not in globals():
+    _spec = importlib.util.spec_from_file_location("vns_domain_names", Path(__file__).with_name("domain_names.py"))
+    _domains = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(_domains)
+    normalize_site_name = _domains.normalize_site_name
+    service_name = _domains.service_name
 
 SERVICE_DIR = Path("/etc/systemd/system")
 APACHE_DIR = Path("/etc/apache2/sites-available")

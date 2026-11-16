@@ -37,3 +37,10 @@ def normalize_site_name(value):
 
 def service_name(value):
     return normalize_dns_name(value)
+
+
+def standalone(code):
+    """A helper in lib/ as it runs on another server, sent as python3 - or -c: with these names in it, since there is no
+    lib/domain_names.py beside a script that has no file, and the server may have no harbor to import them from"""
+    from pathlib import Path
+    return Path(__file__).read_text() + "\n\n" + code

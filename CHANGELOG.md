@@ -2,6 +2,14 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.20] - 2026-11-16
+
+### Fixes
+
+- A server added at an address, or moved to one, has its old host key forgotten in root's known_hosts too, not only Harbor's: the environments on it log in as root does, and a copy to a server set up again at the same IP failed with REMOTE HOST IDENTIFICATION HAS CHANGED
+- Fix permissions on an environment on another server failed with "No module named domain_names": the helper sent over SSH now carries the names it needs, so it runs on a server with or without Harbor. Edit config there failed the same way (name __file__ is not defined): every helper sent over SSH carries them now
+- Backoffice login is not offered on a site managed from another server that does not have the VNS.Harbor package: it can only be added where the site is built. A copy without its project here has the package when its build has VNS.Harbor.dll
+
 ## [1.0.19] - 2026-11-16
 
 ### Fixes

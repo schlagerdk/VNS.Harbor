@@ -150,7 +150,8 @@ def remote_action(system, name, action, target="prod"):
         command = f"env TERM=xterm-256color COLORTERM=truecolor {assignments(**values)} bash -c {shlex.quote(INTERACTIVE[action])}"
         result = settings.remote_exec(system, environment, command, tty=True, check=False)
     elif action in ("files", "config"):
-        code = (LIB / ("managed_config.py" if action == "config" else "remote_files.py")).read_text().rstrip("\n")
+        from harbor.core.names import standalone
+        code = standalone((LIB / ("managed_config.py" if action == "config" else "remote_files.py")).read_text()).rstrip("\n")
         result = settings.remote_exec(system, environment, f"env {assignments(**values)} python3 -c {shlex.quote(code)}", check=False)
     else:
         raise Stop(f"Unknown remote action: {action}")

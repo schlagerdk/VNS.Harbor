@@ -30,7 +30,13 @@ PACKAGE = re.compile(r'<PackageReference\s+Include="VNS\.Harbor"', re.I)
 
 
 def uses_package(system, site):
-    return any(PACKAGE.search(path.read_text(errors="replace")) for path in system.path(site.site_root).glob("*.csproj"))
+    """The project references VNS.Harbor; or, for a site with no project here (an environment copied from another
+    server), its build has the package's dll"""
+    root = system.path(site.site_root)
+    projects = list(root.glob("*.csproj"))
+    if projects:
+        return any(PACKAGE.search(path.read_text(errors="replace")) for path in projects)
+    return any((folder / "VNS.Harbor.dll").is_file() for folder in (root, root / "_publish"))
 
 
 def connection(system, site, environment="main"):
