@@ -1662,3 +1662,30 @@ dialog .windows-field input, dialog .windows-field select { width: 100%; min-hei
 .processes-menu { overflow-x: hidden; }
 .menu .process-item { box-sizing: border-box; min-width: 0; max-width: 100%; }
 .process-text { flex: 1 1 auto; overflow: hidden; }
+
+/* Multi action: grouped choices, each with its icon, a clear chosen state */
+#dlg-multi #multi-selection { margin: 4px 0 4px; padding: 10px; max-height: 112px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.02); }
+#dlg-multi .multi-group { margin-top: 18px; }
+#dlg-multi .multi-group[hidden] { display: none; }
+#dlg-multi .multi-group-head { display: flex; align-items: center; gap: 9px; margin: 0 0 10px; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+#dlg-multi .multi-group-head::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+#dlg-multi .multi-group-icon { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 7px; color: #c4a5ff; background: rgba(163,113,247,.14); }
+#dlg-multi .multi-group-icon .ico { width: 13px; height: 13px; }
+#dlg-multi .multi-choices { margin-bottom: 0; gap: 10px; }
+#dlg-multi .multi-choice { flex-direction: row; align-items: flex-start; gap: 12px; padding: 14px; border-radius: 12px;
+	background: linear-gradient(180deg, rgba(255,255,255,.035), rgba(255,255,255,.01)); transition: border-color .15s, background .15s, box-shadow .15s, transform .15s; }
+#dlg-multi .multi-choice:hover { border-color: rgba(163,113,247,.55); transform: translateY(-1px); box-shadow: 0 6px 18px rgba(0,0,0,.25); }
+#dlg-multi .multi-choice .tc-icon { flex: none; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; color: #c4a5ff;
+	background: rgba(163,113,247,.14); transition: background .15s, color .15s; }
+#dlg-multi .multi-choice .tc-icon .ico { width: 17px; height: 17px; }
+#dlg-multi .multi-choice .tc-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+#dlg-multi .multi-choice .tc-sub { line-height: 1.4; }
+#dlg-multi .multi-choice:has(input:checked) { border-color: #a371f7; box-shadow: 0 0 0 1px #a371f7 inset, 0 8px 24px rgba(163,113,247,.18);
+	background: linear-gradient(135deg, rgba(163,113,247,.2), rgba(88,101,242,.12)); }
+#dlg-multi .multi-choice:has(input:checked) .tc-icon { color: #fff; background: linear-gradient(135deg, #8b5cf6, #6c7bff); }
+#dlg-multi .multi-choice:has(input:checked)::after { content: ""; position: absolute; top: 10px; right: 10px; width: 16px; height: 16px; border-radius: 50%;
+	background: #a371f7 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12l5 5L20 7'/%3E%3C/svg%3E") center / 10px no-repeat; }
+#dlg-multi .multi-choice:has(input:focus-visible) { outline: 2px solid #a371f7; outline-offset: 2px; }
+#dlg-multi #multi-action-description:not(:empty) { margin-top: 16px; padding: 10px 12px; border-radius: 10px; color: var(--text); background: rgba(163,113,247,.08); border: 1px solid rgba(163,113,247,.25); }
+#dlg-multi .multi-footnote { margin-top: 12px; }
+@media (max-width: 640px) { #dlg-multi .multi-choice { padding: 12px; } }

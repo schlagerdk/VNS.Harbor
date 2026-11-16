@@ -3122,6 +3122,10 @@ def terminal_output_problem(text):
         r"^(?:\[[^\]\r\n]+\] )?(?:"
         r"Checking if there is an error in the Apache config file before starting\."
         r"|In case an error causes it to not be restored automatically, you can restore it yourself\."
+        # dotnet's own notes, not problems: a package added without its restore (Harbor restores next), and a build that
+        # runs without the MSBuild server ("the server may have failed to start")
+        r"|(?:warn|info) : --no-restore\|-n flag was used\..*"
+        r"|MSBuild server unavailable: .*Falling back to an in-process build\."
         r")\r?$", "", text, flags=re.M)
     text = re.sub(r"\b(?:0|no)\s+(?:errors?|warnings?|failures?)(?:\(s\))?\b", "", text, flags=re.I)
     return bool(re.search(r"\b(?:errors?|failed|failure|fatal|\w*exception|traceback|warnings?)\b(?![/_-]|\.[A-Za-z0-9])", text, re.I))
@@ -3632,7 +3636,7 @@ def build_command(data):
                 or any(not isinstance(site, str) for site in sites)
                 or len(set(sites)) != len(sites)
                 or action not in ("check", "add", "remove", "local", "prod", "both", "outdated",
-                                  "clear_logs", "clear_logs_prod", "clear_logs_all")):
+                                  "clear_logs", "clear_logs_prod", "clear_logs_all", "sync_settings", "sync_data", "sync_all")):
             abort(400, "Invalid multi action selection")
         tasks = []
         for name in sites:
@@ -3670,6 +3674,10 @@ def build_command(data):
                         found += 1
                 if not found:
                     tasks.append({"site": site, "skip": "No logs to clear" if action == "clear_logs" else "No environment with a clear_logs script"})
+                continue
+            if action.startswith("sync_"):
+                task = multi_sync_task(site, info, action)
+                tasks.append({"site": site, **task})
                 continue
             if action in ("add", "remove"):
                 payload = {"kind": "dotnet_package", "site": site, "action": action,
@@ -4139,6 +4147,47 @@ def build_command(data):
     abort(400, "Unknown task")
 
 
+def multi_sync_task(site, info, action):
+    """Sync from a main site to its environments, as its Sync setup allows and where the user may: the settings
+    (sync_settings), content and media (sync_data), or both, the settings first (sync_all). {"argv", "cwd"} or {"skip"}"""
+    if info["kind"] != "umbraco":
+        return {"skip": "Not an Umbraco site"}
+    root = os.path.join(WEB_ROOT, site)
+    targets = environment_order(root, target_ids(root))
+    if not targets:
+        return {"skip": "No environments"}
+    config = _data_sync_module.load(root)
+
+    def allowed(check, verb):
+        found = []
+        for target in allowed_targets(site, targets, verb):
+            try:
+                check(config, "main", target)
+                found.append(target)
+            except ValueError:
+                pass
+        return found
+
+    settings_to = allowed(_data_sync_module.settings_allowed, "sync_settings") if action != "sync_data" else []
+    data_to = allowed(_data_sync_module.kinds, "sync_data") if action != "sync_settings" else []
+    commands = []
+    if data_to:
+        commands.append(build_command({"kind": "data_sync", "site": site, "source": "main", "destination": ",".join(data_to),
+                                       "settings_first": action == "sync_all"})[1])
+    # Settings to the environments that take settings but not data (sync_all), or to all that take them (sync_settings)
+    settings_only = [target for target in settings_to if action == "sync_settings" or target not in data_to]
+    if settings_only:
+        commands.append(build_command({"kind": "sync_env", "site": site, "source": "main", "destination": ",".join(settings_only)})[1])
+    if not commands:
+        return {"skip": {"sync_settings": "No environment takes settings from it (Sync setup)",
+                         "sync_data": "No environment takes content or media from it (Sync setup)"}.get(action, "Sync setup allows nothing from it")}
+    if len(commands) == 1:
+        return {"argv": commands[0], "cwd": HARBOR_DIR}
+    # One after the other in the same task: both use the main site's uSync export
+    script = "; ".join(f"{shlex.join(argv)} || failed=1" for argv in commands) + "; exit ${failed:-0}"
+    return {"argv": ["/bin/bash", "-c", script], "cwd": HARBOR_DIR}
+
+
 def allowed_targets(site, targets, action):
     """The environments of a site the logged-in user may do action on"""
     return [target for target in targets if access.can(me(), site, target, action)]
@@ -4223,6 +4272,11 @@ def authorize_task(data):
                 need("main", "packages")
             elif action in ("local", "clear_logs"):
                 need("main", "publish" if action == "local" else "clear_logs")
+            elif action.startswith("sync_"):
+                # From the main site to the environments the user may sync to (the task leaves the rest out)
+                verbs = {"sync_settings": ["sync_settings"], "sync_data": ["sync_data"]}.get(action, ["sync_settings", "sync_data"])
+                any(access.can(user, name, "main", verb) for verb in verbs) or deny()
+                any(access.can(user, name, env, verb) for env in target_ids(os.path.join(WEB_ROOT, name)) for verb in verbs) or deny()
             else:
                 # Environments are published or cleared where the user has access (build_command leaves the rest out)
                 verb = "publish" if action in ("prod", "both") else "clear_logs"

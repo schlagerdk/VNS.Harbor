@@ -86,6 +86,16 @@ class TerminalCompletionTests(unittest.TestCase):
                      "/var/log/apache2/site-error.log", "ErrorLog /var/log/apache2/example.log"):
             self.assertFalse(problem(text), text)
 
+    def test_dotnets_own_notes_are_not_problems(self):
+        """Multi install package was marked as failed by these, on every site that worked"""
+        problem = self.ns["terminal_output_problem"]
+        for text in ("[test.shop.dk] warn : --no-restore|-n flag was used. No compatibility check will be done and the added package reference will be unconditional.",
+                     "[test.shop.dk] MSBuild server unavailable: could not connect to the server within the timeout window; the server may have failed to start. Falling back to an in-process build.",
+                     "warn : --no-restore|-n flag was used. No compatibility check will be done and the added package reference will be unconditional."):
+            self.assertFalse(problem(text), text)
+        self.assertTrue(problem("[test.shop.dk] warning NU1903: Package 'X' 1.0.0 has a known high severity vulnerability"))
+        self.assertTrue(problem("[test.shop.dk] error NU1101: Unable to find package VNS.Harbor"))
+
     def test_custom_script_clean_output_allows_auto_close(self):
         self.assertTrue(self.ns["terminal_auto_close"]({"kind": "script", "script": "custom_publish.sh"}))
         output = "Restore complete (0.4s)\nBuild succeeded in 5.1s\nDelete bin\nDelete Umbraco schema files and App_Plugins\n"

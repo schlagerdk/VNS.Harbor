@@ -3472,6 +3472,9 @@ function syncMultiAction() {
 		clear_logs: "Delete the Umbraco logs of each selected main site. Sites that are not Umbraco are skipped.",
 		clear_logs_prod: "Delete the Umbraco logs of every environment of the selected sites. Sites that are not Umbraco, or have no environments, are skipped.",
 		clear_logs_all: "Delete the Umbraco logs of each selected main site and all its environments. Sites that are not Umbraco are skipped.",
+		sync_settings: "Sync the settings of each selected main site to its environments: the ones its Sync setup lets take them.",
+		sync_data: "Sync content and media of each selected main site to its environments: the ones its Sync setup lets take them. Content is added and updated, never deleted.",
+		sync_all: "Sync everything from each selected main site to its environments: the settings first where they are behind, then content and media.",
 	}[action] || "";
 	const packageAction = action === "add" || action === "remove";
 	$("#multi-package-fields").hidden = !packageAction;
@@ -3480,12 +3483,13 @@ function syncMultiAction() {
 	multiForm.elements.namedItem("version").disabled = action !== "add";
 	const selected = listedSites().filter((site) => multiSites.has(site.name));
 	const clearing = action.startsWith("clear_logs");
+	const syncing = action.startsWith("sync_");
 	const skipped = action === "prod" || action === "both"
 		? selected.filter((site) => !site.scripts.includes("publish_prod.sh"))
-		: action === "clear_logs_prod" ? selected.filter((site) => site.kind !== "umbraco" || !site.environments.some(isTarget))
+		: action === "clear_logs_prod" || syncing ? selected.filter((site) => site.kind !== "umbraco" || !site.environments.some(isTarget))
 		: clearing ? selected.filter((site) => site.kind !== "umbraco") : [];
 	$("#multi-skipped").textContent = skipped.length
-		? `Will be skipped (${clearing ? (action === "clear_logs_prod" ? "not Umbraco, or no environments" : "not Umbraco") : "no environments"}): ` + skipped.map(siteLabel).join(", ") : "";
+		? `Will be skipped (${clearing || syncing ? (action === "clear_logs" || action === "clear_logs_all" ? "not Umbraco" : "not Umbraco, or no environments") : "no environments"}): ` + skipped.map(siteLabel).join(", ") : "";
 	$("#multi-submit").disabled = !action || submittingMulti || !selected.length || skipped.length === selected.length;
 }
 $("#btn-multi-all").onclick = () => {
@@ -3502,8 +3506,15 @@ $("#btn-multi-action").onclick = () => {
 	$("#multi-selection").replaceChildren(...Array.from(multiSites, (name) =>
 		el("span", { className: "multi-site-tag", role: "listitem" }, svgIcon("globe"), el("span", { textContent: name }))));
 	$("#multi-count").textContent = `${multiSites.size} site${multiSites.size === 1 ? "" : "s"} selected. Choose what to do with them.`;
-	// Clearing logs is for Umbraco sites
-	$("#multi-maintenance").hidden = !listedSites().some((site) => multiSites.has(site.name) && site.kind === "umbraco");
+	// Clearing logs and sync are for Umbraco sites
+	const umbraco = listedSites().some((site) => multiSites.has(site.name) && site.kind === "umbraco");
+	$("#multi-maintenance").hidden = !umbraco;
+	$("#multi-sync").hidden = !umbraco;
+	// Each choice and section with its icon, once
+	for (const holder of multiDialog.querySelectorAll("[data-icon]")) {
+		const target = holder.matches(".multi-choice") ? holder.querySelector(".tc-icon") : holder;
+		if (target && !target.firstChild) target.append(svgIcon(holder.dataset.icon));
+	}
 	syncMultiAction();
 	multiDialog.showModal();
 };

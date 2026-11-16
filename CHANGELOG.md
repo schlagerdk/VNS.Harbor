@@ -2,6 +2,16 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.25] - 2026-11-16
+
+### Features
+
+- Sync in Multi action: settings, content and media, or everything (the settings first), from each selected main site to the environments its Sync setup lets take them. Multi action is also laid out anew: grouped choices, each with its icon, and a clear chosen state
+
+### Fixes
+
+- Install package on several sites is no longer marked as failed by dotnet's own notes: a package added before its restore (--no-restore), and a build without the MSBuild server ("the server may have failed to start"). Real warnings, such as vulnerable packages, still count
+
 ## [1.0.24] - 2026-11-16
 
 ### Fixes

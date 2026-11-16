@@ -80,6 +80,40 @@ class BulkTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertIn("two: SKIPPED: Not an Umbraco site", result.stdout)
 
+    def test_sync_goes_from_each_main_site_to_the_environments_its_setup_allows(self):
+        """Sync in Multi action: settings, content and media, or both, the settings first in the same task"""
+        import shlex
+        spec = importlib.util.spec_from_file_location("data_sync", ROOT_DIR / "lib/data_sync.py")
+        data_sync = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(data_sync)
+        data_sync.HARBOR_STATE = self.root / "state"
+        (self.root / "one/scripts/data_sync.json").write_text(json.dumps({
+            "main": {"enabled": True, "send": True, "content": True, "media": True},
+            "prod": {"enabled": True, "receive": True, "content": True, "media": True},
+            "staging": {"enabled": True, "receive": False}}))
+        nodes = [node for node in ast.parse((APP / "app.py").read_text()).body
+                 if isinstance(node, ast.FunctionDef) and node.name == "multi_sync_task"]
+        made = []
+
+        def build_command(data):
+            made.append(data)
+            return "", ["harbor", data["kind"], data["destination"], *(["--settings-first"] if data.get("settings_first") else [])], ""
+        ns = dict(os=os, shlex=shlex, WEB_ROOT=str(self.root), HARBOR_DIR="/opt/harbor", _data_sync_module=data_sync,
+                  build_command=build_command, target_ids=lambda root: ["prod", "staging"], environment_order=lambda root, targets: targets,
+                  allowed_targets=lambda site, targets, verb: targets)
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), "multi sync", "exec"), ns)
+        task = ns["multi_sync_task"]
+        umbraco = {"kind": "umbraco"}
+        self.assertEqual(task("one", umbraco, "sync_settings")["argv"], ["harbor", "sync_env", "prod,staging"], "every environment that takes settings")
+        self.assertEqual(task("one", umbraco, "sync_data")["argv"], ["harbor", "data_sync", "prod"], "only the one that takes content and media")
+        both = task("one", umbraco, "sync_all")["argv"]
+        self.assertEqual(both[:2], ["/bin/bash", "-c"])
+        self.assertLess(both[2].index("data_sync prod --settings-first"), both[2].index("sync_env staging"), "one after the other, in one task")
+        self.assertIn("exit ${failed:-0}", both[2])
+        self.assertEqual(task("two", {"kind": "csharp"}, "sync_all"), {"skip": "Not an Umbraco site"})
+        ns["target_ids"] = lambda root: []
+        self.assertEqual(task("one", umbraco, "sync_data"), {"skip": "No environments"})
+
     def test_package_commands_reuse_validation(self):
         for action in ("add", "remove"):
             _, argv, _ = self.command(action=action, package="Example.Package", version="1.2.3")
