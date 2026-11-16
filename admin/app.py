@@ -3520,7 +3520,7 @@ def build_command(data):
             if not isinstance(server, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", server):
                 abort(400, "Choose the Linux server")
             windows_moves(data)
-            return "Move from Windows", [*harbor, "move", "--server", server], "/"
+            return "Copy from Windows", [*harbor, "move", "--server", server], "/"
         pause = ["--pause"] if data.get("pause") is True else []
         if kind == "windows_move_refresh_all":
             return "Refresh from Windows: all moved", [*harbor, "refresh", *pause], "/"
@@ -4542,7 +4542,7 @@ def windows_moves(data):
 
 @app.route("/api/windows-move")
 def api_windows_move():
-    """Every site's environments on Windows, and the Linux servers Harbor knows: for Move from Windows"""
+    """Every site's environments on Windows, and the Linux servers Harbor knows: for Copy from Windows"""
     require_admin()
     from harbor.core.system import System
     from harbor.environments import windows_move

@@ -862,7 +862,7 @@ const buttonStyles = {
 	"Migrate…": ["server", "purple"],
 	"Check outdated": ["download", "amber"], "Restart": ["restart", "amber"], "Restart Apache": ["restart", "amber"],
 	"Stop": ["stop", "red"], "Clear logs": ["eraser", "gray"], "Logs": ["file", "gray"],
-	"SQL Server": ["server", "purple"], "Web server": ["globe", "blue"], "Preferences…": ["sliders", "purple"], "Server tools…": ["package", "purple"], "Backoffice login…": ["key", "purple"], "Servers…": ["server", "blue"], "Import from Windows…": ["download", "blue"], "Move from Windows…": ["download", "purple"], "Refresh from Windows…": ["download", "blue"], "Take over…": ["shield", "green"], "Files (/)": ["folder", "blue"],
+	"SQL Server": ["server", "purple"], "Web server": ["globe", "blue"], "Preferences…": ["sliders", "purple"], "Server tools…": ["package", "purple"], "Backoffice login…": ["key", "purple"], "Servers…": ["server", "blue"], "Import from Windows…": ["download", "blue"], "Copy from Windows…": ["download", "purple"], "Refresh from Windows…": ["download", "blue"], "Take over…": ["shield", "green"], "Files (/)": ["folder", "blue"],
 	"Test config": ["activity", "teal"], "Error logs": ["file", "teal"],
 	"Admin app log": ["file", "gray"], "Apache error logs": ["file", "teal"],
 	"Copy site": ["file", "blue"],
@@ -2573,7 +2573,7 @@ async function refreshFromWindows(site) {
 	if (windowsDialog.open) windowsDialog.close();
 	await openTask(site ? { kind: "windows_refresh", site: site.name, pause } : { kind: "windows_refresh_all", pause });
 }
-// Move from Windows: every site's environments on Windows, moved to a Linux server Harbor knows as new environments
+// Copy from Windows: every site's environments on Windows, moved to a Linux server Harbor knows as new environments
 // of their sites (harbor/environments/windows_move.py). An administrator's alone.
 const windowsMoveDialog = $("#dlg-windows-move");
 const windowsMoveForm = $("#form-windows-move");
@@ -2582,7 +2582,7 @@ function updateWindowsMoveChoice() {
 	for (const box of $("#windows-move-list").querySelectorAll(".windows-check")) box.closest(".windows-site").classList.toggle("chosen", box.checked);
 	const chosen = windowsMoveChoices().filter((box) => box.checked).length;
 	$("#windows-move-submit").disabled = chosen === 0 || !windowsMoveForm.elements.server.value;
-	$("#windows-move-submit").textContent = chosen > 1 ? `Move ${chosen} environments` : "Move";
+	$("#windows-move-submit").textContent = chosen > 1 ? `Copy ${chosen} environments` : "Copy";
 	$("#windows-move-select-all").textContent = chosen && chosen === windowsMoveChoices().length ? "Select none" : "Select all";
 }
 $("#settings-windows-move").onclick = () => run(async () => {
@@ -2599,7 +2599,7 @@ $("#settings-windows-move").onclick = () => run(async () => {
 			el("span", { className: "windows-site-kind build", textContent: item.environment || "Environment" }),
 			box,
 			el("span", { className: "windows-site-text" }, el("strong", { textContent: item.binding || item.target }),
-				el("small", { className: "windows-site-meta", textContent: `${item.environment || "Environment"} of ${item.site}` + (item.moved_to ? ` · moved, as ${item.moved_to}` : "") })),
+				el("small", { className: "windows-site-meta", textContent: `${item.environment || "Environment"} of ${item.site}` + (item.moved_to ? ` · copied, as ${item.moved_to}` : "") })),
 			el("span"));
 		row.dataset.site = item.site;
 		row.dataset.target = item.target;
@@ -2616,7 +2616,7 @@ $("#settings-windows-move").onclick = () => run(async () => {
 	const moved = result.environments.filter((item) => item.moved_to).length;
 	$("#windows-move-moved").hidden = !moved;
 	$("#windows-move-moved").replaceChildren(el("div", { className: "windows-imported-text" },
-		el("strong", { textContent: `${moved} environment${moved === 1 ? "" : "s"} moved, not taken over yet` }),
+		el("strong", { textContent: `${moved} environment${moved === 1 ? "" : "s"} copied, not taken over yet` }),
 		el("span", { className: "muted", textContent: "Their data can be fetched again from Windows" })),
 		el("button", { type: "button", textContent: "Refresh all…", onclick: () => refreshMovedFromWindows(null) }));
 	$("#windows-move-filter").value = "";
@@ -5779,7 +5779,7 @@ $("#btn-settings").onclick = (event) => {
 	event.stopPropagation();
 	$("#user-menu").hidden = true;
 	settingsMenu.hidden = !settingsMenu.hidden;
-	// Move from Windows only when a site here has an environment on Windows
+	// Copy from Windows only when a site here has an environment on Windows
 	$("#settings-windows-move").hidden = !allSites.some((site) => (site.environments || []).some((env) => env.mode === "windows"));
 	if (!settingsMenu.hidden) run(() => checkSystemUpdate(true));
 };

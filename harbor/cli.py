@@ -730,7 +730,7 @@ def parser():
     command.set_defaults(handler=_state_sync)
 
     environment = groups.add_parser("env", help="an environment of a site, chosen with VNS_TARGET").add_subparsers(dest="command", required=True, metavar="<command>")
-    command = environment.add_parser("windows-move", help="environments on Windows moved to a Linux server Harbor knows, while Windows runs them")
+    command = environment.add_parser("windows-move", help="Copy from Windows: environments on Windows copied to a Linux server Harbor knows, while Windows runs them")
     command.add_argument("action", choices=("list", "move", "refresh", "take-over"))
     command.add_argument("site", nargs="?", default="", help="move all in VNS_WINDOWS_MOVES, or refresh all, without one")
     command.add_argument("target", nargs="?", default="", help="move: the environment on Windows; refresh and take-over: the one it became")

@@ -79,8 +79,16 @@ def environment_of(system, name, target):
 
 
 def set_setting(system, environment, name, value, quoted):
-    """A PROD_ setting in the environment's script, kept as it is written there"""
+    """A PROD_ setting in the environment's script, kept as it is written there; in Harbor's copy for an environment
+    whose settings Harbor keeps (no script in the site folder, as one copied or moved from Windows)"""
     path = system.path(environment.script)
+    if not path.is_file():
+        suffix = settings.settings_script("", environment.id)
+        site_root = environment.script[:-len(suffix)] if environment.script.endswith(suffix) else ""
+        if not site_root:
+            raise Stop(f"Cannot keep PROD_{name}: {environment.script} is missing.")
+        settings.update(system, site_root, environment.id, {name: value})
+        return
     text = path.read_text()
     if quoted:
         # As the script: the quote it had stays

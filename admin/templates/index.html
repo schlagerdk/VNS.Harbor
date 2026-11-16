@@ -64,7 +64,7 @@
         <button id="btn-browse" type="button">Files (/)</button>
         <button id="settings-server-tools" type="button">Server tools…</button>
         <button id="settings-servers" type="button">Servers…</button>
-        <button id="settings-windows-move" type="button">Move from Windows…</button>
+        <button id="settings-windows-move" type="button">Copy from Windows…</button>
         <button id="settings-windows-import" type="button">Import from Windows…</button>
       </div>
       <div class="menu-group" role="group" aria-label="Apache">
@@ -916,7 +916,7 @@
   <form method="dialog" id="form-windows-move">
     <header class="ns-head">
       <span class="ns-icon" data-header-icon="download" aria-hidden="true"></span>
-      <div><h2 id="windows-move-title">Move from Windows</h2><p>Environments on a live Windows server, moved to a Linux server while Windows keeps running them. The main sites stay here.</p></div>
+      <div><h2 id="windows-move-title">Copy from Windows</h2><p>Environments on a live Windows server, copied to a Linux server while Windows keeps running them. Nothing on Windows is changed, and the main sites stay here.</p></div>
     </header>
     <label>To the Linux server <select name="server" required></select></label>
     <p class="hint" id="windows-move-no-server" hidden>Add the Linux server in Servers first: Harbor reaches it with its own key.</p>
@@ -928,7 +928,7 @@
     <p class="hint">Each environment becomes a new environment of its site on the Linux server: built from the main site's project here, with the settings and files of the one on Windows (appsettings, umbraco, uSync, Views, wwwroot, App_Data), on HTTP. The one on Windows stays the live one until you take over. Refresh from Windows fetches the live data again (SQLite, media, uSync); Take over issues the certificate once the address has moved, and removes the Windows environment from Harbor without touching IIS.</p>
     <div id="windows-move-moved" class="windows-imported" hidden></div>
     <menu><li class="cancel-action"><button type="button" id="windows-move-cancel" class="cancel-link">Cancel</button></li>
-      <li><button type="submit" id="windows-move-submit" class="primary" disabled>Move</button></li></menu>
+      <li><button type="submit" id="windows-move-submit" class="primary" disabled>Copy</button></li></menu>
   </form>
 </dialog>
 

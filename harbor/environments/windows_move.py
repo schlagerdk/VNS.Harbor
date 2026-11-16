@@ -89,7 +89,7 @@ def move(system, name, target, server_name, alias=""):
     if not environment.windows:
         raise Stop(f"{environment.BINDING or target} is not on Windows.")
     if target in {entry.get("windows") for entry in links(system, name).values() if isinstance(entry, dict)}:
-        raise Stop(f"{environment.BINDING} has been moved already.")
+        raise Stop(f"{environment.BINDING} has been copied already.")
     entry = servers.server(system, server_name)
     before = set(settings.target_ids(system, site.site_root))
     # As the admin's Copy site asks it, to a remote Linux server, on HTTP: the address still points to Windows
@@ -127,13 +127,13 @@ def move_all(system, items, server_name):
             system.warn(f"{item.get('site')} ({item.get('target')}): FAILED{': ' + str(error) if str(error) else ''}")
             failed.append(item.get("site", ""))
     if failed:
-        raise Stop(f"Not moved: {', '.join(failed)}")
+        raise Stop(f"Not copied: {', '.join(failed)}")
 
 
 def _link(system, name, new_id):
     entry = links(system, name).get(new_id)
     if not isinstance(entry, dict) or not entry.get("windows"):
-        raise Stop(f"{new_id} of {name} was not moved from Windows (or has been taken over).")
+        raise Stop(f"{new_id} of {name} was not copied from Windows (or has been taken over).")
     return entry
 
 
@@ -193,7 +193,7 @@ def refresh(system, name, new_id, pause=False):
 def refresh_all(system, pause=False):
     moved = [(name, new_id) for name in _sites(system) for new_id in links(system, name)]
     if not moved:
-        raise Stop("No environment has been moved from Windows (or all have been taken over).")
+        raise Stop("No environment has been copied from Windows (or all have been taken over).")
     failed = []
     for name, new_id in moved:
         system.step(f"==== {name}: {new_id}")

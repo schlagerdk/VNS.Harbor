@@ -181,4 +181,4 @@ def change_binding(system, name="", new_binding="", aliases=None, yes=False, tar
         raise Stop("", result.returncode)
     # Keep the settings of this site in sync (quotes and the trailing comment are preserved)
     set_setting(system, environment, "BINDING", new_binding, quoted=True)
-    system.say(f"PROD_BINDING in {environment.script} is now {new_binding}")
+    system.say(f"PROD_BINDING is now {new_binding}")

@@ -139,6 +139,18 @@ class WindowsMoveTests(unittest.TestCase):
         self.assertEqual(delete.call_args[0][1:], ("test.shop.dk", "n", "prod", "production"), "the Windows environment, from Harbor only")
         self.assertEqual(json.loads((self.root / "var/lib/harbor/sites/test.shop.dk/windows-move.json").read_text()), {})
 
+    def test_a_setting_changes_in_harbors_copy_when_the_site_folder_has_no_script(self):
+        """A moved environment's settings are kept by Harbor: a new binding (or HTTPS after take over) goes there"""
+        from harbor.environments import actions, settings
+        system = RecordingSystem(root=self.root)
+        site_root = "/var/www/test.shop.dk"
+        settings.write_copy(system, site_root, "prod3", {"IP": "10.0.0.9", "USER": "root", "FOLDER": "shop.dk", "BINDING": "shop.dk", "HTTPS": "n"})
+        environment = settings.load(system, site_root, "prod3")
+        actions.set_setting(system, environment, "BINDING", "www.shop.dk", quoted=True)
+        actions.set_setting(system, settings.load(system, site_root, "prod3"), "HTTPS", "y", quoted=False)
+        changed = settings.load(system, site_root, "prod3")
+        self.assertEqual((changed.BINDING, changed.HTTPS), ("www.shop.dk", "y"))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,6 +2,16 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.14] - 2026-11-16
+
+### Changes
+
+- Move from Windows is called Copy from Windows: nothing on Windows is removed or changed, and the site there stays the live one until you take over. The command is still harbor env windows-move
+
+### Fixes
+
+- Copy from Windows (until now Move from Windows) stopped after adding the temporary alias, and Take over after issuing the certificate: a setting of an environment whose settings Harbor keeps (no script in the site folder) was written to a script that is not there. It goes to Harbor's copy, as binding, HTTPS and environment changes
+
 ## [1.0.13] - 2026-11-16
 
 ### Fixes
