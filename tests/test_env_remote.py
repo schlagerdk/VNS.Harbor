@@ -80,7 +80,14 @@ class RemoteSiteTests(unittest.TestCase):
                 ssh, remote = system.commands[index].split(" deploy@10.0.0.5 ", 1)
                 self.assertEqual(ssh.split(" "), ["sshpass", "-e", name, *argv[:-2]])
                 self.assertEqual(argv[-2], "deploy@10.0.0.5")
-                self.assertEqual(words(remote), words(argv[-1]))
+                expected = words(argv[-1])
+                if action in ("files", "config"):
+                    # Unlike the script, the helper carries the names it needs: it has no file beside it there
+                    from harbor.core.names import standalone
+                    legacy = [word for word in expected if word.lstrip().startswith('"""')]
+                    self.assertEqual(len(legacy), 1, expected)
+                    expected = [standalone(word).rstrip("\n") if word in legacy else word for word in expected]
+                self.assertEqual(words(remote), expected)
                 self.assertEqual(system.environments[index], variables)
                 # A script on stdin, or none (the fake ssh got an empty stdin from the script)
                 self.assertEqual(system.inputs[index] or "", sent)
