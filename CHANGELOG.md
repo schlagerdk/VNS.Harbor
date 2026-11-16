@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.16] - 2026-11-16
+
+### Changes
+
+- Import from Windows no longer imports a folder with only a build (Build from is gone): such a site is an environment of a site with its project, and Copy from Windows copies it, built from that project. It is listed, with a note that says so
+
 ## [1.0.15] - 2026-11-16
 
 ### Fixes

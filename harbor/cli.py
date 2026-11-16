@@ -227,10 +227,9 @@ def _windows(args, system):
         from harbor.core.system import Stop
         raise Stop("Give the share and --user, or --server with a Windows server kept in harbor servers.")
     if args.command == "list":
-        print(json.dumps({"folders": windows_import.list_folders(system, args.share, args.user, password, args.domain),
-                          "projects": windows_import.projects(system)}, indent=2))
+        print(json.dumps({"folders": windows_import.list_folders(system, args.share, args.user, password, args.domain)}, indent=2))
     elif args.command == "import":
-        windows_import.import_site(system, args.share, args.folder, args.binding, args.user, password, args.domain, args.aliases, args.build_from)
+        windows_import.import_site(system, args.share, args.folder, args.binding, args.user, password, args.domain, args.aliases)
     elif args.command == "import-all":
         # The admin's choice: [{"folder", "binding", "aliases"}], in VNS_WINDOWS_SITES
         windows_import.import_all(system, args.share, json.loads(os.environ.get("VNS_WINDOWS_SITES") or "[]"), args.user, password, args.domain)
@@ -618,7 +617,6 @@ def parser():
     command.add_argument("--server", default="", help="a Windows server kept in harbor servers, instead of the share and login")
     command.add_argument("--domain", default="")
     command.add_argument("--aliases", default="", help="temporary names to test it by, separated by commas")
-    command.add_argument("--build-from", default="", help="for a build: the site whose project builds it, as site or server:site")
     command.set_defaults(handler=_windows)
     command = windows.add_parser("import-all", help="the folders in VNS_WINDOWS_SITES (JSON: folder, binding, aliases), one at a time")
     command.add_argument("share", nargs="?", default="")

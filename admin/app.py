@@ -4517,11 +4517,7 @@ def windows_sites(data):
             abort(400, "Invalid folder")
         binding = dns_name(item.get("binding") or folder, "binding", fully_qualified=True)
         aliases = [dns_name(alias, "alias", fully_qualified=True) for alias in str(item.get("aliases") or "").replace(",", " ").split()]
-        # A build is built from a project: a site here, or server:site on a server Harbor knows
-        build_from = str(item.get("build_from") or "")
-        if build_from and not re.fullmatch(r"(?:[a-z0-9][a-z0-9-]{0,62}:)?[A-Za-z0-9][A-Za-z0-9.-]{0,252}", build_from):
-            abort(400, "Invalid project to build from")
-        checked.append({"folder": folder, "binding": binding, "aliases": ",".join(aliases), "build_from": build_from})
+        checked.append({"folder": folder, "binding": binding, "aliases": ",".join(aliases)})
     return checked
 
 

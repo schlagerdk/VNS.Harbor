@@ -123,7 +123,7 @@ class WindowsImportTests(unittest.TestCase):
         self.addCleanup(patcher.stop)
 
     def rsync(self, argv, stdin=None):
-        """rsync -a with --exclude, between two folders on this server, as copy_project uses it"""
+        """rsync -a with --exclude, between two folders on this server"""
         args = list(argv[1:])
         excludes = [args[i + 1] for i, item in enumerate(args[:-1]) if item == "--exclude"]
         source, target = Path(args[-2]), Path(args[-1])
@@ -180,30 +180,12 @@ class WindowsImportTests(unittest.TestCase):
         self.assertIn("Windows only", system.said[-1])
         self.assertFalse((self.root / "var/www/old.dk").exists())
 
-    def test_a_build_is_built_here_from_its_project_without_windows_dlls(self):
-        # The project lives in a site here (test.built.dk), with its own build, environments and data
-        project = self.root / "var/www/test.built.dk"
-        for name, text in (("Built.csproj", "<Project/>"), ("Program.cs", "app"), ("bin/Debug/Built.dll", "linux"), ("_publish/Built.dll", "dev"),
-                           ("_production/x", "env"), ("umbraco/Data/Umbraco.sqlite.db", "dev data"), ("appsettings.json", '{"dev": true}')):
-            (project / name).parent.mkdir(parents=True, exist_ok=True)
-            (project / name).write_text(text)
+    def test_a_build_is_not_imported_but_copied_from_windows(self):
+        """Only a build is an environment of a site with its project: Copy from Windows copies it, built from that"""
         code, system = self.harbor("import", UNC, "built.dk", "built.dk", "--user", "admin")
-        self.assertEqual(code, 1, "a build needs the project it is built from")
-        self.assertIn("Build from", system.said[-1])
-        code, system = self.harbor("import", UNC, "built.dk", "built.dk", "--user", "admin", "--build-from", "test.built.dk")
-        self.assertEqual(code, 0, system.said)
-        site = self.root / "var/www/built.dk"
-        # The project's source, Windows' settings and files on top
-        for kept in ("Built.csproj", "Program.cs", "Views/Home.cshtml"):
-            self.assertTrue((site / kept).is_file(), kept)
-        self.assertEqual((site / "appsettings.json").read_text(), "{}", "the live site's settings")
-        # No binaries from Windows, nor the project's builds, environments and data
-        for left_out in ("Built.dll", "Built.runtimeconfig.json", "Built.deps.json", "web.config", "umbraco/Logs", "bin", "_production"):
-            self.assertFalse((site / left_out).exists(), left_out)
-        self.assertEqual(self.setups[-1], ("built.dk", "built.dk", "n", "Production"))
-        # The live data where it runs
-        self.assertEqual((site / "_publish/umbraco/Data/Umbraco.sqlite.db").read_text(), "built data")
-        self.assertEqual(json.loads((self.root / "var/lib/harbor/sites/built.dk/windows-source.json").read_text())["kind"], "build")
+        self.assertEqual(code, 1)
+        self.assertIn("Copy from Windows", system.said[-1])
+        self.assertFalse((self.root / "var/www/built.dk").exists())
 
     def test_an_html_site_is_copied_as_it_is(self):
         code, system = self.harbor("import", UNC, "cdn.dk", "cdn.dk", "--user", "admin")

@@ -11,11 +11,9 @@ moves, and then taken over.
   take-over  after the address has moved: the temporary aliases removed, a certificate issued (HTTPS), and the Windows
              source forgotten. Nothing on Windows is changed
 
-A site with only a build (.NET, with its runtimeconfig.json) is built here from its project, which lives in a site on
-this server or on one of the servers Harbor knows (harbor servers): the project's source is copied (no builds, no data),
-then everything from Windows but its binaries goes on top (appsettings, wwwroot, Views, uSync, the SQLite database), and
-it is built for Linux. Its dlls never come from Windows: a build published there may hold Windows' own libraries. A
-classic ASP.NET site (Umbraco 7 and older, .NET Framework) runs on Windows only, and is not imported.
+A site with only a build (.NET, with its runtimeconfig.json) is not imported: it is an environment of a site with its
+project, and Copy from Windows (harbor env windows-move) copies it, built from that project. A classic ASP.NET site
+(Umbraco 7 and older, .NET Framework) runs on Windows only, and is not imported either.
 
   /var/lib/harbor/sites/<site>/windows-source.json        where it came from: the share, the folder, the login
   /etc/harbor/secrets/sites/<site>/windows-source.json    the login's password (root only)
@@ -30,13 +28,6 @@ from harbor.state.store import read_json, site_secrets, site_state, write_json
 # Not copied when a site is imported: builds and what the site writes while it runs
 LEFT_OUT = ("/bin/**", "/obj/**", "/*.dll", "/*.pdb", "/*.exe", "/runtimes/**", "/refs/**", "/web.config", "/app_offline.htm",
             "/umbraco/Data/TEMP/**", "/umbraco/Logs/**", "/App_Data/TEMP/**", "/App_Data/Logs/**", "/.vs/**", "*.user", "*.lock", "*.partial")
-# Not copied from a build on Windows: its binaries (the site is built here), IIS's own files, and what it writes as it runs
-BUILD_LEFT_OUT = ("*.dll", "*.exe", "*.pdb", "/*.runtimeconfig.json", "/*.deps.json", "/runtimes/**", "/refs/**",
-                  "/web.config", "/app_offline.htm", "/umbraco/Data/TEMP/**", "/umbraco/Logs/**", "/App_Data/TEMP/**",
-                  "/App_Data/Logs/**", "/logs/**", "*.lock", "*.partial")
-# Not copied from the project a build is built from: its builds, its environments' folders and its own data
-PROJECT_LEFT_OUT = ("/bin/", "/obj/", "/_*/", "/node_modules/", "/.git/", "/umbraco/Data/", "/umbraco/Logs/", "/wwwroot/media/",
-                    "/uSync/", "/appsettings*.json", "/vns-harbor.json")
 # What refresh fetches: the data that changes while the site is live. SQLite with its journal files.
 DATA = (("umbraco/Data", ("*.sqlite.db", "*.sqlite.db-wal", "*.sqlite.db-shm")), ("wwwroot/media", ()), ("uSync", ()))
 UMBRACO_VERSION = re.compile(r'<PackageReference\s+Include="Umbraco\.Cms"\s+Version="([^"]+)"', re.I)
@@ -87,55 +78,10 @@ def list_folders(system, unc, user, password, domain=""):
             umbraco = match[1] if match else ""
         if kind == "build":
             projects = []
-            dll = runtimes[0][:-len(".runtimeconfig.json")]
-        else:
-            dll = ""
-        found.append({"folder": folder, "kind": kind, "dll": dll, "project": projects[0][:-len(".csproj")] if len(projects) == 1 else "",
+        found.append({"folder": folder, "kind": kind, "project": projects[0][:-len(".csproj")] if len(projects) == 1 else "",
                       "projects": len(projects), "umbraco": umbraco, "windows_only": windows_only,
                       "imported": imported.get((unc.rstrip("/").lower(), folder.lower()), "")})
     return found
-
-
-def projects(system):
-    """The projects a build can be built from: the sites with one project here, and on the servers Harbor knows.
-    [{server ("" here), site, project}]"""
-    from harbor.install.admin import web_root
-    found = []
-    root = system.path(web_root())
-    for path in sorted(root.glob("*/*.csproj")) if root.is_dir() else []:
-        if len(list(path.parent.glob("*.csproj"))) == 1:
-            found.append({"server": "", "site": path.parent.name, "project": path.stem})
-    from harbor.server import servers
-    for name, entry in sorted(servers.servers(system, "linux").items()):
-        listing = servers.remote(system, entry, f"sh -c 'for f in {web_root()}/*/*.csproj; do [ -f \"$f\" ] && echo \"$f\"; done'", check=False)
-        paths = [line.strip() for line in listing.stdout.splitlines() if line.strip().endswith(".csproj")] if listing.ok else []
-        for line in paths:
-            folder, project = line.rsplit("/", 2)[-2:]
-            if sum(1 for other in paths if other.rsplit("/", 2)[-2] == folder) == 1:
-                found.append({"server": name, "site": folder, "project": project[:-len(".csproj")]})
-    return found
-
-
-def copy_project(system, server, site, target):
-    """A project's source, from a site here or on a server Harbor knows, into target: no builds, no data"""
-    from harbor.install.admin import web_root
-    from harbor.core.names import normalize_site_name
-    try:
-        site = normalize_site_name(site)
-    except ValueError:
-        raise Stop(f"Unknown site: {site}") from None
-    arguments = [argument for pattern in PROJECT_LEFT_OUT for argument in ("--exclude", pattern)]
-    source = f"{web_root()}/{site}/"
-    if not server:
-        if not system.path(source).is_dir():
-            raise Stop(f"{site} is not a site on this server.")
-        system.run("rsync", "-a", *arguments, str(system.path(source)), f"{target}/")
-        return
-    from harbor.server import servers
-    entry = servers.server(system, server)
-    shell = " ".join(servers.ssh(entry))
-    rsync = "rsync" if entry["user"] == "root" else "sudo -n rsync"
-    system.run("rsync", "-a", "-e", shell, f"--rsync-path={rsync}", *arguments, f"{entry['user']}@{entry['host']}:{source}", f"{target}/")
 
 
 def _imported(system):
@@ -164,7 +110,7 @@ def keep_source(system, name, unc, folder, user, password, domain, kind="project
     write_json(secrets / "windows-source.json", {"password": password}, private=True)
 
 
-def import_site(system, unc, folder, binding, user, password, domain="", aliases="", build_from=""):
+def import_site(system, unc, folder, binding, user, password, domain="", aliases=""):
     """A Windows site with a project, here: copied without its builds, set up on HTTP as Production, and its data fetched"""
     from harbor.core.templates import Site
     from harbor.sites.setup import setup_site
@@ -180,23 +126,17 @@ def import_site(system, unc, folder, binding, user, password, domain="", aliases
     lower = {item.lower() for item in files}
     project = any(item.endswith(".csproj") for item in lower)
     build = not project and any(item.endswith(".runtimeconfig.json") for item in lower)
-    if not project and not build and ("global.asax" in lower or any(item.endswith(".dll") for item in lower)):
+    if build:
+        raise Stop(f"{folder} is only a build: copy it with Copy from Windows, as an environment of the site with its project.")
+    if not project and ("global.asax" in lower or any(item.endswith(".dll") for item in lower)):
         raise Stop(f"{folder} is a classic ASP.NET site (.NET Framework): it runs on Windows only.")
-    kind = "project" if project else "build" if build else "html"
-    if build and not build_from:
-        raise Stop(f"{folder} is a build: choose the project it is built from (Build from).")
-    system.step(f"Copy {folder} from Windows" + {"project": "", "build": ", built here from its project", "html": ", as static files"}[kind])
-    # A project without its builds; a build whole, as it runs; static files as they are. IIS's own files never.
-    left_out = LEFT_OUT if project else BUILD_LEFT_OUT if build else ("/web.config", "/app_offline.htm")
+    kind = "project" if project else "html"
+    system.step(f"Copy {folder} from Windows" + {"project": "", "html": ", as static files"}[kind])
+    # A project without its builds; static files as they are. IIS's own files never.
+    left_out = LEFT_OUT if project else ("/web.config", "/app_offline.htm")
     arguments = [argument for pattern in left_out for argument in ("--exclude", pattern)]
     system.path(site.site_root).mkdir(parents=True)
     try:
-        if build:
-            # The project first, from where it lives; then what Windows has, but its binaries, on top
-            server, _, project_site = build_from.rpartition(":")
-            system.step(f"Copy the project of {project_site}" + (f" from {server}" if server else ""))
-            copy_project(system, server, project_site, str(system.path(site.site_root)))
-            system.step(f"Copy {folder}'s settings and files from Windows, without its binaries")
         remote.rclone("copy", remote.target, str(system.path(site.site_root)), *arguments, "--create-empty-src-dirs", "--modify-window", "2s", "--stats", "0")
     except CommandFailed:
         import shutil
@@ -220,7 +160,7 @@ def import_all(system, unc, sites, user, password, domain=""):
         folder, binding = item.get("folder", ""), item.get("binding") or item.get("folder", "")
         system.step(f"==== {folder} as {binding}")
         try:
-            import_site(system, unc, folder, binding, user, password, domain, item.get("aliases", ""), item.get("build_from", ""))
+            import_site(system, unc, folder, binding, user, password, domain, item.get("aliases", ""))
         except (Stop, CommandFailed) as error:
             system.warn(f"{folder}: FAILED{': ' + str(error) if str(error) else ''}")
             failed.append(folder)

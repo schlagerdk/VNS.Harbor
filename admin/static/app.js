@@ -2456,23 +2456,13 @@ $("#windows-list").onclick = () => run(async () => {
 		// One row per folder: what it holds, and whether it can be imported. Name and note together, the kind in a column of
 		// its own, and the binding for what can be imported.
 		const rows = result.folders.map((item) => {
-			const can = ["project", "build", "html"].includes(item.kind) && !item.imported;
+			const can = ["project", "html"].includes(item.kind) && !item.imported;
 			const notes = [];
 			if (item.imported) notes.push(`Imported as ${item.imported}`);
 			if (item.umbraco) notes.push(`Umbraco ${item.umbraco}`);
-			if (item.kind === "build" && !item.imported) notes.push("Built here from its project");
+			if (item.kind === "build" && !item.imported) notes.push("An environment of a site with its project: use Copy from Windows");
 			if (item.kind === "framework") notes.push("Runs on Windows only (Umbraco 7 and older)");
 			if (item.kind === "other") notes.push("Nothing to run here");
-			// A build is built from a project here or on a server Harbor knows: the one whose name is the dll's, when there is one
-			let buildFrom = "";
-			if (item.kind === "build" && can) {
-				const value = (project) => (project.server ? `${project.server}:` : "") + project.site;
-				const match = (result.projects || []).find((project) => project.project.toLowerCase() === (item.dll || "").toLowerCase());
-				buildFrom = el("select", { className: "windows-site-from", ariaLabel: `Build ${item.folder} from`, onchange: updateWindowsChoice },
-					el("option", { value: "", textContent: (result.projects || []).length ? "Build from…" : "No project found here or on the servers" }),
-					...(result.projects || []).map((project) => el("option", { value: value(project), selected: project === match,
-						textContent: `${project.site}${project.server ? " on " + project.server : ""} (${project.project})` })));
-			}
 			// Name with its kind and notes under it; the fields, each with its label, at the right. A click on the row
 			// (not on a field) ticks it.
 			const field = (label, control) => el("label", { className: "windows-field" }, el("span", { textContent: label }), control);
@@ -2485,8 +2475,7 @@ $("#windows-list").onclick = () => run(async () => {
 					el("strong", { textContent: item.folder }),
 					notes.length ? el("small", { className: "windows-site-meta", textContent: notes.join(" · ") }) : ""),
 				can ? el("span", { className: "windows-site-fields" },
-					field("Binding", el("input", { className: "windows-site-binding", value: item.folder, spellcheck: false })),
-					...(buildFrom ? [field("Build from", buildFrom)] : [])) : el("span"));
+					field("Binding", el("input", { className: "windows-site-binding", value: item.folder, spellcheck: false }))) : el("span"));
 			row.onclick = (event) => {
 				if (!can || event.target.closest("input, select, label")) return;
 				box.checked = !box.checked;
@@ -2548,15 +2537,9 @@ windowsForm.onsubmit = (event) => {
 	const alias = windowsForm.elements.alias.value.trim();
 	const sites = [...$("#windows-sites").children].filter((row) => !row.hidden && row.querySelector("input[type=checkbox]")?.checked).map((row) => {
 		const binding = row.querySelector(".windows-site-binding").value.trim() || row.dataset.folder;
-		const from = row.querySelector(".windows-site-from");
-		return { folder: row.dataset.folder, binding, aliases: alias ? alias.replaceAll("{binding}", binding) : "", ...(from ? { build_from: from.value } : {}) };
+		return { folder: row.dataset.folder, binding, aliases: alias ? alias.replaceAll("{binding}", binding) : "" };
 	});
 	if (!sites.length) return;
-	const missing = sites.find((item) => item.build_from === "");
-	if (missing) {
-		toast(`Choose the project ${missing.folder} is built from.`, "error");
-		return;
-	}
 	run(async () => {
 		await openTask({ kind: "windows_import", ...windowsLogin(), sites });
 		windowsDialog.close();
