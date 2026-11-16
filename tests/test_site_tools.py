@@ -74,8 +74,11 @@ class SiteToolTests(unittest.TestCase):
         self.assertEqual({name: content for name, content in self.new.files().items() if "/scripts/" not in name},
                          {name: content for name, content in self.old.files().items() if "/scripts/" not in name})
         ignore = ("clear", "sleep", "uname", *skip)
-        mine = [line for line in harbor_commands(system) if not line.startswith(ignore)]
-        theirs = [line for line in self.old.commands() if not line.startswith(ignore)]
+        # Unlike some scripts, systemctl status never opens a pager: the admin's window waited for a key that never came.
+        # Compared without it, on both sides
+        pager = lambda line: line.replace(" --no-pager", "") if line.startswith("systemctl status ") else line
+        mine = [pager(line) for line in harbor_commands(system) if not line.startswith(ignore)]
+        theirs = [pager(line) for line in self.old.commands() if not line.startswith(ignore)]
         self.assertEqual(mine, theirs)
         return result, system
 
@@ -143,6 +146,16 @@ class ConfigurationTests(unittest.TestCase):
     def test_one_given_is_used(self):
         self.assertEqual(self.publish("Production", given="Debug"), "Debug")
 
+
+
+class NoPagerTests(unittest.TestCase):
+    def test_systemctl_status_never_waits_for_a_key(self):
+        """Clear logs hung in its window: systemctl status opened a pager (lines 1-12/12 (END)) on the terminal"""
+        root = Path(__file__).resolve().parents[1] / "harbor"
+        found = [f"{path.relative_to(root)}:{number}" for path in root.rglob("*.py")
+                 for number, line in enumerate(path.read_text().splitlines(), 1)
+                 if '"systemctl", "status"' in line and "--no-pager" not in line]
+        self.assertEqual(found, [])
 
 if __name__ == "__main__":
     unittest.main()

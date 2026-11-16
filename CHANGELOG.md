@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.24] - 2026-11-16
+
+### Fixes
+
+- Clear logs, Update packages and Check service no longer hang in their window: systemctl status opened a pager (lines 1-12/12 (END)) and waited for a key. It never does now
+
 ## [1.0.23] - 2026-11-16
 
 ### Fixes

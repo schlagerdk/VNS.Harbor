@@ -52,7 +52,7 @@ def restart_apache(system):
 
 def check_service(system, name):
     site = site_named(system, name)
-    system.run("systemctl", "status", site.service_name)
+    system.run("systemctl", "status", site.service_name, "--no-pager")
 
 
 def restart_service(system, name):
@@ -92,7 +92,7 @@ def clear_logs(system, name):
     system.run("systemctl", "stop", site.service_name, check=False)
     shutil.rmtree(system.path(f"{working_folder(system, site)}/umbraco/Logs"), ignore_errors=True)
     system.run("systemctl", "start", site.service_name, check=False)
-    system.run("systemctl", "status", site.service_name, check=False)
+    system.run("systemctl", "status", site.service_name, "--no-pager", check=False)
 
 
 def update_packages(system, name):
@@ -100,7 +100,7 @@ def update_packages(system, name):
     site = site_named(system, name)
     system.run("sudo", "-u", "www-data", "./venv/bin/pip", "install", "--upgrade", "-r", "app/requirements.txt", check=False, cwd=site.site_root)
     system.run("systemctl", "restart", site.service_name, check=False)
-    system.run("systemctl", "status", site.service_name, check=False)
+    system.run("systemctl", "status", site.service_name, "--no-pager", check=False)
 
 
 def fix_app_permissions(system, name):
