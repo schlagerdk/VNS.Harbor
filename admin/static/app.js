@@ -5664,6 +5664,8 @@ $("#btn-settings").onclick = (event) => {
 	event.stopPropagation();
 	$("#user-menu").hidden = true;
 	settingsMenu.hidden = !settingsMenu.hidden;
+	// Move from Windows only when a site here has an environment on Windows
+	$("#settings-windows-move").hidden = !allSites.some((site) => (site.environments || []).some((env) => env.mode === "windows"));
 	if (!settingsMenu.hidden) run(() => checkSystemUpdate(true));
 };
 document.addEventListener("click", () => { settingsMenu.hidden = true; });
