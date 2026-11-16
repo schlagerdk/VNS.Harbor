@@ -846,7 +846,7 @@ const buttonStyles = {
 	"Migrate…": ["server", "purple"],
 	"Check outdated": ["download", "amber"], "Restart": ["restart", "amber"], "Restart Apache": ["restart", "amber"],
 	"Stop": ["stop", "red"], "Clear logs": ["eraser", "gray"], "Logs": ["file", "gray"],
-	"SQL Server": ["server", "purple"], "Web server": ["globe", "blue"], "Preferences…": ["sliders", "purple"], "Server tools…": ["package", "purple"], "Backoffice login…": ["key", "purple"], "Servers…": ["server", "blue"], "Import from Windows…": ["download", "blue"], "Refresh from Windows…": ["download", "blue"], "Take over…": ["shield", "green"], "Files (/)": ["folder", "blue"],
+	"SQL Server": ["server", "purple"], "Web server": ["globe", "blue"], "Preferences…": ["sliders", "purple"], "Server tools…": ["package", "purple"], "Backoffice login…": ["key", "purple"], "Servers…": ["server", "blue"], "Import from Windows…": ["download", "blue"], "Move from Windows…": ["download", "purple"], "Refresh from Windows…": ["download", "blue"], "Take over…": ["shield", "green"], "Files (/)": ["folder", "blue"],
 	"Test config": ["activity", "teal"], "Error logs": ["file", "teal"],
 	"Admin app log": ["file", "gray"], "Apache error logs": ["file", "teal"],
 	"Copy site": ["file", "blue"],
@@ -1752,6 +1752,11 @@ function envPanel(site, env) {
 	if (!isTarget(env) && !site.admin && !site.managed_by) addManage("Copy site", () => copySite(site, env));
 	// Each environment has its own Umbraco users, also one on another server or on Windows (its connection is written there)
 	if (currentUser.admin && site.kind === "umbraco") addManage("Backoffice login…", () => backofficeLoginDialog(site, env));
+	// Moved from Windows, here as an environment: its data fetched again, and taken over once the address has moved
+	if (currentUser.admin && env.windows_move && isTarget(env)) {
+		addManage("Refresh from Windows…", () => refreshMovedFromWindows(site, env));
+		addManage("Take over…", () => takeOverMovedFromWindows(site, env));
+	}
 	// Imported from a live Windows server: its data fetched again, and taken over once the address has moved
 	if (currentUser.admin && site.windows_source && !isTarget(env)) {
 		addManage("Refresh from Windows…", () => refreshFromWindows(site));
@@ -2462,6 +2467,96 @@ async function refreshFromWindows(site) {
 	const pause = Boolean(answer.checked);
 	if (windowsDialog.open) windowsDialog.close();
 	await openTask(site ? { kind: "windows_refresh", site: site.name, pause } : { kind: "windows_refresh_all", pause });
+}
+// Move from Windows: every site's environments on Windows, moved to a Linux server Harbor knows as new environments
+// of their sites (harbor/environments/windows_move.py). An administrator's alone.
+const windowsMoveDialog = $("#dlg-windows-move");
+const windowsMoveForm = $("#form-windows-move");
+const windowsMoveChoices = () => [...$("#windows-move-list").querySelectorAll(".windows-site:not([hidden]) .windows-check:not(:disabled)")];
+function updateWindowsMoveChoice() {
+	for (const box of $("#windows-move-list").querySelectorAll(".windows-check")) box.closest(".windows-site").classList.toggle("chosen", box.checked);
+	const chosen = windowsMoveChoices().filter((box) => box.checked).length;
+	$("#windows-move-submit").disabled = chosen === 0 || !windowsMoveForm.elements.server.value;
+	$("#windows-move-submit").textContent = chosen > 1 ? `Move ${chosen} environments` : "Move";
+	$("#windows-move-select-all").textContent = chosen && chosen === windowsMoveChoices().length ? "Select none" : "Select all";
+}
+$("#settings-windows-move").onclick = () => run(async () => {
+	$("#settings-menu").hidden = true;
+	const result = await api("/api/windows-move");
+	windowsMoveForm.elements.server.replaceChildren(...result.servers.map((name) => el("option", { value: name, textContent: name })));
+	$("#windows-move-no-server").hidden = result.servers.length > 0;
+	const rows = result.environments.map((item) => {
+		const can = !item.moved_to;
+		const box = el("input", { type: "checkbox", className: "windows-check", disabled: !can, onchange: updateWindowsMoveChoice, ariaLabel: item.binding });
+		const row = el("div", { className: "windows-site" + (can ? "" : " off") },
+			el("span", { className: "windows-site-kind build", textContent: item.environment || "Environment" }),
+			box,
+			el("span", { className: "windows-site-text" }, el("strong", { textContent: item.binding || item.target }),
+				el("small", { className: "windows-site-meta", textContent: `${item.environment || "Environment"} of ${item.site}` + (item.moved_to ? ` · moved, as ${item.moved_to}` : "") })),
+			el("span"));
+		row.dataset.site = item.site;
+		row.dataset.target = item.target;
+		row.dataset.binding = item.binding;
+		row.onclick = (event) => {
+			if (!can || event.target.closest("input, select, label")) return;
+			box.checked = !box.checked;
+			updateWindowsMoveChoice();
+		};
+		return row;
+	});
+	$("#windows-move-list").replaceChildren(...rows);
+	if (!rows.length) $("#windows-move-list").append(el("p", { className: "hint", textContent: "No site here has an environment on Windows." }));
+	const moved = result.environments.filter((item) => item.moved_to).length;
+	$("#windows-move-moved").hidden = !moved;
+	$("#windows-move-moved").replaceChildren(el("div", { className: "windows-imported-text" },
+		el("strong", { textContent: `${moved} environment${moved === 1 ? "" : "s"} moved, not taken over yet` }),
+		el("span", { className: "muted", textContent: "Their data can be fetched again from Windows" })),
+		el("button", { type: "button", textContent: "Refresh all…", onclick: () => refreshMovedFromWindows(null) }));
+	$("#windows-move-filter").value = "";
+	updateWindowsMoveChoice();
+	windowsMoveDialog.showModal();
+});
+$("#windows-move-filter").oninput = () => {
+	const text = $("#windows-move-filter").value.trim().toLowerCase();
+	for (const row of $("#windows-move-list").querySelectorAll(".windows-site")) row.hidden = text && !`${row.dataset.binding} ${row.dataset.site}`.toLowerCase().includes(text);
+	updateWindowsMoveChoice();
+};
+windowsMoveForm.elements.server.onchange = updateWindowsMoveChoice;
+$("#windows-move-select-all").onclick = () => {
+	const all = windowsMoveChoices().every((box) => box.checked);
+	for (const box of windowsMoveChoices()) box.checked = !all;
+	updateWindowsMoveChoice();
+};
+$("#windows-move-cancel").onclick = () => windowsMoveDialog.close();
+windowsMoveForm.onsubmit = (event) => {
+	event.preventDefault();
+	const alias = windowsMoveForm.elements.alias.value.trim();
+	const items = windowsMoveChoices().filter((box) => box.checked).map((box) => {
+		const row = box.closest(".windows-site");
+		return { site: row.dataset.site, target: row.dataset.target, alias: alias ? alias.replaceAll("{binding}", row.dataset.binding) : "" };
+	});
+	if (!items.length) return;
+	run(async () => {
+		await openTask({ kind: "windows_move", server: windowsMoveForm.elements.server.value, items });
+		windowsMoveDialog.close();
+	});
+};
+async function refreshMovedFromWindows(site, env) {
+	const answer = await ask({
+		title: env ? `Refresh ${bindingLabel(env) || siteLabel(site)} from Windows?` : "Refresh all moved environments from Windows?",
+		message: "The live data is fetched again: the SQLite database, media and uSync. The environment on Linux is stopped for a moment while its database is replaced. Without a pause, the site on Windows goes on running: a database written to just then may need another refresh.",
+		input: false, ok: "Refresh", checkbox: "Pause the site on Windows while its database is copied",
+	});
+	if (!answer) return;
+	const pause = Boolean(answer.checked);
+	if (windowsMoveDialog.open) windowsMoveDialog.close();
+	await openTask(env ? { kind: "windows_move_refresh", site: site.name, target: env.target, pause } : { kind: "windows_move_refresh_all", pause });
+}
+async function takeOverMovedFromWindows(site, env) {
+	if (!(await ask({ title: `Take over ${bindingLabel(env) || siteLabel(site)}?`,
+		message: "Do this once the address has moved to the Linux server. The temporary alias is removed, a certificate is issued there, and the environment on Windows is removed from Harbor. Its IIS site and files on Windows are not touched.",
+		input: false, ok: "Take over" }))) return;
+	await openTask({ kind: "windows_move_take_over", site: site.name, target: env.target });
 }
 async function takeOverFromWindows(site) {
 	if (!(await ask({ title: `Take over ${siteLabel(site)}?`,

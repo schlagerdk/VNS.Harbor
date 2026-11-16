@@ -68,6 +68,8 @@ class Sync:
         if environment.PASSWORD:
             env["SSHPASS"] = environment.PASSWORD
             argv = ["sshpass", "-e", *argv]
+        else:
+            argv += settings.harbor_key()
         sudo = "" if environment.USER == "root" else "sudo -n"
         return argv, env, sudo
 

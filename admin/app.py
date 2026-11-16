@@ -1325,6 +1325,15 @@ def site_info(name, states):
     for environment in environments:
         site_id = environment.get("target", "main")
         environment["data_sync"] = _data_sync_module.clean(data_sync.get(site_id), site_id)
+    # An environment moved from Windows and not taken over yet: Refresh from Windows and Take over on its card
+    try:
+        moves = json.loads(Path(HARBOR_SITES, name, "windows-move.json").read_text())
+    except (OSError, ValueError):
+        moves = {}
+    for environment in environments:
+        moved = moves.get(environment.get("target", "")) if isinstance(moves, dict) else None
+        if isinstance(moved, dict):
+            environment["windows_move"] = {"from": moved.get("windows", ""), "server": moved.get("server", "")}
     for environment in environments:
         environment["display_binding"] = display_dns_name(environment.get("binding", ""))
         environment["display_aliases"] = [display_dns_name(alias) for alias in environment.get("aliases", [])]
@@ -3435,6 +3444,23 @@ def build_command(data):
     """Validate a terminal request and return (title, argv, cwd). User input is never shell code."""
     kind = data.get("kind")
     bash = "/bin/bash"
+    if kind in ("windows_move", "windows_move_refresh", "windows_move_refresh_all", "windows_move_take_over"):
+        # Environments on Windows moved to a Linux server Harbor knows (harbor/environments/windows_move.py)
+        harbor = ["/usr/bin/python3", HARBOR_COMMAND, "env", "windows-move"]
+        if kind == "windows_move":
+            server = data.get("server")
+            if not isinstance(server, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", server):
+                abort(400, "Choose the Linux server")
+            windows_moves(data)
+            return "Move from Windows", [*harbor, "move", "--server", server], "/"
+        pause = ["--pause"] if data.get("pause") is True else []
+        if kind == "windows_move_refresh_all":
+            return "Refresh from Windows: all moved", [*harbor, "refresh", *pause], "/"
+        site = site_arg(data)
+        target = target_arg(site, data)
+        if kind == "windows_move_refresh":
+            return f"Refresh from Windows: {site}", [*harbor, "refresh", site, target, *pause], "/"
+        return f"Take over from Windows: {site}", [*harbor, "take-over", site, target], "/"
     if kind in ("windows_import", "windows_refresh", "windows_refresh_all", "windows_take_over"):
         # Sites moved from a live Windows server (harbor/sites/windows_import.py): an administrator's alone
         harbor = ["/usr/bin/python3", HARBOR_COMMAND, "windows"]
@@ -4035,7 +4061,8 @@ def sees_session(s):
 
 # Tasks that run as root by choice, or open a shell: only for administrators
 ADMIN_TASKS = {"servers", "server_tool", "install_sql_tools", "update_system", "remote_tool", "move_env", "move_site", "adopt_site", "release_site",
-               "setup_site", "unit_tool", "apache", "register_env", "windows_import", "windows_refresh", "windows_refresh_all", "windows_take_over"}
+               "setup_site", "unit_tool", "apache", "register_env", "windows_import", "windows_refresh", "windows_refresh_all", "windows_take_over",
+               "windows_move", "windows_move_refresh", "windows_move_refresh_all", "windows_move_take_over"}
 
 
 def env_of(site, data, scope_key="scope"):
@@ -4221,6 +4248,8 @@ def api_term():
                                for value in connection.values())):
                     abort(400, "Enter SQL server, database, username and password.")
                 extra_env["VNS_COPY_SQL"] = json.dumps(connection)
+    if payload.get("kind") == "windows_move":
+        extra_env = {**(extra_env or {}), "VNS_WINDOWS_MOVES": json.dumps(windows_moves(payload))}
     if payload.get("kind") == "windows_import":
         sites = windows_sites(payload)
         extra_env = {**(extra_env or {}), "VNS_SMB_PASSWORD": str(payload.get("password") or ""), "VNS_WINDOWS_SITES": json.dumps(sites)}
@@ -4408,6 +4437,32 @@ def windows_sites(data):
             abort(400, "Invalid project to build from")
         checked.append({"folder": folder, "binding": binding, "aliases": ",".join(aliases), "build_from": build_from})
     return checked
+
+
+def windows_moves(data):
+    """The environments on Windows chosen to move, with their temporary aliases, checked"""
+    items = data.get("items")
+    if not isinstance(items, list) or not items or len(items) > 200:
+        abort(400, "Choose the environments to move")
+    checked = []
+    for item in items:
+        if not isinstance(item, dict) or item.get("site") not in site_dirs():
+            abort(400, "Unknown site")
+        target = target_arg(item["site"], {"target": item.get("target")})
+        alias = str(item.get("alias") or "").strip()
+        checked.append({"site": item["site"], "target": target, "alias": dns_name(alias, "alias", fully_qualified=True) if alias else ""})
+    return checked
+
+
+@app.route("/api/windows-move")
+def api_windows_move():
+    """Every site's environments on Windows, and the Linux servers Harbor knows: for Move from Windows"""
+    require_admin()
+    from harbor.core.system import System
+    from harbor.environments import windows_move
+    from harbor.server import servers
+    system = System()
+    return jsonify(environments=windows_move.candidates(system), servers=sorted(servers.servers(system)))
 
 
 @app.route("/api/windows/list", methods=["POST"])

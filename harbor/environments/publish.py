@@ -363,6 +363,8 @@ class Publish:
                 raise Stop("sshpass is required for password login: sudo apt install sshpass")
             self.env["SSHPASS"] = environment.PASSWORD
             self.ssh = ["sshpass", "-e", *self.ssh]
+        else:
+            self.ssh += settings.harbor_key()
         self.host = f"{environment.USER}@{environment.IP}"
         self.sudo = "" if environment.USER == "root" else "sudo -n"
 

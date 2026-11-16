@@ -5,6 +5,7 @@ Each environment has its settings in <site>/scripts/targets/<id>/publish_prod.sh
 for one made before several were possible (id "prod"). Only the PROD_* assignments in it are read, as the script does.
 """
 from dataclasses import dataclass, field, fields
+import os
 import json
 import re
 import shlex
@@ -224,6 +225,15 @@ def load(system, site_root, target="prod"):
     return environment
 
 
+HARBOR_KEY = "/etc/harbor/ssh/id_ed25519"
+
+
+def harbor_key():
+    """ssh's options for Harbor's own key (harbor servers), offered besides root's own: an environment on a server that
+    was added in Servers needs no password of its own"""
+    return ["-i", HARBOR_KEY] if os.path.isfile(HARBOR_KEY) else []
+
+
 def ssh_command(environment, tty=False):
     """The ssh to an environment's server, and the variables it needs: the password goes in SSHPASS, never in argv"""
     argv = ["ssh", "-p", environment.SSH_PORT, "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=10",
@@ -235,7 +245,7 @@ def ssh_command(environment, tty=False):
         env["SSHPASS"] = environment.PASSWORD
         argv = ["sshpass", "-e", *argv]
     else:
-        argv += ["-o", "BatchMode=yes"]
+        argv += ["-o", "BatchMode=yes", *harbor_key()]
     return argv, env
 
 

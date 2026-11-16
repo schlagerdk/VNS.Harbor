@@ -121,6 +121,8 @@ class Move:
         if environment.PASSWORD:
             env["SSHPASS"] = environment.PASSWORD
             argv = ["sshpass", "-e", *argv]
+        else:
+            argv += settings.harbor_key()
         sudo = "" if environment.USER == "root" else "sudo -n"
         rsync = ["rsync", "-az", "-e", " ".join(argv), f"--rsync-path={sudo + ' ' if sudo else ''}rsync"]
         return argv, env, sudo, rsync

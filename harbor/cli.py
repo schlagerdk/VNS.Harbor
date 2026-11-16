@@ -193,6 +193,27 @@ def _migrate(args, system):
         raise Stop("", 2)
 
 
+def _windows_move(args, system):
+    """Environments on Windows moved to a Linux server Harbor knows (harbor/environments/windows_move.py)"""
+    import json
+    from harbor.environments import windows_move
+    if args.action == "list":
+        print(json.dumps(windows_move.candidates(system), indent=2))
+    elif args.action == "move":
+        if args.site:
+            windows_move.move(system, args.site, args.target, args.server, args.alias)
+        else:
+            # The admin's choice: [{"site", "target", "alias"}], in VNS_WINDOWS_MOVES
+            windows_move.move_all(system, json.loads(os.environ.get("VNS_WINDOWS_MOVES") or "[]"), args.server)
+    elif args.action == "refresh":
+        if args.site:
+            windows_move.refresh(system, args.site, args.target, pause=args.pause)
+        else:
+            windows_move.refresh_all(system, pause=args.pause)
+    elif args.action == "take-over":
+        windows_move.take_over(system, args.site, args.target)
+
+
 def _windows(args, system):
     """Sites moved from a Windows server (harbor/sites/windows_import.py); the SMB password in VNS_SMB_PASSWORD"""
     import json
@@ -691,6 +712,14 @@ def parser():
     command.set_defaults(handler=_state_sync)
 
     environment = groups.add_parser("env", help="an environment of a site, chosen with VNS_TARGET").add_subparsers(dest="command", required=True, metavar="<command>")
+    command = environment.add_parser("windows-move", help="environments on Windows moved to a Linux server Harbor knows, while Windows runs them")
+    command.add_argument("action", choices=("list", "move", "refresh", "take-over"))
+    command.add_argument("site", nargs="?", default="", help="move all in VNS_WINDOWS_MOVES, or refresh all, without one")
+    command.add_argument("target", nargs="?", default="", help="move: the environment on Windows; refresh and take-over: the one it became")
+    command.add_argument("--server", default="", help="move: the Linux server, as named in harbor servers")
+    command.add_argument("--alias", default="", help="move: a temporary name to test it by")
+    command.add_argument("--pause", action="store_true", help="refresh: take the site on Windows offline while its database is copied")
+    command.set_defaults(handler=_windows_move)
     command = environment.add_parser("action", help="issue_certificate or change_env where the environment is (was prod_action.sh)")
     command.add_argument("site", nargs="?", default="")
     command.add_argument("action", nargs="?", default="")

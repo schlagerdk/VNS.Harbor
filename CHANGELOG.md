@@ -6,9 +6,11 @@ All notable changes to VNS Harbor are listed here, newest first.
 
 ### Features
 
-- Import from Windows (Tools menu, or harbor windows): sites on a live Windows server are moved here while it keeps running them. A site with a project is copied without its builds, built here and set up as Production; static files (a CDN, a plain HTML site) are copied as they are. Each runs on HTTP with its own binding, and a temporary alias to test it by. A site with only a build cannot be built here and is not imported
-- Refresh from Windows, for one site or all: the live data is fetched again (the SQLite database, media and uSync; all files of a static site) as often as wanted. Pause the site on Windows takes it offline (app_offline.htm) while its database is copied
-- Take over, once the address has moved: the temporary aliases go, a certificate is issued and the site runs on HTTPS. Nothing on Windows is changed
+- Move from Windows (Tools menu, or harbor env windows-move): every site's environments on a live Windows server are moved to a Linux server Harbor knows, as new environments of their sites. Each is built from the main site's project here, with the settings and files of the one on Windows (appsettings, umbraco, uSync, Views, wwwroot, App_Data), on HTTP with a temporary alias. The one on Windows stays the live one meanwhile
+- Import from Windows (Tools menu, or harbor windows), for sites that are not environments here, on the server they move to: a site with a project is built there; a build is built from its project on that server or on one Harbor knows (Build from), and its dlls never come from Windows; static files are copied as they are. A classic ASP.NET site (Umbraco 7 and older) runs on Windows only and is not imported. A filter shows what can be imported, by kind and by name
+- Refresh from Windows, for one or all: the live data is fetched again (the SQLite database, media and uSync; all files of a static site), as often as wanted. Pause the site on Windows takes it offline (app_offline.htm) while its database is copied
+- Take over, once the address has moved: the temporary alias goes, a certificate is issued and it runs on HTTPS; a moved environment's Windows environment is removed from Harbor. Nothing on Windows is changed
+- An environment on a Linux server added in Servers is reached with Harbor's own key: it needs no password of its own
 
 ### Fixes
 
