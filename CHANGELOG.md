@@ -2,6 +2,13 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.8] - 2026-11-16
+
+### Changes
+
+- The dashboard in Umbraco is called VNS Harbor Sync, its tab and its user group too (VNS.Harbor 18.3.1.6); the package keeps its name. A user group made before keeps its name and alias
+- What this site sends and receives is written with capitals: Settings · Content · Media, or Nothing
+
 ## [1.0.7] - 2026-11-14
 
 ### Fixes

@@ -126,18 +126,19 @@ export default class VnsHarborDashboard extends UmbElementMixin(LitElement) {
 		const site = this._state.site;
 		const setup = site.setup;
 		const name = this.#from();
-		const list = (part) => [...(part.settings ? ["settings"] : []), ...(part.data || [])];
+		const capital = (word) => word.charAt(0).toUpperCase() + word.slice(1);
+		const list = (part) => [...(part.settings ? ["settings"] : []), ...(part.data || [])].map(capital);
 		const sends = setup ? list(setup.sends) : [];
 		const receives = setup ? list(setup.receives) : [];
 		const key = name.toLowerCase();
 		return html`<div class="this-site" style="--tone:${this.#tone(name)}">
 			<span class="badge"><uui-icon name=${ICONS[key] || "icon-server"}></uui-icon></span>
 			<div class="who"><span class="label">This site</span><strong>${name}</strong></div>
-			${setup ? html`<div class="flow"><span class="label">Sends</span><span>${sends.length ? sends.join(" · ") : "nothing"}</span></div>
+			${setup ? html`<div class="flow"><span class="label">Sends</span><span>${sends.length ? sends.join(" · ") : "Nothing"}</span></div>
 				<div class="flow ${receives.length ? "receives" : "none"}"><span class="label">Receives</span>
-					<span>${receives.length ? receives.join(" · ") : "nothing"}</span></div>
+					<span>${receives.length ? receives.join(" · ") : "Nothing"}</span></div>
 				${receives.length ? html`<p class="overwrite"><uui-icon name="icon-alert"></uui-icon>Other environments may overwrite this site's ${
-					receives.length > 1 ? receives.slice(0, -1).join(", ") + " and " + receives.at(-1) : receives[0]}.</p>` : nothing}` : nothing}
+					(receives.length > 1 ? receives.slice(0, -1).join(", ") + " and " + receives.at(-1) : receives[0]).toLowerCase()}.</p>` : nothing}` : nothing}
 		</div>`;
 	}
 
@@ -189,13 +190,13 @@ export default class VnsHarborDashboard extends UmbElementMixin(LitElement) {
 		if (!state) return html`<uui-loader-bar></uui-loader-bar>`;
 		let body;
 		if (state.failed) body = this.#notice("icon-alert", "VNS Harbor could not be asked", "The site could not read its own connection to Harbor.");
-		else if (!state.allowed) body = this.#notice("icon-lock", "No access to VNS Harbor", "An administrator can give you access by adding you to the VNS Harbor user group. Administrators have access.");
+		else if (!state.allowed) body = this.#notice("icon-lock", "No access to VNS Harbor Sync", "An administrator can give you access by adding you to the VNS Harbor Sync user group (alias vnsHarbor). Administrators have access.");
 		else if (!state.connected) body = this.#notice("icon-plug", "Not connected to Harbor", "This site is not connected to the Harbor that manages it yet. It is connected when Harbor publishes it.");
 		else if (!state.reachable) body = this.#notice("icon-wifi", "Harbor cannot be reached", html`To sync from here, this site needs access to Harbor at <code>${state.harbor}</code> over HTTPS. The sync buttons are off until it has.`);
 		else if (!state.site.destinations.length) body = this.#notice("icon-settings", "Nothing to sync to", "Sync setup in Harbor does not let this site send settings or data to any of its environments.");
 		else body = html`${this.#thisSite()}<h3 class="section">Sync to</h3>${this.#everywhere(state.site.destinations)}<div class="destinations">${state.site.destinations.map((destination) => this.#destination(destination))}</div>${this.#taskView()}`;
 		return html`<div class="page">
-			<header><h2>VNS Harbor</h2><p>Sync this site's settings or data to its environments. Data is merged: nothing is deleted there.</p></header>
+			<header><h2>VNS Harbor Sync</h2><p>Sync this site's settings or data to its environments. Data is merged: nothing is deleted there.</p></header>
 			${body}
 		</div>`;
 	}
