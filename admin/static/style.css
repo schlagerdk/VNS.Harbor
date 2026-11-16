@@ -1654,3 +1654,11 @@ dialog .windows-field input, dialog .windows-field select { width: 100%; min-hei
 .server-pick { margin: 14px 0 22px; }
 .server-pick[hidden], .ns-section[hidden] { display: none; }
 .server-pick .server-picker-row { margin-bottom: 0; }
+/* Copy and Import from Windows: the alias and its explanation come before the list, with room under them */
+#form-windows-move .hint + .ns-section, #windows-sites-section > label + .ns-section { margin-top: 18px; }
+/* What is copied or imported and not taken over yet: at the top of the dialog, before anything is chosen */
+#windows-move-moved, #windows-imported { margin: 0 0 16px; }
+/* A long step (a share's path) is cut with an ellipsis, never scrolled sideways */
+.processes-menu { overflow-x: hidden; }
+.menu .process-item { box-sizing: border-box; min-width: 0; max-width: 100%; }
+.process-text { flex: 1 1 auto; overflow: hidden; }

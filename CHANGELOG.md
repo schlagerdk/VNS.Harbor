@@ -2,6 +2,16 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.15] - 2026-11-16
+
+### Fixes
+
+- Copy from Windows and Import from Windows show the temporary alias before the list of sites, and what is copied or imported and not taken over yet (with Refresh all) at the top, so it is seen and checked before the button: the button stays at the bottom while the list scrolls
+- The file editor and the SQL query window close with a Close button, as the other windows, not a small x
+- A long step in Processes is cut with an ellipsis, without a scrollbar
+- The steps of a task window always follow the newest one: when it is opened again, and with each new step even when the list was scrolled up
+- Awaiting take over in the overview: the sites copied or imported from Windows that Windows still runs
+
 ## [1.0.14] - 2026-11-16
 
 ### Changes

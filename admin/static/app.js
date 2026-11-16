@@ -788,6 +788,8 @@ const attentionFilters = {
 	"check-failed": ["Update check failed", (s) => s.updates === "error", "The last package update check failed"],
 	"not-set-up": ["Not set up", (s) => !!s.not_set_up, "A folder without a service, or a site whose setup was not finished"],
 	missing: ["Missing environment", (s) => s.environments.some(isMissingEnv), "An environment no longer exists on its server"],
+	"take-over": ["Awaiting take over", (s) => !!s.windows_source || s.environments.some((env) => env.windows_move),
+		"Copied or imported from Windows, which still runs it: take over once its address has moved"],
 };
 
 
@@ -4816,12 +4818,19 @@ function renderTask(t) {
 	taskDialog.classList.toggle("closing", closing);
 	$("#task-status").textContent = state === "running" ? `Working… ${elapsed < 60 ? elapsed + " s" : Math.floor(elapsed / 60) + " min " + (elapsed % 60) + " s"}`
 		: closing ? "Done – closing" : state === "done" ? "Done" : state === "warning" ? "Finished with warnings: see the output" : `Failed${t.exitCode ? ` (exit ${t.exitCode})` : ""}: see the output`;
+	// The newest step is always in view: at the bottom when the window opens and with each new step, also when the
+	// list was scrolled up
+	const list = $("#task-steps");
+	const follow = t.followSteps || t.steps.length !== t.stepsShown;
+	t.followSteps = false;
+	t.stepsShown = t.steps.length;
 	$("#task-steps").replaceChildren(...t.steps.map((step, index) => {
 		const last = index === t.steps.length - 1;
 		const kind = step.type === "warning" ? "warning" : last && state === "running" ? "active" : last && state === "failed" ? "failed" : "done";
 		return el("li", { className: `task-step ${kind}` }, el("span", { className: "task-step-mark", "aria-hidden": "true" }), el("span", { textContent: step.text }));
 	}));
 	$("#task-steps").hidden = !t.steps.length;
+	if (follow) list.scrollTop = list.scrollHeight;
 	// A script without steps shows what it is doing now
 	$("#task-current").textContent = state === "running" && !t.steps.length ? t.lastLine || "Starting…" : "";
 	$("#task-current").hidden = !$("#task-current").textContent;
@@ -4842,8 +4851,11 @@ function showTaskWindow(t) {
 	t.pane.hidden = false;
 	$("#task-details").replaceChildren(t.pane);
 	setTaskOutput(t, !!t.outputOpen);
+	t.followSteps = true;
 	renderTask(t);
 	if (!taskDialog.open) taskDialog.showModal();
+	// Once the window has its size
+	requestAnimationFrame(() => { $("#task-steps").scrollTop = $("#task-steps").scrollHeight; });
 	clearInterval(t.clock);
 	t.clock = setInterval(() => (t.taskState === "running" ? renderTask(t) : clearInterval(t.clock)), 1000);
 }
