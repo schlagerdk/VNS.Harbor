@@ -3417,17 +3417,7 @@ def api_servers_kept():
     require_admin()
     from harbor.core.system import System
     from harbor.server import servers
-    kept = servers.servers(System())
-    # A server's public address is learnt by its status: asked here for one that does not have it yet, so a DNS check
-    # behind NAT is right without opening Servers first
-    missing = [name for name, entry in kept.items() if entry.get("kind") != "windows" and not entry.get("public")]
-    for name in missing:
-        try:
-            subprocess.run(["/usr/bin/python3", HARBOR_COMMAND, "servers", "status", name], capture_output=True, text=True, timeout=20)
-        except (OSError, subprocess.SubprocessError):
-            pass
-    if missing:
-        kept = servers.servers(System())
+    kept = learnt_servers()
     found = []
     for name, entry in sorted(kept.items()):
         if entry.get("kind") == "windows":
@@ -3435,8 +3425,23 @@ def api_servers_kept():
                           "user": entry.get("user", ""), "domain": entry.get("domain", "")})
         else:
             found.append({"name": name, "kind": "linux", "label": f"{entry['user']}@{entry['host']}", "host": entry["host"],
-                          "user": entry["user"], "port": entry["port"], "public": entry.get("public", "")})
+                          "user": entry["user"], "port": entry["port"], "public": entry.get("public", ""), "fqdn": entry.get("fqdn", "")})
     return jsonify(servers=found)
+
+
+def learnt_servers():
+    """The servers in Servers, with what their status learns (public address, full name) asked for the ones that do not
+    have it yet: so a DNS check behind NAT, or a temporary alias, is right without opening Servers first"""
+    from harbor.core.system import System
+    from harbor.server import servers
+    kept = servers.servers(System())
+    missing = [name for name, entry in kept.items() if entry.get("kind") != "windows" and (not entry.get("public") or "fqdn" not in entry)]
+    for name in missing:
+        try:
+            subprocess.run(["/usr/bin/python3", HARBOR_COMMAND, "servers", "status", name], capture_output=True, text=True, timeout=20)
+        except (OSError, subprocess.SubprocessError):
+            pass
+    return servers.servers(System()) if missing else kept
 
 
 def ssh_login(data):
@@ -4543,7 +4548,9 @@ def api_windows_move():
     from harbor.environments import windows_move
     from harbor.server import servers
     system = System()
-    return jsonify(environments=windows_move.candidates(system), servers=sorted(servers.servers(system, "linux")))
+    linux = {name: entry for name, entry in learnt_servers().items() if entry.get("kind") != "windows"}
+    return jsonify(environments=windows_move.candidates(system), servers=sorted(linux),
+                   names={name: entry.get("fqdn", "") for name, entry in linux.items()})
 
 
 @app.route("/api/windows/list", methods=["POST"])
@@ -4579,7 +4586,7 @@ def api_windows_imported():
     from harbor.core.system import System
     from harbor.server import servers
     kept = servers.servers(System(), "windows")
-    return jsonify(imported=windows_imported(),
+    return jsonify(imported=windows_imported(), name=socket.getfqdn().lower().rstrip("."),
                    servers=[{"name": name, "share": entry.get("share", ""), "user": entry.get("user", "")} for name, entry in sorted(kept.items())])
 
 

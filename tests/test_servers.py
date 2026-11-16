@@ -120,6 +120,14 @@ class ServerTests(unittest.TestCase):
         main(["servers", "status", "two"], system)
         self.assertEqual(json.loads((self.root / "var/lib/harbor/servers.json").read_text())["two"]["public"], "203.0.113.9")
 
+    def test_the_full_name_is_kept_for_a_temporary_alias(self):
+        """{binding}.<its full name> is the alias suggested for a site moved there; a name without a domain is not"""
+        self.add(self.system(ssh=lambda argv: ""))
+        for fqdn, kept in (("web-02.example.com", "web-02.example.com"), ("web-02", "")):
+            system = self.system(ssh=lambda argv: json.dumps({**STATUS, "fqdn": fqdn}) if argv[-1] == "python3 -" else "")
+            main(["servers", "status", "two"], system)
+            self.assertEqual(json.loads((self.root / "var/lib/harbor/servers.json").read_text())["two"]["fqdn"], kept)
+
     def test_a_windows_server_keeps_its_share_and_login(self):
         """For Import from Windows: nothing is run there, and its password is kept for root only"""
         from harbor.server import servers

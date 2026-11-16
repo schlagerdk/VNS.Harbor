@@ -87,7 +87,7 @@ class WindowsMoveTests(unittest.TestCase):
                          {"VNS_ENV_COPY": "1", "VNS_PROD_TARGET": "remote", "VNS_PROD_IP": "10.0.0.9", "VNS_PROD_PASSWORD": "",
                           "VNS_PROD_HTTPS": "n", "VNS_PROD_BINDING": "shop.dk"}, "a copy over Harbor's key, on HTTP")
         self.assertEqual(binding.call_args.kwargs["target"], "prod2")
-        self.assertEqual(binding.call_args[0][3], ["shop.dk.new.example"])
+        self.assertEqual(binding.call_args[0][3], "shop.dk.new.example", "as text, as change_binding reads it")
         links = json.loads((self.root / "var/lib/harbor/sites/test.shop.dk/windows-move.json").read_text())
         self.assertEqual(links, {"prod2": {"windows": "production", "server": "prod-01", "alias": "shop.dk.new.example"}})
         from harbor.environments import windows_move
@@ -125,7 +125,7 @@ class WindowsMoveTests(unittest.TestCase):
                 mock.patch("harbor.sites.delete.delete_site") as delete:
             code, system = self.harbor("take-over", "test.shop.dk", "prod2")
         self.assertEqual(code, 0, system.said)
-        self.assertEqual(binding.call_args[0][3], [], "the alias goes")
+        self.assertEqual(binding.call_args[0][3], "", "the alias goes")
         certificate.assert_called_once()
         self.assertEqual(delete.call_args[0][1:], ("test.shop.dk", "n", "prod", "production"), "the Windows environment, from Harbor only")
         self.assertEqual(json.loads((self.root / "var/lib/harbor/sites/test.shop.dk/windows-move.json").read_text()), {})

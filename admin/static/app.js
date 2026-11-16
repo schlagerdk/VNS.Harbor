@@ -2390,6 +2390,12 @@ $("#settings-servers").onclick = () => { $("#settings-menu").hidden = true; open
 // (harbor/sites/windows_import.py). An administrator's alone.
 const windowsDialog = $("#dlg-windows-import");
 const windowsForm = $("#form-windows-import");
+// A temporary alias under the server the sites go to, as {binding}.<its full name>: filled in until it is typed over
+function suggestAlias(input, name) {
+	if (input.value && input.value !== input.dataset.suggested) return;
+	input.value = name ? `{binding}.${name}` : "";
+	input.dataset.suggested = input.value;
+}
 const windowsKinds = { project: "Project", html: "Static files", build: "Only a build", framework: ".NET Framework (old)", other: "Nothing to run" };
 $("#settings-windows-import").onclick = () => {
 	$("#settings-menu").hidden = true;
@@ -2401,6 +2407,7 @@ $("#settings-windows-import").onclick = () => {
 	run(async () => {
 		const result = await api("/api/windows/imported");
 		renderWindowsImported(result.imported);
+		suggestAlias(windowsForm.elements.alias, result.name);
 		// A Windows server kept in Servers: its share and login are used by harbor, never sent to the page
 		const select = windowsForm.elements.server;
 		select.replaceChildren(el("option", { value: "", textContent: "Type the share and login" }),
@@ -2583,6 +2590,8 @@ $("#settings-windows-move").onclick = () => run(async () => {
 	const result = await api("/api/windows-move");
 	windowsMoveForm.elements.server.replaceChildren(...result.servers.map((name) => el("option", { value: name, textContent: name })));
 	$("#windows-move-no-server").hidden = result.servers.length > 0;
+	windowsMoveNames = result.names || {};
+	suggestAlias(windowsMoveForm.elements.alias, windowsMoveNames[windowsMoveForm.elements.server.value]);
 	const rows = result.environments.map((item) => {
 		const can = !item.moved_to;
 		const box = el("input", { type: "checkbox", className: "windows-check", disabled: !can, onchange: updateWindowsMoveChoice, ariaLabel: item.binding });
@@ -2619,7 +2628,11 @@ $("#windows-move-filter").oninput = () => {
 	for (const row of $("#windows-move-list").querySelectorAll(".windows-site")) row.hidden = text && !`${row.dataset.binding} ${row.dataset.site}`.toLowerCase().includes(text);
 	updateWindowsMoveChoice();
 };
-windowsMoveForm.elements.server.onchange = updateWindowsMoveChoice;
+let windowsMoveNames = {};
+windowsMoveForm.elements.server.onchange = () => {
+	suggestAlias(windowsMoveForm.elements.alias, windowsMoveNames[windowsMoveForm.elements.server.value]);
+	updateWindowsMoveChoice();
+};
 $("#windows-move-select-all").onclick = () => {
 	const all = windowsMoveChoices().every((box) => box.checked);
 	for (const box of windowsMoveChoices()) box.checked = !all;

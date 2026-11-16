@@ -208,7 +208,7 @@ def import_site(system, unc, folder, binding, user, password, domain="", aliases
     if aliases:
         from harbor.sites.bindings import change_binding
         system.step(f"Add the temporary aliases {aliases}")
-        change_binding(system, name, binding, aliases.replace(",", " ").split(), yes=True)
+        change_binding(system, name, binding, aliases, yes=True)
     refresh(system, name)
     system.say(f"{name} runs here on HTTP. Refresh fetches the live site's data again; take over when the address has moved.")
 
@@ -325,7 +325,7 @@ def take_over(system, name):
     config = system.path(site.config_path)
     binding = next((line.split()[1] for line in config.read_text().splitlines() if line.split()[:1] == ["ServerName"]), name) if config.is_file() else name
     system.step("Remove the temporary aliases")
-    change_binding(system, name, binding, [], yes=True)
+    change_binding(system, name, binding, "", yes=True)
     issue_certificate(system, name, yes=True)
     forget(system, name)
     system.say(f"{name} has been taken over: it runs here on HTTPS.")

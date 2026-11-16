@@ -2,6 +2,16 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.12] - 2026-11-16
+
+### Features
+
+- The temporary alias in Move from Windows and Import from Windows is filled in as {binding}.<the server's full name> (as web-02.example.com), from the server chosen or this one. Harbor learns each server's full name with its status; a typed alias is kept
+
+### Fixes
+
+- Move from Windows stopped with an error (AttributeError) when it added the temporary alias, after the environment had been copied and started; Import from Windows had the same fault with aliases, and Take over in both when it removed them. The aliases are given as text, as the binding change reads them
+
 ## [1.0.11] - 2026-11-16
 
 ### Features

@@ -86,6 +86,9 @@ try:
     found["public"] = match.group(1) if match else ""
 except Exception:
     pass
+# Its full name: a temporary alias for a site moved there is named under it ({binding}.<name>)
+import socket
+found["fqdn"] = socket.getfqdn().lower().rstrip(".")
 print(json.dumps(found))
 '''
 
@@ -306,17 +309,23 @@ def status(system, name):
         found = json.loads(result.stdout.strip().splitlines()[-1])
     except (ValueError, IndexError):
         found = {}
-    remember_public(system, name, found.get("public", ""))
+    remember_public(system, name, found.get("public", ""), found.get("fqdn"))
     return {"name": name, **{key: entry[key] for key in ("host", "user", "port")}, "reachable": True, **judged(found)}
 
 
-def remember_public(system, name, public):
-    """The server's public address, kept with it: DNS for a site there is checked against it (its own may be internal)"""
-    if not public or not re.fullmatch(r"[0-9]{1,3}(?:\.[0-9]{1,3}){3}", public):
-        return
+def remember_public(system, name, public, fqdn=None):
+    """The server's public address, kept with it: DNS for a site there is checked against it (its own may be internal).
+    And its full name, when it has one with a domain ("" when not, so it is not asked again)"""
     found = servers(system)
-    if name in found and found[name].get("public") != public:
-        found[name]["public"] = public
+    if name not in found:
+        return
+    entry = dict(found[name])
+    if public and re.fullmatch(r"[0-9]{1,3}(?:\.[0-9]{1,3}){3}", public):
+        entry["public"] = public
+    if fqdn is not None:
+        entry["fqdn"] = fqdn if re.fullmatch(r"[a-z0-9-]+(?:\.[a-z0-9-]+)+", fqdn or "") else ""
+    if entry != found[name]:
+        found[name] = entry
         write_json(system.path(SERVERS), found)
 
 

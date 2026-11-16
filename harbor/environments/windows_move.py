@@ -101,7 +101,7 @@ def move(system, name, target, server_name, alias=""):
     if alias:
         from harbor.environments.bindings import change_binding
         system.step(f"Add the temporary alias {alias}")
-        change_binding(system, name, environment.BINDING, [alias], yes=True, target=new_id)
+        change_binding(system, name, environment.BINDING, alias, yes=True, target=new_id)
     system.say(f"{environment.BINDING} runs on {server_name} on HTTP, as the environment {new_id}. Windows still runs it: "
                "Refresh from Windows fetches its data again; take over when the address has moved.")
     return new_id
@@ -208,7 +208,7 @@ def take_over(system, name, new_id):
     entry = _link(system, name, new_id)
     linux = settings.load(system, site.site_root, new_id)
     system.step("Remove the temporary alias")
-    change_binding(system, name, linux.BINDING, [], yes=True, target=new_id)
+    change_binding(system, name, linux.BINDING, "", yes=True, target=new_id)
     issue_certificate(system, name, new_id, yes=True)
     system.step("Remove the environment on Windows from Harbor (its IIS site is not touched)")
     delete_site(system, name, "n", "prod", entry["windows"])

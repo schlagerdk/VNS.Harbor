@@ -158,7 +158,7 @@ class WindowsImportTests(unittest.TestCase):
         with mock.patch("harbor.sites.bindings.change_binding") as binding:
             code, system = self.harbor("import", UNC, "shop.dk", "shop.dk", "--user", "admin", "--aliases", "shop.dk.new.example")
         self.assertEqual(code, 0, system.said)
-        self.assertEqual(binding.call_args[0][1:4], ("shop.dk", "shop.dk", ["shop.dk.new.example"]), "the temporary alias")
+        self.assertEqual(binding.call_args[0][1:4], ("shop.dk", "shop.dk", "shop.dk.new.example"), "the temporary alias, as text")
         site = self.root / "var/www/shop.dk"
         self.assertTrue((site / "Program.cs").is_file())
         for left_out in ("Shop.dll", "bin", "web.config", "umbraco/Logs"):
@@ -247,7 +247,7 @@ class WindowsImportTests(unittest.TestCase):
             code, system = self.harbor("take-over", "cdn.dk")
         self.assertEqual(code, 0, system.said)
         binding.assert_called_once()
-        self.assertEqual(binding.call_args[0][3], [], "no aliases")
+        self.assertEqual(binding.call_args[0][3], "", "no aliases")
         certificate.assert_called_once()
         self.assertFalse((self.root / "var/lib/harbor/sites/cdn.dk/windows-source.json").exists())
         self.assertFalse((self.root / "etc/harbor/secrets/sites/cdn.dk/windows-source.json").exists())
