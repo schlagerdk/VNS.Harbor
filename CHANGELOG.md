@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.30] - 2026-11-17
+
+### Fixes
+
+- The admin shows a spinner with Loading sites… while it opens or reloads, not an empty dark page
+
 ## [1.0.29] - 2026-11-16
 
 ### Fixes

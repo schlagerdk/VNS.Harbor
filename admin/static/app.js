@@ -5134,8 +5134,12 @@ run(async () => {
 	syncSiteForm();
 	try { currentUser = await api("/api/me"); } catch (error) { /* the page goes on as before */ }
 	applyAccess();
-	// The views are hidden until the address picks one, so a site's page does not show the list first
-	try { await loadSites(); } finally { await route(); }
+	// The views are hidden until the address picks one, so a site's page does not show the list first. Meanwhile
+	// the page says it is loading, not an empty background
+	if (location.hash.startsWith("#sql")) $("#page-loading p").textContent = "Loading…";
+	try { await loadSites(); } finally {
+		try { await route(); } finally { $("#page-loading").hidden = true; }
+	}
 	await restoreTerminals();
 	updateTerminalState();
 });

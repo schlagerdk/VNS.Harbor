@@ -1699,3 +1699,11 @@ dialog .windows-field input, dialog .windows-field select { width: 100%; min-hei
 /* Four in a row: the icon above the text, so the text has the card's width */
 #dlg-multi .multi-choices-4 .multi-choice { flex-direction: column; gap: 9px; }
 @media (max-width: 640px) { #dlg-multi .multi-choices-4 .multi-choice { flex-direction: row; } }
+
+/* While the page loads its sites: a spinner, not an empty background */
+.page-loading { position: fixed; inset: 0; z-index: 5; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px;
+	color: var(--muted); font-size: 14px; pointer-events: none; animation: page-loading-in .2s ease .15s both; }
+.page-loading[hidden] { display: none; }
+.page-loading p { margin: 0; letter-spacing: .02em; }
+.page-loading-spinner { width: 34px; height: 34px; border-radius: 50%; border: 3px solid rgba(163,113,247,.2); border-top-color: #a371f7; animation: update-spin .8s linear infinite; }
+@keyframes page-loading-in { from { opacity: 0; } to { opacity: 1; } }
