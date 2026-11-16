@@ -1338,6 +1338,8 @@ def site_info(name, states):
         "display_name": display_dns_name(name),
         "kind": kind,
         "has_project": bool(projects),
+        # Imported from a live Windows server, and not taken over yet: Refresh from Windows and Take over
+        "windows_source": os.path.isfile(os.path.join(HARBOR_SITES, name, "windows-source.json")),
         "project": os.path.splitext(os.path.basename(projects[0]))[0] if len(projects) == 1 else "",
         "managed_by": managed_by(name),
         "updates": updates,
@@ -2445,7 +2447,7 @@ def name_history(history):
     return history
 
 
-def recent_syncs(site, here, count=10):
+def recent_syncs(site, here, count=10, kinds=None):
     """The newest syncs from or to this site, with the environments by name"""
     from harbor.core.system import System
     from harbor.environments import history
@@ -2453,6 +2455,9 @@ def recent_syncs(site, here, count=10):
     found = []
     for entry in history.entries(System(), site):
         if here not in (entry.get("from"), entry.get("to")):
+            continue
+        # The Sync dialog of one kind lists only syncs of that kind
+        if kinds and not set(entry.get("kinds", [])) & set(kinds):
             continue
         for key in ("from", "to"):
             if entry.get(key) not in names:
@@ -3430,6 +3435,18 @@ def build_command(data):
     """Validate a terminal request and return (title, argv, cwd). User input is never shell code."""
     kind = data.get("kind")
     bash = "/bin/bash"
+    if kind in ("windows_import", "windows_refresh", "windows_refresh_all", "windows_take_over"):
+        # Sites moved from a live Windows server (harbor/sites/windows_import.py): an administrator's alone
+        harbor = ["/usr/bin/python3", HARBOR_COMMAND, "windows"]
+        if kind == "windows_import":
+            share, user, domain = windows_login(data)
+            return "Import from Windows", [*harbor, "import-all", share, "--user", user, *(["--domain", domain] if domain else [])], "/"
+        if kind == "windows_refresh_all":
+            return "Refresh from Windows: all", [*harbor, "refresh-all", *(["--pause"] if data.get("pause") is True else [])], "/"
+        site = site_arg(data)
+        if kind == "windows_refresh":
+            return "Refresh from Windows: " + site, [*harbor, "refresh", site, *(["--pause"] if data.get("pause") is True else [])], "/"
+        return "Take over from Windows: " + site, [*harbor, "take-over", site], "/"
     if kind == "servers":
         if not os.path.isfile(HARBOR_COMMAND):
             abort(500, "Harbor is missing. Update VNS first.")
@@ -4018,7 +4035,7 @@ def sees_session(s):
 
 # Tasks that run as root by choice, or open a shell: only for administrators
 ADMIN_TASKS = {"servers", "server_tool", "install_sql_tools", "update_system", "remote_tool", "move_env", "move_site", "adopt_site", "release_site",
-               "setup_site", "unit_tool", "apache", "register_env"}
+               "setup_site", "unit_tool", "apache", "register_env", "windows_import", "windows_refresh", "windows_refresh_all", "windows_take_over"}
 
 
 def env_of(site, data, scope_key="scope"):
@@ -4204,6 +4221,9 @@ def api_term():
                                for value in connection.values())):
                     abort(400, "Enter SQL server, database, username and password.")
                 extra_env["VNS_COPY_SQL"] = json.dumps(connection)
+    if payload.get("kind") == "windows_import":
+        sites = windows_sites(payload)
+        extra_env = {**(extra_env or {}), "VNS_SMB_PASSWORD": str(payload.get("password") or ""), "VNS_WINDOWS_SITES": json.dumps(sites)}
     if payload.get("kind") in ("sync_env", "data_sync"):
         # Who started it, for the sync history the dashboard in Umbraco shows
         # By id too: the history shows the user's name as it is now, also after they change it in Profile
@@ -4350,6 +4370,81 @@ def save_data_sync(site):
     return jsonify(settings=settings)
 
 
+# //host/share/folder. It is passed to rclone as an argument, never through a shell, so an admin share such as d$ is fine
+WINDOWS_SHARE_RE = re.compile(r"//[A-Za-z0-9][A-Za-z0-9.-]{0,252}/[^\x00-\x1f\"<>|]{1,400}")
+
+
+def windows_login(data):
+    """The share and login of a Windows server, checked: the share as //host/share/folder"""
+    share = str(data.get("share") or "").strip().replace("\\", "/").rstrip("/")
+    user = str(data.get("user") or "").strip()
+    domain = str(data.get("domain") or "").strip()
+    if not WINDOWS_SHARE_RE.fullmatch(share):
+        abort(400, "Give the share as //server/share/folder")
+    if not re.fullmatch(r"[A-Za-z0-9._@\\-]{1,128}", user) or not re.fullmatch(r"[A-Za-z0-9._-]{0,128}", domain):
+        abort(400, "Give the Windows login (and its domain, if it has one)")
+    if not isinstance(data.get("password"), str) or not data["password"] or len(data["password"]) > 256:
+        abort(400, "Give the Windows password")
+    return share, user, domain
+
+
+def windows_sites(data):
+    """The folders chosen to import, with their bindings and temporary aliases, checked"""
+    sites = data.get("sites")
+    if not isinstance(sites, list) or not sites or len(sites) > 200:
+        abort(400, "Choose the sites to import")
+    checked = []
+    for item in sites:
+        if not isinstance(item, dict):
+            abort(400, "Invalid site")
+        folder = str(item.get("folder") or "")
+        if not folder or len(folder) > 200 or any(char in folder for char in "/\\\x00") or folder in (".", ".."):
+            abort(400, "Invalid folder")
+        binding = dns_name(item.get("binding") or folder, "binding", fully_qualified=True)
+        aliases = [dns_name(alias, "alias", fully_qualified=True) for alias in str(item.get("aliases") or "").replace(",", " ").split()]
+        # A build is built from a project: a site here, or server:site on a server Harbor knows
+        build_from = str(item.get("build_from") or "")
+        if build_from and not re.fullmatch(r"(?:[a-z0-9][a-z0-9-]{0,62}:)?[A-Za-z0-9][A-Za-z0-9.-]{0,252}", build_from):
+            abort(400, "Invalid project to build from")
+        checked.append({"folder": folder, "binding": binding, "aliases": ",".join(aliases), "build_from": build_from})
+    return checked
+
+
+@app.route("/api/windows/list", methods=["POST"])
+def api_windows_list():
+    """The folders in a Windows share, and what each holds (harbor windows list): for Import from Windows"""
+    require_admin()
+    data = request.get_json(silent=True) or {}
+    share, user, domain = windows_login(data)
+    try:
+        result = subprocess.run(["/usr/bin/python3", HARBOR_COMMAND, "windows", "list", share, "--user", user, *(["--domain", domain] if domain else [])],
+                                capture_output=True, text=True, timeout=180, env={**os.environ, "VNS_SMB_PASSWORD": data["password"]})
+    except subprocess.TimeoutExpired:
+        return error("The Windows server did not answer in time.", 504)
+    if result.returncode != 0:
+        lines = [line for line in (result.stdout + result.stderr).splitlines() if line.strip()]
+        return error(lines[-1] if lines else "The share could not be read.", 400)
+    try:
+        found = json.loads(result.stdout[result.stdout.index("{"):])
+    except ValueError:
+        return error("The share could not be read.", 400)
+    return jsonify(folders=found.get("folders", []), projects=found.get("projects", []), imported=windows_imported())
+
+
+@app.route("/api/windows/imported")
+def api_windows_imported():
+    require_admin()
+    return jsonify(imported=windows_imported())
+
+
+def windows_imported():
+    """The sites here imported from Windows and not taken over yet"""
+    try:
+        return sorted(path.parent.name for path in Path(HARBOR_SITES).glob("*/windows-source.json"))
+    except OSError:
+        return []
+
+
 @app.route("/api/sites/<site>/sync-status")
 def sync_status(site):
     """For the Sync dialog: each destination's last syncs from the source, whether the source has changed since, and
@@ -4383,7 +4478,7 @@ def sync_status(site):
         else:
             found[destination] = {"history": name_history(history.between(system, site, source, destination, ["settings"], mine))}
     try:
-        recent = recent_syncs(site, source)
+        recent = recent_syncs(site, source, kinds=("content", "media") if kind == "data" else ("settings",))
     except (OSError, ValueError):
         recent = []
     return jsonify(destinations=found, recent=recent)

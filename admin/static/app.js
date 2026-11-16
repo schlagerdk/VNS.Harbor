@@ -846,7 +846,7 @@ const buttonStyles = {
 	"Migrate…": ["server", "purple"],
 	"Check outdated": ["download", "amber"], "Restart": ["restart", "amber"], "Restart Apache": ["restart", "amber"],
 	"Stop": ["stop", "red"], "Clear logs": ["eraser", "gray"], "Logs": ["file", "gray"],
-	"SQL Server": ["server", "purple"], "Web server": ["globe", "blue"], "Preferences…": ["sliders", "purple"], "Server tools…": ["package", "purple"], "Backoffice login…": ["key", "purple"], "Servers…": ["server", "blue"], "Files (/)": ["folder", "blue"],
+	"SQL Server": ["server", "purple"], "Web server": ["globe", "blue"], "Preferences…": ["sliders", "purple"], "Server tools…": ["package", "purple"], "Backoffice login…": ["key", "purple"], "Servers…": ["server", "blue"], "Import from Windows…": ["download", "blue"], "Refresh from Windows…": ["download", "blue"], "Take over…": ["shield", "green"], "Files (/)": ["folder", "blue"],
 	"Test config": ["activity", "teal"], "Error logs": ["file", "teal"],
 	"Admin app log": ["file", "gray"], "Apache error logs": ["file", "teal"],
 	"Copy site": ["file", "blue"],
@@ -1752,6 +1752,11 @@ function envPanel(site, env) {
 	if (!isTarget(env) && !site.admin && !site.managed_by) addManage("Copy site", () => copySite(site, env));
 	// Each environment has its own Umbraco users, also one on another server or on Windows (its connection is written there)
 	if (currentUser.admin && site.kind === "umbraco") addManage("Backoffice login…", () => backofficeLoginDialog(site, env));
+	// Imported from a live Windows server: its data fetched again, and taken over once the address has moved
+	if (currentUser.admin && site.windows_source && !isTarget(env)) {
+		addManage("Refresh from Windows…", () => refreshFromWindows(site));
+		addManage("Take over…", () => takeOverFromWindows(site));
+	}
 	// An environment on Windows is only removed here: its IIS site and files stay on the server
 	if (hasProd(site) && !site.admin && env.mode === "windows") addManage("Remove environment", () => deleteSite(site, "prod", env), "push-right");
 	else if (hasProd(site) && !site.admin) addManage("Delete site", () => deleteSite(site, isTarget(env) ? "prod" : "test", env), "danger");
@@ -2163,7 +2168,7 @@ async function copySite(site, main) {
 		for (const item of $("#copy-server-list").querySelectorAll(".goes .move-site-where")) item.textContent = removing ? "Moves" : "Copied";
 		$("#copy-server-hint").textContent = "The whole folders go, including builds, media, logs and SQLite databases, so the sites run the same version and nothing is built. A database in SQL Server stays where it is: connections to this server's own SQL Server are pointed at its address, which must accept connections from the new server."
 			+ (kept ? ` Environments on other servers are not touched, and are published to${removing ? " from the new server" : " from both servers"}.` : "")
-			+ " The new server needs the same VNS version and CPU architecture, and none of the sites. If a step fails, the sites here run as before.";
+			+ " The new server needs the same Harbor version and CPU architecture, and none of the sites. If a step fails, the sites here run as before.";
 	};
 	for (const input of field("destination")) input.onchange = update;
 	field("remove_here").onchange = update;
@@ -2294,6 +2299,176 @@ $("#search").oninput = (event) => {
 $("#btn-server-shell").onclick = () => run(() => openTask({ kind: "shell" }));
 $("#settings-server-tools").onclick = () => { $("#settings-menu").hidden = true; openServerTools(); };
 $("#settings-servers").onclick = () => { $("#settings-menu").hidden = true; openServers(); };
+
+// Import from Windows: sites from a live Windows server, set up here on HTTP and kept the same until the address moves
+// (harbor/sites/windows_import.py). An administrator's alone.
+const windowsDialog = $("#dlg-windows-import");
+const windowsForm = $("#form-windows-import");
+const windowsKinds = { project: "Project", html: "Static files", build: "Only a build", framework: ".NET Framework (old)", other: "Nothing to run" };
+$("#settings-windows-import").onclick = () => {
+	$("#settings-menu").hidden = true;
+	$("#windows-sites-section").hidden = true;
+	$("#windows-sites").replaceChildren();
+	$("#windows-import-submit").disabled = true;
+	windowsDialog.showModal();
+	(windowsForm.elements.share.value ? windowsForm.elements.password : windowsForm.elements.share).focus();
+	run(async () => renderWindowsImported((await api("/api/windows/imported")).imported));
+};
+$("#windows-import-cancel").onclick = () => windowsDialog.close();
+const windowsLogin = () => Object.fromEntries(["share", "user", "password", "domain"].map((name) => [name, windowsForm.elements[name].value.trim()]));
+const windowsChoices = () => [...$("#windows-sites").querySelectorAll(".windows-site:not([hidden]) input[type=checkbox]:not(:disabled)")];
+function updateWindowsChoice() {
+	for (const box of $("#windows-sites").querySelectorAll(".windows-check")) box.closest(".windows-site").classList.toggle("chosen", box.checked);
+	const chosen = windowsChoices().filter((box) => box.checked).length;
+	$("#windows-import-submit").disabled = chosen === 0;
+	$("#windows-import-submit").textContent = chosen > 1 ? `Import ${chosen} sites` : "Import";
+	$("#windows-select-all").textContent = chosen && chosen === windowsChoices().length ? "Select none" : "Select all";
+}
+$("#windows-select-all").onclick = () => {
+	const all = windowsChoices().every((box) => box.checked);
+	for (const box of windowsChoices()) box.checked = !all;
+	updateWindowsChoice();
+};
+$("#windows-list").onclick = () => run(async () => {
+	const login = windowsLogin();
+	// The first field that is missing is named, and has the focus
+	const missing = [["share", "the share"], ["user", "the username"], ["password", "the password"]].find(([name]) => !login[name]);
+	if (missing) {
+		windowsForm.elements[missing[0]].focus();
+		throw new Error(`Give ${missing[1]} of the Windows server.`);
+	}
+	$("#windows-list").disabled = true;
+	$("#windows-list").textContent = "Reading the share…";
+	try {
+		const result = await api("/api/windows/list", { json: login });
+		// One row per folder: what it holds, and whether it can be imported. Name and note together, the kind in a column of
+		// its own, and the binding for what can be imported.
+		const rows = result.folders.map((item) => {
+			const can = ["project", "build", "html"].includes(item.kind) && !item.imported;
+			const notes = [];
+			if (item.imported) notes.push(`Imported as ${item.imported}`);
+			if (item.umbraco) notes.push(`Umbraco ${item.umbraco}`);
+			if (item.kind === "build" && !item.imported) notes.push("Built here from its project");
+			if (item.kind === "framework") notes.push("Runs on Windows only (Umbraco 7 and older)");
+			if (item.kind === "other") notes.push("Nothing to run here");
+			// A build is built from a project here or on a server Harbor knows: the one whose name is the dll's, when there is one
+			let buildFrom = "";
+			if (item.kind === "build" && can) {
+				const value = (project) => (project.server ? `${project.server}:` : "") + project.site;
+				const match = (result.projects || []).find((project) => project.project.toLowerCase() === (item.dll || "").toLowerCase());
+				buildFrom = el("select", { className: "windows-site-from", ariaLabel: `Build ${item.folder} from`, onchange: updateWindowsChoice },
+					el("option", { value: "", textContent: (result.projects || []).length ? "Build from…" : "No project found here or on the servers" }),
+					...(result.projects || []).map((project) => el("option", { value: value(project), selected: project === match,
+						textContent: `${project.site}${project.server ? " on " + project.server : ""} (${project.project})` })));
+			}
+			// Name with its kind and notes under it; the fields, each with its label, at the right. A click on the row
+			// (not on a field) ticks it.
+			const field = (label, control) => el("label", { className: "windows-field" }, el("span", { textContent: label }), control);
+			const box = el("input", { type: "checkbox", className: "windows-check", disabled: !can, onchange: () => { row.classList.toggle("chosen", box.checked); updateWindowsChoice(); }, ariaLabel: item.folder });
+			const row = el("div", { className: "windows-site" + (can ? "" : " off") },
+				box,
+				// The kind sits small in the row's top right corner: the name and notes get the room
+				el("span", { className: "windows-site-kind " + item.kind, textContent: windowsKinds[item.kind] || item.kind }),
+				el("span", { className: "windows-site-text" },
+					el("strong", { textContent: item.folder }),
+					notes.length ? el("small", { className: "windows-site-meta", textContent: notes.join(" · ") }) : ""),
+				can ? el("span", { className: "windows-site-fields" },
+					field("Binding", el("input", { className: "windows-site-binding", value: item.folder, spellcheck: false })),
+					...(buildFrom ? [field("Build from", buildFrom)] : [])) : el("span"));
+			row.onclick = (event) => {
+				if (!can || event.target.closest("input, select, label")) return;
+				box.checked = !box.checked;
+				box.onchange();
+			};
+			row.dataset.folder = item.folder;
+			row.dataset.kind = item.imported ? "imported" : item.kind;
+			row.dataset.can = can ? "1" : "";
+			return row;
+		});
+		$("#windows-sites").replaceChildren(...rows);
+		// The filter: what can be imported at first, by kind, and by name
+		const counts = rows.reduce((found, row) => ({ ...found, [row.dataset.kind]: (found[row.dataset.kind] || 0) + 1 }), {});
+		const filters = [["can", "Can be imported", rows.filter((row) => row.dataset.can).length], ["all", "All", rows.length],
+			...["project", "build", "html", "framework", "imported", "other"].filter((kind) => counts[kind])
+				.map((kind) => [kind, kind === "imported" ? "Imported" : windowsKinds[kind], counts[kind]])];
+		windowsFilter = "can";
+		$("#windows-filter-kinds").replaceChildren(...filters.map(([value, label, count]) => el("button", {
+			type: "button", className: "windows-filter-kind" + (value === windowsFilter ? " on" : ""),
+			onclick: (event) => {
+				windowsFilter = value;
+				for (const chip of $("#windows-filter-kinds").children) chip.classList.toggle("on", chip === event.currentTarget);
+				applyWindowsFilter();
+			} }, `${label} `, el("span", { className: "count", textContent: String(count) }))));
+		$("#windows-filter-text").value = "";
+		applyWindowsFilter();
+		$("#windows-sites-section").hidden = false;
+		renderWindowsImported(result.imported);
+		updateWindowsChoice();
+	} finally {
+		$("#windows-list").disabled = false;
+		$("#windows-list").textContent = "Show the sites";
+	}
+});
+let windowsFilter = "can";
+function applyWindowsFilter() {
+	const text = $("#windows-filter-text").value.trim().toLowerCase();
+	let shown = 0;
+	for (const row of $("#windows-sites").children) {
+		const kind = windowsFilter === "all" || (windowsFilter === "can" ? row.dataset.can : row.dataset.kind === windowsFilter);
+		row.hidden = !(kind && (!text || row.dataset.folder.toLowerCase().includes(text)));
+		shown += row.hidden ? 0 : 1;
+	}
+	$("#windows-filter-empty").hidden = shown > 0;
+	updateWindowsChoice();
+}
+$("#windows-filter-text").oninput = applyWindowsFilter;
+function renderWindowsImported(imported) {
+	const box = $("#windows-imported");
+	box.hidden = !imported?.length;
+	if (!imported?.length) return;
+	box.replaceChildren(el("div", { className: "windows-imported-text" },
+		el("strong", { textContent: `${imported.length} site${imported.length === 1 ? "" : "s"} imported, not taken over yet` }),
+		el("span", { className: "muted", textContent: imported.join(", ") })),
+		el("button", { type: "button", textContent: "Refresh all…", onclick: () => refreshFromWindows(null) }));
+}
+windowsForm.onsubmit = (event) => {
+	event.preventDefault();
+	const alias = windowsForm.elements.alias.value.trim();
+	const sites = [...$("#windows-sites").children].filter((row) => !row.hidden && row.querySelector("input[type=checkbox]")?.checked).map((row) => {
+		const binding = row.querySelector(".windows-site-binding").value.trim() || row.dataset.folder;
+		const from = row.querySelector(".windows-site-from");
+		return { folder: row.dataset.folder, binding, aliases: alias ? alias.replaceAll("{binding}", binding) : "", ...(from ? { build_from: from.value } : {}) };
+	});
+	if (!sites.length) return;
+	const missing = sites.find((item) => item.build_from === "");
+	if (missing) {
+		toast(`Choose the project ${missing.folder} is built from.`, "error");
+		return;
+	}
+	run(async () => {
+		await openTask({ kind: "windows_import", ...windowsLogin(), sites });
+		windowsDialog.close();
+	});
+};
+// Refresh one site (or all) from Windows: the live data fetched again. Pausing takes the site on Windows offline
+// (app_offline.htm) while its database is copied.
+async function refreshFromWindows(site) {
+	const answer = await ask({
+		title: site ? `Refresh ${siteLabel(site)} from Windows?` : "Refresh all sites from Windows?",
+		message: "The live data is fetched again: the SQLite database, media and uSync (all files of a static site). The site here is stopped for a moment while its database is replaced. Without a pause, the site on Windows goes on running: a database written to just then may need another refresh.",
+		input: false, ok: "Refresh", checkbox: "Pause the site on Windows while its database is copied",
+	});
+	if (!answer) return;
+	const pause = Boolean(answer.checked);
+	if (windowsDialog.open) windowsDialog.close();
+	await openTask(site ? { kind: "windows_refresh", site: site.name, pause } : { kind: "windows_refresh_all", pause });
+}
+async function takeOverFromWindows(site) {
+	if (!(await ask({ title: `Take over ${siteLabel(site)}?`,
+		message: "Do this once the address has moved here. The temporary aliases are removed, a certificate is issued, and the site runs on HTTPS. Windows is forgotten, and nothing on it is changed.",
+		input: false, ok: "Take over" }))) return;
+	await openTask({ kind: "windows_take_over", site: site.name });
+}
 $("#btn-browse").onclick = () => run(() => openFiles("", "", true));
 $("#btn-check-updates").onclick = () => run(async () => {
 	// It asks NuGet about every project on the server, which takes a while: only on purpose
@@ -6250,7 +6425,7 @@ function serverCard(item, release) {
 	const rows = item.reachable ? [
 		toolRow("System", `${item.os || "—"} · Python ${item.python || "—"}`),
 		toolRow("Harbor", harbor || "Not installed", { on: Boolean(harbor) }),
-		...(item.vns ? [toolRow("VNS", item.vns + (item.admin ? ` · admin ${item.admin}` : ""))] : []),
+		...(item.vns ? [toolRow("Old installation", item.vns + (item.admin ? ` · admin ${item.admin}` : ""))] : []),
 		...(item.problems || []).map((problem) => toolRow("Needs", problem)),
 	] : [toolRow("Error", (item.error || []).join(" ") || "No answer")];
 	if (item.this) {

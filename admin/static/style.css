@@ -1316,6 +1316,8 @@ button.primary.danger-primary:disabled { opacity: .5; }
 .copy-section { min-width: 0; margin: 0; padding: 0; border: 0; }
 .copy-section[hidden] { display: none; }
 .copy-options { display: grid; gap: 10px; margin: 14px 0 12px; }
+/* An option block whose options are all hidden takes no room */
+.copy-options:not(:has(> :not([hidden]))) { display: none; }
 .copy-option.sql { --option-tone: var(--purple); }
 .copy-option.move { --option-tone: var(--orange); }
 .copy-option.delete { --option-tone: var(--red); }
@@ -1596,3 +1598,47 @@ dialog.newsite .server-address-row { grid-template-columns: minmax(0, 3fr) minma
 #server-tools-list .tool-row .tool-row-detail { white-space: normal; }
 #server-tools-list .tool-row .tool-row-action.tool-danger { color: var(--red); border-color: rgba(248, 81, 73, .35); }
 @media (max-width: 720px) { #server-tools-list .tool-text, #server-tools-list .tool-rows { margin-left: 0; } }
+
+/* Import from Windows: a row per folder in the share, and a filter above them */
+.windows-list-button { justify-content: flex-end; }
+.windows-list-button button { width: 100%; }
+.windows-filter { display: grid; gap: 8px; margin-bottom: 10px; }
+.windows-filter-kinds { display: flex; flex-wrap: wrap; gap: 6px; }
+.windows-filter-kind { padding: 3px 10px; border-radius: 999px; font-size: 12px; background: rgba(255, 255, 255, .03); }
+.windows-filter-kind.on { border-color: var(--blue); background: rgba(88, 166, 255, .15); color: var(--text); }
+.windows-filter-kind .count { color: var(--muted); }
+.windows-sites { display: flex; flex-direction: column; gap: 6px; max-height: 50vh; overflow-y: auto; margin-bottom: 12px; padding-right: 4px; }
+.windows-site { position: relative; flex: none; display: grid; grid-template-columns: 22px minmax(0, 1fr) minmax(0, 240px); align-items: center; gap: 14px;
+	box-sizing: border-box; padding: 10px 14px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255, 255, 255, .02);
+	cursor: pointer; transition: border-color .15s, background .15s; }
+.windows-site:hover { border-color: rgba(88, 166, 255, .45); }
+.windows-site.chosen { border-color: var(--blue); background: rgba(88, 166, 255, .07); }
+.windows-site[hidden] { display: none; }
+.windows-site.off { opacity: .55; cursor: default; }
+.windows-site.off:hover { border-color: var(--line); }
+/* A checkbox of its own: rounded, blue with a white tick when chosen */
+dialog .windows-check { appearance: none; -webkit-appearance: none; display: grid; place-content: center; width: 22px; height: 22px; min-height: 0;
+	margin: 0; padding: 0; border: 1.5px solid var(--muted); border-radius: 7px; background: transparent; cursor: pointer; transition: background .15s, border-color .15s; }
+dialog .windows-check::before { content: ""; width: 11px; height: 11px; transform: scale(0); transition: transform .12s;
+	clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%); background: #fff; }
+dialog .windows-check:checked { border-color: var(--blue); background: var(--blue); }
+dialog .windows-check:checked::before { transform: scale(1); }
+dialog .windows-check:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+dialog .windows-check:disabled { border-color: var(--line); cursor: default; }
+.windows-site-text { display: grid; gap: 5px; min-width: 0; }
+.windows-site-text strong { overflow-wrap: anywhere; font-size: 14px; }
+.windows-site-meta { color: var(--muted); font-size: 12px; }
+.windows-site-kind { position: absolute; top: 7px; right: 10px; padding: 1px 7px; border-radius: 999px; font-size: 10px; font-weight: 600;
+	letter-spacing: .02em; white-space: nowrap; background: rgba(255, 255, 255, .06); color: var(--muted); pointer-events: none; }
+.windows-site { padding-top: 14px; }
+.windows-site-kind.project { background: rgba(88, 166, 255, .15); color: var(--blue); }
+.windows-site-kind.build { background: rgba(163, 113, 247, .15); color: var(--purple); }
+.windows-site-kind.html { background: rgba(63, 185, 80, .15); color: var(--green); }
+.windows-site-kind.framework { background: rgba(210, 153, 34, .15); color: #d29922; }
+.windows-site-fields { display: grid; gap: 6px; cursor: default; }
+dialog .windows-field { display: grid; gap: 2px; margin: 0; font-size: 11px; color: var(--muted); }
+dialog .windows-field input, dialog .windows-field select { width: 100%; min-height: 0; padding: 5px 8px; font-size: 13px; }
+@media (max-width: 700px) { .windows-site { grid-template-columns: 22px minmax(0, 1fr); } .windows-site-fields { grid-column: 2; } }
+.windows-imported { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; padding: 10px 12px;
+	border: 1px solid var(--line); border-radius: 10px; }
+.windows-imported-text { display: grid; gap: 2px; font-size: 13px; min-width: 0; }

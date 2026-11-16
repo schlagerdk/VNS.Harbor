@@ -64,6 +64,7 @@
         <button id="btn-browse" type="button">Files (/)</button>
         <button id="settings-server-tools" type="button">Server tools…</button>
         <button id="settings-servers" type="button">Servers…</button>
+        <button id="settings-windows-import" type="button">Import from Windows…</button>
       </div>
       <div class="menu-group" role="group" aria-label="Apache">
         <div class="menu-group-title">Apache</div>
@@ -471,12 +472,12 @@
           <label>Password<input name="password" type="password" required autocomplete="new-password"></label>
         </div>
       </fieldset>
-    </fieldset>
       <div class="copy-options" id="copy-here-options">
         <label class="sync-option copy-option move" id="copy-move-row"><input name="move_here" type="checkbox"><span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span><span class="sync-option-text"><span class="sync-option-title">Remove it here afterwards</span><span class="sync-option-sub">Move: the site is stopped while it is copied, and its service and Apache config are removed once the copy runs. A way to give it a new folder and binding</span></span></label>
         <label class="sync-option copy-option delete copy-option-nested" id="copy-move-delete-row" hidden><input name="move_delete" type="checkbox"><span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4h8v2M6 6l1 14h10l1-14M10 11v6M14 11v6"/></svg></span><span class="sync-option-text"><span class="sync-option-title">Also delete the old folder</span><span class="sync-option-sub">Otherwise it stays in /var/www, without a service</span></span></label>
         <label class="sync-option copy-option stop" id="copy-here-stop-row"><input name="move_stop" type="checkbox"><span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg></span><span class="sync-option-text"><span class="sync-option-title">Stop the site here while copying</span><span class="sync-option-sub">So a SQLite database stays consistent. It starts again afterwards</span></span></label>
       </div>
+    </fieldset>
     <fieldset id="copy-server" class="copy-section" hidden disabled>
       <div class="ns-grid">
         <label>Server host <input name="host" required autocomplete="url" spellcheck="false" placeholder="server.example.com"></label>
@@ -710,7 +711,7 @@
   <form method="dialog">
     <header class="ns-head">
       <span class="ns-icon" data-header-icon="download" aria-hidden="true"></span>
-      <div><h2 id="system-update-info-title">Update VNS</h2><p id="system-update-versions"></p></div>
+      <div><h2 id="system-update-info-title">Update VNS Harbor</h2><p id="system-update-versions"></p></div>
     </header>
     <div id="system-update-notes" class="system-update-notes"></div>
     <a id="system-update-changes" class="system-update-changes" target="_blank" rel="noopener noreferrer">See every change on GitHub ↗</a>
@@ -903,6 +904,38 @@
     </fieldset>
     <p class="environment-notice">The service will restart to apply the selected environment.</p>
     <menu><button type="button" id="environment-cancel" class="cancel-link">Cancel</button><button type="submit" class="primary">Change environment</button></menu>
+  </form>
+</dialog>
+
+<dialog id="dlg-windows-import" class="newsite" aria-labelledby="windows-import-title">
+  <form method="dialog" id="form-windows-import">
+    <header class="ns-head">
+      <span class="ns-icon" data-header-icon="download" aria-hidden="true"></span>
+      <div><h2 id="windows-import-title">Import from Windows</h2><p>Sites from a live Windows server, set up here on HTTP while Windows keeps running them.</p></div>
+    </header>
+    <div class="ns-section">The Windows server</div>
+    <label>Share <input name="share" required spellcheck="false" autocomplete="off" placeholder="//server/share/folder"></label>
+    <div class="ns-grid">
+      <label>Username <input name="user" required spellcheck="false" autocomplete="off"></label>
+      <label>Password <input name="password" type="password" required autocomplete="new-password"></label>
+      <label>Domain <input name="domain" spellcheck="false" autocomplete="off" placeholder="Optional"></label>
+      <label class="windows-list-button"><span>&nbsp;</span><button type="button" id="windows-list">Show the sites</button></label>
+    </div>
+    <div id="windows-sites-section" hidden>
+      <div class="ns-section">Sites <button type="button" id="windows-select-all" class="cancel-link sync-select-all">Select all</button></div>
+      <div class="windows-filter">
+        <input id="windows-filter-text" type="search" placeholder="Filter by name" spellcheck="false" autocomplete="off" aria-label="Filter by name">
+        <div id="windows-filter-kinds" class="windows-filter-kinds" role="group" aria-label="Show"></div>
+      </div>
+      <div id="windows-sites" class="windows-sites"></div>
+      <p class="hint" id="windows-filter-empty" hidden>No folder matches the filter.</p>
+      <label>Temporary alias <span class="muted">(optional, to test each site by before the address moves; {binding} is the site's binding)</span>
+        <input name="alias" spellcheck="false" autocomplete="off" placeholder="{binding}.migrate.example.com"></label>
+      <p class="hint">A site with a project is copied without its builds, built here and set up as Production; static files are copied as they are. Each runs on HTTP with its own binding. Refresh from Windows fetches the live data again (SQLite, media, uSync) as often as you like; Take over issues the certificate once the address has moved. Nothing on Windows is changed, and rules in its web.config (redirects, rewrites) are not carried over.</p>
+    </div>
+    <div id="windows-imported" class="windows-imported" hidden></div>
+    <menu><li class="cancel-action"><button type="button" id="windows-import-cancel" class="cancel-link">Cancel</button></li>
+      <li><button type="submit" id="windows-import-submit" class="primary" disabled>Import</button></li></menu>
   </form>
 </dialog>
 

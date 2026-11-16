@@ -2,6 +2,20 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.10] - 2026-11-16
+
+### Features
+
+- Import from Windows (Tools menu, or harbor windows): sites on a live Windows server are moved here while it keeps running them. A site with a project is copied without its builds, built here and set up as Production; static files (a CDN, a plain HTML site) are copied as they are. Each runs on HTTP with its own binding, and a temporary alias to test it by. A site with only a build cannot be built here and is not imported
+- Refresh from Windows, for one site or all: the live data is fetched again (the SQLite database, media and uSync; all files of a static site) as often as wanted. Pause the site on Windows takes it offline (app_offline.htm) while its database is copied
+- Take over, once the address has moved: the temporary aliases go, a certificate is issued and the site runs on HTTPS. Nothing on Windows is changed
+
+### Fixes
+
+- The Sync dialogs list only the recent syncs of their own kind: data in Sync data, settings in Sync settings
+- Copy site: the options for this server are only shown when copying to this server (Stop the site here was shown twice), and an empty block of options takes no room
+- The last mentions of the old installation are named as Harbor or as the old installation
+
 ## [1.0.9] - 2026-11-16
 
 ### Changes

@@ -193,6 +193,27 @@ def _migrate(args, system):
         raise Stop("", 2)
 
 
+def _windows(args, system):
+    """Sites moved from a Windows server (harbor/sites/windows_import.py); the SMB password in VNS_SMB_PASSWORD"""
+    import json
+    from harbor.sites import windows_import
+    password = os.environ.get("VNS_SMB_PASSWORD", "")
+    if args.command == "list":
+        print(json.dumps({"folders": windows_import.list_folders(system, args.share, args.user, password, args.domain),
+                          "projects": windows_import.projects(system)}, indent=2))
+    elif args.command == "import":
+        windows_import.import_site(system, args.share, args.folder, args.binding, args.user, password, args.domain, args.aliases, args.build_from)
+    elif args.command == "import-all":
+        # The admin's choice: [{"folder", "binding", "aliases"}], in VNS_WINDOWS_SITES
+        windows_import.import_all(system, args.share, json.loads(os.environ.get("VNS_WINDOWS_SITES") or "[]"), args.user, password, args.domain)
+    elif args.command == "refresh":
+        windows_import.refresh(system, args.site, pause=args.pause)
+    elif args.command == "refresh-all":
+        windows_import.refresh_all(system, pause=args.pause)
+    elif args.command == "take-over":
+        windows_import.take_over(system, args.site)
+
+
 def _servers(args, system):
     import json
     from harbor.server import servers
@@ -551,6 +572,37 @@ def parser():
     command.add_argument("--json", action="store_true", help="the plan as JSON")
     command.add_argument("--rollback", action="store_true", help="put a migrated site's scripts back from its backup")
     command.set_defaults(handler=_migrate, command="")
+    windows = groups.add_parser("windows", help="sites moved from a Windows server (IIS) while it stays live").add_subparsers(
+        dest="command", required=True, metavar="<command>")
+    command = windows.add_parser("list", help="the folders in a share, and what each holds, as JSON (password in VNS_SMB_PASSWORD)")
+    command.add_argument("share", help="//server/share/folder")
+    command.add_argument("--user", required=True)
+    command.add_argument("--domain", default="")
+    command.set_defaults(handler=_windows)
+    command = windows.add_parser("import", help="a folder with a project, or static files, set up here on HTTP")
+    command.add_argument("share")
+    command.add_argument("folder")
+    command.add_argument("binding")
+    command.add_argument("--user", required=True)
+    command.add_argument("--domain", default="")
+    command.add_argument("--aliases", default="", help="temporary names to test it by, separated by commas")
+    command.add_argument("--build-from", default="", help="for a build: the site whose project builds it, as site or server:site")
+    command.set_defaults(handler=_windows)
+    command = windows.add_parser("import-all", help="the folders in VNS_WINDOWS_SITES (JSON: folder, binding, aliases), one at a time")
+    command.add_argument("share")
+    command.add_argument("--user", required=True)
+    command.add_argument("--domain", default="")
+    command.set_defaults(handler=_windows)
+    command = windows.add_parser("refresh-all", help="every site imported from Windows, refreshed one at a time")
+    command.add_argument("--pause", action="store_true")
+    command.set_defaults(handler=_windows)
+    command = windows.add_parser("refresh", help="the live site's data fetched again (SQLite, media, uSync; all files of an HTML site)")
+    command.add_argument("site")
+    command.add_argument("--pause", action="store_true", help="take the site on Windows offline while its database is copied")
+    command.set_defaults(handler=_windows)
+    command = windows.add_parser("take-over", help="after the address moved: the aliases go, a certificate, and the Windows source is forgotten")
+    command.add_argument("site")
+    command.set_defaults(handler=_windows)
     other = groups.add_parser("servers", help="other servers Harbor works with, reached with its own SSH key").add_subparsers(
         dest="command", required=True, metavar="<command>")
     command = other.add_parser("add", help="add a server: Harbor's key is put there with the password in HARBOR_SSH_PASSWORD, once")
