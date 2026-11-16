@@ -94,7 +94,9 @@ def move(system, name, target, server_name, alias=""):
     before = set(settings.target_ids(system, site.site_root))
     # As the admin's Copy site asks it, to a remote Linux server, on HTTP: the address still points to Windows
     request = {"VNS_ENV_COPY": "1", "VNS_PROD_TARGET": "remote", "VNS_PROD_IP": entry["host"], "VNS_PROD_USER": entry["user"],
-               "VNS_PROD_PASSWORD": "", "VNS_PROD_SSH_PORT": str(entry["port"]), "VNS_PROD_FOLDER": environment.BINDING,
+               "VNS_PROD_PASSWORD": "", "VNS_PROD_SSH_PORT": str(entry["port"]),
+               # Named as its folder on Windows (poda.dk), not by its binding (www.poda.dk): /var/www/<folder> and its service
+               "VNS_PROD_FOLDER": environment.FOLDER or environment.BINDING,
                "VNS_PROD_BINDING": environment.BINDING, "VNS_PROD_ENVIRONMENT": environment.other.get("ENVIRONMENT", "") or "Production",
                "VNS_PROD_HTTPS": "n"}
     with mock.patch.dict(os.environ, request):

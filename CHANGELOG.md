@@ -2,6 +2,17 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.21] - 2026-11-16
+
+### Features
+
+- Managed elsewhere and Managed here in the overview: the environments of sites on another server, and this server's own sites, each shown alone
+
+### Fixes
+
+- Publishing an environment no longer deletes anything in its App_Plugins (wwwroot/App_Plugins and App_Plugins): new and updated files from the build go there, and what the build does not have stays. Only the main site's own publish may delete there
+- Copy from Windows names the copy as its folder on Windows, not by its binding: poda.dk with the binding www.poda.dk is /var/www/poda.dk and the service poda.dk on Linux, as on Windows
+
 ## [1.0.20] - 2026-11-16
 
 ### Fixes

@@ -87,7 +87,7 @@ esac
             (bin_folder / name).chmod(0o755)
         return bin_folder, log
 
-    def compare(self, values, first=True):
+    def compare(self, values, first=True, plugins=()):
         # ---- the script
         server, target, text = self.make("old", values)
         bin_folder, log = self.programs(server)
@@ -108,6 +108,9 @@ esac
         if not first:
             (server.root / "remote/var/www/shop.dk").mkdir(parents=True)
             (server.root / "remote/var/www/shop.dk/appsettings.json").write_text("{}")
+        for name in plugins:
+            (server.root / "remote/var/www/shop.dk" / name).parent.mkdir(parents=True, exist_ok=True)
+            (server.root / "remote/var/www/shop.dk" / name).write_text("kept")
         (target / "publish_prod.sh").write_text(text)
 
         def real(argv, stdin=None, variables=None):
@@ -128,6 +131,9 @@ esac
             del os.environ["VNS_PUBLISH_TRACKED"], os.environ["VNS_TARGET"]
         self.assertEqual(code, result.returncode, (result.stdout, result.stderr, system.said))
         mine = self.state(server, log)
+        if plugins:
+            # Unlike the script, which deleted them: App_Plugins of an environment is never deleted from
+            return result, system, server
         self.assertEqual(mine[0], legacy[0], "the files")
         self.assertEqual(as_frozen(mine[1]), legacy[1], "what ran as root where the environment is")
         return result, system, server
@@ -148,6 +154,15 @@ esac
         self.assertTrue(settings["Local"], "from the site's own publish folder")
         self.assertIn('Compile Remove="_staging/**"', (server.root / "var/www/shop.dk/Shop.csproj").read_text())
         self.assertFalse((server.root / "var/www/shop.dk/bin").exists())
+
+    def test_app_plugins_of_an_environment_are_never_deleted(self):
+        """A publish deleted what an environment had in App_Plugins and the build did not: only the main site may"""
+        kept = ("wwwroot/App_Plugins/Extra/extra.js", "App_Plugins/Old/package.manifest")
+        result, system, server = self.compare(REMOTE, False, plugins=kept)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for name in kept:
+            self.assertEqual((server.root / "remote/var/www/shop.dk" / name).read_text(), "kept", name)
+        self.assertTrue((server.root / "remote/var/www/shop.dk/Shop.dll").is_file(), "the build still went there")
 
     def test_an_environment_on_another_server(self):
         for first in (True, False):

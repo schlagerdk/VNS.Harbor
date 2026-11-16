@@ -20,7 +20,7 @@ PROD_SMB_USER='admin'
 PROD_SMB_PASSWORD='pw'
 PROD_SMB_DOMAIN=''
 PROD_FOLDER='shop.dk'
-PROD_BINDING='shop.dk'
+PROD_BINDING='www.shop.dk'
 PROD_ENVIRONMENT=Production
 """
 LINUX = """PROD_LOCAL_PATH=''
@@ -83,9 +83,10 @@ class WindowsMoveTests(unittest.TestCase):
         with self.moved(), mock.patch("harbor.environments.bindings.change_binding") as binding:
             code, system = self.harbor("move", "test.shop.dk", "production", "--server", "prod-01", "--alias", "shop.dk.new.example")
         self.assertEqual(code, 0, system.said)
-        self.assertEqual({key: self.request[key] for key in ("VNS_ENV_COPY", "VNS_PROD_TARGET", "VNS_PROD_IP", "VNS_PROD_PASSWORD", "VNS_PROD_HTTPS", "VNS_PROD_BINDING")},
+        self.assertEqual({key: self.request[key] for key in ("VNS_ENV_COPY", "VNS_PROD_TARGET", "VNS_PROD_IP", "VNS_PROD_PASSWORD", "VNS_PROD_HTTPS", "VNS_PROD_BINDING", "VNS_PROD_FOLDER")},
                          {"VNS_ENV_COPY": "1", "VNS_PROD_TARGET": "remote", "VNS_PROD_IP": "10.0.0.9", "VNS_PROD_PASSWORD": "",
-                          "VNS_PROD_HTTPS": "n", "VNS_PROD_BINDING": "shop.dk"}, "a copy over Harbor's key, on HTTP")
+                          "VNS_PROD_HTTPS": "n", "VNS_PROD_BINDING": "www.shop.dk", "VNS_PROD_FOLDER": "shop.dk"},
+                         "a copy over Harbor's key, on HTTP, named as its folder on Windows")
         self.assertEqual(binding.call_args.kwargs["target"], "prod2")
         self.assertEqual(binding.call_args[0][3], "shop.dk.new.example", "as text, as change_binding reads it")
         links = json.loads((self.root / "var/lib/harbor/sites/test.shop.dk/windows-move.json").read_text())

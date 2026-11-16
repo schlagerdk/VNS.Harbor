@@ -438,7 +438,10 @@ class Publish:
                 # Schema files are never uploaded. Once the site exists there, its content, settings and data are never
                 # overwritten or deleted by a publish (rsync keeps excluded paths when using --delete). wwwroot/App_Plugins
                 # is the packages' own code (their backoffice, such as VNS.Harbor's dashboard): it always goes along.
-                keep = ["--exclude", "appsettings-schema*.json", "--exclude", "umbraco-package-schema.json", "--exclude", "/scripts/",
+                # App_Plugins of an environment is never deleted from: what the build has is copied there (new and
+                # updated files), and what it does not have stays (protect rules, first: rsync takes the first that fits)
+                keep = ["--filter", "P /App_Plugins/**", "--filter", "P /wwwroot/App_Plugins/**",
+                        "--exclude", "appsettings-schema*.json", "--exclude", "umbraco-package-schema.json", "--exclude", "/scripts/",
                         "--exclude", "/.vns-publish/"]
                 if exists:
                     keep += ["--include", "/wwwroot/", "--include", "/wwwroot/App_Plugins/***", "--exclude", "/wwwroot/*"]

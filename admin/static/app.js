@@ -757,6 +757,9 @@ function renderStats() {
 		["running", "Running", count((s) => siteState(s) === "active")],
 		["stopped", "Stopped", count((s) => siteState(s) === "inactive")],
 		["prod", "With environments", count(hasProd)],
+		// Environments of sites on another server (managed from there), and the sites that are this server's own
+		["managed", "Managed elsewhere", count((s) => !!s.managed_by)],
+		["own", "Managed here", count((s) => !s.managed_by)],
 	];
 	for (const kind of Object.keys(kindLabel)) {
 		const n = count((s) => s.kind === kind);
@@ -804,6 +807,8 @@ function matches(site) {
 	if (filter === "running" && state !== "active") return false;
 	if (filter === "stopped" && state !== "inactive") return false;
 	if (filter === "prod" && !hasProd(site)) return false;
+	if (filter === "managed" && !site.managed_by) return false;
+	if (filter === "own" && site.managed_by) return false;
 	if (kindLabel[filter] && site.kind !== filter) return false;
 	if (attentionFilters[filter] && !attentionFilters[filter][1](site)) return false;
 	return matchesQuery(site);
