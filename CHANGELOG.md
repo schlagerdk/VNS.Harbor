@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.23] - 2026-11-16
+
+### Fixes
+
+- An environment on another Linux server or on Windows is headed by its folder on its card (poda.dk), with its binding listed below
+
 ## [1.0.22] - 2026-11-16
 
 ### Fixes

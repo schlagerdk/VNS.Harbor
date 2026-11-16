@@ -88,7 +88,7 @@ console.log(JSON.stringify(sortedEnvironments(input).map((env) => env.binding)))
 
     def test_binding_is_the_heading_and_the_overview_button(self):
         source = (APP / "static/app.js").read_text()
-        self.assertIn('if (isTarget(env)) heading.prepend(el("h3", { className: "env-title", textContent: bindingLabel(env) || address.hostname }));', source)
+        self.assertIn('if (isTarget(env)) heading.prepend(el("h3", { className: "env-title", textContent: envFolderName(env) || bindingLabel(env) || address.hostname }));', source)
         self.assertIn('const meta = el("dl", { className: "meta" }, el("dt", { textContent: "Binding" }), el("dd", {}, binding,', source)
         self.assertIn(".env-head .publish-status { flex-basis: auto; }", (APP / "static/style.css").read_text())
         row = source[source.index("function compactEnvironmentRow"):source.index("function siteCard(")]

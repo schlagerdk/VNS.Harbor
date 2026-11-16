@@ -1070,6 +1070,10 @@ const siteTitle = (site) => {
 	const main = site.environments?.find((env) => env.key === "main");
 	return (main && bindingLabel(main)) || siteLabel(site);
 };
+// An environment's folder by its name, where it is a site of its own: on another Linux server (its folder there) or on
+// Windows (the last part of its share). One in a folder of the main site here is named by its binding
+const envFolderName = (env) => env.mode === "remote" || env.mode === "windows"
+	? (env.folder || "").replace(/[\\/]+$/, "").split(/[\\/]/).pop() : "";
 const aliasLabels = (env) => env?.display_aliases || env?.aliases || [];
 
 function environmentAddress(env) {
@@ -1630,8 +1634,9 @@ function envPanel(site, env) {
 	const binding = !address.url ? bindingLink("") : site.admin && !isTarget(env)
 		? el("span", { textContent: bindingLabel(env) })
 		: openLink(bindingLabel(env) || address.hostname, address.url, address.title);
-	// The main site's name is the page's title. Its binding, which can differ, is listed below.
-	if (isTarget(env)) heading.prepend(el("h3", { className: "env-title", textContent: bindingLabel(env) || address.hostname }));
+	// The main site's name is the page's title. An environment is headed by its folder, as the server it runs on names it
+	// (poda.dk); its binding, which can differ (www.poda.dk), is listed below
+	if (isTarget(env)) heading.prepend(el("h3", { className: "env-title", textContent: envFolderName(env) || bindingLabel(env) || address.hostname }));
 	const meta = el("dl", { className: "meta" }, el("dt", { textContent: "Binding" }), el("dd", {}, binding,
 		...(site.answers_any_name && !isTarget(env) ? [el("span", { className: "badge any-name", title: "Apache sends a request for a name that no other site has to this site", textContent: "any name" })] : [])));
 	if (env.aliases && env.aliases.length) {
