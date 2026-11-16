@@ -3467,7 +3467,7 @@ function syncMultiAction() {
 		remove: "Remove a NuGet package from every selected project.",
 		local: "Build and restart each selected main site.",
 		prod: "Build and deploy every environment of each selected site, one at a time per site.",
-		both: "Publish each main site, then all its environments. Sites run in parallel.",
+		both: "Publish each main site, then all its environments. Four sites run at a time.",
 		outdated: "Run dotnet outdated --upgrade for every selected project. Review changes and publish afterward.",
 		clear_logs: "Delete the Umbraco logs of each selected main site. Sites that are not Umbraco are skipped.",
 		clear_logs_prod: "Delete the Umbraco logs of every environment of the selected sites. Sites that are not Umbraco, or have no environments, are skipped.",
@@ -4836,10 +4836,19 @@ function renderTask(t) {
 	const follow = t.followSteps || t.steps.length !== t.stepsShown;
 	t.followSteps = false;
 	t.stepsShown = t.steps.length;
+	// Several sites at once (Multi action): each site's newest step is active while that site runs, failed if it failed
+	const lastOfSite = {};
+	t.steps.forEach((step, index) => { if (step.site) lastOfSite[step.site] = index; });
 	$("#task-steps").replaceChildren(...t.steps.map((step, index) => {
 		const last = index === t.steps.length - 1;
-		const kind = step.type === "warning" ? "warning" : last && state === "running" ? "active" : last && state === "failed" ? "failed" : "done";
-		return el("li", { className: `task-step ${kind}` }, el("span", { className: "task-step-mark", "aria-hidden": "true" }), el("span", { textContent: step.text }));
+		const siteState = step.site && t.siteStates ? t.siteStates[step.site] : "";
+		const kind = step.type === "warning" ? "warning"
+			: step.site && siteState ? (lastOfSite[step.site] === index && siteState === "running" && state === "running" ? "active"
+				: lastOfSite[step.site] === index && siteState === "failed" ? "failed" : "done")
+			: last && state === "running" ? "active" : last && state === "failed" ? "failed" : "done";
+		// The site in front, unless the step names it already
+		const text = step.site && !step.text.includes(step.site) ? `${step.site}: ${step.text}` : step.text;
+		return el("li", { className: `task-step ${kind}` }, el("span", { className: "task-step-mark", "aria-hidden": "true" }), el("span", { textContent: text }));
 	}));
 	$("#task-steps").hidden = !t.steps.length;
 	if (follow) list.scrollTop = list.scrollHeight;
@@ -5025,7 +5034,9 @@ function openTerminal(id, title, autoClose, sites = [], running = true, scope = 
 		if (!data.startsWith("harbor;")) return false;
 		try {
 			const event = JSON.parse(data.slice("harbor;".length));
-			if (event.type === "step" || event.type === "warning") t.steps.push({ type: event.type, text: String(event.text || "") });
+			if (event.type === "step" || event.type === "warning") t.steps.push({ type: event.type, text: String(event.text || ""), site: event.site ? String(event.site) : "" });
+			// Multi action: a site has started or ended (several run at once)
+			if (event.type === "site" && event.site) (t.siteStates ||= {})[event.site] = String(event.state || "");
 			renderTask(t);
 		} catch (_) { /* not ours */ }
 		return true;

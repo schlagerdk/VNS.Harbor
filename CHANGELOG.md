@@ -2,6 +2,13 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.27] - 2026-11-16
+
+### Fixes
+
+- Multi action runs four sites at a time, not all at once: a sync of 17 sites to one server opened more SSH logins than its sshd lets wait (MaxStartups), and it reset some of them (kex_exchange_identification: Connection reset by peer). Many builds at once also crowded the server. HARBOR_MULTI_PARALLEL sets another number
+- The steps of a Multi action are named with their site, and each running site's newest step is shown as active (several sites run at once), failed when its site failed
+
 ## [1.0.26] - 2026-11-16
 
 ### Fixes

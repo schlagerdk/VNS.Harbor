@@ -215,6 +215,46 @@ class BulkTests(unittest.TestCase):
             self.assertIn(f'[{task["site"]}] concurrent', result.stdout)
             self.assertIn(f'{task["site"]}: OK', result.stdout)
 
+    def test_no_more_than_four_sites_run_at_once(self):
+        """17 syncs at once to one server: its sshd reset the logins over its limit, and 7 sites failed"""
+        script = (
+            "import fcntl, os, pathlib, sys, time\n"
+            "root = pathlib.Path(sys.argv[1])\n"
+            "with open(root / 'lock', 'a+') as lock:\n"
+            "    fcntl.flock(lock, fcntl.LOCK_EX)\n"
+            "    running = int((root / 'running').read_text() or 0) + 1 if (root / 'running').exists() else 1\n"
+            "    (root / 'running').write_text(str(running))\n"
+            "    most = max(running, int((root / 'most').read_text()) if (root / 'most').exists() else 0)\n"
+            "    (root / 'most').write_text(str(most))\n"
+            "time.sleep(0.3)\n"
+            "with open(root / 'lock', 'a+') as lock:\n"
+            "    fcntl.flock(lock, fcntl.LOCK_EX)\n"
+            "    (root / 'running').write_text(str(int((root / 'running').read_text()) - 1))\n"
+        )
+        tasks = [{"site": f"site-{number}", "argv": [sys.executable, "-c", script, str(self.root)], "cwd": str(self.root)}
+                 for number in range(10)]
+        result = subprocess.run([sys.executable, str(ROOT_DIR / "lib/bulk_tasks.py"), json.dumps(tasks)],
+                                capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+        self.assertEqual(int((self.root / "most").read_text()), 4, "four at a time, and four did run together")
+        self.assertEqual(result.stdout.count(": OK"), 10, "and every site ran")
+
+    def test_steps_are_named_with_their_site_and_each_site_starts_and_ends(self):
+        """The window shows each running site's newest step as active: several sites run at once"""
+        step = 'import sys; sys.stdout.write("\\x1b]7777;harbor;{\\"type\\": \\"step\\", \\"text\\": \\"Sync settings\\"}\\x07Sync settings\\n"); sys.exit(int(sys.argv[1]))'
+        tasks = [{"site": "one", "argv": [sys.executable, "-c", step, "0"], "cwd": str(self.root)},
+                 {"site": "two", "argv": [sys.executable, "-c", step, "1"], "cwd": str(self.root)}]
+        result = subprocess.run([sys.executable, str(ROOT_DIR / "lib/bulk_tasks.py"), json.dumps(tasks)], capture_output=True, text=True,
+                                timeout=30, env={**os.environ, "HARBOR_PROGRESS": "1"})
+        events = [json.loads(match) for match in re.findall(r"\x1b\]7777;harbor;(\{.*?\})\x07", result.stdout)]
+        for site, end in (("one", "done"), ("two", "failed")):
+            mine = [event for event in events if event.get("site") == site]
+            self.assertEqual(mine, [{"type": "site", "site": site, "state": "running"}, {"type": "step", "text": "Sync settings", "site": site},
+                                    {"type": "site", "site": site, "state": end}])
+        result = subprocess.run([sys.executable, str(ROOT_DIR / "lib/bulk_tasks.py"), json.dumps(tasks)], capture_output=True, text=True,
+                                timeout=30, env={key: value for key, value in os.environ.items() if key != "HARBOR_PROGRESS"})
+        self.assertNotIn('"type": "site"', result.stdout, "no events where they are not wanted")
+
     def test_invalid_selection_and_non_csharp_are_rejected(self):
         for sites in ([], ["one", "one"], ["one"] * 101, [1]):
             with self.assertRaises(BadRequest):
