@@ -256,6 +256,18 @@ def _servers(args, system):
         servers.install(system, args.name)
     elif args.command == "rollback":
         servers.rollback(system, args.name)
+    elif args.command == "set-host":
+        servers.set_host(system, args.name, args.host)
+    elif args.command == "rename":
+        servers.rename(system, args.name, args.new)
+    elif args.command == "edit":
+        # The name first: the address is then changed under the new one
+        name = args.name
+        if args.new_name and args.new_name != name:
+            servers.rename(system, name, args.new_name)
+            name = args.new_name
+        if args.host:
+            servers.set_host(system, name, args.host)
     else:
         names = [args.name] if args.name else sorted(servers.servers(system))  # a Windows server tells whether its share opens
         # Every server: this one first
@@ -655,6 +667,19 @@ def parser():
     command.add_argument("share", help="//server/share/folder")
     command.add_argument("--user", required=True)
     command.add_argument("--domain", default="")
+    command.set_defaults(handler=_servers)
+    command = other.add_parser("set-host", help="the server has a new address: kept here, and in every environment that was on the old one")
+    command.add_argument("name")
+    command.add_argument("host", help="its new address")
+    command.set_defaults(handler=_servers)
+    command = other.add_parser("rename", help="a server's name in Servers changed; nothing changes on the server")
+    command.add_argument("name")
+    command.add_argument("new")
+    command.set_defaults(handler=_servers)
+    command = other.add_parser("edit", help="a server's name and address at once (rename, then set-host)")
+    command.add_argument("name")
+    command.add_argument("--name", dest="new_name", default="")
+    command.add_argument("--host", default="")
     command.set_defaults(handler=_servers)
     command = other.add_parser("rollback", help="the release installed there before the one in use, used again there")
     command.add_argument("name")

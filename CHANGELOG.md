@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.17] - 2026-11-16
+
+### Features
+
+- Edit on a server in Servers (harbor servers edit, rename, set-host): its name and its address. A new name takes a Windows server's password with it, and the copies from Windows that name it follow. A new address is for a server given another IP, such as one that takes over the Windows server's address. Harbor logs in at the new address, then changes it in Servers and in every environment that was on the old one, so publish, refresh and take over go on there. Nothing changes on the server
+
 ## [1.0.16] - 2026-11-16
 
 ### Changes

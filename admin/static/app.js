@@ -6632,7 +6632,7 @@ function serverCard(item, release) {
 			state: item.reachable ? "Share opens" : "Not reachable", stateClass: item.reachable ? "ok" : "bad",
 			rows: [toolRow("Kind", "Windows: kept for Import from Windows"), toolRow("Login", (item.domain ? item.domain + "\\" : "") + item.user),
 				...(item.reachable ? [] : [toolRow("Error", (item.error || []).join(" ") || "No answer")])],
-			actions: [toolButton("Remove…", () => confirmServers(`Remove ${item.name}?`, `Its share and login are forgotten here, with the password. Nothing on ${item.name} is changed.`, "Remove", { action: "remove", name: item.name }), "tool-danger")] });
+			actions: [toolButton("Edit…", () => askEditServer(item)), toolButton("Remove…", () => confirmServers(`Remove ${item.name}?`, `Its share and login are forgotten here, with the password. Nothing on ${item.name} is changed.`, "Remove", { action: "remove", name: item.name }), "tool-danger")] });
 		card.querySelector(".tool-icon").innerHTML = osLogos.windows;
 		card.querySelector(".tool-icon").classList.add("os-icon");
 		return card;
@@ -6666,6 +6666,7 @@ function serverCard(item, release) {
 			await runServers({ action: "rollback", name: item.name });
 		}));
 	}
+	actions.push(toolButton("Edit…", () => askEditServer(item)));
 	actions.push(toolButton("Remove…", () => askRemoveServer(item), "tool-danger"));
 	return toolCard({ icon: "server", tone: item.reachable ? "blue" : "amber", title: item.name, detail: `${item.user}@${item.host}${item.port !== 22 ? ":" + item.port : ""}`,
 		state: state[0], stateClass: state[1], rows, actions });
@@ -6679,6 +6680,35 @@ async function runServers(payload) {
 
 async function confirmServers(title, message, ok, payload) {
 	if (await ask({ title, message, input: false, ok, danger: true })) await runServers(payload);
+}
+
+// A server's name in Servers, and a Linux server's address: for one given another IP, such as the one that takes over a
+// Windows server's address. Also when the old address no longer answers
+function askEditServer(item) {
+	const form = $("#form-server-action");
+	const windows = item.kind === "windows";
+	$("#server-action-icon").replaceChildren(svgIcon("server"));
+	$("#server-action-title").textContent = `Edit ${item.name}`;
+	$("#server-action-text").textContent = `Nothing changes on ${item.name} itself.`;
+	const button = $("#server-action-ok");
+	button.textContent = "Save";
+	button.classList.remove("danger");
+	button.classList.add("primary");
+	const field = (label, props) => el("label", {}, label, el("input", { autocomplete: "off", spellcheck: false, required: true, ...props }));
+	$("#server-action-fields").replaceChildren(
+		field("Name", { name: "new_name", value: item.name, pattern: "[a-z0-9][a-z0-9\\-]{0,62}", title: "Lower case letters, digits and -" }),
+		...(windows ? [] : [field("Address", { name: "host", value: item.host }),
+			el("p", { className: "hint", textContent: `A new address: Harbor logs in there with its key, then changes it here and in every environment on ${item.host}, so publish, refresh and take over go on there.` })]));
+	form.onsubmit = (event) => {
+		event.preventDefault();
+		const name = form.elements.new_name.value.trim();
+		const host = windows ? "" : form.elements.host.value.trim();
+		const payload = { action: "edit", name: item.name, new_name: name !== item.name ? name : "", host: host !== item.host ? host : "" };
+		serverActionDialog.close();
+		if (payload.new_name || payload.host) run(() => runServers(payload));
+	};
+	serverActionDialog.showModal();
+	form.elements.new_name.focus();
 }
 
 function askRemoveServer(item) {

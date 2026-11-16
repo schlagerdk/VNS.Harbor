@@ -217,6 +217,90 @@ def add(system, name, host, user="root", port="22", password=""):
     system.say(f"{name} ({user}@{host}) is added. Harbor reaches it with its own key; no password is kept.")
 
 
+def rename(system, name, new):
+    """A server given another name in Servers: its password goes with it (a Windows server), and the environments copied
+    from Windows that name it follow. Nothing changes on the server, and its environments are reached by address."""
+    found = servers(system)
+    if name not in found:
+        raise Stop(f"No server {name}.")
+    if not NAME.fullmatch(new or ""):
+        raise Stop("A server's name is lower case letters, digits and -, such as linux-02.")
+    if new == name:
+        return
+    if new in found:
+        raise Stop(f"There is a server called {new} already.")
+    found = {new if key == name else key: value for key, value in found.items()}
+    write_json(system.path(SERVERS), found)
+    secret = system.path(f"{SECRETS}/{name}.json")
+    if secret.is_file():
+        secret.rename(system.path(f"{SECRETS}/{new}.json"))
+    # Copy from Windows keeps the server's name with each copy (harbor/environments/windows_move.py)
+    from harbor.environments.settings import STATE
+    state = system.path(STATE)
+    for path in sorted(state.glob("*/windows-move.json")) if state.is_dir() else []:
+        links = read_json(path)
+        if isinstance(links, dict) and any(isinstance(entry, dict) and entry.get("server") == name for entry in links.values()):
+            write_json(path, {key: {**entry, "server": new} if isinstance(entry, dict) and entry.get("server") == name else entry
+                              for key, entry in links.items()})
+    system.say(f"{name} is called {new} now.")
+
+
+def set_host(system, name, host):
+    """The server has a new address (it was given another IP): kept in Servers, and in every environment here that was
+    on the old one, so publish, refresh and take over reach it there. Nothing changes on the server itself."""
+    entry = server(system, name)
+    if not HOST.fullmatch(host or ""):
+        raise Stop("Give the server's new address.")
+    old = entry["host"]
+    if host == old:
+        system.say(f"{name} is at {host} already.")
+        return []
+    trial = {**entry, "host": host}
+    # A key seen at the new address belongs to what was there before (such as the server it takes over from)
+    if not any(other["host"] == host and int(other["port"]) == int(entry["port"]) for other in servers(system, "linux").values()):
+        forget_host_key(system, host, entry["port"])
+    system.step(f"Log in to {host} with Harbor's key")
+    if not remote(system, trial, "true", check=False).ok:
+        raise Stop(f"Harbor cannot log in to {entry['user']}@{host}. Has the server got its new address yet?")
+    found = servers(system)
+    found[name] = {key: value for key, value in {**found[name], "host": host}.items() if key not in ("public", "fqdn")}
+    write_json(system.path(SERVERS), found)
+    moved = environments_at(system, old, entry["port"], host)
+    for site, target in moved:
+        system.say(f"{site} ({target}): {old} -> {host}")
+    try:
+        status(system, name)
+    except Stop:
+        pass
+    system.say(f"{name} is at {host} now, with {len(moved)} environment(s).")
+    return moved
+
+
+def environments_at(system, old, port, host):
+    """Every environment here on the server at old (and its SSH port): its address changed to host"""
+    from harbor.core.templates import Site
+    from harbor.environments import settings
+    from harbor.install.admin import web_root
+    root = system.path(web_root())
+    moved = []
+    for folder in sorted(path.name for path in root.iterdir() if path.is_dir() and not path.name.startswith(".")) if root.is_dir() else []:
+        site = Site(folder)
+        try:
+            targets = settings.target_ids(system, site.site_root)
+        except (settings.SettingsError, OSError):
+            continue
+        for target in targets:
+            try:
+                environment = settings.load(system, site.site_root, target)
+            except settings.SettingsError:
+                continue
+            if environment.windows or environment.IP != old or str(environment.SSH_PORT or "22") != str(port):
+                continue
+            settings.update(system, site.site_root, target, {"IP": host})
+            moved.append((folder, target))
+    return moved
+
+
 # Only what Harbor installed: its releases and its command when it points there. The sites and the admin stay.
 UNINSTALL = """set -e
 rm -rf /opt/harbor

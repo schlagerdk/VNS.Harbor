@@ -2151,6 +2151,16 @@ def servers_command(data):
         return f"Add Windows server {name}", harbor + ["add-windows", name, share, "--user", user, *(["--domain", domain] if domain else [])], {"VNS_SMB_PASSWORD": data["password"]}
     if action == "rollback":
         return f"Roll back Harbor on {name}", harbor + ["rollback", name], {}
+    if action == "edit":
+        # Its name, and for a Linux server its address (harbor servers edit): what is left empty stays
+        new_name, host = data.get("new_name", "") or "", data.get("host", "") or ""
+        if not isinstance(new_name, str) or (new_name and not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", new_name)):
+            abort(400, "Give the server a name of lower case letters, digits and -")
+        if not isinstance(host, str) or (host and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.:-]{0,252}", host)):
+            abort(400, "Give the server's new address")
+        if not new_name and not host:
+            abort(400, "Nothing to change")
+        return f"Edit server {name}", harbor + ["edit", name, *(["--name", new_name] if new_name else []), *(["--host", host] if host else [])], {}
     if action == "remove":
         options = [*(["--uninstall"] if data.get("uninstall") is True else []), *(["--revoke-key"] if data.get("revoke_key") is True else [])]
         return f"Remove server {name}", harbor + ["remove", name, *options], {}

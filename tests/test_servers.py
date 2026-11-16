@@ -120,6 +120,46 @@ class ServerTests(unittest.TestCase):
         main(["servers", "status", "two"], system)
         self.assertEqual(json.loads((self.root / "var/lib/harbor/servers.json").read_text())["two"]["public"], "203.0.113.9")
 
+    def test_a_new_address_follows_into_every_environment_on_the_server(self):
+        """The server got another IP: Servers and each environment on the old address change, nothing else"""
+        self.add(self.system(ssh=lambda argv: ""))
+        from harbor.environments import settings
+        system = self.system(ssh=lambda argv: "")
+        with mock.patch.dict(os.environ, {"VNS_WEB_ROOT": "/var/www"}):
+            for site, target, ip in (("shop.dk", "prod2", "10.0.0.2"), ("shop.dk", "staging", "10.0.0.7"), ("blog.dk", "prod3", "10.0.0.2")):
+                (self.root / f"var/www/{site}").mkdir(parents=True, exist_ok=True)
+                settings.write_copy(system, f"/var/www/{site}", target, {"IP": ip, "USER": "root", "FOLDER": site, "BINDING": site, "SSH_PORT": "22"})
+            self.assertEqual(main(["servers", "set-host", "two", "10.0.0.20"], system), 0, system.said)
+            ips = {(site, target): settings.load(system, f"/var/www/{site}", target).IP
+                   for site, target in (("shop.dk", "prod2"), ("shop.dk", "staging"), ("blog.dk", "prod3"))}
+        self.assertEqual(ips, {("shop.dk", "prod2"): "10.0.0.20", ("shop.dk", "staging"): "10.0.0.7", ("blog.dk", "prod3"): "10.0.0.20"})
+        self.assertEqual(json.loads((self.root / "var/lib/harbor/servers.json").read_text())["two"]["host"], "10.0.0.20")
+        # Not reachable at the new address: nothing is changed
+        system = self.system(ssh=lambda argv: Result(255, "", "No route to host") if argv[-1] == "true" else "")
+        self.assertEqual(main(["servers", "set-host", "two", "10.0.0.30"], system), 1)
+        self.assertEqual(json.loads((self.root / "var/lib/harbor/servers.json").read_text())["two"]["host"], "10.0.0.20")
+
+    def test_a_server_is_renamed_with_its_password_and_the_copies_that_name_it(self):
+        """Nothing changes on the server: its entry, a Windows password and Copy from Windows' links follow the name"""
+        self.add(self.system(ssh=lambda argv: ""))
+        system = self.system()
+        with mock.patch("harbor.sites.windows_import.share"), mock.patch.dict(os.environ, {"VNS_SMB_PASSWORD": "pw"}):
+            main(["servers", "add-windows", "win", "//10.0.0.7/d$/sites", "--user", "Administrator"], system)
+        links = self.root / "var/lib/harbor/sites/test.shop.dk/windows-move.json"
+        links.parent.mkdir(parents=True)
+        links.write_text(json.dumps({"prod2": {"windows": "production", "server": "two", "alias": ""}}))
+        self.assertEqual(main(["servers", "rename", "two", "prod-01"], system), 0, system.said)
+        self.assertEqual(main(["servers", "edit", "win", "--name", "prod-01-win"], system), 0, system.said)
+        kept = json.loads((self.root / "var/lib/harbor/servers.json").read_text())
+        self.assertEqual(sorted(kept), ["prod-01", "prod-01-win"])
+        self.assertEqual(kept["prod-01"]["host"], "10.0.0.2")
+        from harbor.server import servers
+        self.assertEqual(servers.windows_login(system, "prod-01-win")[2], "pw", "the password went with it")
+        self.assertEqual(json.loads(links.read_text())["prod2"]["server"], "prod-01")
+        # Not onto another server's name, nor a name with capitals
+        self.assertEqual(main(["servers", "rename", "prod-01", "prod-01-win"], system), 1)
+        self.assertEqual(main(["servers", "rename", "prod-01", "Prod-01"], system), 1)
+
     def test_the_full_name_is_kept_for_a_temporary_alias(self):
         """{binding}.<its full name> is the alias suggested for a site moved there; a name without a domain is not"""
         self.add(self.system(ssh=lambda argv: ""))
