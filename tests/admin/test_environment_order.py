@@ -143,6 +143,9 @@ console.log(JSON.stringify([
         start = app.index("def api_backoffice_user")
         body = app[start:app.index("\n\n\n", start)]
         self.assertLess(body.index("managed_by(site)"), body.index("backoffice.connect("), "refused before it connects")
+        start = app.index("def api_backoffice_login")
+        body = app[start:app.index("\n\n\n", start)]
+        self.assertLess(body.index("if managed_by(site):"), body.index("backoffice.login_link("), "no link, which connected it, on a managed site")
 
     def test_confirmation_names_the_environment_it_acts_on(self):
         source = (APP / "static/app.js").read_text()

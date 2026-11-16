@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.29] - 2026-11-16
+
+### Fixes
+
+- The Backend button of a site managed from another server opens its backoffice's own login: the one-time link connected the site to the Harbor of the server it runs on (that Harbor's token), and the site's sync then got Harbor cannot be reached
+
 ## [1.0.28] - 2026-11-16
 
 ### Fixes

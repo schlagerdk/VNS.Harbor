@@ -2586,6 +2586,10 @@ def api_backoffice_login(name):
     from harbor.core.system import Stop
     from harbor.umbraco import backoffice
     system = System()
+    # A site managed from another server is that Harbor's: a link from here connected it to this one (its token), and
+    # its sync could no longer reach its own. The Backend button opens the backoffice's own login there
+    if managed_by(site):
+        return jsonify(url=None)
     if not backoffice.backoffice_user(system, site, environment) or not backoffice.uses_package(system, _harbor_site(site)):
         return jsonify(url=None)
     try:
