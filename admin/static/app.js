@@ -1063,8 +1063,10 @@ async function backofficeLoginDialog(site, env) {
 const backofficeLink = (binding, asButton) => openLink(binding + "/umbraco", "https://" + binding + "/umbraco", "Umbraco backoffice", asButton);
 const siteLabel = (site) => site.display_name || site.name;
 const bindingLabel = (env) => env.display_binding || env.binding;
-// The name people look for. The folder can have another name, and is listed on the page.
+// The name people look for. The folder can have another name, and is listed on the page. A site managed from another
+// server (an environment of a site there) is named by its folder, as it is there: poda.dk, with the binding www.poda.dk
 const siteTitle = (site) => {
+	if (site.managed_by) return siteLabel(site);
 	const main = site.environments?.find((env) => env.key === "main");
 	return (main && bindingLabel(main)) || siteLabel(site);
 };

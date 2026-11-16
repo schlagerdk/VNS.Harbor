@@ -128,9 +128,10 @@ console.log(JSON.stringify([
     siteTitle({name: "folder.test", environments: [{key: "main", binding: "new.test"}, {key: "prod", binding: "other.test"}]}),
     siteTitle({name: "folder.test", environments: [{key: "main", binding: ""}]}),
     siteTitle({name: "folder.test", display_name: "Folder", environments: []}),
+    siteTitle({name: "poda.dk", managed_by: {site: "test.poda.dk"}, environments: [{key: "main", binding: "www.poda.dk"}]}),
 ]));"""
         result = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True)
-        self.assertEqual(json.loads(result.stdout), ["new.test", "folder.test", "Folder"])
+        self.assertEqual(json.loads(result.stdout), ["new.test", "folder.test", "Folder", "poda.dk"], "a managed site by its folder")
         self.assertIn('el("h2", { textContent: siteTitle(site) })', source)
         self.assertIn('className: "site-title", textContent: siteTitle(site)', source)
 

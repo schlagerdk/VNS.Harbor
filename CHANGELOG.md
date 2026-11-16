@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.22] - 2026-11-16
+
+### Fixes
+
+- A site managed from another server is headed by its folder, as on the server it is managed from (poda.dk, with the binding www.poda.dk). This server's own sites are still headed by their main binding
+
 ## [1.0.21] - 2026-11-16
 
 ### Features
