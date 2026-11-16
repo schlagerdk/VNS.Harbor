@@ -3445,7 +3445,7 @@ def learnt_servers():
     from harbor.core.system import System
     from harbor.server import servers
     kept = servers.servers(System())
-    missing = [name for name, entry in kept.items() if entry.get("kind") != "windows" and (not entry.get("public") or "fqdn" not in entry)]
+    missing = [name for name, entry in kept.items() if entry.get("kind") != "windows" and (not entry.get("public") or "fqdn" not in entry or "names" not in entry)]
     for name in missing:
         try:
             subprocess.run(["/usr/bin/python3", HARBOR_COMMAND, "servers", "status", name], capture_output=True, text=True, timeout=20)
@@ -4556,7 +4556,21 @@ def api_windows_move():
     system = System()
     linux = {name: entry for name, entry in learnt_servers().items() if entry.get("kind") != "windows"}
     return jsonify(environments=windows_move.candidates(system), servers=sorted(linux),
-                   names={name: entry.get("fqdn", "") for name, entry in linux.items()})
+                   names={name: alias_domain(entry) for name, entry in linux.items()})
+
+
+def alias_domain(entry):
+    """What a temporary alias on a server goes under: of the names its admin is reached by (admin.<name>), the one whose
+    DNS points to the server now (also while it borrows another server's address); else the first, else its full name"""
+    names = [item for item in entry.get("names") or [] if isinstance(item, str)]
+    addresses = {entry.get("public", ""), entry.get("host", "")} - {""}
+    for name in names:
+        try:
+            if socket.gethostbyname(f"admin.{name}") in addresses:
+                return name
+        except OSError:
+            continue
+    return names[0] if names else entry.get("fqdn", "")
 
 
 @app.route("/api/windows/list", methods=["POST"])

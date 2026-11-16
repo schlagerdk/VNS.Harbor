@@ -2409,7 +2409,10 @@ $("#settings-windows-import").onclick = () => {
 	run(async () => {
 		const result = await api("/api/windows/imported");
 		renderWindowsImported(result.imported);
-		suggestAlias(windowsForm.elements.alias, result.name);
+		// Under the name this page is reached by (admin.<name>), which reaches this server now, also while it borrows
+		// another server's address; else its own full name
+		const reached = location.hostname.replace(/^admin\./, "");
+		suggestAlias(windowsForm.elements.alias, /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(reached) && !/^[0-9.]+$/.test(reached) ? reached.toLowerCase() : result.name);
 		// A Windows server kept in Servers: its share and login are used by harbor, never sent to the page
 		const select = windowsForm.elements.server;
 		select.replaceChildren(el("option", { value: "", textContent: "Type the share and login" }),

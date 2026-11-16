@@ -11,6 +11,7 @@ import sys
 import tempfile
 import textwrap
 import unittest
+from unittest import mock
 import xml.etree.ElementTree as ET
 
 from flask import abort
@@ -493,6 +494,29 @@ class LinuxHttpTests(ScriptTestCase):
         self.assertIn('scheme=http\n', start)
         self.assertIn('${scheme}://${BINDING}', start)
         self.assertNotIn('https://${BINDING}', start)
+
+
+class AliasDomainTests(unittest.TestCase):
+    """The temporary alias of a site copied to a server: under the admin name whose DNS reaches it now"""
+    def setUp(self):
+        import socket
+        source = (ROOT_DIR / "admin/app.py").read_text()
+        nodes = [node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef) and node.name == "alias_domain"]
+        self.ns = {"socket": socket}
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), "alias domain", "exec"), self.ns)
+
+    def test_the_name_that_points_to_the_server_wins(self):
+        entry = {"host": "10.0.0.16", "public": "203.0.113.41", "fqdn": "prod-01.example.com",
+                 "names": ["prod-01.example.com", "web-02.example.com"]}
+        dns = {"admin.prod-01.example.com": "203.0.113.20", "admin.web-02.example.com": "203.0.113.41"}
+        with mock.patch("socket.gethostbyname", side_effect=lambda name: dns[name]):
+            self.assertEqual(self.ns["alias_domain"](entry), "web-02.example.com", "while it borrows web-02's address")
+        dns["admin.prod-01.example.com"] = "203.0.113.41"
+        with mock.patch("socket.gethostbyname", side_effect=lambda name: dns[name]):
+            self.assertEqual(self.ns["alias_domain"](entry), "prod-01.example.com")
+        with mock.patch("socket.gethostbyname", side_effect=OSError):
+            self.assertEqual(self.ns["alias_domain"](entry), "prod-01.example.com", "the first, when none resolves")
+        self.assertEqual(self.ns["alias_domain"]({"fqdn": "prod-01.example.com"}), "prod-01.example.com", "its full name, without names")
 
 
 class ProductionSetupTests(unittest.TestCase):

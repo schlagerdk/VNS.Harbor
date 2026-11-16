@@ -77,6 +77,18 @@ for name in sorted(os.listdir("/etc/systemd/system")) if os.path.isdir("/etc/sys
     if match:
         admin = match.group(1)
 found["admin"] = admin
+# The names the admin is reached by (its ServerName and aliases): a site's temporary alias goes under the one that
+# reaches the server now
+found["admin_names"] = []
+try:
+    text = open(f"/etc/apache2/sites-available/{admin}.conf").read() if admin else ""
+    for line in re.findall(r"(?mi)^\s*Server(?:Name|Alias)\s+(.+)$", text):
+        for item in line.split():
+            item = item.lower().split(":")[0]
+            if item.startswith("admin.") and item not in found["admin_names"]:
+                found["admin_names"].append(item)
+except OSError:
+    pass
 # Its address as the internet sees it: a server behind a router knows only its internal one
 found["public"] = ""
 try:
@@ -393,11 +405,11 @@ def status(system, name):
         found = json.loads(result.stdout.strip().splitlines()[-1])
     except (ValueError, IndexError):
         found = {}
-    remember_public(system, name, found.get("public", ""), found.get("fqdn"))
+    remember_public(system, name, found.get("public", ""), found.get("fqdn"), found.get("admin_names"))
     return {"name": name, **{key: entry[key] for key in ("host", "user", "port")}, "reachable": True, **judged(found)}
 
 
-def remember_public(system, name, public, fqdn=None):
+def remember_public(system, name, public, fqdn=None, admin_names=None):
     """The server's public address, kept with it: DNS for a site there is checked against it (its own may be internal).
     And its full name, when it has one with a domain ("" when not, so it is not asked again)"""
     found = servers(system)
@@ -408,6 +420,9 @@ def remember_public(system, name, public, fqdn=None):
         entry["public"] = public
     if fqdn is not None:
         entry["fqdn"] = fqdn if re.fullmatch(r"[a-z0-9-]+(?:\.[a-z0-9-]+)+", fqdn or "") else ""
+    if admin_names is not None:
+        # admin.<name>: the names under which its sites can be reached for a test
+        entry["names"] = [item[len("admin."):] for item in admin_names if re.fullmatch(r"admin(?:\.[a-z0-9-]+){2,}", item)]
     if entry != found[name]:
         found[name] = entry
         write_json(system.path(SERVERS), found)

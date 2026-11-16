@@ -2,6 +2,13 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.19] - 2026-11-16
+
+### Fixes
+
+- The temporary alias suggested in Import from Windows is under the name the admin is reached by (admin.<name>): that name reaches the server now, also while it borrows another server's address. The server's own full name only when the admin is reached by IP
+- The temporary alias suggested in Copy from Windows is under the Linux server's admin name that reaches it now: Harbor learns the names its admin is reached by (admin.<name>) with its status, and takes the one whose DNS points to the server, also while it borrows another server's address
+
 ## [1.0.18] - 2026-11-16
 
 ### Fixes
