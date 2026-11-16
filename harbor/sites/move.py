@@ -297,7 +297,9 @@ def move_site(system, name):
         env["SSHPASS"] = password
         ssh = ["sshpass", "-e", *ssh]
     else:
-        ssh += ["-o", "BatchMode=yes"]
+        # Harbor's own key too: a server added in Servers needs no password
+        from harbor.environments.settings import harbor_key
+        ssh += ["-o", "BatchMode=yes", *harbor_key()]
     sudo = "" if user == "root" else "sudo -n"
 
     def on_new_server(command, check=True):

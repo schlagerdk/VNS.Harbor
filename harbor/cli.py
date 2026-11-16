@@ -219,6 +219,13 @@ def _windows(args, system):
     import json
     from harbor.sites import windows_import
     password = os.environ.get("VNS_SMB_PASSWORD", "")
+    if getattr(args, "server", ""):
+        # A Windows server kept in harbor servers: its share and login
+        from harbor.server import servers
+        args.share, args.user, password, args.domain = servers.windows_login(system, args.server)
+    if args.command in ("list", "import", "import-all") and not (args.share and args.user):
+        from harbor.core.system import Stop
+        raise Stop("Give the share and --user, or --server with a Windows server kept in harbor servers.")
     if args.command == "list":
         print(json.dumps({"folders": windows_import.list_folders(system, args.share, args.user, password, args.domain),
                           "projects": windows_import.projects(system)}, indent=2))
@@ -244,12 +251,14 @@ def _servers(args, system):
         servers.remove(system, args.name, uninstall=args.uninstall, revoke_key=args.revoke_key)
     elif args.command == "list":
         print(json.dumps(servers.servers(system), indent=2))
+    elif args.command == "add-windows":
+        servers.add_windows(system, args.name, args.share, args.user, os.environ.get("VNS_SMB_PASSWORD", ""), args.domain)
     elif args.command == "install":
         servers.install(system, args.name)
     elif args.command == "rollback":
         servers.rollback(system, args.name)
     else:
-        names = [args.name] if args.name else sorted(servers.servers(system))
+        names = [args.name] if args.name else sorted(servers.servers(system))  # a Windows server tells whether its share opens
         # Every server: this one first
         found = ([] if args.name else [servers.here(system)]) + [servers.status(system, name) for name in names]
         print(json.dumps(found, indent=2))
@@ -596,22 +605,25 @@ def parser():
     windows = groups.add_parser("windows", help="sites moved from a Windows server (IIS) while it stays live").add_subparsers(
         dest="command", required=True, metavar="<command>")
     command = windows.add_parser("list", help="the folders in a share, and what each holds, as JSON (password in VNS_SMB_PASSWORD)")
-    command.add_argument("share", help="//server/share/folder")
-    command.add_argument("--user", required=True)
+    command.add_argument("share", nargs="?", default="", help="//server/share/folder")
+    command.add_argument("--user", default="")
+    command.add_argument("--server", default="", help="a Windows server kept in harbor servers, instead of the share and login")
     command.add_argument("--domain", default="")
     command.set_defaults(handler=_windows)
     command = windows.add_parser("import", help="a folder with a project, or static files, set up here on HTTP")
-    command.add_argument("share")
+    command.add_argument("share", help="//server/share/folder, or the name of a Windows server with --server")
     command.add_argument("folder")
     command.add_argument("binding")
-    command.add_argument("--user", required=True)
+    command.add_argument("--user", default="")
+    command.add_argument("--server", default="", help="a Windows server kept in harbor servers, instead of the share and login")
     command.add_argument("--domain", default="")
     command.add_argument("--aliases", default="", help="temporary names to test it by, separated by commas")
     command.add_argument("--build-from", default="", help="for a build: the site whose project builds it, as site or server:site")
     command.set_defaults(handler=_windows)
     command = windows.add_parser("import-all", help="the folders in VNS_WINDOWS_SITES (JSON: folder, binding, aliases), one at a time")
-    command.add_argument("share")
-    command.add_argument("--user", required=True)
+    command.add_argument("share", nargs="?", default="")
+    command.add_argument("--user", default="")
+    command.add_argument("--server", default="", help="a Windows server kept in harbor servers, instead of the share and login")
     command.add_argument("--domain", default="")
     command.set_defaults(handler=_windows)
     command = windows.add_parser("refresh-all", help="every site imported from Windows, refreshed one at a time")
@@ -639,6 +651,12 @@ def parser():
     command.set_defaults(handler=_servers)
     command = other.add_parser("install", help="install this server's Harbor release there and use it (an agent); again updates it")
     command.add_argument("name")
+    command.set_defaults(handler=_servers)
+    command = other.add_parser("add-windows", help="a Windows server's share and login, kept for Import from Windows (password in VNS_SMB_PASSWORD)")
+    command.add_argument("name", help="a name of its own, such as windows-01")
+    command.add_argument("share", help="//server/share/folder")
+    command.add_argument("--user", required=True)
+    command.add_argument("--domain", default="")
     command.set_defaults(handler=_servers)
     command = other.add_parser("rollback", help="the release installed there before the one in use, used again there")
     command.add_argument("name")

@@ -4,8 +4,15 @@ All notable changes to VNS Harbor are listed here, newest first.
 
 ## [1.0.11] - 2026-11-16
 
+### Features
+
+- Windows servers in Servers: a share and its login, kept with the Windows logo (Add server, Windows). Harbor tries the login first, keeps the password for root only, and runs nothing there
+- A server from Servers can be chosen wherever another server is asked for: Add environment (Linux and Windows), Copy site to another server, and Import from Windows. In Add environment the list is at the top, under the kind of server. Choosing one hides its fields; a Linux server is reached with Harbor's key, and a Windows password is never sent to the page
+
 ### Fixes
 
+- The last site in Import from Windows is no longer cut off at the bottom of the list
+- DNS for a server behind a router is checked against its public address: Harbor asks each server in Servers what the internet sees it as, and keeps it, also when a dialog lists the servers before Servers has been opened. One whose public address is not known is not called wrong for pointing to a public address in front of its internal one
 - Copying or moving an environment from Windows fetches only the SQLite database from umbraco (umbraco/Data), never its logs, locks or TEMP: a file IIS holds open could not be read, and the copy failed. rclone gets filters, not --include with --exclude
 - Move from Windows, Import from Windows, Refresh and Take over run in a task window with their steps, not in a terminal; Move from Windows is only in the menu when a site has an environment on Windows
 - A main site with environments has no Delete site: they are built from its project, so they are deleted first, and harbor site delete says so when asked to delete the main site alone

@@ -106,7 +106,7 @@ def projects(system):
         if len(list(path.parent.glob("*.csproj"))) == 1:
             found.append({"server": "", "site": path.parent.name, "project": path.stem})
     from harbor.server import servers
-    for name, entry in sorted(servers.servers(system).items()):
+    for name, entry in sorted(servers.servers(system, "linux").items()):
         listing = servers.remote(system, entry, f"sh -c 'for f in {web_root()}/*/*.csproj; do [ -f \"$f\" ] && echo \"$f\"; done'", check=False)
         paths = [line.strip() for line in listing.stdout.splitlines() if line.strip().endswith(".csproj")] if listing.ok else []
         for line in paths:

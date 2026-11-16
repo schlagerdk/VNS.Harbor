@@ -20,7 +20,7 @@ class ProductionEnvironmentTests(unittest.TestCase):
     def test_modal_environment_for_local_and_remote_targets(self):
         source = (ROOT_DIR / "admin/app.py").read_text()
         nodes = [node for node in ast.parse(source).body
-                 if isinstance(node, ast.FunctionDef) and node.name in ("production_setup_env", "ssh_login", "dns_name")]
+                 if isinstance(node, ast.FunctionDef) and node.name in ("production_setup_env", "ssh_login", "kept_server", "dns_name")]
         with tempfile.TemporaryDirectory() as directory:
             scripts = Path(directory) / "example.test/scripts"
             scripts.mkdir(parents=True)

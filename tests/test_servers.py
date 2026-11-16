@@ -1,6 +1,7 @@
 """harbor servers: other servers, reached with Harbor's own key; the password once, never kept (phase 5)"""
 import json
 import os
+import stat
 from pathlib import Path
 import sys
 import tempfile
@@ -111,6 +112,36 @@ class ServerTests(unittest.TestCase):
         self.assertEqual(main(["servers", "rollback", "two"], system), 1)
         self.assertIn("no earlier release", system.said[-1])
         self.assertFalse(any("self rollback" in command for command in system.commands))
+
+    def test_the_public_address_is_kept_with_the_server(self):
+        """A server behind a router knows only its internal address: DNS for a site there is checked against this one"""
+        self.add(self.system(ssh=lambda argv: ""))
+        system = self.system(ssh=lambda argv: json.dumps({**STATUS, "public": "203.0.113.9"}) if argv[-1] == "python3 -" else "")
+        main(["servers", "status", "two"], system)
+        self.assertEqual(json.loads((self.root / "var/lib/harbor/servers.json").read_text())["two"]["public"], "203.0.113.9")
+
+    def test_a_windows_server_keeps_its_share_and_login(self):
+        """For Import from Windows: nothing is run there, and its password is kept for root only"""
+        from harbor.server import servers
+        with mock.patch("harbor.sites.windows_import.share") as opened, mock.patch.dict(os.environ, {"VNS_SMB_PASSWORD": "pw"}):
+            system = self.system()
+            self.assertEqual(main(["servers", "add-windows", "windows-01", "//10.0.0.7/d$/sites/", "--user", "Administrator"], system), 0, system.said)
+        opened.assert_called_once_with(system, "//10.0.0.7/d$/sites", "Administrator", "pw", "")
+        kept = json.loads((self.root / "var/lib/harbor/servers.json").read_text())["windows-01"]
+        self.assertEqual((kept["kind"], kept["share"], kept["user"]), ("windows", "//10.0.0.7/d$/sites", "Administrator"))
+        self.assertNotIn("pw", json.dumps(kept))
+        secret = self.root / "etc/harbor/secrets/servers/windows-01.json"
+        self.assertEqual(json.loads(secret.read_text())["password"], "pw")
+        self.assertEqual(stat.S_IMODE(secret.stat().st_mode), 0o600)
+        system = self.system()
+        self.assertEqual(servers.windows_login(system, "windows-01"), ("//10.0.0.7/d$/sites", "Administrator", "pw", ""))
+        # Not an SSH server: never installed on, nor listed where SSH is used
+        self.assertEqual(servers.servers(system, "linux"), {})
+        self.assertEqual(main(["servers", "install", "windows-01"], system), 1)
+        with mock.patch("harbor.sites.windows_import.share"):
+            self.assertTrue(servers.status(system, "windows-01")["reachable"])
+        self.assertEqual(main(["servers", "remove", "windows-01"], system), 0, system.said)
+        self.assertFalse(secret.exists())
 
     def test_remove_forgets_and_can_uninstall_and_take_the_key(self):
         self.add(self.system(ssh=lambda argv: ""))

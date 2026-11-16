@@ -498,7 +498,7 @@ class LinuxHttpTests(ScriptTestCase):
 class ProductionSetupTests(unittest.TestCase):
     def setUp(self):
         source = (ROOT_DIR / "admin/app.py").read_text()
-        wanted = ("production_setup_env", "ssh_login", "dns_name", "windows_share", "windows_site_folder", "parse_prod", "read_text")
+        wanted = ("production_setup_env", "ssh_login", "kept_server", "dns_name", "windows_share", "windows_site_folder", "parse_prod", "read_text")
         nodes = [node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef) and node.name in wanted]
         nodes += [node for node in ast.parse(source).body
                   if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "PROD_KEYS"]

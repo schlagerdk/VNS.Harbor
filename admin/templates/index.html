@@ -480,7 +480,7 @@
       </div>
     </fieldset>
     <fieldset id="copy-server" class="copy-section" hidden disabled>
-      <div class="ns-grid">
+      <div class="ns-grid" id="copy-server-fields">
         <label>Server host <input name="host" required autocomplete="url" spellcheck="false" placeholder="server.example.com"></label>
         <label>SSH port <input name="ssh_port" type="number" min="1" max="65535" value="22" required></label>
         <label>SSH username <input name="user" required autocomplete="username" value="root"></label>
@@ -567,6 +567,8 @@
       <label class="type-card"><input type="radio" name="target" value="remote"><span class="tc-title">Linux server</span><span class="tc-sub">Another server, over SSH</span></label>
       <label class="type-card"><input type="radio" name="target" value="windows"><span class="tc-title">Windows server</span><span class="tc-sub">An IIS site, over SMB</span></label>
     </div>
+    <div id="prod-remote-pick" class="server-pick" hidden></div>
+    <div id="prod-windows-pick" class="server-pick" hidden></div>
     <div class="ns-section">Site</div>
     <div class="ns-grid">
       <div class="choice-field wide" id="prod-environment-row"><span class="choice-label">Environment</span><div class="env-choices" role="radiogroup" aria-label="Environment"><label class="env-choice env-development"><input type="radio" name="environment" value="Development"><span>Development</span></label><label class="env-choice env-test"><input type="radio" name="environment" value="Test"><span>Test</span></label><label class="env-choice env-staging"><input type="radio" name="environment" value="Staging"><span>Staging</span></label><label class="env-choice env-production"><input type="radio" name="environment" value="Production" checked><span>Production</span></label></div></div>
@@ -578,7 +580,7 @@
     <div id="prod-dns" hidden></div>
     <div id="prod-remote-options">
       <div class="ns-section">SSH connection</div>
-      <div class="ns-grid">
+      <div class="ns-grid" id="prod-remote-fields">
         <label>Server host <input name="host" required autocomplete="url" spellcheck="false" placeholder="prod.example.com"></label>
         <label>SSH port <input name="ssh_port" type="number" min="1" max="65535" value="22" required></label>
         <label>SSH username <input name="user" required autocomplete="username" value="root"></label>
@@ -588,11 +590,13 @@
     </div>
     <div id="prod-windows-options" hidden>
       <div class="ns-section">Windows connection (SMB)</div>
+      <div id="prod-windows-fields">
       <label>Share with the sites' folders <input name="smb_share" required autocomplete="off" spellcheck="false" placeholder="//server/share/folder"></label>
       <div class="ns-grid">
         <label>SMB username <input name="smb_user" required autocomplete="off" spellcheck="false" value="Administrator"></label>
         <label>SMB password <input name="smb_password" type="password" required autocomplete="new-password"></label>
         <label>SMB domain <input name="smb_domain" autocomplete="off" spellcheck="false" placeholder="Empty if no domain"></label>
+      </div>
       </div>
       <p class="hint prod-dest-path" id="prod-windows-path"></p>
       <p class="hint">The IIS site's folder is the share and the folder name, like /var/www/&lt;folder&gt; on Linux. The IIS site and its folder must already exist, with the ASP.NET Core Hosting Bundle and IIS URL Rewrite Module installed. web.config is created on the first publish, with the HTTPS redirect and Umbraco's sitemap and robots rewrites when they apply. If the share already holds this site, it is adopted as it is: its environment is read from its web.config, and nothing is published or changed there. The password is saved in this site's root-only production scripts.</p>
@@ -935,13 +939,16 @@
       <div><h2 id="windows-import-title">Import from Windows</h2><p>Sites from a live Windows server, set up here on HTTP while Windows keeps running them.</p></div>
     </header>
     <div class="ns-section">The Windows server</div>
-    <label>Share <input name="share" required spellcheck="false" autocomplete="off" placeholder="//server/share/folder"></label>
-    <div class="ns-grid">
-      <label>Username <input name="user" required spellcheck="false" autocomplete="off"></label>
-      <label>Password <input name="password" type="password" required autocomplete="new-password"></label>
-      <label>Domain <input name="domain" spellcheck="false" autocomplete="off" placeholder="Optional"></label>
-      <label class="windows-list-button"><span>&nbsp;</span><button type="button" id="windows-list">Show the sites</button></label>
+    <label id="windows-server-row" hidden>Server <select name="server"></select></label>
+    <div id="windows-login-fields">
+      <label>Share <input name="share" required spellcheck="false" autocomplete="off" placeholder="//server/share/folder"></label>
+      <div class="ns-grid">
+        <label>Username <input name="user" required spellcheck="false" autocomplete="off"></label>
+        <label>Password <input name="password" type="password" required autocomplete="new-password"></label>
+        <label>Domain <input name="domain" spellcheck="false" autocomplete="off" placeholder="Optional"></label>
+      </div>
     </div>
+    <button type="button" id="windows-list" class="windows-list">Show the sites</button>
     <div id="windows-sites-section" hidden>
       <div class="ns-section">Sites <button type="button" id="windows-select-all" class="cancel-link sync-select-all">Select all</button></div>
       <div class="windows-filter">

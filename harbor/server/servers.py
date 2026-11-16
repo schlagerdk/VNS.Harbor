@@ -2,7 +2,10 @@
 
   /etc/harbor/ssh/id_ed25519      Harbor's key (root only); its .pub is put on each server when it is added
   /etc/harbor/ssh/known_hosts     the servers' host keys, as first seen
-  /var/lib/harbor/servers.json    {name: {host, user, port, added}}
+  /var/lib/harbor/servers.json    {name: {host, user, port, added}}; a Windows server {kind: windows, share, user, domain, added}
+  /etc/harbor/secrets/servers/<name>.json   a Windows server's password (root only)
+
+A Windows server is only kept with its share and login, so Import from Windows can choose it: Harbor runs nothing there.
 
 A password is used once, to put the key on the server, and is never stored. status() is the version handshake: what the
 server runs, and whether this Harbor can work with it.
@@ -74,20 +77,73 @@ for name in sorted(os.listdir("/etc/systemd/system")) if os.path.isdir("/etc/sys
     if match:
         admin = match.group(1)
 found["admin"] = admin
+# Its address as the internet sees it: a server behind a router knows only its internal one
+found["public"] = ""
+try:
+    import urllib.request
+    text = urllib.request.urlopen("https://1.1.1.1/cdn-cgi/trace", timeout=4).read(4096).decode("ascii", "replace")
+    match = re.search(r"(?m)^ip=([0-9.]+)$", text)
+    found["public"] = match.group(1) if match else ""
+except Exception:
+    pass
 print(json.dumps(found))
 '''
 
 
-def servers(system):
+SECRETS = "/etc/harbor/secrets/servers"
+SHARE = re.compile(r"//[A-Za-z0-9][A-Za-z0-9.-]{0,252}/[^\x00-\x1f\"<>|]{1,400}")
+WINDOWS_USER = re.compile(r"[A-Za-z0-9._@\\-]{1,128}")
+DOMAIN = re.compile(r"[A-Za-z0-9._-]{0,128}")
+
+
+def servers(system, kind=""):
+    """Every server Harbor knows; with kind, only the Linux ones (linux) or the Windows ones (windows)"""
     found = read_json(system.path(SERVERS))
-    return found if isinstance(found, dict) else {}
+    found = found if isinstance(found, dict) else {}
+    if kind:
+        found = {name: entry for name, entry in found.items() if (entry.get("kind") or "linux") == kind}
+    return found
 
 
 def server(system, name):
     found = servers(system).get(name)
     if not found:
         raise Stop(f"No server {name}. Add it with: harbor servers add {name} <host>")
+    if found.get("kind") == "windows":
+        raise Stop(f"{name} is a Windows server: Harbor only keeps its share and login.")
     return found
+
+
+def add_windows(system, name, share, user, password, domain=""):
+    """A Windows server's share and login, kept for Import from Windows. The login is tried first."""
+    from harbor.sites.windows_import import share as open_share
+    share = (share or "").strip().replace("\\", "/").rstrip("/")
+    if not NAME.fullmatch(name or ""):
+        raise Stop("A server's name is lower case letters, digits and -, such as windows-01.")
+    if name in servers(system):
+        raise Stop(f"There is a server {name} already.")
+    if not SHARE.fullmatch(share) or not WINDOWS_USER.fullmatch(user or "") or not DOMAIN.fullmatch(domain or "") or not password:
+        raise Stop("Give the share as //server/share/folder, the login and its password.")
+    system.step(f"Log in to {share}")
+    open_share(system, share, user, password, domain)
+    found = servers(system)
+    found[name] = {"kind": "windows", "share": share, "user": user, "domain": domain,
+                   "added": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+    secrets = system.path(SECRETS)
+    secrets.mkdir(parents=True, exist_ok=True)
+    secrets.chmod(0o700)
+    write_json(secrets / f"{name}.json", {"password": password}, private=True)
+    write_json(system.path(SERVERS), found)
+    system.say(f"{name} ({share}) is added. Import from Windows can choose it; its password is kept for root only.")
+
+
+def windows_login(system, name):
+    """A Windows server's share and login, with its password: (share, user, password, domain)"""
+    entry = servers(system).get(name)
+    if not entry or entry.get("kind") != "windows":
+        raise Stop(f"No Windows server {name}.")
+    secret = read_json(system.path(f"{SECRETS}/{name}.json")) or {}
+    return entry["share"], entry["user"], secret.get("password", ""), entry.get("domain", "")
 
 
 def key(system):
@@ -134,7 +190,7 @@ def add(system, name, host, user="root", port="22", password=""):
     system.path(SSH_DIR).mkdir(parents=True, exist_ok=True)
     # A server none of Harbor's servers is at: a key seen there before belongs to what was there then (a server set up
     # again has a new one), and this one is learnt as it logs in now
-    if not any(other["host"] == host and int(other["port"]) == int(port) for other in servers(system).values()):
+    if not any(other["host"] == host and int(other["port"]) == int(port) for other in servers(system, "linux").values()):
         forget_host_key(system, host, port)
     if password:
         system.step(f"Put Harbor's key on {host}")
@@ -151,6 +207,10 @@ def add(system, name, host, user="root", port="22", password=""):
     found = servers(system)
     found[name] = entry
     write_json(system.path(SERVERS), found)
+    try:
+        status(system, name)
+    except Stop:
+        pass
     system.say(f"{name} ({user}@{host}) is added. Harbor reaches it with its own key; no password is kept.")
 
 
@@ -171,6 +231,12 @@ def remove(system, name, uninstall=False, revoke_key=False):
     entry = found.get(name)
     if entry is None:
         raise Stop(f"No server {name}.")
+    if entry.get("kind") == "windows":
+        del found[name]
+        write_json(system.path(SERVERS), found)
+        system.path(f"{SECRETS}/{name}.json").unlink(missing_ok=True)
+        system.say(f"{name} is removed here, with its password. Nothing on it was changed.")
+        return
     if uninstall or revoke_key:
         if not remote(system, entry, "true", check=False).ok:
             raise Stop(f"{name} does not answer, so Harbor cannot be uninstalled or its key taken out there. Remove it without them.")
@@ -187,7 +253,7 @@ def remove(system, name, uninstall=False, revoke_key=False):
     del found[name]
     write_json(system.path(SERVERS), found)
     # Its host key goes too, unless another server here is at the same address
-    if not any(other["host"] == entry["host"] and int(other["port"]) == int(entry["port"]) for other in found.values()):
+    if not any(other.get("host") == entry["host"] and int(other.get("port", 0)) == int(entry["port"]) for other in found.values()):
         forget_host_key(system, entry["host"], entry["port"])
     left = [] if revoke_key else [f"Harbor's key stays in ~/.ssh/authorized_keys on {entry['host']}"]
     if not uninstall:
@@ -219,7 +285,18 @@ def here(system):
 
 
 def status(system, name):
-    """The version handshake: what the server runs, and whether this Harbor can work with it"""
+    """The version handshake: what the server runs, and whether this Harbor can work with it. A Windows server: whether
+    its share opens with the login kept for it."""
+    found = servers(system).get(name)
+    if found and found.get("kind") == "windows":
+        from harbor.sites.windows_import import share as open_share
+        share, user, password, domain = windows_login(system, name)
+        base = {"name": name, "kind": "windows", "share": share, "user": user, "domain": domain}
+        try:
+            open_share(system, share, user, password, domain)
+        except Stop as error:
+            return {**base, "reachable": False, "error": [str(error) or "the share could not be opened"]}
+        return {**base, "reachable": True}
     entry = server(system, name)
     result = remote(system, entry, "python3 -", input=STATUS, check=False)
     if not result.ok:
@@ -229,7 +306,18 @@ def status(system, name):
         found = json.loads(result.stdout.strip().splitlines()[-1])
     except (ValueError, IndexError):
         found = {}
+    remember_public(system, name, found.get("public", ""))
     return {"name": name, **{key: entry[key] for key in ("host", "user", "port")}, "reachable": True, **judged(found)}
+
+
+def remember_public(system, name, public):
+    """The server's public address, kept with it: DNS for a site there is checked against it (its own may be internal)"""
+    if not public or not re.fullmatch(r"[0-9]{1,3}(?:\.[0-9]{1,3}){3}", public):
+        return
+    found = servers(system)
+    if name in found and found[name].get("public") != public:
+        found[name]["public"] = public
+        write_json(system.path(SERVERS), found)
 
 
 def rollback(system, name):

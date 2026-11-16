@@ -255,14 +255,20 @@ function dnsCard(input, { expect: expected = "", name: targetName = "", aliases 
 		card.classList.remove("checking");
 		card.classList.toggle("here", ready && here > 0);
 		records.replaceChildren(el("div", { className: "dns-check-rows" }, ...dnsNameRows(list, answers, address, expect)));
+		// An internal address: the names point to a public one in front of it, which cannot be compared from here
+		const internal = Boolean(expect) && privateIPv4(expect);
+		const pointing = publicNames.filter((answer) => answer?.addresses?.length).length;
 		if (!publicNames.length) { status.className = "dns-status muted"; status.textContent = "Local names: no public DNS"; }
 		else if (ready) { status.className = "dns-status ok"; status.textContent = expect ? `All names point to ${expect}` : "All names point here"; }
+		else if (internal) { status.className = "dns-status muted"; status.textContent = `${pointing} of ${publicNames.length} have a record`; }
 		else { status.className = "dns-status warn"; status.textContent = `${here} of ${publicNames.length} point ${expect ? "to " + expect : "here"}`; }
 		note.textContent = !expect && server?.behind_nat
 			? `The public address could not be found, only an internal one (${address}). Set the public address under Preferences, so the records point to where the internet reaches it.`
-			: ready ? "" : `Make the missing records where each domain's DNS is kept. An HTTPS certificate covers every name, so each must point ${expect ? "to " + expect : "here"}.`;
+			: ready ? ""
+			: internal ? `${expect} is an internal address, so the names point to a public address that forwards to it. Harbor cannot see that forwarding from here: the certificate is issued when the names reach the server.`
+			: `Make the missing records where each domain's DNS is kept. An HTTPS certificate covers every name, so each must point ${expect ? "to " + expect : "here"}.`;
 		note.classList.toggle("warn", Boolean(!expect && server?.behind_nat));
-		onState(!publicNames.length ? "local" : ready ? "here" : "elsewhere");
+		onState(!publicNames.length ? "local" : ready ? "here" : internal ? "unknown" : "elsewhere");
 	};
 	const show = async () => {
 		expect = expectNow();
@@ -277,11 +283,16 @@ function dnsCard(input, { expect: expected = "", name: targetName = "", aliases 
 		const address = expect || server?.address || "";
 		// Only an A record to the public address: the server's own host name is rarely public DNS
 		const host = targetName;
-		records.replaceChildren(record("A", name, address || "this server's address"),
+		// An internal address (behind a router or firewall): the record points to the public address that reaches it,
+		// which Harbor cannot see from here
+		const internal = Boolean(expect) && privateIPv4(expect);
+		records.replaceChildren(record("A", name, internal ? `the public address that reaches ${expect}` : address || "this server's address"),
 			...(host && host.includes(".") && host !== name ? [record("CNAME", name, host)] : []));
 		note.textContent = !expect && server?.behind_nat
 			? `The public address could not be found, only an internal one (${address}). Set the public address under Preferences, so the record points to where the internet reaches it.`
-			: `Make one of these where the domain's DNS is kept. An HTTPS certificate is issued only when the name points ${expect ? "to " + expect : "here"}.`;
+			: internal
+				? `${expect} is an internal address, so the name points to a public address that forwards to it. Harbor cannot see that forwarding from here: the certificate is issued when the name reaches the server.`
+				: `Make one of these where the domain's DNS is kept. An HTTPS certificate is issued only when the name points ${expect ? "to " + expect : "here"}.`;
 		note.classList.toggle("warn", Boolean(!expect && server?.behind_nat));
 		if (!name.includes(".")) {
 			status.className = "dns-status muted";
@@ -305,9 +316,14 @@ function dnsCard(input, { expect: expected = "", name: targetName = "", aliases 
 		// A subdomain can follow the server's own name instead, so it moves with the server
 		if (answer.host && !targetName) records.append(record("CNAME", name, answer.host));
 		if (answer.here) { status.className = "dns-status ok"; status.textContent = answer.proxy ? "Via " + answer.proxy : expect ? `Points to ${expect}` : "Points here"; status.title = answer.proxy ? `Proxied by ${answer.proxy}: its addresses stand in for this server's` : ""; }
+		else if (answer.addresses.length && internal) {
+			// Not wrong: a public address in front of an internal one cannot be compared from here
+			status.className = "dns-status muted"; status.textContent = `Points to ${answer.addresses[0]}`;
+			status.title = `${answer.addresses.join(", ")}: public, in front of ${expect}`;
+		}
 		else if (answer.addresses.length) { status.className = "dns-status warn"; status.textContent = `Points to ${answer.addresses[0]}`; status.title = answer.addresses.join(", "); }
 		else { status.className = "dns-status muted"; status.textContent = "No record yet"; }
-		onState(answer.here ? "here" : answer.addresses.length ? "elsewhere" : "none");
+		onState(answer.here ? "here" : answer.addresses.length ? (internal ? "unknown" : "elsewhere") : "none");
 	};
 	// Typed, or filled in by the dialog (the binding follows the folder name): checked shortly after it changes
 	let seen = null;
@@ -2052,7 +2068,70 @@ async function changeBinding(site, scope, env) {
 	}
 }
 
+// A server from Servers, chosen in a dialog instead of typing its address and login: its fields are filled and hidden,
+// and the server (by name) tells the rest. A Windows password stays on the server, never in the page.
+const serverPickers = [];
+// The servers in Servers, as last asked: a DNS check uses a server's public address when its own is internal
+let keptServers = [];
+const publicAddressOf = (host) => (keptServers.find((item) => item.kind === "linux" && item.host === host)?.public) || "";
+function serverPicker(kind, fields, fill, { place = null, heading = null } = {}) {
+	// Named by kind: a dialog can have both, and its own field called server (an SQL connection)
+	const select = el("select", { name: kind === "windows" ? "windows_server" : "remote_server", className: "server-picker" });
+	const row = el("label", { className: "server-picker-row" }, kind === "windows" ? "Windows server" : "Server", select);
+	row.hidden = true;
+	let kept = [];
+	const choose = () => {
+		const chosen = kept.find((item) => item.name === select.value) || null;
+		fields.hidden = Boolean(chosen);
+		if (heading) heading.hidden = Boolean(chosen);
+		for (const input of fields.querySelectorAll("input")) {
+			if (input.dataset.required === undefined) input.dataset.required = input.required ? "1" : "";
+			input.required = !chosen && input.dataset.required === "1";
+		}
+		fill(chosen);
+	};
+	select.onchange = choose;
+	const picker = {
+		row,
+		async refresh() {
+			const all = (await api("/api/servers/kept")).servers;
+			keptServers = all;
+			kept = all.filter((item) => item.kind === kind);
+			select.replaceChildren(el("option", { value: "", textContent: "Type it below" }),
+				...kept.map((item) => el("option", { value: item.name, textContent: `${item.name} (${item.label})` })));
+			row.hidden = !kept.length;
+			select.value = "";
+			choose();
+		},
+	};
+	if (place) place.append(row);
+	else fields.before(row);
+	serverPickers.push(picker);
+	return picker;
+}
+const refreshServerPickers = () => Promise.all(serverPickers.map((picker) => picker.refresh())).catch((error) => console.error(error));
+{
+	const prodForm = $("#dlg-prod form"), copyForm = $("#dlg-copy-site form");
+	const set = (form, values) => { for (const [name, value] of Object.entries(values)) if (form.elements[name]) form.elements[name].value = value; };
+	// At the top of Add environment, under the kind of server: the rest of the dialog follows from the one chosen
+	const sectionOf = (fields) => fields.closest("[id$=-options]").querySelector(".ns-section");
+	serverPicker("linux", $("#prod-remote-fields"), (chosen) => {
+		if (chosen) set(prodForm, { host: chosen.host, ssh_port: chosen.port, user: chosen.user, password: "" });
+		prodForm.elements.host?.dispatchEvent(new Event("input"));
+	}, { place: $("#prod-remote-pick"), heading: sectionOf($("#prod-remote-fields")) });
+	serverPicker("windows", $("#prod-windows-fields"), (chosen) => {
+		if (chosen) set(prodForm, { smb_share: chosen.share, smb_user: chosen.user, smb_domain: chosen.domain, smb_password: "" });
+		prodForm.elements.smb_share?.dispatchEvent(new Event("input"));
+		syncProdForm();
+	}, { place: $("#prod-windows-pick"), heading: sectionOf($("#prod-windows-fields")) });
+	serverPicker("linux", $("#copy-server-fields"), (chosen) => {
+		if (chosen) set(copyForm, { host: chosen.host, ssh_port: chosen.port, user: chosen.user, ssh_password: "" });
+		copyForm.elements.host?.dispatchEvent(new Event("input"));
+	});
+}
+
 async function copySite(site, main) {
+	refreshServerPickers();
 	const dialog = $("#dlg-copy-site");
 	const form = $("#form-copy-site");
 	form.reset();
@@ -2130,7 +2209,7 @@ async function copySite(site, main) {
 	showServerPath();
 	// With HTTPS, DNS for the site and its environments here is checked against the new server as it is typed
 	$("#copy-server-env-bindings").value = site.environments.filter((env) => isTarget(env) && env.mode === "local").map(bindingLabel).filter(Boolean).join("\n");
-	$("#copy-server-dns").replaceChildren(dnsCard(field("server_binding"), { expect: () => field("host").value.trim(), aliases: $("#copy-server-env-bindings") }));
+	$("#copy-server-dns").replaceChildren(dnsCard(field("server_binding"), { expect: () => publicAddressOf(field("host").value.trim()) || field("host").value.trim(), aliases: $("#copy-server-env-bindings") }));
 
 	const update = () => {
 		const toServer = field("destination").value === "server";
@@ -2213,7 +2292,7 @@ async function copySite(site, main) {
 				let payload;
 				if (field("destination").value === "server") {
 					const removing = field("remove_here").checked;
-					payload = { kind: "move_site", site: site.name, host: field("host").value.trim(), ssh_port: field("ssh_port").value,
+					payload = { kind: "move_site", site: site.name, remote_server: field("remote_server").value, host: field("host").value.trim(), ssh_port: field("ssh_port").value,
 						user: field("user").value.trim(), password: field("ssh_password").value, copy: !removing,
 						folder: field("server_folder").value.trim(), binding: field("server_binding").value.trim(),
 						project: serverProject ? field("server_project").value.trim() : "", https: field("https").checked ? "y" : "n",
@@ -2319,10 +2398,27 @@ $("#settings-windows-import").onclick = () => {
 	$("#windows-import-submit").disabled = true;
 	windowsDialog.showModal();
 	(windowsForm.elements.share.value ? windowsForm.elements.password : windowsForm.elements.share).focus();
-	run(async () => renderWindowsImported((await api("/api/windows/imported")).imported));
+	run(async () => {
+		const result = await api("/api/windows/imported");
+		renderWindowsImported(result.imported);
+		// A Windows server kept in Servers: its share and login are used by harbor, never sent to the page
+		const select = windowsForm.elements.server;
+		select.replaceChildren(el("option", { value: "", textContent: "Type the share and login" }),
+			...result.servers.map((item) => el("option", { value: item.name, textContent: `${item.name} (${item.share})` })));
+		$("#windows-server-row").hidden = !result.servers.length;
+		select.value = result.servers.length === 1 ? result.servers[0].name : "";
+		showWindowsLogin();
+	});
 };
+function showWindowsLogin() {
+	const kept = Boolean(windowsForm.elements.server.value);
+	$("#windows-login-fields").hidden = kept;
+	for (const input of $("#windows-login-fields").querySelectorAll("input")) input.disabled = kept;
+}
+windowsForm.elements.server.onchange = showWindowsLogin;
 $("#windows-import-cancel").onclick = () => windowsDialog.close();
-const windowsLogin = () => Object.fromEntries(["share", "user", "password", "domain"].map((name) => [name, windowsForm.elements[name].value.trim()]));
+const windowsLogin = () => windowsForm.elements.server.value ? { server: windowsForm.elements.server.value }
+	: Object.fromEntries(["share", "user", "password", "domain"].map((name) => [name, windowsForm.elements[name].value.trim()]));
 const windowsChoices = () => [...$("#windows-sites").querySelectorAll(".windows-site:not([hidden]) input[type=checkbox]:not(:disabled)")];
 function updateWindowsChoice() {
 	for (const box of $("#windows-sites").querySelectorAll(".windows-check")) box.closest(".windows-site").classList.toggle("chosen", box.checked);
@@ -2339,7 +2435,7 @@ $("#windows-select-all").onclick = () => {
 $("#windows-list").onclick = () => run(async () => {
 	const login = windowsLogin();
 	// The first field that is missing is named, and has the focus
-	const missing = [["share", "the share"], ["user", "the username"], ["password", "the password"]].find(([name]) => !login[name]);
+	const missing = login.server ? null : [["share", "the share"], ["user", "the username"], ["password", "the password"]].find(([name]) => !login[name]);
 	if (missing) {
 		windowsForm.elements[missing[0]].focus();
 		throw new Error(`Give ${missing[1]} of the Windows server.`);
@@ -2760,6 +2856,8 @@ function syncProdForm() {
 	$("#prod-local-options").hidden = !local;
 	$("#prod-remote-options").hidden = !linuxRemote;
 	$("#prod-windows-options").hidden = !windows;
+	$("#prod-remote-pick").hidden = !linuxRemote;
+	$("#prod-windows-pick").hidden = !windows;
 	$("#prod-protocol-hint").textContent = windows
 		? "The address checked after publishing. IIS manages the binding and its certificate"
 		: "A certificate is issued, so DNS for the binding must point to the server. Off: HTTP without one";
@@ -2769,7 +2867,8 @@ function syncProdForm() {
 	prodForm.ssh_port.required = linuxRemote;
 	prodForm.smb_share.required = windows;
 	prodForm.smb_user.required = windows;
-	prodForm.smb_password.required = windows;
+	// A kept Windows server has its password with Harbor
+	prodForm.smb_password.required = windows && !prodForm.elements.windows_server?.value;
 	const moving = Boolean(prodForm.dataset.moveTarget);
 	const copying = Boolean(prodForm.dataset.copy);
 	const same = target === "same";
@@ -2871,6 +2970,7 @@ function forgetProdSuggestion() {
 	for (const key of ["suggestedFolder", "suggestedBinding", "suggestedPath"]) delete prodForm.dataset[key];
 }
 function openCreateProdDialog(site, moveEnv, copying = false) {
+	refreshServerPickers();
 	prodForm.reset();
 	delete prodForm.dataset.httpsChoice;
 	delete prodForm.dataset.copy;
@@ -2979,7 +3079,9 @@ prodForm.elements.https_card.addEventListener("change", () => {
 });
 $("#prod-dns").replaceChildren(dnsCard(prodForm.binding, { expect: () => {
 	const target = prodForm.elements.target.value;
-	return target === "remote" ? prodForm.host.value.trim() : target === "same" ? prodForm.dataset.moveHost || "" : "";
+	const host = target === "remote" ? prodForm.host.value.trim() : target === "same" ? prodForm.dataset.moveHost || "" : "";
+	// A server in Servers behind a router: DNS points to its public address
+	return publicAddressOf(host) || host;
 } }));
 // The suggestions follow the environment, on this server or another
 $("#prod-environment-row").onchange = applyProdSuggestion;
@@ -6516,6 +6618,17 @@ function compareVersions(a, b) {
 }
 
 function serverCard(item, release) {
+	// A Windows server: its share and login, kept for Import from Windows, with the Windows logo
+	if (item.kind === "windows") {
+		const card = toolCard({ icon: "server", tone: item.reachable ? "blue" : "amber", title: item.name, detail: item.share,
+			state: item.reachable ? "Share opens" : "Not reachable", stateClass: item.reachable ? "ok" : "bad",
+			rows: [toolRow("Kind", "Windows: kept for Import from Windows"), toolRow("Login", (item.domain ? item.domain + "\\" : "") + item.user),
+				...(item.reachable ? [] : [toolRow("Error", (item.error || []).join(" ") || "No answer")])],
+			actions: [toolButton("Remove…", () => confirmServers(`Remove ${item.name}?`, `Its share and login are forgotten here, with the password. Nothing on ${item.name} is changed.`, "Remove", { action: "remove", name: item.name }), "tool-danger")] });
+		card.querySelector(".tool-icon").innerHTML = osLogos.windows;
+		card.querySelector(".tool-icon").classList.add("os-icon");
+		return card;
+	}
 	const harbor = item.harbor && item.harbor.name;
 	const order = harbor && release ? compareVersions(releaseVersion(release), releaseVersion(harbor)) : 0;
 	const current = harbor && order <= 0;
@@ -6595,8 +6708,11 @@ function askAddServer() {
 	button.classList.remove("danger");
 	button.classList.add("primary");
 	const field = (label, props) => el("label", {}, label, el("input", { autocomplete: "off", spellcheck: false, ...props }));
-	$("#server-action-fields").replaceChildren(
-		field("Name", { name: "name", required: true, pattern: "[a-z0-9][a-z0-9\\-]{0,62}", placeholder: "A short name for it, such as web-01", maxLength: 63 }),
+	// Linux: Harbor's key is put there. Windows: only its share and login are kept, for Import from Windows.
+	const kind = (value, title, sub, checked) => el("label", { className: "type-card" },
+		el("input", { type: "radio", name: "kind", value, checked, onchange: () => showKind() }),
+		el("span", { className: "tc-title", textContent: title }), el("span", { className: "tc-sub", textContent: sub }));
+	const linux = el("div", { className: "server-kind-fields" },
 		el("div", { className: "ns-grid server-address-row" },
 			field("Address", { name: "host", required: true, placeholder: "IP or host name", maxLength: 253 }),
 			field("SSH port", { name: "port", value: "22", required: true, inputMode: "numeric", pattern: "[0-9]{1,5}" })),
@@ -6604,6 +6720,28 @@ function askAddServer() {
 			field("Login", { name: "user", value: "root", required: true, maxLength: 32 }),
 			field("Password", { name: "password", type: "password", autocomplete: "new-password", placeholder: "Used once, not kept", maxLength: 256 })),
 		el("p", { className: "hint", textContent: "Leave the password empty when Harbor's key is in ~/.ssh/authorized_keys there already. A login other than root needs passwordless sudo." }));
+	const windows = el("div", { className: "server-kind-fields" },
+		field("Share", { name: "share", required: true, placeholder: "//server/share/folder", maxLength: 400 }),
+		el("div", { className: "ns-grid" },
+			field("Username", { name: "smb_user", required: true, maxLength: 128 }),
+			field("Password", { name: "smb_password", type: "password", autocomplete: "new-password", required: true, maxLength: 256 })),
+		field("Domain", { name: "domain", placeholder: "Optional", maxLength: 128 }),
+		el("p", { className: "hint", textContent: "Harbor tries the login, then keeps the share and login for Import from Windows. The password is kept for root only; nothing is run on Windows." }));
+	const showKind = () => {
+		const isWindows = form.elements.kind.value === "windows";
+		for (const [part, on] of [[linux, !isWindows], [windows, isWindows]]) {
+			part.hidden = !on;
+			for (const input of part.querySelectorAll("input")) input.disabled = !on;
+		}
+		$("#server-action-text").textContent = isWindows
+			? "Its share and login are kept, so Import from Windows can choose it. Harbor runs nothing there."
+			: "Harbor logs in once with the password and puts its own SSH key there. The password is not kept.";
+	};
+	$("#server-action-fields").replaceChildren(
+		el("div", { className: "type-cards" }, kind("linux", "Linux", "Over SSH: Harbor installs and updates it", true), kind("windows", "Windows", "A share and its login, for Import from Windows", false)),
+		field("Name", { name: "name", required: true, pattern: "[a-z0-9][a-z0-9\\-]{0,62}", placeholder: "A short name for it, such as web-01", maxLength: 63 }),
+		linux, windows);
+	showKind();
 	// A name as the server knows it: lower case, letters, digits and -, made so as it is typed (KIKAYO becomes kikayo)
 	const name = form.elements.name;
 	name.title = "Lower case letters, digits and -, such as web-01";
@@ -6617,8 +6755,11 @@ function askAddServer() {
 	form.onsubmit = (event) => {
 		event.preventDefault();
 		const values = form.elements;
-		const payload = { action: "add" };
-		for (const name of ["name", "host", "user", "port", "password"]) payload[name] = values[name].value.trim();
+		const payload = values.kind.value === "windows"
+			? { action: "add_windows", name: values.name.value.trim(), share: values.share.value.trim(), user: values.smb_user.value.trim(),
+				password: values.smb_password.value, domain: values.domain.value.trim() }
+			: { action: "add" };
+		if (values.kind.value !== "windows") for (const name of ["name", "host", "user", "port", "password"]) payload[name] = values[name].value.trim();
 		serverActionDialog.close();
 		run(() => runServers(payload));
 	};

@@ -1607,7 +1607,7 @@ dialog.newsite .server-address-row { grid-template-columns: minmax(0, 3fr) minma
 .windows-filter-kind { padding: 3px 10px; border-radius: 999px; font-size: 12px; background: rgba(255, 255, 255, .03); }
 .windows-filter-kind.on { border-color: var(--blue); background: rgba(88, 166, 255, .15); color: var(--text); }
 .windows-filter-kind .count { color: var(--muted); }
-.windows-sites { display: flex; flex-direction: column; gap: 6px; max-height: 50vh; overflow-y: auto; margin-bottom: 12px; padding-right: 4px; }
+.windows-sites { display: flex; flex-direction: column; gap: 6px; max-height: 50vh; overflow-y: auto; margin-bottom: 12px; padding: 2px 4px 4px 0; }
 .windows-site { position: relative; flex: none; display: grid; grid-template-columns: 22px minmax(0, 1fr) minmax(0, 240px); align-items: center; gap: 14px;
 	box-sizing: border-box; padding: 10px 14px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255, 255, 255, .02);
 	cursor: pointer; transition: border-color .15s, background .15s; }
@@ -1642,3 +1642,15 @@ dialog .windows-field input, dialog .windows-field select { width: 100%; min-hei
 .windows-imported { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; padding: 10px 12px;
 	border: 1px solid var(--line); border-radius: 10px; }
 .windows-imported-text { display: grid; gap: 2px; font-size: 13px; min-width: 0; }
+
+.windows-list { width: 100%; margin: 4px 0 6px; }
+#windows-login-fields[hidden], .server-kind-fields[hidden] { display: none; }
+.tool-icon.os-icon svg { width: 22px; height: 22px; }
+
+/* A server chosen from Servers: its fields are hidden */
+#prod-remote-fields[hidden], #prod-windows-fields[hidden], #copy-server-fields[hidden] { display: none; }
+.server-picker-row { margin-bottom: 10px; }
+/* The server picker at the top of Add environment, under the kind of server */
+.server-pick { margin: 14px 0 22px; }
+.server-pick[hidden], .ns-section[hidden] { display: none; }
+.server-pick .server-picker-row { margin-bottom: 0; }

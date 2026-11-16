@@ -2145,6 +2145,10 @@ def servers_command(data):
         return f"Add server {name}", harbor + ["add", name, host, "--user", user, "--port", port], {"HARBOR_SSH_PASSWORD": password}
     if action == "install":
         return f"Install Harbor on {name}", harbor + ["install", name], {}
+    if action == "add_windows":
+        # A Windows server's share and login, kept for Import from Windows; the password in the task's environment
+        share, user, domain = windows_login(data)
+        return f"Add Windows server {name}", harbor + ["add-windows", name, share, "--user", user, *(["--domain", domain] if domain else [])], {"VNS_SMB_PASSWORD": data["password"]}
     if action == "rollback":
         return f"Roll back Harbor on {name}", harbor + ["rollback", name], {}
     if action == "remove":
@@ -3358,6 +3362,9 @@ def production_setup_env(data, site, moving=False):
         # move_env.sh uses the login saved for the source
         pass
     elif target == "windows":
+        kept = kept_server(data, "windows")
+        if kept:
+            data = {**data, "smb_share": kept["share"], "smb_user": kept["user"], "smb_password": kept["password"], "smb_domain": kept["domain"]}
         user = data.get("smb_user", "")
         password = data.get("smb_password", "")
         domain = data.get("smb_domain", "")
@@ -3384,8 +3391,60 @@ def production_setup_env(data, site, moving=False):
     return values
 
 
+def kept_server(data, kind):
+    """A server chosen from Servers in a dialog, or None: Linux {host, user, port}, reached with Harbor's key; Windows
+    {share, user, domain, password}, the password read here, never sent to the page"""
+    name = data.get("windows_server" if kind == "windows" else "remote_server")
+    if not name:
+        return None
+    if not isinstance(name, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", name):
+        abort(400, "Unknown server")
+    from harbor.core.system import System
+    from harbor.server import servers
+    system = System()
+    entry = servers.servers(system, kind).get(name)
+    if not entry:
+        abort(400, f"No {'Windows' if kind == 'windows' else 'Linux'} server {name} in Servers")
+    if kind == "windows":
+        share, user, password, domain = servers.windows_login(system, name)
+        return {"share": share, "user": user, "password": password, "domain": domain}
+    return {"host": entry["host"], "user": entry["user"], "port": str(entry["port"])}
+
+
+@app.route("/api/servers/kept")
+def api_servers_kept():
+    """The servers in Servers, for the dialogs that choose one: never a password"""
+    require_admin()
+    from harbor.core.system import System
+    from harbor.server import servers
+    kept = servers.servers(System())
+    # A server's public address is learnt by its status: asked here for one that does not have it yet, so a DNS check
+    # behind NAT is right without opening Servers first
+    missing = [name for name, entry in kept.items() if entry.get("kind") != "windows" and not entry.get("public")]
+    for name in missing:
+        try:
+            subprocess.run(["/usr/bin/python3", HARBOR_COMMAND, "servers", "status", name], capture_output=True, text=True, timeout=20)
+        except (OSError, subprocess.SubprocessError):
+            pass
+    if missing:
+        kept = servers.servers(System())
+    found = []
+    for name, entry in sorted(kept.items()):
+        if entry.get("kind") == "windows":
+            found.append({"name": name, "kind": "windows", "label": entry.get("share", ""), "share": entry.get("share", ""),
+                          "user": entry.get("user", ""), "domain": entry.get("domain", "")})
+        else:
+            found.append({"name": name, "kind": "linux", "label": f"{entry['user']}@{entry['host']}", "host": entry["host"],
+                          "user": entry["user"], "port": entry["port"], "public": entry.get("public", "")})
+    return jsonify(servers=found)
+
+
 def ssh_login(data):
-    """The server, username, password (empty: an SSH key) and port of a Linux server, as entered in a dialog"""
+    """The server, username, password (empty: an SSH key) and port of a Linux server, as entered in a dialog, or the
+    one chosen from Servers (Harbor's key, no password)"""
+    kept = kept_server(data, "linux")
+    if kept:
+        return kept["host"], kept["user"], "", kept["port"]
     host = data.get("host", "")
     user = data.get("user", "")
     password = data.get("password", "")
@@ -3469,6 +3528,9 @@ def build_command(data):
         # Sites moved from a live Windows server (harbor/sites/windows_import.py): an administrator's alone
         harbor = ["/usr/bin/python3", HARBOR_COMMAND, "windows"]
         if kind == "windows_import":
+            server = windows_server(data)
+            if server:
+                return "Import from Windows", [*harbor, "import-all", "--server", server], "/"
             share, user, domain = windows_login(data)
             return "Import from Windows", [*harbor, "import-all", share, "--user", user, *(["--domain", domain] if domain else [])], "/"
         if kind == "windows_refresh_all":
@@ -4256,7 +4318,8 @@ def api_term():
         extra_env = {**(extra_env or {}), "VNS_WINDOWS_MOVES": json.dumps(windows_moves(payload))}
     if payload.get("kind") == "windows_import":
         sites = windows_sites(payload)
-        extra_env = {**(extra_env or {}), "VNS_SMB_PASSWORD": str(payload.get("password") or ""), "VNS_WINDOWS_SITES": json.dumps(sites)}
+        extra_env = {**(extra_env or {}), "VNS_WINDOWS_SITES": json.dumps(sites),
+                     **({} if payload.get("server") else {"VNS_SMB_PASSWORD": str(payload.get("password") or "")})}
     if payload.get("kind") in ("sync_env", "data_sync"):
         # Who started it, for the sync history the dashboard in Umbraco shows
         # By id too: the history shows the user's name as it is now, also after they change it in Profile
@@ -4407,6 +4470,20 @@ def save_data_sync(site):
 WINDOWS_SHARE_RE = re.compile(r"//[A-Za-z0-9][A-Za-z0-9.-]{0,252}/[^\x00-\x1f\"<>|]{1,400}")
 
 
+def windows_server(data):
+    """A Windows server kept in Servers, when the request names one: harbor reads its share and login itself"""
+    name = data.get("server")
+    if not name:
+        return ""
+    if not isinstance(name, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", name):
+        abort(400, "Unknown Windows server")
+    from harbor.core.system import System
+    from harbor.server import servers
+    if name not in servers.servers(System(), "windows"):
+        abort(400, "Unknown Windows server")
+    return name
+
+
 def windows_login(data):
     """The share and login of a Windows server, checked: the share as //host/share/folder"""
     share = str(data.get("share") or "").strip().replace("\\", "/").rstrip("/")
@@ -4466,7 +4543,7 @@ def api_windows_move():
     from harbor.environments import windows_move
     from harbor.server import servers
     system = System()
-    return jsonify(environments=windows_move.candidates(system), servers=sorted(servers.servers(system)))
+    return jsonify(environments=windows_move.candidates(system), servers=sorted(servers.servers(system, "linux")))
 
 
 @app.route("/api/windows/list", methods=["POST"])
@@ -4474,10 +4551,15 @@ def api_windows_list():
     """The folders in a Windows share, and what each holds (harbor windows list): for Import from Windows"""
     require_admin()
     data = request.get_json(silent=True) or {}
-    share, user, domain = windows_login(data)
+    server = windows_server(data)
+    if server:
+        argv, password = ["--server", server], ""
+    else:
+        share, user, domain = windows_login(data)
+        argv, password = [share, "--user", user, *(["--domain", domain] if domain else [])], data["password"]
     try:
-        result = subprocess.run(["/usr/bin/python3", HARBOR_COMMAND, "windows", "list", share, "--user", user, *(["--domain", domain] if domain else [])],
-                                capture_output=True, text=True, timeout=180, env={**os.environ, "VNS_SMB_PASSWORD": data["password"]})
+        result = subprocess.run(["/usr/bin/python3", HARBOR_COMMAND, "windows", "list", *argv],
+                                capture_output=True, text=True, timeout=180, env={**os.environ, "VNS_SMB_PASSWORD": password})
     except subprocess.TimeoutExpired:
         return error("The Windows server did not answer in time.", 504)
     if result.returncode != 0:
@@ -4492,8 +4574,13 @@ def api_windows_list():
 
 @app.route("/api/windows/imported")
 def api_windows_imported():
+    """The sites imported and not taken over yet, and the Windows servers kept in Servers (never their passwords)"""
     require_admin()
-    return jsonify(imported=windows_imported())
+    from harbor.core.system import System
+    from harbor.server import servers
+    kept = servers.servers(System(), "windows")
+    return jsonify(imported=windows_imported(),
+                   servers=[{"name": name, "share": entry.get("share", ""), "user": entry.get("user", "")} for name, entry in sorted(kept.items())])
 
 
 def windows_imported():
