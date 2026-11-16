@@ -28,6 +28,47 @@ from harbor.state.store import read_json, site_secrets, site_state, write_json
 # Not copied when a site is imported: builds and what the site writes while it runs
 LEFT_OUT = ("/bin/**", "/obj/**", "/*.dll", "/*.pdb", "/*.exe", "/runtimes/**", "/refs/**", "/web.config", "/app_offline.htm",
             "/umbraco/Data/TEMP/**", "/umbraco/Logs/**", "/App_Data/TEMP/**", "/App_Data/Logs/**", "/.vs/**", "*.user", "*.lock", "*.partial")
+# Windows does not tell _Publish from _publish, or wwwroot/Media from wwwroot/media; Linux does, and Harbor uses the
+# lower case: a folder fetched in another case is put there (with what is already there), so nothing is split in two
+LOWER_CASE = ("_publish", "_publish/wwwroot/media", "wwwroot/media")
+# A published build on Windows (_Publish) brings its settings and data, never its binaries: the site is built here
+PUBLISH_LEFT_OUT = ("/_publish/**.dll", "/_publish/**.exe", "/_publish/**.pdb", "/_publish/runtimes/**", "/_publish/refs/**",
+                    "/_publish/*.runtimeconfig.json", "/_publish/*.deps.json", "/_publish/web.config", "/_publish/app_offline.htm",
+                    "/_publish/umbraco/Data/TEMP/**", "/_publish/umbraco/Logs/**", "/_publish/logs/**")
+
+
+def lower_case_folders(root, paths=LOWER_CASE):
+    """Each folder in paths in lower case under root: one fetched as _Publish or wwwroot/Media is renamed, or put into the
+    lower case one where both are (what came from Windows wins)"""
+    import os
+    import shutil
+    from pathlib import Path
+
+    def merge(source, target):
+        for item in sorted(os.listdir(source)):
+            if item in os.listdir(target) and (source / item).is_dir() and (target / item).is_dir():
+                merge(source / item, target / item)
+            else:
+                if item in os.listdir(target):
+                    shutil.rmtree(target / item) if (target / item).is_dir() else (target / item).unlink()
+                (source / item).rename(target / item)
+        source.rmdir()
+
+    for relative in paths:
+        current = Path(root)
+        for part in relative.split("/"):
+            if not current.is_dir():
+                break
+            names = os.listdir(current)
+            for name in [name for name in names if name.lower() == part and name != part and (current / name).is_dir()]:
+                if part in os.listdir(current):
+                    merge(current / name, current / part)
+                else:
+                    # Also where the file system does not tell them apart (macOS): a rename that only changes the case
+                    (current / name).rename(current / part)
+            current = current / part
+
+
 # What refresh fetches: the data that changes while the site is live. SQLite with its journal files.
 DATA = (("umbraco/Data", ("*.sqlite.db", "*.sqlite.db-wal", "*.sqlite.db-shm")), ("wwwroot/media", ()), ("uSync", ()))
 UMBRACO_VERSION = re.compile(r'<PackageReference\s+Include="Umbraco\.Cms"\s+Version="([^"]+)"', re.I)
@@ -133,8 +174,9 @@ def import_site(system, unc, folder, binding, user, password, domain="", aliases
     kind = "project" if project else "html"
     system.step(f"Copy {folder} from Windows" + {"project": "", "html": ", as static files"}[kind])
     # A project without its builds; static files as they are. IIS's own files never.
-    left_out = LEFT_OUT if project else ("/web.config", "/app_offline.htm")
-    arguments = [argument for pattern in left_out for argument in ("--exclude", pattern)]
+    left_out = LEFT_OUT + PUBLISH_LEFT_OUT if project else ("/web.config", "/app_offline.htm")
+    # Windows' names in any case: _Publish is _publish
+    arguments = [argument for pattern in left_out for argument in ("--exclude", pattern)] + ["--ignore-case"]
     system.path(site.site_root).mkdir(parents=True)
     try:
         remote.rclone("copy", remote.target, str(system.path(site.site_root)), *arguments, "--create-empty-src-dirs", "--modify-window", "2s", "--stats", "0")
@@ -142,6 +184,7 @@ def import_site(system, unc, folder, binding, user, password, domain="", aliases
         import shutil
         shutil.rmtree(system.path(site.site_root), ignore_errors=True)
         raise Stop(f"{folder} could not be copied from Windows.") from None
+    lower_case_folders(system.path(site.site_root))
     keep_source(system, name, unc, folder, user, password, domain, kind)
     system.step(f"Set up {name} on HTTP" + (", as an HTML site" if kind == "html" else ", as Production"))
     setup_site(system, name, binding, "n", "Production")
@@ -245,12 +288,16 @@ def refresh(system, name, pause=False):
                 remote.bring_online()
             except RuntimeError as error:
                 system.warn(str(error))
-        if stopped or not has_database:
-            system.run("chown", "-R", "www-data:www-data", *(str(system.path(f"{here}/{folder}")) for folder, _ in DATA
-                                                              if system.path(f"{here}/{folder}").exists()), check=False)
+        # Only the folders it has: a site without a SQLite database, media or uSync (SQL Server) has none of them
+        fetched = [str(system.path(f"{here}/{folder}")) for folder, _ in DATA if system.path(f"{here}/{folder}").exists()]
+        if fetched and (stopped or not has_database):
+            system.run("chown", "-R", "www-data:www-data", *fetched, check=False)
         if stopped:
             system.step("Start the site here")
             system.run("systemctl", "start", site.service_name, check=False)
+    if not fetched:
+        system.say(f"{name} has no SQLite database, media or uSync on Windows: there was no data to fetch.")
+        return
     system.say(f"{name} has the live site's data as it was now.")
 
 

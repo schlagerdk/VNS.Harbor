@@ -31,8 +31,10 @@ class FakeShare:
         return self.folder / target[len(":smb:d$/sites"):].lstrip("/")
 
     @staticmethod
-    def matches(relative, patterns):
-        return any(fnmatch.fnmatch("/" + relative, pattern.replace("**", "*")) or fnmatch.fnmatch(Path(relative).name, pattern) for pattern in patterns)
+    def matches(relative, patterns, ignore_case=False):
+        if ignore_case:
+            relative, patterns = relative.lower(), [pattern.lower() for pattern in patterns]
+        return any(fnmatch.fnmatchcase("/" + relative, pattern.replace("**", "*")) or fnmatch.fnmatchcase(Path(relative).name, pattern) for pattern in patterns)
 
     def __call__(self, argv, stdin=None):
         args = list(argv[1:])
@@ -60,7 +62,7 @@ class FakeShare:
             source, target = self.path(plain[0]), Path(plain[1])
             for item in sorted(source.rglob("*")):
                 relative = str(item.relative_to(source))
-                if options["--exclude"] and self.matches(relative, options["--exclude"]):
+                if options["--exclude"] and self.matches(relative, options["--exclude"], "--ignore-case" in args):
                     continue
                 if options["--include"] and not self.matches(relative, options["--include"]):
                     continue
@@ -96,6 +98,10 @@ class WindowsImportTests(unittest.TestCase):
                            ("built.dk/Built.deps.json", '{"runtimeTarget": {"name": ".NETCoreApp,Version=v10.0/win-x64"}, "libraries": {"Umbraco.Cms/17.4.0": {}}}'),
                            ("built.dk/appsettings.json", "{}"), ("built.dk/Views/Home.cshtml", "<h1/>"), ("built.dk/umbraco/Data/Umbraco.sqlite.db", "built data"),
                            ("built.dk/umbraco/Logs/log.json", "log"),
+                           ("sql.dk/Sql.csproj", "<Project/>"), ("sql.dk/Program.cs", "app"),
+                           ("cased.dk/Cased.csproj", "<Project/>"), ("cased.dk/_Publish/appsettings.json", '{"live": true}'),
+                           ("cased.dk/_Publish/Cased.dll", "windows build"), ("cased.dk/_Publish/runtimes/win-x64/x.dll", "windows"),
+                           ("cased.dk/_Publish/wwwroot/Media/a1/logo.png", "png"),
                            ("cdn.dk/index.html", "<h1>cdn</h1>"), ("cdn.dk/img/a.png", "png"), ("cdn.dk/web.config", "<iis/>")):
             (self.windows / name).parent.mkdir(parents=True, exist_ok=True)
             (self.windows / name).write_text(text)
@@ -186,6 +192,54 @@ class WindowsImportTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("Copy from Windows", system.said[-1])
         self.assertFalse((self.root / "var/www/built.dk").exists())
+
+    def test_a_site_without_data_on_windows_is_imported_without_a_bare_chown(self):
+        """SQL Server, no media, no uSync: nothing to fetch, and chown is not run without its files"""
+        code, system = self.harbor("import", UNC, "sql.dk", "sql.dk", "--user", "admin")
+        self.assertEqual(code, 0, system.said)
+        self.assertFalse([command for command in system.commands if command.strip() in ("chown -R www-data:www-data",)], system.commands)
+        self.assertIn("no data to fetch", " ".join(system.said))
+
+    def test_publish_and_media_are_taken_over_in_lower_case_without_windows_binaries(self):
+        """Windows does not tell _Publish from _publish: here the site runs from _publish, with its settings there"""
+        code, system = self.harbor("import", UNC, "cased.dk", "cased.dk", "--user", "admin")
+        self.assertEqual(code, 0, system.said)
+        site = self.root / "var/www/cased.dk"
+        self.assertEqual([name for name in os.listdir(site) if name.lower() == "_publish"], ["_publish"])
+        self.assertEqual((site / "_publish/appsettings.json").read_text(), '{"live": true}')
+        self.assertEqual([name for name in os.listdir(site / "_publish/wwwroot") if name.lower() == "media"], ["media"])
+        self.assertTrue((site / "_publish/wwwroot/media/a1/logo.png").is_file())
+        for left_out in ("Cased.dll", "runtimes"):
+            self.assertFalse((site / "_publish" / left_out).exists(), left_out)
+
+    def test_folders_in_another_case_are_put_into_the_lower_case_ones(self):
+        from harbor.sites.windows_import import lower_case_folders
+        root = self.root / "cases"
+        (root / "wwwroot/Media/a").mkdir(parents=True)
+        (root / "wwwroot/Media/a/new.png").write_text("windows")
+        (root / "_Publish").mkdir()
+        (root / "_Publish/appsettings.json").write_text("{}")
+        lower_case_folders(root)
+        self.assertEqual(sorted(os.listdir(root)), ["_publish", "wwwroot"])
+        self.assertEqual(os.listdir(root / "wwwroot"), ["media"])
+        self.assertEqual((root / "wwwroot/media/a/new.png").read_text(), "windows")
+        self.assertTrue((root / "_publish/appsettings.json").is_file())
+
+    def test_both_cases_are_merged_into_the_lower_case_folder(self):
+        """Where Linux has _publish already and _Publish arrives: one folder, what came from Windows winning"""
+        from harbor.sites.windows_import import lower_case_folders
+        root = self.root / "both"
+        (root / "_publish").mkdir(parents=True)
+        (root / "_Publish").mkdir(exist_ok=True)
+        if len(os.listdir(root)) == 1:
+            self.skipTest("this file system does not tell _Publish from _publish")
+        (root / "_publish/Site.dll").write_text("linux build")
+        (root / "_publish/appsettings.json").write_text("old")
+        (root / "_Publish/appsettings.json").write_text("live")
+        lower_case_folders(root)
+        self.assertEqual(os.listdir(root), ["_publish"])
+        self.assertEqual((root / "_publish/appsettings.json").read_text(), "live")
+        self.assertEqual((root / "_publish/Site.dll").read_text(), "linux build")
 
     def test_an_html_site_is_copied_as_it_is(self):
         code, system = self.harbor("import", UNC, "cdn.dk", "cdn.dk", "--user", "admin")

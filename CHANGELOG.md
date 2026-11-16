@@ -2,6 +2,13 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.18] - 2026-11-16
+
+### Fixes
+
+- Import from Windows and its Refresh no longer print a chown error for a site without a SQLite database, media or uSync on Windows (as one on SQL Server): it says there was no data to fetch
+- _Publish and wwwroot/Media from Windows are _publish and wwwroot/media here (Import and Copy from Windows): Windows does not tell the cases apart, Linux does, so a site had its settings in _Publish and ran from _publish. A folder in another case is renamed, or put into the lower case one. Binaries in _Publish are not imported: the site is built here
+
 ## [1.0.17] - 2026-11-16
 
 ### Features

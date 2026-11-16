@@ -280,6 +280,9 @@ class Move:
             share.rclone("copy", f"{share.target}/{folder}", f"{self.content}/{folder}", "--create-empty-src-dirs",
                          *[argument for pattern in ("- /TEMP/**", "- /Logs/**", "- *.lock", "- *.partial", "+ **") for argument in ("--filter", pattern)],
                          "--modify-window", "2s", "--stats", "0")
+        # wwwroot/Media on Windows is wwwroot/media here, where the site and Refresh from Windows look for it
+        from harbor.sites.windows_import import lower_case_folders
+        lower_case_folders(self.content)
 
     def fetch_source(self):
         """The source's folder as rsync sees it"""
