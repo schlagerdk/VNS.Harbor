@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.26] - 2026-11-16
+
+### Fixes
+
+- Multi action opens with nothing looking chosen (the first choice had a ring), and its choices are more compact: four in a row have their icon above the text
+
 ## [1.0.25] - 2026-11-16
 
 ### Features

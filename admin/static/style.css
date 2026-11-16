@@ -1685,7 +1685,17 @@ dialog .windows-field input, dialog .windows-field select { width: 100%; min-hei
 #dlg-multi .multi-choice:has(input:checked) .tc-icon { color: #fff; background: linear-gradient(135deg, #8b5cf6, #6c7bff); }
 #dlg-multi .multi-choice:has(input:checked)::after { content: ""; position: absolute; top: 10px; right: 10px; width: 16px; height: 16px; border-radius: 50%;
 	background: #a371f7 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12l5 5L20 7'/%3E%3C/svg%3E") center / 10px no-repeat; }
-#dlg-multi .multi-choice:has(input:focus-visible) { outline: 2px solid #a371f7; outline-offset: 2px; }
 #dlg-multi #multi-action-description:not(:empty) { margin-top: 16px; padding: 10px 12px; border-radius: 10px; color: var(--text); background: rgba(163,113,247,.08); border: 1px solid rgba(163,113,247,.25); }
 #dlg-multi .multi-footnote { margin-top: 12px; }
 @media (max-width: 640px) { #dlg-multi .multi-choice { padding: 12px; } }
+/* Nothing looks chosen before a choice is made: no focus ring (the arrow keys move the choice, which shows) */
+#dlg-multi:focus, #dlg-multi .multi-choice, #dlg-multi .multi-choice:focus-within { outline: none; }
+#dlg-multi .multi-choice { gap: 11px; padding: 12px 14px; }
+#dlg-multi .multi-choice .tc-icon { width: 30px; height: 30px; border-radius: 9px; }
+#dlg-multi .multi-choice .tc-icon .ico { width: 16px; height: 16px; }
+#dlg-multi .multi-choice .tc-title { font-size: 14px; }
+#dlg-multi .multi-choice .tc-sub { font-size: 12px; color: var(--muted); }
+#dlg-multi .multi-group { margin-top: 16px; }
+/* Four in a row: the icon above the text, so the text has the card's width */
+#dlg-multi .multi-choices-4 .multi-choice { flex-direction: column; gap: 9px; }
+@media (max-width: 640px) { #dlg-multi .multi-choices-4 .multi-choice { flex-direction: row; } }

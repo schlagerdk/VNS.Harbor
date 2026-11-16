@@ -3472,9 +3472,9 @@ function syncMultiAction() {
 		clear_logs: "Delete the Umbraco logs of each selected main site. Sites that are not Umbraco are skipped.",
 		clear_logs_prod: "Delete the Umbraco logs of every environment of the selected sites. Sites that are not Umbraco, or have no environments, are skipped.",
 		clear_logs_all: "Delete the Umbraco logs of each selected main site and all its environments. Sites that are not Umbraco are skipped.",
-		sync_settings: "Sync the settings of each selected main site to its environments: the ones its Sync setup lets take them.",
-		sync_data: "Sync content and media of each selected main site to its environments: the ones its Sync setup lets take them. Content is added and updated, never deleted.",
-		sync_all: "Sync everything from each selected main site to its environments: the settings first where they are behind, then content and media.",
+		sync_settings: "Each main site sends its settings (uSync, Views and assets) to its environments. An environment that does not take settings in Sync setup is left out.",
+		sync_data: "Each main site sends its content and media to its environments. Content is added and updated, never deleted. An environment that does not take content and media in Sync setup is left out.",
+		sync_all: "Each main site sends its settings to its environments where they are behind, then its content and media. What an environment does not take in Sync setup is left out.",
 	}[action] || "";
 	const packageAction = action === "add" || action === "remove";
 	$("#multi-package-fields").hidden = !packageAction;
@@ -3517,6 +3517,8 @@ $("#btn-multi-action").onclick = () => {
 	}
 	syncMultiAction();
 	multiDialog.showModal();
+	// The dialog, not its first choice: nothing looks chosen before a choice is made
+	multiDialog.focus();
 };
 multiForm.addEventListener("change", (event) => { if (event.target.name === "action") syncMultiAction(); });
 $("#multi-close").onclick = () => multiDialog.close();
