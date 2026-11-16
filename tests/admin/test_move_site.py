@@ -180,8 +180,10 @@ class AdminTests(unittest.TestCase):
 
     def test_https_is_a_choice_checked_against_the_new_server(self):
         self.assertIn('"VNS_MOVE_HTTPS": "y" if payload.get("https") == "y" else "n",', self.app)
-        self.assertIn('dnsCard(field("server_binding"), { expect: () => field("host").value.trim(), aliases: $("#copy-server-env-bindings") })', self.source)
-        self.assertIn('return target === "remote" ? prodForm.host.value.trim() : target === "same" ? prodForm.dataset.moveHost || "" : "";', self.source)
+        # A server in Servers behind a router is checked against its public address
+        self.assertIn('dnsCard(field("server_binding"), { expect: () => publicAddressOf(field("host").value.trim()) || field("host").value.trim(), aliases: $("#copy-server-env-bindings") })', self.source)
+        self.assertIn('const host = target === "remote" ? prodForm.host.value.trim() : target === "same" ? prodForm.dataset.moveHost || "" : "";', self.source)
+        self.assertIn('return publicAddressOf(host) || host;', self.source)
         self.assertIn("const expectNow = () => (typeof expected === \"function\" ? expected() : expected) || \"\";", self.source)
 
     def test_a_certificate_that_fails_leaves_the_site_on_http(self):
