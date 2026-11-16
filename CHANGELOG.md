@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.13] - 2026-11-16
+
+### Fixes
+
+- An environment moved from Windows and then deleted no longer counts as moved: the one on Windows can be moved again, and Refresh from Windows leaves it out
+
 ## [1.0.12] - 2026-11-16
 
 ### Features

@@ -37,8 +37,17 @@ def links_path(system, site):
 
 
 def links(system, site):
+    """The environments moved from Windows that still exist: one deleted since is no longer a move, so the one on
+    Windows can be moved again"""
     found = read_json(links_path(system, site))
-    return found if isinstance(found, dict) else {}
+    if not isinstance(found, dict):
+        return {}
+    from harbor.core.templates import Site
+    try:
+        existing = set(settings.target_ids(system, Site(site).site_root))
+    except (settings.SettingsError, OSError):
+        return found
+    return {new_id: entry for new_id, entry in found.items() if new_id in existing}
 
 
 def _sites(system):

@@ -97,6 +97,15 @@ class WindowsMoveTests(unittest.TestCase):
         with self.moved():
             code, system = self.harbor("move", "test.shop.dk", "production", "--server", "prod-01")
         self.assertEqual(code, 1)
+        # The new environment deleted: the one on Windows can be moved again
+        import shutil
+        shutil.rmtree(self.root / "var/www/test.shop.dk/scripts/targets/prod2")
+        listed = windows_move.candidates(RecordingSystem(root=self.root))
+        self.assertEqual([(item["target"], item["moved_to"]) for item in listed], [("production", "")])
+        with self.moved(), mock.patch("harbor.environments.bindings.change_binding"):
+            code, system = self.harbor("move", "test.shop.dk", "production", "--server", "prod-01")
+        self.assertEqual(code, 0, system.said)
+        self.assertEqual(list(json.loads((self.root / "var/lib/harbor/sites/test.shop.dk/windows-move.json").read_text())), ["prod2"])
 
     def test_refresh_brings_the_live_data_with_a_pause_on_windows(self):
         with self.moved(), mock.patch("harbor.environments.bindings.change_binding"):
