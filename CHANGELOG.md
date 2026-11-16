@@ -2,7 +2,7 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
-## [1.0.30] - 2026-11-17
+## [1.0.30] - 2026-11-16
 
 ### Fixes
 
