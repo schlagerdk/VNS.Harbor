@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.28] - 2026-11-16
+
+### Fixes
+
+- Backoffice login is never offered on a site managed from another server, and saving it there is refused: it connected the site to the Harbor of the server it runs on, which does not know it, so its sync said Harbor cannot be reached. It is set where the site is managed
+
 ## [1.0.27] - 2026-11-16
 
 ### Fixes

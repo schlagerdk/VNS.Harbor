@@ -2615,6 +2615,10 @@ def api_backoffice_user(name):
     user = (request.get_json(silent=True) or {}).get("user", "")
     if not isinstance(user, str):
         abort(400, "Invalid user")
+    # Saving connects the site to this Harbor: never one managed from another server, which knows it and its token
+    managing = managed_by(site)
+    if managing:
+        return error(f"{site} is managed from {managing.get('host') or 'another server'}: set its Backoffice login there.", 400)
     try:
         backoffice.set_backoffice_user(system, site, user.strip(), environment)
         if user.strip() and backoffice.uses_package(system, _harbor_site(site)):

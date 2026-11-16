@@ -135,6 +135,15 @@ console.log(JSON.stringify([
         self.assertIn('el("h2", { textContent: siteTitle(site) })', source)
         self.assertIn('className: "site-title", textContent: siteTitle(site)', source)
 
+    def test_a_managed_site_has_no_backoffice_login_here(self):
+        """Saving it on the server a site runs on connected it to that Harbor: its sync could no longer reach its own"""
+        source = (APP / "static/app.js").read_text()
+        self.assertIn('if (currentUser.admin && site.kind === "umbraco" && !site.managed_by) addManage("Backoffice login…"', source)
+        app = (APP / "app.py").read_text()
+        start = app.index("def api_backoffice_user")
+        body = app[start:app.index("\n\n\n", start)]
+        self.assertLess(body.index("managed_by(site)"), body.index("backoffice.connect("), "refused before it connects")
+
     def test_confirmation_names_the_environment_it_acts_on(self):
         source = (APP / "static/app.js").read_text()
         self.assertIn("message: `${confirmText} (${bindingLabel(env) || siteLabel(site)})`", source)

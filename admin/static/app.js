@@ -1781,8 +1781,9 @@ function envPanel(site, env) {
 	// where it can also be migrated
 	if (!isTarget(env) && !site.admin && !site.managed_by) addManage("Copy site", () => copySite(site, env));
 	// Each environment has its own Umbraco users, also one on another server or on Windows (its connection is written there)
-	// Not on a site managed from another server without the package: it cannot be added here, only where it is built
-	if (currentUser.admin && site.kind === "umbraco" && (!site.managed_by || site.harbor_package)) addManage("Backoffice login…", () => backofficeLoginDialog(site, env));
+	// Not on a site managed from another server: its Backoffice login is set where it is managed, and saving it here
+	// connected the site to this Harbor, which does not know it (aogtillon.dk lost its sync)
+	if (currentUser.admin && site.kind === "umbraco" && !site.managed_by) addManage("Backoffice login…", () => backofficeLoginDialog(site, env));
 	// Moved from Windows, here as an environment: its data fetched again, and taken over once the address has moved
 	if (currentUser.admin && env.windows_move && isTarget(env)) {
 		addManage("Refresh from Windows…", () => refreshMovedFromWindows(site, env));
