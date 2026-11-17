@@ -869,7 +869,7 @@ const buttonStyles = {
 	"Migrate…": ["server", "purple"],
 	"Check outdated": ["download", "amber"], "Restart": ["restart", "amber"], "Restart Apache": ["restart", "amber"],
 	"Stop": ["stop", "red"], "Clear logs": ["eraser", "gray"], "Logs": ["file", "gray"],
-	"SQL Server": ["server", "purple"], "Web server": ["globe", "blue"], "Preferences…": ["sliders", "purple"], "Server tools…": ["package", "purple"], "Backoffice login…": ["key", "purple"], "Servers…": ["server", "blue"], "Import from Windows…": ["download", "blue"], "Copy from Windows…": ["download", "purple"], "Refresh from Windows…": ["download", "blue"], "Take over…": ["shield", "green"], "Files (/)": ["folder", "blue"],
+	"SQL Server": ["server", "purple"], "Web server": ["globe", "blue"], "Preferences…": ["sliders", "purple"], "Server tools…": ["package", "purple"], "Backoffice login…": ["key", "purple"], "Move out…": ["undo", "amber"], "Servers…": ["server", "blue"], "Import from Windows…": ["download", "blue"], "Copy from Windows…": ["download", "purple"], "Refresh from Windows…": ["download", "blue"], "Take over…": ["shield", "green"], "Files (/)": ["folder", "blue"],
 	"Test config": ["activity", "teal"], "Error logs": ["file", "teal"],
 	"Admin app log": ["file", "gray"], "Apache error logs": ["file", "teal"],
 	"Copy site": ["file", "blue"],
@@ -1794,7 +1794,7 @@ function envPanel(site, env) {
 	// Each environment has its own Umbraco users, also one on another server or on Windows (its connection is written there)
 	// Not on a site managed from another server: its Backoffice login is set where it is managed, and saving it here
 	// connected the site to this Harbor, which does not know it (aogtillon.dk lost its sync)
-	if (currentUser.admin && site.kind === "umbraco" && !site.managed_by) addManage("Backoffice login…", () => backofficeLoginDialog(site, env));
+	if (currentUser.admin && site.kind === "umbraco" && !site.managed_by && backofficeLoginFits(site)) addManage("Backoffice login…", () => backofficeLoginDialog(site, env));
 	// A site published from a developer's machine, or any C# site that is only a build here (no project, not an
 	// environment of a site elsewhere): the script that sends it a new build
 	// Python and static sites too: their files are published the same way
@@ -6970,6 +6970,15 @@ $("#servers-add").onclick = () => askAddServer();
 // A release's version: 1.3.0 of 1.3.0-05abd71e5e08-dev. Builds of the same version (a test build here) are not an update.
 function releaseVersion(name) {
 	return String(name || "").split("-")[0].split(".").map((part) => parseInt(part, 10) || 0);
+}
+
+// Backoffice login needs the VNS.Harbor package, which needs Umbraco 18.3.1 or later: a site with an older Umbraco does
+// not get the button, unless it has the package already
+const UMBRACO_FOR_PACKAGE = [18, 3, 1];
+function backofficeLoginFits(site) {
+	if (site.harbor_package) return true;
+	const version = String(site.umbraco_version || "").split(/[.-]/).map((part) => Number.parseInt(part, 10) || 0);
+	return Boolean(site.umbraco_version) && compareVersions(version, UMBRACO_FOR_PACKAGE) >= 0;
 }
 
 function compareVersions(a, b) {

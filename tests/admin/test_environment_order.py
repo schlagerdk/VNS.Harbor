@@ -138,7 +138,7 @@ console.log(JSON.stringify([
     def test_a_managed_site_has_no_backoffice_login_here(self):
         """Saving it on the server a site runs on connected it to that Harbor: its sync could no longer reach its own"""
         source = (APP / "static/app.js").read_text()
-        self.assertIn('if (currentUser.admin && site.kind === "umbraco" && !site.managed_by) addManage("Backoffice login…"', source)
+        self.assertIn('if (currentUser.admin && site.kind === "umbraco" && !site.managed_by && backofficeLoginFits(site)) addManage("Backoffice login…"', source)
         app = (APP / "app.py").read_text()
         start = app.index("def api_backoffice_user")
         body = app[start:app.index("\n\n\n", start)]
@@ -146,6 +146,17 @@ console.log(JSON.stringify([
         start = app.index("def api_backoffice_login")
         body = app[start:app.index("\n\n\n", start)]
         self.assertLess(body.index("if managed_by(site):"), body.index("backoffice.login_link("), "no link, which connected it, on a managed site")
+
+    def test_backoffice_login_only_where_the_package_fits(self):
+        """The VNS.Harbor package needs Umbraco 18.3.1 or later: dev.kikayo.dk (13.13.0) had the button"""
+        source = (APP / "static/app.js").read_text()
+        code = source[source.index("const UMBRACO_FOR_PACKAGE"):source.index("function serverCard(")]
+        script = code + """
+console.log(JSON.stringify(["13.13.0", "18.3.0", "18.3.1", "18.4.2", ""].map((umbraco_version) => backofficeLoginFits({umbraco_version}))
+    .concat([backofficeLoginFits({umbraco_version: "13.1.0", harbor_package: true})])));"""
+        result = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True)
+        self.assertEqual(json.loads(result.stdout), [False, False, True, True, False, True])
+        self.assertIn('!site.managed_by && backofficeLoginFits(site)) addManage("Backoffice login…"', source)
 
     def test_confirmation_names_the_environment_it_acts_on(self):
         source = (APP / "static/app.js").read_text()

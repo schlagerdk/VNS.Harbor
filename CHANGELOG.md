@@ -2,6 +2,13 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.41] - 2026-11-17
+
+### Fixes
+
+- Move out… has a colour and an icon of its own, as the other buttons: it no longer fades into the page
+- Backoffice login is offered only on an Umbraco site of 18.3.1 or later, which the VNS.Harbor package needs, or one that has the package already: an older site (such as Umbraco 13) had the button
+
 ## [1.0.40] - 2026-11-17
 
 ### Fixes
