@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.40] - 2026-11-17
+
+### Fixes
+
+- The publish script reaches the server over SSH by its internal address, as Harbor knows its own addresses (SSH is usually open only inside), not by the public name of its admin; SERVER still gives another. The publish token goes to the admin over HTTPS as before
+
 ## [1.0.39] - 2026-11-17
 
 ### Fixes

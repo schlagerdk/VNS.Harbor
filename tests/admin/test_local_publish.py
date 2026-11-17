@@ -50,6 +50,14 @@ class LocalPublishScriptTests(unittest.TestCase):
         self.assertIn("--keep=/wwwroot/", args)
         self.assertIn("--keep=/files/", args)
 
+    def test_ssh_goes_to_the_servers_internal_address(self):
+        for system in ("unix", "windows"):
+            with self.subTest(system=system):
+                text = self.script(site="shop.example.com", binding="shop.example.com", https="n", environment="Production",
+                                   access="ssh", system=system, sshHost="10.0.0.16")
+                self.assertIn("root@10.0.0.16", text)
+                self.assertNotIn("root@web-02.example.com", text)
+
     def test_with_a_token_it_publishes_over_https_and_fails_on_a_failed_publish(self):
         text = self.script(site="shop.example.com", binding="shop.example.com", https="n", environment="Production", access="token")
         subprocess.run(["bash", "-n"], input=text, text=True, check=True)

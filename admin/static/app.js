@@ -2905,15 +2905,17 @@ siteForm.onsubmit = (event) => {
 // their publish token or over SSH as root, for a C# site (dotnet publish for the server's architecture), a Python
 // site (its app folder) or a static site (its files). Harbor puts it in place: harbor site receive-build here
 // (harbor/sites/receive_build.py)
-function localPublishScript({ site, binding, https, environment, kind = "csharp", system = "unix", access = "token" }) {
+function localPublishScript({ site, binding, https, environment, kind = "csharp", system = "unix", access = "token", sshHost = "" }) {
 	const server = location.hostname.replace(/^admin\./, "");
+	// SSH by the server's internal address, where it is usually open; its public name only when it has none
+	const ssh = sshHost || server;
 	const admin = location.origin;
 	const csharp = kind === "csharp" || kind === "umbraco";
 	const source = kind === "python" ? "app" : ".";
 	return (system === "windows" ? publishCmd : publishBash)({ site, binding: binding || "*", https: https === "y" ? "y" : "n",
-		environment: environment || "Production", csharp, source, server, admin, token: access === "token" });
+		environment: environment || "Production", csharp, source, server, ssh, admin, token: access === "token" });
 }
-function publishBash({ site, binding, https, environment, csharp, source, server, admin, token }) {
+function publishBash({ site, binding, https, environment, csharp, source, server, ssh, admin, token }) {
 	const quote = (value) => `'${String(value).replaceAll("'", "'\\''")}'`;
 	const lines = [
 		"#!/usr/bin/env bash",
@@ -2929,9 +2931,9 @@ function publishBash({ site, binding, https, environment, csharp, source, server
 		...(token ? [`HARBOR=${quote(admin)}`,
 			"# Your publish token (Publish from your machine in Harbor): in HARBOR_TOKEN, or in this file",
 			`TOKEN_FILE="$HOME/.config/vns-harbor/${server}.token"`]
-			: ["# The server as you reach it over SSH: change it, or give it when you run the script, when SSH is not open on",
-				"# its public name (SERVER=root@linux-01 ./publish-harbor.sh). A publish token needs no SSH",
-				`SERVER="\${SERVER:-${"root@" + server}}"`, 'PORT="${PORT:-22}"']),
+			: [`# The server over SSH, by its internal address (SSH is usually open only inside). Give another when you run the`,
+				"# script: SERVER=root@name ./publish-harbor.sh. A publish token needs no SSH",
+				`SERVER="\${SERVER:-${"root@" + ssh}}"`, 'PORT="${PORT:-22}"']),
 		...(csharp ? ["# The project to publish: the only .csproj in this folder, or name it: PROJECT=Site.csproj ./publish-harbor.sh",
 			'PROJECT="${PROJECT:-}"']
 			: source === "app"
@@ -2994,7 +2996,7 @@ function publishBash({ site, binding, https, environment, csharp, source, server
 		'COPYFILE_DISABLE=1 tar -C "$OUT/tar" -czf - . | "${SSH[@]}" "$REMOTE"');
 	return lines.join("\n") + "\n";
 }
-function publishCmd({ site, binding, https, environment, csharp, source, server, admin, token }) {
+function publishCmd({ site, binding, https, environment, csharp, source, server, ssh, admin, token }) {
 	// For the server's shell: one argument in single quotes
 	const quote = (value) => `'${String(value).replaceAll("'", "'\\''")}'`;
 	const lines = [
@@ -3011,8 +3013,8 @@ function publishCmd({ site, binding, https, environment, csharp, source, server,
 		...(token ? [`set "HARBOR=${admin}"`,
 			"rem Your publish token (Publish from your machine in Harbor): in HARBOR_TOKEN, or in this file",
 			`set "TOKEN_FILE=%USERPROFILE%\\.config\\vns-harbor\\${server}.token"`]
-			: ["rem The server as you reach it over SSH: change it when SSH is not open on its public name. A publish token needs no SSH",
-				`if not defined SERVER set "SERVER=root@${server}"`, `if not defined PORT set "PORT=22"`]),
+			: ["rem The server over SSH, by its internal address (SSH is usually open only inside). A publish token needs no SSH",
+				`if not defined SERVER set "SERVER=root@${ssh}"`, `if not defined PORT set "PORT=22"`]),
 		...(csharp ? ["rem The project to publish: the only .csproj in this folder, or name it here", `set "PROJECT="`]
 			: source === "app"
 				? ["rem The folder whose files are published: app when the project has app\\app.py, else this folder. Name it to choose", `set "SOURCE="`]
@@ -3115,6 +3117,14 @@ function showLocalPublish(options) {
 	form.elements.lp_system.forEach((input) => { input.onchange = render; });
 	form.elements.lp_access.forEach((input) => { input.onchange = render; });
 	render();
+	// SSH by the server's internal IPv4 address, as Harbor knows its own addresses
+	api("/api/server-address").then(({ addresses }) => {
+		const internal = (addresses || []).find((address) => /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(address));
+		if (internal && dialog.open) {
+			options.sshHost = internal;
+			render();
+		}
+	}).catch(() => { /* its public name, then */ });
 	dialog.showModal();
 }
 // Your publish token, where the script is: whether you have one, a new one shown this once with the command that
