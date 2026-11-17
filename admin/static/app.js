@@ -1786,8 +1786,10 @@ function envPanel(site, env) {
 	// Not on a site managed from another server: its Backoffice login is set where it is managed, and saving it here
 	// connected the site to this Harbor, which does not know it (aogtillon.dk lost its sync)
 	if (currentUser.admin && site.kind === "umbraco" && !site.managed_by) addManage("Backoffice login…", () => backofficeLoginDialog(site, env));
-	// A site published from a developer's machine: the script for it again
-	if (currentUser.admin && site.local_publish && !isTarget(env)) addManage("Publish from your machine…", () => showLocalPublish({
+	// A site published from a developer's machine, or any C# site that is only a build here (no project, not an
+	// environment of a site elsewhere): the script that sends it a new build
+	const buildOnly = !site.has_project && (site.kind === "csharp" || site.kind === "umbraco") && !site.managed_by && !site.admin;
+	if (currentUser.admin && (site.local_publish || buildOnly) && !isTarget(env)) addManage("Publish from your machine…", () => showLocalPublish({
 		site: site.name, binding: site.local_publish.binding || bindingLabel(env), https: env.scheme === "https" ? "y" : "n", environment: env.environment || "Production" }));
 	// Moved from Windows, here as an environment: its data fetched again, and taken over once the address has moved
 	if (currentUser.admin && env.windows_move && isTarget(env)) {

@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.33] - 2026-11-17
+
+### Fixes
+
+- Publish from your machine is offered on every C# site that is only a build here (no project, not an environment of a site elsewhere), also one set up before 1.0.32: its first publish from a machine puts the build in the folder it runs from
+
 ## [1.0.32] - 2026-11-17
 
 ### Fixes
