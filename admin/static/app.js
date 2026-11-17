@@ -2894,18 +2894,52 @@ function localPublishScript({ site, binding, https, environment }) {
 	const quote = (value) => `'${String(value).replaceAll("'", "'\\''")}'`;
 	return `#!/usr/bin/env bash
 # Publishes ${site} from this machine to ${server} (VNS Harbor). Run it in the project's folder.
-# The first run sets the site up there; later runs update it and restart it. Its settings, database and media there
-# are never touched, and nothing is deleted in App_Plugins or uSync.
+# It builds the project for the server's architecture and sends the build, with a scripts folder beside it, as one
+# tar over one SSH login. The first run sets the site up; later runs check the build (it has the dll the site runs,
+# and nothing the site keeps on the server), put it in place and restart the site. If the site then does not run and
+# answer, the publish fails here too, and harbor site rollback ${site} on the server puts the build before it back.
 set -euo pipefail
 SERVER=${quote("root@" + server)}
 PORT=22
 SITE=${quote(site)}
-BUILD="$(mktemp -d)"
-trap 'rm -rf "$BUILD"' EXIT
-dotnet publish -c Release -r linux-x64 --self-contained false -o "$BUILD"
-ssh -p "$PORT" "$SERVER" "mkdir -p /var/lib/harbor/incoming/$SITE"
-rsync -az --delete -e "ssh -p $PORT" "$BUILD/" "$SERVER:/var/lib/harbor/incoming/$SITE/"
-ssh -p "$PORT" "$SERVER" harbor site receive-build "$SITE" --binding ${quote(binding || "*")} --https ${https === "y" ? "y" : "n"} --environment ${quote(environment || "Production")}
+# The project to publish: the only .csproj in this folder, or name it: PROJECT=Site.csproj ./publish-harbor.sh
+PROJECT="\${PROJECT:-}"
+# Paths the site keeps on the server from every publish, such as /wwwroot/ when its files are made there:
+# KEEP=(/wwwroot/)
+KEEP=()
+# y: appsettings.json from the build at every publish (appsettings.<Environment>.json on the server stays).
+# n: only the first time, and the server's own stays
+SEND_APPSETTINGS=n
+
+if [ -z "$PROJECT" ]; then
+	set -- *.csproj
+	if [ "$#" -ne 1 ] || [ ! -e "$1" ]; then
+		echo "There is not exactly one .csproj here: name it, PROJECT=Site.csproj $0" >&2
+		exit 1
+	fi
+	PROJECT="$1"
+fi
+SSH=(ssh -p "$PORT" -o ControlMaster=auto -o "ControlPath=$HOME/.ssh/harbor-%r@%h:%p" -o ControlPersist=60 "$SERVER")
+case "$("\${SSH[@]}" uname -m)" in
+	x86_64) RID=linux-x64 ;;
+	aarch64|arm64) RID=linux-arm64 ;;
+	*) echo "The server's architecture is not one .NET publishes for" >&2; exit 1 ;;
+esac
+OUT="$(mktemp -d)"
+trap 'rm -rf "$OUT"' EXIT
+dotnet publish "$PROJECT" -c Release -r "$RID" --self-contained false -o "$OUT/build"
+if [ -d scripts ]; then
+	cp -R scripts "$OUT/scripts"
+fi
+COMMIT="$(git rev-parse --short HEAD 2>/dev/null || true)"
+DIRTY=n
+if [ -n "$(git status --porcelain 2>/dev/null || true)" ]; then DIRTY=y; fi
+APPSETTINGS=server
+if [ "$SEND_APPSETTINGS" = y ]; then APPSETTINGS=build; fi
+REMOTE="$(printf '%q ' harbor site receive-build "$SITE" --stdin --binding ${quote(binding || "*")} --https ${https === "y" ? "y" : "n"} \\
+	--environment ${quote(environment || "Production")} --appsettings "$APPSETTINGS" --by "$(whoami)@$(hostname -s)" --commit "$COMMIT" --dirty "$DIRTY" \\
+	\${KEEP[@]+"\${KEEP[@]/#/--keep=}"})"
+COPYFILE_DISABLE=1 tar -C "$OUT" -czf - . | "\${SSH[@]}" "$REMOTE"
 `;
 }
 function showLocalPublish(options) {
@@ -2913,7 +2947,7 @@ function showLocalPublish(options) {
 	const script = localPublishScript(options);
 	$("#local-publish-intro").textContent = `${options.site} runs the build you publish from your computer. Its project must build the same dll.`;
 	$("#local-publish-script").textContent = script;
-	$("#local-publish-note").textContent = "Your machine needs the .NET SDK, rsync and SSH access to this server as root (an SSH key). The build is framework-dependent: the server runs it with its own .NET.";
+	$("#local-publish-note").textContent = "Your machine needs the .NET SDK and SSH access to this server as root (an SSH key). The build is framework-dependent, for the server's architecture: the server runs it with its own .NET. KEEP and SEND_APPSETTINGS at the top of the script set what the site keeps on the server.";
 	$("#local-publish-copy").onclick = () => run(async () => { await copyText(script, dialog); toast("Script copied.", "ok"); });
 	dialog.showModal();
 }

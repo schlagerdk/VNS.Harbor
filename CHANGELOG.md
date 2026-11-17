@@ -2,6 +2,25 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.35] - 2026-11-17
+
+### Features
+
+- Publish from your machine sends the build as one tar over one SSH login (no rsync on the machine, so macOS' own is no matter, and no rights from the machine's temporary folder), built for the server's architecture (it asks: linux-x64 or linux-arm64) and from the project named, or the only .csproj in the folder
+- Publish from a machine checks the build before anything changes: it must have the dll the site's service starts, and none of what the site keeps on the server (App_Data, umbraco/Data, and its kept paths such as /wwwroot/), which would be a fault in the project
+- The paths a site keeps from every publish, such as /wwwroot/ where its files are made on the server (KEEP in the script, harbor site receive-build --keep; kept in local-publish.json from then on)
+- appsettings.json can come from the build at every publish (SEND_APPSETTINGS=y in the script, --appsettings build): appsettings.<Environment>.json on the server stays. By default the server's own stays, as before
+- A scripts folder beside the publish script goes along: the site's own scripts (.sh) in its scripts folder, owned by root
+- After a publish Harbor checks that the site runs and answers on its port (up to a minute); if not, the publish fails, on the machine too, with the site's log
+- harbor site rollback <site>: the build before the last publish put back in seconds, the site restarted and checked
+- One publish of a site at a time (a lock), and each publish is kept in local-publish.json: when, by whom from which machine, which git commit and whether it had changes not committed
+
+### Fixes
+
+- The scripts folder of a site published from a machine is root's again after a publish: it was given to www-data with the rest of the folder, though the admin runs those scripts as root
+- The folder a site runs from keeps its own rights at a publish (such as drwxrwxr-t), not those of the machine's temporary folder
+- A later publish no longer changes the binding kept for the site: it is the one the site was made with
+
 ## [1.0.34] - 2026-11-17
 
 ### Fixes

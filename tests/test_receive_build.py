@@ -105,6 +105,127 @@ class ReceiveBuildTests(unittest.TestCase):
         code = main(["site", "create-external", "shop.dk", "--project", "Shop"], RecordingSystem(root=self.root))
         self.assertEqual(code, 1, "not over a site that is there")
 
+    def running_site(self, port="4020"):
+        """shop.dk as a publish from a machine left it: its service runs Shop.dll on a port"""
+        site = self.root / "var/www/shop.dk"
+        (site / "wwwroot").mkdir(parents=True)
+        (site / "wwwroot/upload.png").write_text("made there")
+        (site / "Shop.dll").write_text("v1")
+        (site / "Shop.runtimeconfig.json").write_text("{}")
+        (site / "appsettings.json").write_text('{"server": true}')
+        (site / "appsettings.Production.json").write_text('{"secret": true}')
+        os.chmod(site, 0o1775)
+        (self.root / "etc/systemd/system").mkdir(parents=True, exist_ok=True)
+        (self.root / "etc/systemd/system/shop.dk.service").write_text(
+            f'ExecStart=/usr/lib/dotnet/dotnet /var/www/shop.dk/Shop.dll --urls "http://localhost:{port}"\n')
+        return site
+
+    def system(self, code="200"):
+        return RecordingSystem(root=self.root, answers={"rsync": real_rsync, "curl": code})
+
+    def test_kept_paths_own_scripts_and_the_check_that_it_answers(self):
+        """What its own publish script did: /wwwroot/ kept, scripts/ along as root's, and the site checked"""
+        site = self.running_site()
+        self.build({"Shop.dll": "v2", "Shop.runtimeconfig.json": "{}", "wwwroot/site.css": "from the build"})
+        system = self.system()
+        self.assertEqual(main(["site", "receive-build", "shop.dk", "--keep", "/wwwroot/"], system), 1, "a build with what the site keeps")
+        self.assertIn("The build has /wwwroot/", system.said[-1])
+        self.assertEqual((site / "Shop.dll").read_text(), "v1", "nothing changed")
+        self.build({"Shop.dll": "v2", "Shop.runtimeconfig.json": "{}"})
+        scripts = self.root / "var/lib/harbor/incoming/shop.dk.scripts"
+        scripts.mkdir(parents=True)
+        (scripts / "warm.sh").write_text("echo warm")
+        (scripts / "notes.txt").write_text("not a script")
+        system = self.system()
+        self.assertEqual(main(["site", "receive-build", "shop.dk", "--keep", "/wwwroot/"], system), 0, system.said)
+        self.assertEqual((site / "Shop.dll").read_text(), "v2")
+        self.assertEqual((site / "wwwroot/upload.png").read_text(), "made there")
+        self.assertEqual((site / "scripts/warm.sh").read_text(), "echo warm")
+        self.assertFalse((site / "scripts/notes.txt").exists(), "only scripts")
+        self.assertIn(f"chown -R root:root {site}/scripts", system.commands, "root's, as they run as root")
+        self.assertTrue(any("curl" in command and "127.0.0.1:4020" in command for command in system.commands))
+        self.assertEqual(oct(os.stat(site).st_mode & 0o7777), "0o1775", "the folder's own rights stay")
+        self.assertEqual(json.loads((self.root / "var/lib/harbor/sites/shop.dk/local-publish.json").read_text())["keep"], ["/wwwroot/"])
+        # Kept from then on, without saying so again
+        self.build({"Shop.dll": "v3", "Shop.runtimeconfig.json": "{}", "wwwroot/site.css": "from the build"})
+        self.assertEqual(main(["site", "receive-build", "shop.dk"], self.system()), 1)
+        self.assertEqual(main(["site", "receive-build", "shop.dk", "--keep", "/../etc/"], RecordingSystem(root=self.root)), 1, "never out of the site")
+
+    def test_a_build_without_the_dll_the_service_runs_changes_nothing(self):
+        site = self.running_site()
+        self.build({"Other.dll": "x", "Other.runtimeconfig.json": "{}"})
+        system = self.system()
+        self.assertEqual(main(["site", "receive-build", "shop.dk"], system), 1)
+        self.assertIn("The build has no Shop.dll", system.said[-1])
+        self.assertTrue((site / "Shop.dll").is_file(), "the site still runs what it ran")
+        self.build({"Shop.dll": "v2", "Shop.runtimeconfig.json": "{}", "App_Data/seed.json": "{}"})
+        system = self.system()
+        self.assertEqual(main(["site", "receive-build", "shop.dk"], system), 1, "App_Data is the server's")
+        self.assertIn("The build has /App_Data/", system.said[-1])
+
+    def test_a_site_that_does_not_answer_fails_and_rollback_puts_the_build_before_back(self):
+        site = self.running_site()
+        self.build({"Shop.dll": "v2", "Shop.runtimeconfig.json": "{}"})
+        system = self.system("502")
+        self.assertEqual(main(["site", "receive-build", "shop.dk"], system), 1)
+        self.assertIn("journalctl -u shop.dk -n 30 --no-pager", system.commands)
+        self.assertIn("does not answer on port 4020 (502)", system.said[-1])
+        self.assertIn("harbor site rollback shop.dk", system.said[-1])
+        self.assertEqual((site / "Shop.dll").read_text(), "v2")
+        system = self.system()
+        self.assertEqual(main(["site", "rollback", "shop.dk"], system), 0, system.said)
+        self.assertEqual((site / "Shop.dll").read_text(), "v1", "the build before")
+        self.assertEqual((site / "appsettings.json").read_text(), '{"server": true}', "its settings were never part of a build")
+        self.assertEqual((site / "wwwroot/upload.png").read_text(), "made there")
+
+    def test_appsettings_from_the_build_when_the_site_takes_them(self):
+        site = self.running_site()
+        self.build({"Shop.dll": "v2", "Shop.runtimeconfig.json": "{}", "appsettings.json": '{"code": true}',
+                    "appsettings.Production.json": '{"from code": true}'})
+        self.assertEqual(main(["site", "receive-build", "shop.dk"], self.system()), 0)
+        self.assertEqual((site / "appsettings.json").read_text(), '{"server": true}', "the server's, by default")
+        self.assertEqual(main(["site", "receive-build", "shop.dk", "--appsettings", "build"], self.system()), 0)
+        self.assertEqual((site / "appsettings.json").read_text(), '{"code": true}')
+        self.assertEqual((site / "appsettings.Production.json").read_text(), '{"secret": true}', "the environment's stays")
+
+    def tar(self, link=False):
+        import io
+        import tarfile
+        data = io.BytesIO()
+        with tarfile.open(fileobj=data, mode="w:gz") as archive:
+            for name, text in (("./build/Shop.dll", "v2"), ("./build/Shop.runtimeconfig.json", "{}"), ("./scripts/warm.sh", "echo")):
+                info = tarfile.TarInfo(name)
+                info.size = len(text)
+                archive.addfile(info, io.BytesIO(text.encode()))
+            if link:
+                escape = tarfile.TarInfo("./build/escape")
+                escape.type, escape.linkname = tarfile.SYMTYPE, "/etc/passwd"
+                archive.addfile(escape)
+        data.seek(0)
+        return data
+
+    def test_the_tar_on_stdin_one_publish_at_a_time_and_who_published(self):
+        from harbor.core.system import Stop
+        from harbor.sites.receive_build import receive_build
+        site = self.running_site()
+        with self.assertRaises(Stop) as refused:
+            receive_build(self.system(), "shop.dk", stream=self.tar(link=True))
+        self.assertIn("points out of it", str(refused.exception))
+        self.assertEqual((site / "Shop.dll").read_text(), "v1", "nothing changed")
+        receive_build(self.system(), "shop.dk", stream=self.tar(), by="mhs@mac", commit="abc1234", dirty="y")
+        self.assertEqual((site / "Shop.dll").read_text(), "v2")
+        self.assertEqual((site / "scripts/warm.sh").read_text(), "echo")
+        last = json.loads((self.root / "var/lib/harbor/sites/shop.dk/local-publish.json").read_text())["publishes"][0]
+        self.assertEqual((last["by"], last["commit"], last["dirty"]), ("mhs@mac", "abc1234", True))
+        # A second publish while one runs is refused
+        import fcntl
+        lock_path = self.root / "var/lib/harbor/incoming/shop.dk.lock"
+        with open(lock_path, "w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            system = self.system()
+            self.assertEqual(main(["site", "receive-build", "shop.dk"], system), 1)
+            self.assertIn("being published already", system.said[-1])
+
     def test_a_site_with_a_project_here_is_not_replaced(self):
         site = self.root / "var/www/shop.dk"
         site.mkdir(parents=True)

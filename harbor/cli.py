@@ -75,7 +75,13 @@ def _create_external(args, system):
 
 def _receive_build(args, system):
     from harbor.sites.receive_build import receive_build
-    receive_build(system, args.site, args.binding, args.https, args.environment)
+    receive_build(system, args.site, args.binding, args.https, args.environment, args.keep, args.appsettings,
+                  sys.stdin.buffer if args.stdin else None, args.by, args.commit, args.dirty)
+
+
+def _rollback_build(args, system):
+    from harbor.sites.receive_build import rollback
+    rollback(system, args.site)
 
 
 def _delete_site(args, system):
@@ -525,7 +531,19 @@ def parser():
     command.add_argument("--binding", default="", help="the first time: the binding, or * to answer any name")
     command.add_argument("--https", default="n", choices=("y", "n"), help="the first time: a certificate")
     command.add_argument("--environment", default="Production", choices=("Development", "Test", "Staging", "Production"))
+    command.add_argument("--keep", action="append", default=None, metavar="PATH",
+                         help="a path the site keeps from its publishes, such as /wwwroot/ (again for more); kept from then on")
+    command.add_argument("--appsettings", choices=("build", "server"), default=None,
+                         help="build: appsettings.json from the build at every publish (appsettings.<Environment>.json stays); "
+                              "server: only the first time. Kept from then on")
+    command.add_argument("--stdin", action="store_true", help="the build as a tar on stdin (build/ and scripts/), as the script sends it")
+    command.add_argument("--by", default="", help="who published, and from which machine")
+    command.add_argument("--commit", default="", help="the git commit published")
+    command.add_argument("--dirty", default="", choices=("", "y", "n"), help="y: with changes not committed")
     command.set_defaults(handler=_receive_build)
+    command = site.add_parser("rollback", help="a site published from a machine: the build before its last publish put back")
+    command.add_argument("site")
+    command.set_defaults(handler=_rollback_build)
     command = site.add_parser("delete", help="delete a site, its environments or one of them (was delete_site.sh)")
     command.add_argument("site", nargs="?", default="")
     command.add_argument("certificates", nargs="?", default="", help="y to revoke and remove the certificates")

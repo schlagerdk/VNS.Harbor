@@ -420,7 +420,7 @@
     </header>
     <ol class="local-publish-steps">
       <li>Save the script as <code>publish-harbor.sh</code> in your project's folder, and make it runnable: <code>chmod +x publish-harbor.sh</code></li>
-      <li>Run it there: <code>./publish-harbor.sh</code>. It builds the project for Linux, sends the build to this server over SSH, and Harbor puts it in place.</li>
+      <li>Run it there: <code>./publish-harbor.sh</code>. It builds the project for this server, sends the build over one SSH login, and Harbor checks it, puts it in place and checks that the site answers.</li>
     </ol>
     <pre id="local-publish-script" class="local-publish-script"></pre>
     <p class="hint" id="local-publish-note"></p>
