@@ -1,0 +1,30 @@
+{
+	// The NuGet package (VNS.Harbor) is in nuget/: the repository's root has no project of its own
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Debug",
+			"type": "process",
+			"command": "dotnet",
+			"args": ["build", "${workspaceFolder}/nuget/VNS.Harbor.csproj", "-c", "Debug"],
+			"problemMatcher": "$msCompile",
+			"group": "build"
+		},
+		{
+			"label": "Release",
+			"type": "process",
+			"command": "dotnet",
+			"args": ["build", "${workspaceFolder}/nuget/VNS.Harbor.csproj", "-c", "Release"],
+			"problemMatcher": "$msCompile",
+			"group": "build"
+		},
+		{
+			"label": "Pack Nuget",
+			"type": "process",
+			"command": "dotnet",
+			"args": ["pack", "${workspaceFolder}/nuget/VNS.Harbor.csproj", "-c", "Release"],
+			"problemMatcher": "$msCompile",
+			"group": "build"
+		}
+	]
+}
