@@ -1784,6 +1784,9 @@ function envPanel(site, env) {
 	// Not on a site managed from another server: its Backoffice login is set where it is managed, and saving it here
 	// connected the site to this Harbor, which does not know it (aogtillon.dk lost its sync)
 	if (currentUser.admin && site.kind === "umbraco" && !site.managed_by) addManage("Backoffice login…", () => backofficeLoginDialog(site, env));
+	// A site published from a developer's machine: the script for it again
+	if (currentUser.admin && site.local_publish && !isTarget(env)) addManage("Publish from your machine…", () => showLocalPublish({
+		site: site.name, binding: site.local_publish.binding || bindingLabel(env), https: env.scheme === "https" ? "y" : "n", environment: env.environment || "Production" }));
 	// Moved from Windows, here as an environment: its data fetched again, and taken over once the address has moved
 	if (currentUser.admin && env.windows_move && isTarget(env)) {
 		addManage("Refresh from Windows…", () => refreshMovedFromWindows(site, env));
@@ -2779,8 +2782,11 @@ async function loadDotnetTemplates() {
 	return templateRequest;
 }
 function syncSiteForm() {
+	// From my machine: a C# site with no project here, so only its environment is asked for
+	const fromMachine = siteForm.type.value === "local";
 	const csharp = siteForm.type.value === "csharp";
-	$("#csharp-options").hidden = !csharp;
+	$("#csharp-options").hidden = !csharp && !fromMachine;
+	for (const field of $("#csharp-options").querySelectorAll(".csharp-here")) field.hidden = fromMachine;
 	$("#template-name-option").hidden = !csharp;
 	$("#template-status").hidden = !csharp;
 	siteForm.version.disabled = !csharp;
@@ -2855,11 +2861,50 @@ siteForm.onsubmit = (event) => {
 		if (data.type === "csharp" && data.template?.toLowerCase() === "umbraco" && !data.version?.trim()) {
 			data.version = defaultUmbracoVersion;
 		}
+		if (data.type === "local") {
+			// Nothing is made here yet: the first run of the script sets the site up with its build
+			dialog.close();
+			showLocalPublish({ site: data.site.trim(), binding: data.binding, https: data.certificate === "y" ? "y" : "n", environment: data.environment || "Production", first: true });
+			return;
+		}
 		data.kind = "create_site";
 		await openTask(data);
 		dialog.close();
 	});
 };
+
+// The script a developer runs in the project's folder: dotnet publish for Linux, the build to this server over SSH,
+// and harbor site receive-build here (harbor/sites/receive_build.py). This server by the name the admin is reached by.
+function localPublishScript({ site, binding, https, environment }) {
+	const server = location.hostname.replace(/^admin\./, "");
+	const quote = (value) => `'${String(value).replaceAll("'", "'\\''")}'`;
+	return `#!/usr/bin/env bash
+# Publishes ${site} from this machine to ${server} (VNS Harbor). Run it in the project's folder.
+# The first run sets the site up there; later runs update it and restart it. Its settings, database and media there
+# are never touched, and nothing is deleted in App_Plugins or uSync.
+set -euo pipefail
+SERVER=${quote("root@" + server)}
+PORT=22
+SITE=${quote(site)}
+BUILD="$(mktemp -d)"
+trap 'rm -rf "$BUILD"' EXIT
+dotnet publish -c Release -r linux-x64 --self-contained false -o "$BUILD"
+ssh -p "$PORT" "$SERVER" "mkdir -p /var/lib/harbor/incoming/$SITE"
+rsync -az --delete -e "ssh -p $PORT" "$BUILD/" "$SERVER:/var/lib/harbor/incoming/$SITE/"
+ssh -p "$PORT" "$SERVER" harbor site receive-build "$SITE" --binding ${quote(binding || "*")} --https ${https === "y" ? "y" : "n"} --environment ${quote(environment || "Production")}
+`;
+}
+function showLocalPublish(options) {
+	const dialog = $("#dlg-local-publish");
+	const script = localPublishScript(options);
+	$("#local-publish-intro").textContent = options.first
+		? `${options.site} is made on this server the first time you run the script, from the build it sends.`
+		: `${options.site} runs the build you publish from your computer.`;
+	$("#local-publish-script").textContent = script;
+	$("#local-publish-note").textContent = "Your machine needs the .NET SDK, rsync and SSH access to this server as root (an SSH key). The build is framework-dependent: the server runs it with its own .NET.";
+	$("#local-publish-copy").onclick = () => run(async () => { await copyText(script, dialog); toast("Script copied.", "ok"); });
+	dialog.showModal();
+}
 
 const prodDialog = $("#dlg-prod");
 const prodForm = $("#form-prod");

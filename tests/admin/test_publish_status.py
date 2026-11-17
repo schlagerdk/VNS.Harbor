@@ -149,10 +149,11 @@ class PublishStatusTests(unittest.TestCase):
         from lib.domain_names import display_dns_name, service_name
 
         nodes = [node for node in ast.parse((APP / "app.py").read_text()).body
-                 if isinstance(node, ast.FunctionDef) and node.name in ("site_info", "harbor_package")]
+                 if isinstance(node, ast.FunctionDef) and node.name in ("site_info", "harbor_package", "read_local_publish")
+                 or isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "PROJECT_SCRIPTS"]
         from lib import data_sync
         from lib import database_info
-        ns = dict(os=os, glob=glob, re=re, _publish_module=tracking, _data_sync_module=data_sync, _database_module=database_info, default_site_name=lambda: "", setup_kind=lambda root: "html", WEB_ROOT=str(self.root.parent),
+        ns = dict(os=os, glob=glob, re=re, _publish_module=tracking, _data_sync_module=data_sync, _database_module=database_info, default_site_name=lambda: "", setup_kind=lambda root: "html", published_project_info=lambda *args, **kwargs: None, WEB_ROOT=str(self.root.parent),
                   APACHE_SITES=str(self.root), APACHE_ENABLED=str(self.root), SERVICE_DIR=str(self.root),
                   SCRIPT_RE=re.compile(r".*\.sh$"), ADMIN_SITE="admin.test",
                   read_text=lambda path: Path(path).read_text() if Path(path).is_file() else "",
@@ -188,6 +189,15 @@ class PublishStatusTests(unittest.TestCase):
         with self.assertLogs(__name__, level="WARNING"):
             site = ns["site_info"]("example.test", {})
         self.assertEqual([env["publish_status"] for env in site["environments"]], ["unknown", "current"])
+        # A build with no project here: a project's scripts are not offered, the others are
+        self.project.unlink()
+        (self.root / "scripts").mkdir(exist_ok=True)
+        for script in ("publish.sh", "outdated.sh", "create_prod.sh", "check_service.sh"):
+            (self.root / "scripts" / script).write_text("exit 0\n")
+        site = ns["site_info"]("example.test", {})
+        self.assertIn("check_service.sh", site["scripts"])
+        for script in ("publish.sh", "outdated.sh", "create_prod.sh"):
+            self.assertNotIn(script, site["scripts"])
 
     def test_badges_and_template_tracking_hooks(self):
         source = (APP / "static/app.js").read_text()

@@ -412,6 +412,22 @@
 
 <div id="toasts" popover="manual"></div>
 
+<dialog id="dlg-local-publish" class="newsite" aria-labelledby="local-publish-title">
+  <form method="dialog">
+    <header class="ns-head">
+      <span class="ns-icon" data-header-icon="upload" aria-hidden="true"></span>
+      <div><h2 id="local-publish-title">Publish from your machine</h2><p id="local-publish-intro"></p></div>
+    </header>
+    <ol class="local-publish-steps">
+      <li>Save the script as <code>publish-harbor.sh</code> in your project's folder, and make it runnable: <code>chmod +x publish-harbor.sh</code></li>
+      <li>Run it there: <code>./publish-harbor.sh</code>. It builds the project for Linux, sends the build to this server over SSH, and Harbor puts it in place.</li>
+    </ol>
+    <pre id="local-publish-script" class="local-publish-script"></pre>
+    <p class="hint" id="local-publish-note"></p>
+    <menu><li class="cancel-action"><button type="button" id="local-publish-copy" class="cancel-link">Copy script</button></li><li><button type="submit" class="primary">Close</button></li></menu>
+  </form>
+</dialog>
+
 <dialog id="dlg-prompt">
   <form method="dialog" id="form-prompt">
     <header id="prompt-header">
@@ -539,6 +555,7 @@
       <label class="type-card"><input type="radio" name="type" value="csharp" checked><span class="tc-title">C# / .NET</span><span class="tc-sub">Web project</span></label>
       <label class="type-card"><input type="radio" name="type" value="python"><span class="tc-title">Python</span><span class="tc-sub">Flask / gunicorn</span></label>
       <label class="type-card"><input type="radio" name="type" value="html"><span class="tc-title">HTML</span><span class="tc-sub">Static files</span></label>
+      <label class="type-card"><input type="radio" name="type" value="local"><span class="tc-title">From my machine</span><span class="tc-sub">C# built and published from your computer</span></label>
     </div>
     <div class="ns-section">Name and address</div>
     <div class="ns-grid">
@@ -555,11 +572,11 @@
           <input name="template" list="dotnet-templates" placeholder="Search templates…" autocomplete="off" spellcheck="false" pattern="[A-Za-z0-9][A-Za-z0-9._\-]*" aria-describedby="template-status">
           <datalist id="dotnet-templates"></datalist>
         </label>
-        <label>Version (optional) <input name="version" placeholder="Installed template version" autocomplete="off" spellcheck="false"></label>
-        <label>C# project name <input name="project" placeholder="same as folder name"></label>
-        <label>Build <select name="build"><option>Debug</option><option>Release</option></select></label>
+        <label class="csharp-here">Version (optional) <input name="version" placeholder="Installed template version" autocomplete="off" spellcheck="false"></label>
+        <label class="csharp-here">C# project name <input name="project" placeholder="same as folder name"></label>
+        <label class="csharp-here">Build <select name="build"><option>Debug</option><option>Release</option></select></label>
         <div class="choice-field wide"><span class="choice-label">Environment</span><div class="env-choices" role="radiogroup" aria-label="Environment"><label class="env-choice env-development"><input type="radio" name="environment" value="Development" checked><span>Development</span></label><label class="env-choice env-test"><input type="radio" name="environment" value="Test"><span>Test</span></label><label class="env-choice env-staging"><input type="radio" name="environment" value="Staging"><span>Staging</span></label><label class="env-choice env-production"><input type="radio" name="environment" value="Production"><span>Production</span></label></div></div>
-        <label>Local publish folder <input name="publish" value="_development" placeholder="Site root when empty"></label>
+        <label class="csharp-here">Local publish folder <input name="publish" value="_development" placeholder="Site root when empty"></label>
       </div>
       <p id="template-status" class="hint template-status" role="status" hidden></p>
     </div>

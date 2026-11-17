@@ -68,6 +68,11 @@ def _setup_site(args, system):
     setup_site(system, args.site, args.binding, args.certificate, args.environment)
 
 
+def _receive_build(args, system):
+    from harbor.sites.receive_build import receive_build
+    receive_build(system, args.site, args.binding, args.https, args.environment)
+
+
 def _delete_site(args, system):
     from harbor.sites.delete import delete_site
     delete_site(system, args.site, args.certificates, args.scope, os.environ.get("VNS_TARGET", ""))
@@ -501,6 +506,13 @@ def parser():
     command.add_argument("certificate", nargs="?", default="", help="y or n")
     command.add_argument("environment", nargs="?", default="")
     command.set_defaults(handler=_setup_site)
+    command = site.add_parser("receive-build", help="a C# site published from a developer's machine: the build it sent to "
+                              "/var/lib/harbor/incoming/<site> set up (the first time) or put in place, and the site restarted")
+    command.add_argument("site")
+    command.add_argument("--binding", default="", help="the first time: the binding, or * to answer any name")
+    command.add_argument("--https", default="n", choices=("y", "n"), help="the first time: a certificate")
+    command.add_argument("--environment", default="Production", choices=("Development", "Test", "Staging", "Production"))
+    command.set_defaults(handler=_receive_build)
     command = site.add_parser("delete", help="delete a site, its environments or one of them (was delete_site.sh)")
     command.add_argument("site", nargs="?", default="")
     command.add_argument("certificates", nargs="?", default="", help="y to revoke and remove the certificates")

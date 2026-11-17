@@ -1210,6 +1210,19 @@ def setup_kind(root):
     return "html"
 
 
+# A C# project's own scripts: building, its packages, environments made from it, its environment
+PROJECT_SCRIPTS = {"publish.sh", "publish_local.sh", "outdated.sh", "create_prod.sh", "change_env.sh"}
+
+
+def read_local_publish(name):
+    try:
+        with open(os.path.join(HARBOR_SITES, name, "local-publish.json"), encoding="utf-8") as stream:
+            found = json.load(stream)
+    except (OSError, ValueError):
+        return None
+    return {"binding": str(found.get("binding", ""))} if isinstance(found, dict) else None
+
+
 def harbor_package(root, projects):
     if projects:
         return any(re.search(r'<PackageReference\s+Include="VNS\.Harbor"', read_text(path), re.I) for path in projects)
@@ -1254,6 +1267,10 @@ def site_info(name, states):
         scripts = migrated_scripts(name)
     elif os.path.isdir(scripts_dir):
         scripts = sorted(f for f in os.listdir(scripts_dir) if SCRIPT_RE.match(f) and os.path.isfile(os.path.join(scripts_dir, f)))
+    if not projects:
+        # A build with no project here (published from a machine, or put here by hand) is run as it is: a project's
+        # tools do nothing for it, also where they were recorded for it before
+        scripts = [script for script in scripts if script not in PROJECT_SCRIPTS]
 
     first_label = "Test" if not aspnet or aspnet.group(1) != "Production" else "Production"
     if name == ADMIN_SITE:
@@ -1358,6 +1375,8 @@ def site_info(name, states):
         "windows_source": os.path.isfile(os.path.join(HARBOR_SITES, name, "windows-source.json")),
         "project": os.path.splitext(os.path.basename(projects[0]))[0] if len(projects) == 1 else "",
         "managed_by": managed_by(name),
+        # Published from a developer's machine (harbor site receive-build): its binding, for the script shown again
+        "local_publish": read_local_publish(name),
         # The VNS.Harbor package, which the Backend button logs in with: in the project, or in the build of a site
         # without one here (an environment managed from another server)
         "harbor_package": harbor_package(root, projects),

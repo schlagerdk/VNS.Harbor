@@ -1707,3 +1707,9 @@ dialog .windows-field input, dialog .windows-field select { width: 100%; min-hei
 .page-loading p { margin: 0; letter-spacing: .02em; }
 .page-loading-spinner { width: 34px; height: 34px; border-radius: 50%; border: 3px solid rgba(163,113,247,.2); border-top-color: #a371f7; animation: update-spin .8s linear infinite; }
 @keyframes page-loading-in { from { opacity: 0; } to { opacity: 1; } }
+
+/* Publish from your machine: the steps and the script to copy */
+.local-publish-steps { margin: 4px 0 12px; padding-left: 20px; line-height: 1.6; color: var(--text); font-size: 13px; }
+.local-publish-steps code, #local-publish-note code { font-size: 12px; padding: 1px 5px; border-radius: 5px; background: rgba(255,255,255,.06); }
+.local-publish-script { max-height: 320px; margin: 0; padding: 12px 14px; overflow: auto; border: 1px solid var(--line); border-radius: 10px;
+	background: #0b0d12; color: #d6deeb; font: 12px/1.55 ui-monospace, Menlo, Consolas, monospace; white-space: pre; user-select: all; }

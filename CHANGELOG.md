@@ -2,6 +2,16 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.31] - 2026-11-17
+
+### Features
+
+- From my machine in New site: a C# site with no project on the server, published from your own computer and run as an environment from another server is. Harbor gives you a script for the project's folder: dotnet publish for Linux (framework-dependent), the build to the server with rsync over SSH, and harbor site receive-build there. The first run sets the site up (service, Apache, certificate when chosen); later runs put the new build in place and restart it, never touching its appsettings, database, media or App_Data, and deleting nothing in App_Plugins or uSync. The site's page shows the script again (Publish from your machine)
+
+### Fixes
+
+- A site that is only a build (published from a machine, or put in /var/www by hand) no longer offers a project's scripts (publish, outdated, create_prod, change_env): setup no longer gives them to a build, and the admin leaves them out where they were given before
+
 ## [1.0.30] - 2026-11-16
 
 ### Fixes

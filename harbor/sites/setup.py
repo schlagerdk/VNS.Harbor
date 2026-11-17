@@ -155,7 +155,8 @@ def setup_site(system, name="", binding="", certificate="", environment=""):
             if certificate == "y":
                 system.step(f"Issue a certificate for {binding}")
                 issue_certificate(system, site, binding)
-            install_missing_scripts(system, site, "common", "service", "umbraco" if kind == "umbraco" else "csharp")
+            # A project's own tools (publish, outdated, create_prod, change_env) only for a project: a build is run as it is
+            install_missing_scripts(system, site, "common", "service", *(["umbraco"] if kind == "umbraco" else []))
             if kind_of_folder == "project":
                 install_missing_scripts(system, site, "csharp")
                 csproj = system.path(f"{site.site_root}/{project}.csproj")
