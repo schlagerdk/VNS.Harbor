@@ -679,17 +679,49 @@ def migrated_site_json(site):
         return {}
 
 
-def custom_scripts_dir(site):
-    """A migrated site's own scripts: they stay in its scripts folder (Harbor's own scripts are gone from there)"""
+def custom_scripts_dir(site, script=""):
+    """A migrated site's own scripts: they stay in its scripts folder (Harbor's own scripts are gone from there). A site
+    published from a machine has the ones its publishes send in Harbor's state, where only root can write
+    (harbor/sites/receive_build.py); those written on the server stay in its scripts folder. With a script: the folder
+    that has it, Harbor's state first"""
+    owned = own_scripts_dir(site)
+    if script and os.path.isfile(os.path.join(owned, script)):
+        return owned
     return os.path.join(WEB_ROOT, site, "scripts")
 
 
+def own_scripts_dir(site):
+    return os.path.join(HARBOR_SITES, site, "scripts")
+
+
+def root_only(path):
+    """A script the admin runs as root, and its folder: root's, and no one else may write them. A site's app user
+    (www-data) owns the site's folder and could swap in a scripts folder of its own; such a script is not run"""
+    for item in (path, os.path.dirname(path)):
+        try:
+            info = os.stat(item)
+        except OSError:
+            return False
+        if info.st_uid != 0 or info.st_mode & 0o022:
+            return False
+    return True
+
+
+def runnable(path):
+    if not root_only(path):
+        abort(400, f"{os.path.basename(path)} is not run: it or its folder can be changed by someone other than root, and it "
+                   "runs as root. A script of your own is fine where root owns it and only root can write it: check it, then "
+                   f"chown -R root:root {os.path.dirname(path)} && chmod -R go-w {os.path.dirname(path)}")
+    return path
+
+
 def migrated_scripts(site):
-    """The scripts a migrated site shows: the system scripts it had, and its own"""
-    own = custom_scripts_dir(site)
+    """The scripts a migrated site shows: the system scripts it had, and its own (in its scripts folder, and the ones its
+    publishes from a machine sent, in Harbor's state)"""
     names = set(name for name in migrated_site_json(site).get("scripts", []) if isinstance(name, str) and SCRIPT_RE.match(name))
-    if os.path.isdir(own):
-        names |= {name for name in os.listdir(own) if SCRIPT_RE.match(name) and os.path.isfile(os.path.join(own, name))}
+    for own in (custom_scripts_dir(site), own_scripts_dir(site)):
+        if os.path.isdir(own):
+            names |= {name for name in os.listdir(own) if SCRIPT_RE.match(name) and os.path.isfile(os.path.join(own, name))}
     return sorted(names)
 
 
@@ -715,10 +747,11 @@ def harbor_script_command(site, script, target="prod"):
         words = HARBOR_SCRIPTS[script]
         return harbor + ([site if word == "@" else word for word in words] if "@" in words
                          else words + ([site] if words[0] == "site" else []))
-    path = os.path.realpath(os.path.join(custom_scripts_dir(site), script))
-    if os.path.dirname(path) != os.path.realpath(custom_scripts_dir(site)) or not os.path.isfile(path):
+    folder = custom_scripts_dir(site, script)
+    path = os.path.realpath(os.path.join(folder, script))
+    if os.path.dirname(path) != os.path.realpath(folder) or not os.path.isfile(path):
         abort(400, "Unknown script")
-    return ["/bin/bash", path]
+    return ["/bin/bash", runnable(path)]
 
 
 def publish_entry(site, target=None):
@@ -1277,6 +1310,10 @@ def site_info(name, states):
         scripts = migrated_scripts(name)
     elif os.path.isdir(scripts_dir):
         scripts = sorted(f for f in os.listdir(scripts_dir) if SCRIPT_RE.match(f) and os.path.isfile(os.path.join(scripts_dir, f)))
+    # Its own scripts where only root can write them, as a publish from a machine puts them
+    owned = os.path.join(HARBOR_SITES, name, "scripts")
+    if os.path.isdir(owned):
+        scripts = sorted(set(scripts) | {f for f in os.listdir(owned) if SCRIPT_RE.match(f) and os.path.isfile(os.path.join(owned, f))})
     if not projects:
         # A build with no project here (published from a machine, or put here by hand) is run as it is: a project's
         # tools do nothing for it, also where they were recorded for it before
@@ -3966,10 +4003,14 @@ def build_command(data):
         script = data.get("script", "")
         target = target_arg(site, data) if data.get("target") else "prod"
         folder = target_folder(os.path.join(WEB_ROOT, site), target)
+        # A site published from a machine: its own scripts in Harbor's state, where only root can write
+        if target == "prod" and os.path.isfile(os.path.join(own_scripts_dir(site), script)):
+            folder = own_scripts_dir(site)
         path = os.path.realpath(os.path.join(folder, script))
         if not SCRIPT_RE.match(script) or os.path.dirname(path) != os.path.realpath(folder) or not os.path.isfile(path):
             abort(400, "Unknown script")
-        argv = [bash, path]
+        argv = [bash, runnable(path)]
+        folder = os.path.join(WEB_ROOT, site) if folder == own_scripts_dir(site) else folder
         root = os.path.join(WEB_ROOT, site)
         if script in ("publish.sh", "publish_local.sh", "publish_prod.sh") and glob.glob(os.path.join(root, "*.csproj")):
             argv = [sys.executable, os.path.join(LIB_DIR, "publish_status.py"),

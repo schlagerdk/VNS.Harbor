@@ -66,9 +66,27 @@ class UnicodeScriptTests(unittest.TestCase):
             or (isinstance(node, ast.FunctionDef) and node.name == "build_command")
         ]
         self.ns = dict(re=re, os=os, glob=glob, sys=sys, abort=abort,
-                       site_arg=lambda data: data["site"], service_name=service_name, HARBOR_DIR=str(ROOT_DIR), LIB_DIR=str(ROOT_DIR / "lib"))
+                       site_arg=lambda data: data["site"], service_name=service_name, HARBOR_DIR=str(ROOT_DIR), LIB_DIR=str(ROOT_DIR / "lib"),
+                       # Run as root, a script must be root's: here the tests' own user makes them
+                       own_scripts_dir=lambda site: "/nonexistent/" + site, runnable=lambda path: path)
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "script validation", "exec"), self.ns)
         add_target_helpers(self.ns)
+
+    def test_a_script_that_is_not_root_only_is_not_run(self):
+        """The site's app user owns a folder that runs from its own folder, and could swap in a scripts folder"""
+        from types import SimpleNamespace
+        from unittest import mock
+        nodes = [node for node in ast.parse((APP / "app.py").read_text()).body
+                 if isinstance(node, ast.FunctionDef) and node.name in ("root_only", "runnable")]
+        ns = dict(os=os, abort=abort)
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), "root only", "exec"), ns)
+        for uid, mode, ok in ((0, 0o755, True), (33, 0o755, False), (0, 0o775, False), (0, 0o757, False)):
+            with self.subTest(uid=uid, mode=oct(mode)), mock.patch("os.stat", return_value=SimpleNamespace(st_uid=uid, st_mode=mode)):
+                self.assertEqual(ns["root_only"]("/var/www/site/scripts/run.sh"), ok)
+        with mock.patch("os.stat", return_value=SimpleNamespace(st_uid=33, st_mode=0o755)):
+            with self.assertRaises(Exception) as refused:
+                ns["runnable"]("/var/www/site/scripts/run.sh")
+            self.assertIn("is not run", str(refused.exception))
     def test_unicode_script_is_listed_and_can_be_run(self):
         with tempfile.TemporaryDirectory() as directory:
             folder = Path(directory) / "example.test" / "scripts"

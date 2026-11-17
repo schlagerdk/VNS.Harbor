@@ -84,7 +84,8 @@ def keep_paths(paths):
     found = []
     for path in paths or []:
         path = path.strip()
-        if not path:
+        # none: nothing kept, as a choice (the first publish to a site with files asks for one)
+        if not path or path == "none":
             continue
         if not KEEP_PATH.fullmatch(path) or ".." in path.split("/"):
             raise Stop(f"{path} is not a path in the site's folder, as /wwwroot/ is.")
@@ -256,18 +257,48 @@ def publish(system, name, binding, https, environment, keep, appsettings, who):
         previous = system.path(f"{PREVIOUS}/{name}")
         previous.mkdir(parents=True, exist_ok=True)
         before = (folder / "requirements.txt").read_bytes() if (folder / "requirements.txt").is_file() else b""
-        system.run("rsync", "-a", "--delete", *arguments, f"{folder}/", f"{previous}/")
+        # The first publish to a site that has files it would delete: only with a choice of what it keeps
+        if keep is None and "keep" not in found:
+            doomed = would_delete(system, incoming, folder, arguments)
+            if doomed:
+                shown = ", ".join(doomed[:8]) + (f" and {len(doomed) - 8} more" if len(doomed) > 8 else "")
+                raise Stop(f"This publish would delete {len(doomed)} file(s) the site has and the build does not: {shown}. "
+                           "Nothing was changed. Choose what the site keeps: KEEP=(/wwwroot/) for a folder, or KEEP=(none) to let them go "
+                           "(--keep none). The choice is kept for later publishes.")
+        # What it runs now, for harbor site rollback: only when the publish before worked, so two failures in a row
+        # still leave the last one that ran
+        if found.get("ok", True):
+            system.run("rsync", "-a", "--delete", *arguments, f"{folder}/", f"{previous}/")
         system.step(f"Copy the new {'build' if kind == 'csharp' else 'files'} into {folder}" + (f", keeping {', '.join(kept)}" if kept else ""))
-        put_in_place(system, site, incoming, folder, arguments)
-        restart(system, site, kind, folder, before, f" harbor site rollback {name} puts what it had before back.")
+        try:
+            put_in_place(system, site, incoming, folder, arguments)
+            restart(system, site, kind, folder, before, f" harbor site rollback {name} puts what it had before back.")
+        except Stop:
+            remember(system, name, found, binding, kept, appsettings, who, ok=False)
+            raise
+    remember(system, name, found, binding, kept, appsettings, who, ok=True)
+    system.say(f"{name} runs what you published from your machine.")
+
+
+def remember(system, name, found, binding, kept, appsettings, who, ok):
+    """The publish in local-publish.json: what the site keeps, and when, by whom, which commit, and whether it worked"""
     publishes = [entry for entry in found.get("publishes", []) if isinstance(entry, dict)]
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    publishes = ([{"time": now, **{key: value for key, value in who.items() if value}}] + publishes)[:HISTORY]
+    entry = {"time": now, **{key: value for key, value in who.items() if value}, **({} if ok else {"failed": True})}
     marker(system, name).parent.mkdir(parents=True, exist_ok=True)
     # The binding is the one it was made with: a later publish does not change it (Change bindings does)
     write_json(marker(system, name), {**found, "binding": found.get("binding") or binding or name, "keep": kept,
-                                       "appsettings": appsettings, "published": now, "publishes": publishes})
-    system.say(f"{name} runs what you published from your machine.")
+                                       "appsettings": appsettings, "published": now, "ok": ok,
+                                       "publishes": ([entry] + publishes)[:HISTORY]})
+
+
+def would_delete(system, source, folder, arguments):
+    """The files a copy would delete (rsync's dry run), as paths in the folder"""
+    protect = [argument for pattern in PROTECTED for argument in ("--filter", f"P {pattern}")]
+    result = system.run("rsync", "-a", "--delete", "--dry-run", "--itemize-changes", *protect, *arguments,
+                        f"{source}/", f"{folder}/", check=False, capture=True)
+    return [line.split(" ", 1)[1].strip() for line in (result.stdout or "").splitlines()
+            if line.startswith("*deleting") and not line.rstrip().endswith("/")]
 
 
 def restart(system, site, kind, folder, requirements_before, failed=""):
@@ -317,15 +348,34 @@ def rollback(system, name):
     system.say(f"{name} runs what it had before its last publish.")
 
 
+def scripts_folder(system, name):
+    """Where a site published from a machine keeps its own scripts: in Harbor's state, which only root can write. Not
+    in the site's folder, which its app user (www-data) owns and could swap a scripts folder into"""
+    return site_state(system, name) / "scripts"
+
+
 def own_scripts(system, name, site):
-    """The site's own scripts: the ones sent along put in its scripts folder (.sh only), and the folder owned by root
-    whatever made it, as the admin runs them as root. The site (www-data) must never be able to change them"""
-    scripts = system.path(f"{site.site_root}/scripts")
+    """The site's own scripts as the machine sent them (.sh only), in a folder only root can write, as the admin runs
+    them as root. One the machine sent before and no longer sends is removed; one written on the server stays, as do
+    the scripts in the site's own scripts folder (made root's here as well)"""
+    target = scripts_folder(system, name)
     sent = system.path(f"{INCOMING}/{name}.scripts")
-    if sent.is_dir() and any(sent.glob("*.sh")):
-        system.step("Put the site's own scripts in its scripts folder")
-        scripts.mkdir(parents=True, exist_ok=True)
-        system.run("rsync", "-a", "--no-perms", "--chmod=D755,F755", "--include", "*.sh", "--exclude", "*", f"{sent}/", f"{scripts}/")
-    if scripts.is_dir():
-        system.run("chown", "-R", "root:root", str(scripts), check=False)
-        system.run("chmod", "-R", "go-w", str(scripts), check=False)
+    if sent.is_dir():
+        record = site_state(system, name) / "published-scripts.json"
+        before = read_json(record)
+        before = set(before) if isinstance(before, list) else set()
+        now = {path.name for path in sent.glob("*.sh") if path.is_file()}
+        if now or before & {path.name for path in target.glob("*.sh")}:
+            system.step("Put the site's own scripts where only root can change them")
+        target.mkdir(parents=True, exist_ok=True)
+        system.run("rsync", "-a", "--no-perms", "--chmod=D755,F755", "--include", "*.sh", "--exclude", "*", f"{sent}/", f"{target}/")
+        for gone in sorted(before - now):
+            (target / gone).unlink(missing_ok=True)
+        write_json(record, sorted(now))
+    if target.is_dir():
+        system.run("chown", "-R", "root:root", str(target), check=False)
+        system.run("chmod", "-R", "go-w", str(target), check=False)
+    legacy = system.path(f"{site.site_root}/scripts")
+    if legacy.is_dir():
+        system.run("chown", "-R", "root:root", str(legacy), check=False)
+        system.run("chmod", "-R", "go-w", str(legacy), check=False)

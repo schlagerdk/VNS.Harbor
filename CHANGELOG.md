@@ -2,6 +2,16 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.37] - 2026-11-17
+
+### Fixes
+
+- The first publish from a machine to a site that has files the publish would delete stops, and names them, until the site has a choice of what it keeps (KEEP=(/wwwroot/), or KEEP=(none) to let them go): a site's own files are not deleted by mistake
+- The scripts a publish from a machine sends are kept where only root can write (/var/lib/harbor/sites/<site>/scripts), not in the site's folder, which its app user owns. A script it no longer sends is removed; one written on the server, there or in the site's scripts folder, stays
+- The admin runs a site's script only when it and its folder are root's and only root can write them: the app user of a site that runs from its own folder could otherwise swap in a scripts folder of its own and have it run as root. Setup keeps a site's scripts folder root's
+- The copy for harbor site rollback is made only when the publish before worked, and a failed publish is kept as failed: after two failures in a row, rollback still goes back to the last one that ran
+- A new publish token is saved with a command for the computer chosen: Command Prompt on Windows (in %USERPROFILE%\.config\vns-harbor, where the .cmd script looks), not the macOS/Linux command. The new token stays shown while the dialog is open, also when another computer is chosen
+
 ## [1.0.36] - 2026-11-17
 
 ### Features

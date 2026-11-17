@@ -94,5 +94,17 @@ class LocalPublishScriptTests(unittest.TestCase):
         self.assertIn("site.local_publish?.binding", call)
         self.assertNotIn("site.local_publish.binding", call)
 
+    def test_the_token_is_saved_where_the_script_of_that_computer_looks_and_stays_shown(self):
+        """Windows was given the macOS command to save its token, and choosing another computer hid a new token"""
+        source = (APP / "static/app.js").read_text()
+        start = source.index("async function renderPublishToken(")
+        body = source[start:source.index("\n}\n", start)]
+        self.assertIn('if not exist "${folder}" mkdir "${folder}" & echo ${info.token}> "${folder}\\\\${server}.token"', body)
+        self.assertIn("const folder = `%USERPROFILE%\\\\.config\\\\vns-harbor`;", body)
+        self.assertIn("if (shownPublishToken && info.exists) info.token = shownPublishToken;", body)
+        # Where the cmd script reads it
+        text = self.script(site="shop.example.com", binding="shop.example.com", https="n", environment="Production", access="token", system="windows")
+        self.assertIn('set "TOKEN_FILE=%USERPROFILE%\\.config\\vns-harbor\\web-02.example.com.token"', text)
+
 if __name__ == "__main__":
     unittest.main()

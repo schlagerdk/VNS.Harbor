@@ -2933,7 +2933,8 @@ function publishBash({ site, binding, https, environment, csharp, source, server
 		...(csharp ? ["# The project to publish: the only .csproj in this folder, or name it: PROJECT=Site.csproj ./publish-harbor.sh",
 			'PROJECT="${PROJECT:-}"']
 			: [`# The folder whose files are published`, `SOURCE=${quote(source)}`]),
-		"# Paths the site keeps on the server from every publish, such as /wwwroot/ or /.env:",
+		"# Paths the site keeps on the server from every publish, such as /wwwroot/ or /.env. The first publish to a site",
+		"# with files the publish would delete stops until you choose: the paths it keeps, or KEEP=(none) to let them go.",
 		"# KEEP=(/wwwroot/)",
 		"KEEP=()",
 		...(csharp ? ["# y: appsettings.json from the build at every publish (appsettings.<Environment>.json on the server stays).",
@@ -3000,7 +3001,8 @@ function publishCmd({ site, binding, https, environment, csharp, source, server,
 			: [`set "SERVER=root@${server}"`, `set "PORT=22"`]),
 		...(csharp ? ["rem The project to publish: the only .csproj in this folder, or name it here", `set "PROJECT="`]
 			: ["rem The folder whose files are published", `set "SOURCE=${source}"`]),
-		"rem Paths the site keeps on the server from every publish, separated by spaces, such as /wwwroot/ or /.env",
+		"rem Paths the site keeps on the server from every publish, separated by spaces, such as /wwwroot/ or /.env.",
+		"rem The first publish to a site with files the publish would delete stops until you choose: the paths, or none",
 		`set "KEEP="`,
 		...(csharp ? ["rem y: appsettings.json from the build at every publish (appsettings.<Environment>.json on the server stays)", `set "SEND_APPSETTINGS=n"`] : []),
 		"",
@@ -3056,8 +3058,11 @@ function publishCmd({ site, binding, https, environment, csharp, source, server,
 		"exit /b 1");
 	return lines.join("\r\n") + "\r\n";
 }
+// A token made while the dialog is open: shown until it closes, whichever computer is chosen (it is the same token)
+let shownPublishToken = null;
 function showLocalPublish(options) {
 	const dialog = $("#dlg-local-publish");
+	shownPublishToken = null;
 	const form = dialog.querySelector("form");
 	// The computer guessed from the browser, the access as it was chosen last; both can be changed
 	const windows = /win/i.test(navigator.userAgentData?.platform || navigator.platform || "");
@@ -3098,7 +3103,10 @@ async function renderPublishToken(made = null) {
 	const box = $("#local-publish-token");
 	const server = location.hostname.replace(/^admin\./, "");
 	const dialog = $("#dlg-local-publish");
+	if (made) shownPublishToken = made.token || null;
 	const info = made || await api("/api/publish-token").catch(() => ({ exists: false }));
+	if (shownPublishToken && info.exists) info.token = shownPublishToken;
+	const windows = dialog.querySelector("form").elements.lp_system.value === "windows";
 	const when = (value) => value ? new Date(value).toLocaleString() : "never";
 	const button = (label, action, className = "") => el("button", { type: "button", className, textContent: label, onclick: () => run(action) });
 	const make = async () => {
@@ -3106,7 +3114,8 @@ async function renderPublishToken(made = null) {
 		renderPublishToken(await api("/api/publish-token", { method: "POST" }));
 	};
 	const remove = async () => {
-		if (!(await ask({ title: "Remove your publish token?", message: "Publishing with it stops; the script then uses SSH.", input: false, ok: "Remove", danger: true }))) return;
+		if (!(await ask({ title: "Remove your publish token?", message: "Publishing with it stops: make a new one, or publish over SSH.", input: false, ok: "Remove", danger: true }))) return;
+		shownPublishToken = null;
 		renderPublishToken(await api("/api/publish-token", { method: "DELETE" }));
 	};
 	const head = el("div", { className: "local-publish-token-head" },
@@ -3119,8 +3128,13 @@ async function renderPublishToken(made = null) {
 		...(info.exists ? [button("Remove", remove, "tool-danger")] : []));
 	const shown = [];
 	if (info.token) {
-		const save = `mkdir -p ~/.config/vns-harbor && printf '%s' '${info.token}' > ~/.config/vns-harbor/${server}.token && chmod 600 ~/.config/vns-harbor/${server}.token`;
-		shown.push(el("p", { className: "hint", textContent: "Your new token. Copy it now: Harbor keeps only a fingerprint of it. Run this on your machine to save it where the script looks:" }),
+		// Saved where the script for this computer looks: macOS/Linux in ~/.config, Windows in %USERPROFILE%\.config (Command Prompt)
+		const folder = `%USERPROFILE%\\.config\\vns-harbor`;
+		const save = windows
+			? `if not exist "${folder}" mkdir "${folder}" & echo ${info.token}> "${folder}\\${server}.token"`
+			: `mkdir -p ~/.config/vns-harbor && printf '%s' '${info.token}' > ~/.config/vns-harbor/${server}.token && chmod 600 ~/.config/vns-harbor/${server}.token`;
+		shown.push(el("p", { className: "hint", textContent: "Your new token. Copy it now: Harbor keeps only a fingerprint of it. "
+			+ (windows ? "Run this in Command Prompt (cmd) on your machine to save it where the script looks:" : "Run this on your machine to save it where the script looks:") }),
 			el("pre", { className: "local-publish-script local-publish-token-save", textContent: save }),
 			button("Copy command", async () => { await copyText(save, dialog); toast("Command copied.", "ok"); }));
 	}

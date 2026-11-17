@@ -175,6 +175,11 @@ def setup_site(system, name="", binding="", certificate="", environment=""):
                                "--self-contained", "false", "--nologo", cwd=site.site_root)
             # The service runs as www-data and writes inside the folder it runs from
             system.run("chown", "-R", "www-data:www-data", site.publish_root)
+            # Its scripts stay root's, as the admin runs them as root: also where the site runs from its own folder
+            scripts = system.path(f"{site.site_root}/scripts")
+            if scripts.is_dir():
+                system.run("chown", "-R", "root:root", str(scripts))
+                system.run("chmod", "-R", "go-w", str(scripts))
             conf = kind_folder / "apache.conf.tpl"
             service = kind_folder / "service.tpl"
             install_apache_config(system, site, conf if conf.is_file() else SOLUTION / "csharp/apache.conf.tpl", certificate=certificate == "y")
