@@ -418,10 +418,14 @@
       <span class="ns-icon" data-header-icon="upload" aria-hidden="true"></span>
       <div><h2 id="local-publish-title">Publish from your machine</h2><p id="local-publish-intro"></p></div>
     </header>
-    <ol class="local-publish-steps">
-      <li>Save the script as <code>publish-harbor.sh</code> in your project's folder, and make it runnable: <code>chmod +x publish-harbor.sh</code></li>
-      <li>Run it there: <code>./publish-harbor.sh</code>. It builds the project for this server, sends the build over one SSH login, and Harbor checks it, puts it in place and checks that the site answers.</li>
-    </ol>
+    <div class="local-publish-choices">
+      <div class="lp-choice" role="radiogroup" aria-label="Your computer"><span class="choice-label">Your computer</span>
+        <label><input type="radio" name="lp_system" value="unix" checked><span>macOS / Linux</span></label><label><input type="radio" name="lp_system" value="windows"><span>Windows</span></label></div>
+      <div class="lp-choice" role="radiogroup" aria-label="Access"><span class="choice-label">Access to the server</span>
+        <label><input type="radio" name="lp_access" value="token" checked><span>Publish token</span></label><label><input type="radio" name="lp_access" value="ssh"><span>SSH as root</span></label></div>
+    </div>
+    <ol class="local-publish-steps" id="local-publish-steps"></ol>
+    <section id="local-publish-token" class="local-publish-token" aria-live="polite"></section>
     <pre id="local-publish-script" class="local-publish-script"></pre>
     <p class="hint" id="local-publish-note"></p>
     <menu><li class="cancel-action"><button type="button" id="local-publish-copy" class="cancel-link">Copy script</button></li><li><button type="submit" class="primary">Close</button></li></menu>

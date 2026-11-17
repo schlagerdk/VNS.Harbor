@@ -2,6 +2,15 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.36] - 2026-11-17
+
+### Features
+
+- Publish from your machine without SSH: a publish token of your own, made, shown once and removed in the Publish from your machine dialog (only its fingerprint is kept, root only). With it the script publishes over HTTPS to Harbor (POST /api/publish/<site>), as you and only to the sites you may publish; the output comes back as it runs, and the script fails when the publish does
+- The Publish from your machine dialog asks which computer (macOS/Linux or Windows: a .cmd script, with Windows' own tar, curl and ssh) and which access (publish token or SSH as root), and its script, steps and file name follow
+- Python and static sites can be published from a machine too: a Python site's app folder (its packages installed when requirements.txt changed, then restarted and checked on gunicorn's port), a static site's files. harbor site rollback works for them as well
+- Update Python packages is beside the site's title, as Publish all, and only when pip says a package in requirements.txt has a newer version (how many and which in its tip). What pip says is kept an hour, and asked again after an update
+
 ## [1.0.35] - 2026-11-17
 
 ### Features

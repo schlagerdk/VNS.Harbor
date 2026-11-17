@@ -47,7 +47,7 @@ class ReceiveBuildTests(unittest.TestCase):
     def test_nothing_sent_is_said(self):
         code, system = self.harbor()
         self.assertEqual(code, 1)
-        self.assertIn("publish script", system.said[-1])
+        self.assertIn("Make the site in Harbor first", system.said[-1])
 
     def test_the_first_build_sets_the_site_up_and_later_ones_keep_what_it_has(self):
         self.build({"Shop.dll": "v1", "Shop.runtimeconfig.json": "{}", "appsettings.json": '{"local": true}',
@@ -225,6 +225,43 @@ class ReceiveBuildTests(unittest.TestCase):
             system = self.system()
             self.assertEqual(main(["site", "receive-build", "shop.dk"], system), 1)
             self.assertIn("being published already", system.said[-1])
+
+    def test_a_python_site_gets_its_app_its_packages_when_they_changed_and_is_checked(self):
+        site = self.root / "var/www/shop.dk"
+        for name, text in (("app/app.py", "v1"), ("app/requirements.txt", "flask==3.0"), ("app/.env", "SECRET=1"), ("venv/bin/pip", "")):
+            (site / name).parent.mkdir(parents=True, exist_ok=True)
+            (site / name).write_text(text)
+        (self.root / "etc/systemd/system").mkdir(parents=True)
+        (self.root / "etc/systemd/system/shop.dk.service").write_text("ExecStart=/var/www/shop.dk/venv/bin/gunicorn --bind 127.0.0.1:4100 app:app\n")
+        self.build({"app.py": "v2", "requirements.txt": "flask==3.0"})
+        system = self.system()
+        self.assertEqual(main(["site", "receive-build", "shop.dk", "--keep", "/.env"], system), 0, system.said)
+        self.assertEqual((site / "app/app.py").read_text(), "v2")
+        self.assertEqual((site / "app/.env").read_text(), "SECRET=1", "kept")
+        self.assertFalse(any("pip" in command for command in system.commands), "the same requirements: no install")
+        self.assertTrue(any("127.0.0.1:4100" in command for command in system.commands), "gunicorn's port, checked")
+        self.build({"app.py": "v3", "requirements.txt": "flask==3.1"})
+        system = self.system()
+        self.assertEqual(main(["site", "receive-build", "shop.dk"], system), 0, system.said)
+        self.assertIn("sudo -u www-data ./venv/bin/pip install --upgrade -r app/requirements.txt", system.commands)
+        self.build({"main.py": "x"})
+        self.assertEqual(main(["site", "receive-build", "shop.dk"], self.system()), 1, "no app.py: not what the site runs")
+
+    def test_an_html_site_gets_its_files_and_keeps_its_scripts_root(self):
+        site = self.root / "var/www/shop.dk"
+        (site / "scripts").mkdir(parents=True)
+        (site / "scripts/own.sh").write_text("echo")
+        (site / "index.html").write_text("old")
+        (site / "old.html").write_text("gone")
+        self.build({"index.html": "new", "css/site.css": "body{}"})
+        system = self.system()
+        self.assertEqual(main(["site", "receive-build", "shop.dk"], system), 0, system.said)
+        self.assertEqual((site / "index.html").read_text(), "new")
+        self.assertFalse((site / "old.html").exists())
+        self.assertEqual((site / "scripts/own.sh").read_text(), "echo", "its scripts are not the build's")
+        self.assertFalse(any("systemctl restart" in command for command in system.commands), "no service to restart")
+        self.assertEqual(main(["site", "rollback", "shop.dk"], self.system()), 0)
+        self.assertEqual((site / "index.html").read_text(), "old")
 
     def test_a_site_with_a_project_here_is_not_replaced(self):
         site = self.root / "var/www/shop.dk"

@@ -1436,12 +1436,20 @@ function renderSite(name) {
 	if (site.has_project && site.kind !== "csharp" && site.kind !== "umbraco" && site.scripts.includes("outdated.sh")) {
 		actions.append(el("button", { textContent: "Check outdated", title: "outdated.sh", onclick: () => run(() => openTask({ kind: "script", site: site.name, script: "outdated.sh" })) }));
 	}
-	if (site.kind === "python") {
-		for (const [script, label] of [["update_packages.sh", "Update Python packages"]]) {
-			if (site.scripts.includes(script)) {
-				add(label, () => openTask({ kind: "script", site: site.name, script }));
-			}
-		}
+	// Update Python packages: beside the title, as Publish all, and only when pip says some are outdated
+	let pythonUpdates = null;
+	if (site.kind === "python" && site.scripts.includes("update_packages.sh")) {
+		pythonUpdates = el("button", { textContent: "Update Python packages", className: "detail-title-action", hidden: true,
+			onclick: () => run(async () => {
+				const t = await openTask({ kind: "script", site: site.name, script: "update_packages.sh" });
+				if (t) t.afterTask = () => renderSite(site.name);
+			}) });
+		api(`/api/sites/${encodeURIComponent(site.name)}/python-outdated`).then(({ outdated }) => {
+			if (!outdated?.length || !pythonUpdates.isConnected) return;
+			pythonUpdates.textContent = `Update Python packages (${outdated.length})`;
+			pythonUpdates.title = outdated.map((item) => `${item.name} ${item.version} → ${item.latest}`).join("\n");
+			pythonUpdates.hidden = false;
+		}).catch(() => { /* no button when pip cannot tell */ });
 	}
 	// The main site's Sync settings… and Sync data…, beside Publish all: they open the same dialog
 	const mainEnv = site.environments.find((env) => !isTarget(env));
@@ -1465,6 +1473,7 @@ function renderSite(name) {
 		title.append(el("button", { textContent: "Move under main site", className: "detail-title-action", onclick: () => run(() => openAdoptDialog(site)) }));
 	}
 	if (publishAll) title.append(publishAll);
+	if (pythonUpdates) title.append(pythonUpdates);
 	head.append(title);
 	if (actions.childElementCount) head.append(actions);
 	for (const env of site.environments) {
@@ -1788,9 +1797,12 @@ function envPanel(site, env) {
 	if (currentUser.admin && site.kind === "umbraco" && !site.managed_by) addManage("Backoffice login…", () => backofficeLoginDialog(site, env));
 	// A site published from a developer's machine, or any C# site that is only a build here (no project, not an
 	// environment of a site elsewhere): the script that sends it a new build
-	const buildOnly = !site.has_project && (site.kind === "csharp" || site.kind === "umbraco") && !site.managed_by && !site.admin;
-	if (currentUser.admin && (site.local_publish || buildOnly) && !isTarget(env)) addManage("Publish from your machine…", () => showLocalPublish({
-		site: site.name, binding: site.local_publish?.binding || bindingLabel(env), https: env.scheme === "https" ? "y" : "n", environment: env.environment || "Production" }));
+	// Python and static sites too: their files are published the same way
+	const buildOnly = (!site.has_project && (site.kind === "csharp" || site.kind === "umbraco") || site.kind === "python" || site.kind === "html")
+		&& !site.managed_by && !site.admin;
+	// Also for a user who may publish it: with their own publish token, no SSH as root
+	if ((currentUser.admin || can(site.name, "main", "publish")) && (site.local_publish || buildOnly) && !isTarget(env)) addManage("Publish from your machine…", () => showLocalPublish({
+		site: site.name, kind: site.kind, binding: site.local_publish?.binding || bindingLabel(env), https: env.scheme === "https" ? "y" : "n", environment: env.environment || "Production" }));
 	// Moved from Windows, here as an environment: its data fetched again, and taken over once the address has moved
 	if (currentUser.admin && env.windows_move && isTarget(env)) {
 		addManage("Refresh from Windows…", () => refreshMovedFromWindows(site, env));
@@ -2889,67 +2901,230 @@ siteForm.onsubmit = (event) => {
 
 // The script a developer runs in the project's folder: dotnet publish for Linux, the build to this server over SSH,
 // and harbor site receive-build here (harbor/sites/receive_build.py). This server by the name the admin is reached by.
-function localPublishScript({ site, binding, https, environment }) {
+// The script a developer runs in the project's folder: for macOS/Linux (bash) or Windows (cmd), sending over HTTPS with
+// their publish token or over SSH as root, for a C# site (dotnet publish for the server's architecture), a Python
+// site (its app folder) or a static site (its files). Harbor puts it in place: harbor site receive-build here
+// (harbor/sites/receive_build.py)
+function localPublishScript({ site, binding, https, environment, kind = "csharp", system = "unix", access = "token" }) {
 	const server = location.hostname.replace(/^admin\./, "");
+	const admin = location.origin;
+	const csharp = kind === "csharp" || kind === "umbraco";
+	const source = kind === "python" ? "app" : ".";
+	return (system === "windows" ? publishCmd : publishBash)({ site, binding: binding || "*", https: https === "y" ? "y" : "n",
+		environment: environment || "Production", csharp, source, server, admin, token: access === "token" });
+}
+function publishBash({ site, binding, https, environment, csharp, source, server, admin, token }) {
 	const quote = (value) => `'${String(value).replaceAll("'", "'\\''")}'`;
-	return `#!/usr/bin/env bash
-# Publishes ${site} from this machine to ${server} (VNS Harbor). Run it in the project's folder.
-# It builds the project for the server's architecture and sends the build, with a scripts folder beside it, as one
-# tar over one SSH login. The first run sets the site up; later runs check the build (it has the dll the site runs,
-# and nothing the site keeps on the server), put it in place and restart the site. If the site then does not run and
-# answer, the publish fails here too, and harbor site rollback ${site} on the server puts the build before it back.
-set -euo pipefail
-SERVER=${quote("root@" + server)}
-PORT=22
-SITE=${quote(site)}
-# The project to publish: the only .csproj in this folder, or name it: PROJECT=Site.csproj ./publish-harbor.sh
-PROJECT="\${PROJECT:-}"
-# Paths the site keeps on the server from every publish, such as /wwwroot/ when its files are made there:
-# KEEP=(/wwwroot/)
-KEEP=()
-# y: appsettings.json from the build at every publish (appsettings.<Environment>.json on the server stays).
-# n: only the first time, and the server's own stays
-SEND_APPSETTINGS=n
-
-if [ -z "$PROJECT" ]; then
-	set -- *.csproj
-	if [ "$#" -ne 1 ] || [ ! -e "$1" ]; then
-		echo "There is not exactly one .csproj here: name it, PROJECT=Site.csproj $0" >&2
-		exit 1
-	fi
-	PROJECT="$1"
-fi
-SSH=(ssh -p "$PORT" -o ControlMaster=auto -o "ControlPath=$HOME/.ssh/harbor-%r@%h:%p" -o ControlPersist=60 "$SERVER")
-case "$("\${SSH[@]}" uname -m)" in
-	x86_64) RID=linux-x64 ;;
-	aarch64|arm64) RID=linux-arm64 ;;
-	*) echo "The server's architecture is not one .NET publishes for" >&2; exit 1 ;;
-esac
-OUT="$(mktemp -d)"
-trap 'rm -rf "$OUT"' EXIT
-dotnet publish "$PROJECT" -c Release -r "$RID" --self-contained false -o "$OUT/build"
-if [ -d scripts ]; then
-	cp -R scripts "$OUT/scripts"
-fi
-COMMIT="$(git rev-parse --short HEAD 2>/dev/null || true)"
-DIRTY=n
-if [ -n "$(git status --porcelain 2>/dev/null || true)" ]; then DIRTY=y; fi
-APPSETTINGS=server
-if [ "$SEND_APPSETTINGS" = y ]; then APPSETTINGS=build; fi
-REMOTE="$(printf '%q ' harbor site receive-build "$SITE" --stdin --binding ${quote(binding || "*")} --https ${https === "y" ? "y" : "n"} \\
-	--environment ${quote(environment || "Production")} --appsettings "$APPSETTINGS" --by "$(whoami)@$(hostname -s)" --commit "$COMMIT" --dirty "$DIRTY" \\
-	\${KEEP[@]+"\${KEEP[@]/#/--keep=}"})"
-COPYFILE_DISABLE=1 tar -C "$OUT" -czf - . | "\${SSH[@]}" "$REMOTE"
-`;
+	const lines = [
+		"#!/usr/bin/env bash",
+		`# Publishes ${site} from this machine to ${server} (VNS Harbor). Run it in the project's folder.`,
+		csharp ? "# It builds the project for the server's architecture and sends the build, with a scripts folder beside it, as one"
+			: `# It sends the files in ${source === "." ? "this folder" : source} (no .git, node_modules or virtual environment), with a scripts folder beside it, as one`,
+		token ? "# tar over HTTPS to Harbor, with your publish token. Harbor checks it, puts it in place"
+			: "# tar over one SSH login as root. Harbor checks it, puts it in place",
+		csharp || source === "app" ? "# and restarts the site; if it then does not run and answer, the publish fails here too." : "# (a static site has nothing to restart).",
+		`# harbor site rollback ${site} on the server puts what it had before back.`,
+		"set -euo pipefail",
+		`SITE=${quote(site)}`,
+		...(token ? [`HARBOR=${quote(admin)}`,
+			"# Your publish token (Publish from your machine in Harbor): in HARBOR_TOKEN, or in this file",
+			`TOKEN_FILE="$HOME/.config/vns-harbor/${server}.token"`]
+			: [`SERVER=${quote("root@" + server)}`, "PORT=22"]),
+		...(csharp ? ["# The project to publish: the only .csproj in this folder, or name it: PROJECT=Site.csproj ./publish-harbor.sh",
+			'PROJECT="${PROJECT:-}"']
+			: [`# The folder whose files are published`, `SOURCE=${quote(source)}`]),
+		"# Paths the site keeps on the server from every publish, such as /wwwroot/ or /.env:",
+		"# KEEP=(/wwwroot/)",
+		"KEEP=()",
+		...(csharp ? ["# y: appsettings.json from the build at every publish (appsettings.<Environment>.json on the server stays).",
+			"# n: only the first time, and the server's own stays", "SEND_APPSETTINGS=n"] : []),
+		"",
+	];
+	if (token) lines.push('TOKEN="${HARBOR_TOKEN:-}"',
+		'if [ -z "$TOKEN" ] && [ -f "$TOKEN_FILE" ]; then TOKEN="$(cat "$TOKEN_FILE")"; fi',
+		'if [ -z "$TOKEN" ]; then echo "No publish token: make one with Publish from your machine in Harbor, and save it in $TOKEN_FILE" >&2; exit 1; fi');
+	else lines.push('SSH=(ssh -p "$PORT" -o ControlMaster=auto -o "ControlPath=$HOME/.ssh/harbor-%r@%h:%p" -o ControlPersist=60 "$SERVER")');
+	lines.push('OUT="$(mktemp -d)"', "trap 'rm -rf \"$OUT\"' EXIT", 'mkdir -p "$OUT/tar/build"');
+	if (csharp) lines.push(
+		'if [ -z "$PROJECT" ]; then',
+		"\tset -- *.csproj",
+		'\tif [ "$#" -ne 1 ] || [ ! -e "$1" ]; then echo "There is not exactly one .csproj here: name it, PROJECT=Site.csproj $0" >&2; exit 1; fi',
+		'\tPROJECT="$1"',
+		"fi",
+		token ? 'ARCH="$(curl -fsS -H "Authorization: Bearer $TOKEN" "$HARBOR/api/publish/$SITE/architecture")"' : 'ARCH="$("${SSH[@]}" uname -m)"',
+		'case "$ARCH" in',
+		"\tx86_64) RID=linux-x64 ;;",
+		"\taarch64|arm64) RID=linux-arm64 ;;",
+		'\t*) echo "The server\'s architecture (${ARCH:-not known}) is not one .NET publishes for" >&2; exit 1 ;;',
+		"esac",
+		'dotnet publish "$PROJECT" -c Release -r "$RID" --self-contained false -o "$OUT/tar/build"');
+	else lines.push(
+		'COPYFILE_DISABLE=1 tar -C "$SOURCE" --exclude=./.git --exclude=./node_modules --exclude=./.venv --exclude=./venv --exclude=__pycache__ \\',
+		'\t--exclude=./scripts --exclude="./publish-harbor.*" -cf - . | tar -C "$OUT/tar/build" -xf -');
+	lines.push(
+		'if [ -d scripts ]; then cp -R scripts "$OUT/tar/scripts"; fi',
+		'COMMIT="$(git rev-parse --short HEAD 2>/dev/null || true)"',
+		"DIRTY=n",
+		'if [ -n "$(git status --porcelain 2>/dev/null || true)" ]; then DIRTY=y; fi');
+	if (csharp) lines.push("APPSETTINGS=server", 'if [ "$SEND_APPSETTINGS" = y ]; then APPSETTINGS=build; fi');
+	if (token) lines.push(
+		'COPYFILE_DISABLE=1 tar -C "$OUT/tar" -czf "$OUT/build.tgz" .',
+		`QUERY=(--url-query "commit=$COMMIT" --url-query "dirty=$DIRTY"${csharp ? ' --url-query "appsettings=$APPSETTINGS"' : ""})`,
+		'for path in ${KEEP[@]+"${KEEP[@]}"}; do QUERY+=(--url-query "keep=$path"); done',
+		'curl -sS -N --fail-with-body -X POST -T "$OUT/build.tgz" -H "Authorization: Bearer $TOKEN" "${QUERY[@]}" \\',
+		'\t"$HARBOR/api/publish/$SITE" | tee "$OUT/log"',
+		'[ "$(tail -n 1 "$OUT/log")" = "Harbor: OK" ]');
+	else lines.push(
+		`REMOTE="$(printf '%q ' harbor site receive-build "$SITE" --stdin${csharp ? ` --binding ${quote(binding)} --https ${https} --environment ${quote(environment)} --appsettings "$APPSETTINGS"` : ""} \\`,
+		'\t--by "$(whoami)@$(hostname -s)" --commit "$COMMIT" --dirty "$DIRTY" ${KEEP[@]+"${KEEP[@]/#/--keep=}"})"',
+		'COPYFILE_DISABLE=1 tar -C "$OUT/tar" -czf - . | "${SSH[@]}" "$REMOTE"');
+	return lines.join("\n") + "\n";
+}
+function publishCmd({ site, binding, https, environment, csharp, source, server, admin, token }) {
+	// For the server's shell: one argument in single quotes
+	const quote = (value) => `'${String(value).replaceAll("'", "'\\''")}'`;
+	const lines = [
+		"@echo off",
+		"setlocal EnableExtensions EnableDelayedExpansion",
+		`rem Publishes ${site} from this machine to ${server} (VNS Harbor). Run it in the project's folder.`,
+		csharp ? "rem It builds the project for the server's architecture and sends the build, with a scripts folder beside it, as one"
+			: `rem It sends the files in ${source === "." ? "this folder" : source} (no .git, node_modules or virtual environment), with a scripts folder beside it, as one`,
+		token ? "rem tar over HTTPS to Harbor, with your publish token. Harbor checks it and puts it in place."
+			: "rem tar over SSH as root. Harbor checks it and puts it in place.",
+		`rem harbor site rollback ${site} on the server puts what it had before back.`,
+		"rem Windows 10 and later have tar, curl and ssh.",
+		`set "SITE=${site}"`,
+		...(token ? [`set "HARBOR=${admin}"`,
+			"rem Your publish token (Publish from your machine in Harbor): in HARBOR_TOKEN, or in this file",
+			`set "TOKEN_FILE=%USERPROFILE%\\.config\\vns-harbor\\${server}.token"`]
+			: [`set "SERVER=root@${server}"`, `set "PORT=22"`]),
+		...(csharp ? ["rem The project to publish: the only .csproj in this folder, or name it here", `set "PROJECT="`]
+			: ["rem The folder whose files are published", `set "SOURCE=${source}"`]),
+		"rem Paths the site keeps on the server from every publish, separated by spaces, such as /wwwroot/ or /.env",
+		`set "KEEP="`,
+		...(csharp ? ["rem y: appsettings.json from the build at every publish (appsettings.<Environment>.json on the server stays)", `set "SEND_APPSETTINGS=n"`] : []),
+		"",
+	];
+	if (token) lines.push(
+		`set "TOKEN=%HARBOR_TOKEN%"`,
+		`if not defined TOKEN if exist "%TOKEN_FILE%" set /p TOKEN=<"%TOKEN_FILE%"`,
+		`if not defined TOKEN (echo No publish token: make one with Publish from your machine in Harbor, and save it in %TOKEN_FILE% & exit /b 1)`);
+	lines.push(`set "OUT=%TEMP%\\harbor-publish-%RANDOM%%RANDOM%"`, `mkdir "%OUT%\\tar\\build" || exit /b 1`);
+	if (csharp) lines.push(
+		"if not defined PROJECT (",
+		"\tset /a COUNT=0",
+		`\tfor %%f in (*.csproj) do (set /a COUNT+=1 & set "PROJECT=%%f")`,
+		`\tif not "!COUNT!"=="1" (echo There is not exactly one .csproj here: name it in PROJECT at the top of this script & goto failed)`,
+		")",
+		token ? `for /f "usebackq delims=" %%a in (\`curl -fsS -H "Authorization: Bearer !TOKEN!" "%HARBOR%/api/publish/%SITE%/architecture"\`) do set "ARCH=%%a"`
+			: `for /f "usebackq delims=" %%a in (\`ssh -p %PORT% %SERVER% uname -m\`) do set "ARCH=%%a"`,
+		`if "!ARCH!"=="x86_64" (set "RID=linux-x64") else if "!ARCH!"=="aarch64" (set "RID=linux-arm64") else (echo The server's architecture is not one .NET publishes for & goto failed)`,
+		`dotnet publish "!PROJECT!" -c Release -r !RID! --self-contained false -o "%OUT%\\tar\\build" || goto failed`);
+	else lines.push(
+		`tar -C "%SOURCE%" --exclude=./.git --exclude=./node_modules --exclude=./.venv --exclude=./venv --exclude=__pycache__ --exclude=./scripts --exclude="./publish-harbor.*" -cf "%OUT%\\files.tar" . || goto failed`,
+		`tar -C "%OUT%\\tar\\build" -xf "%OUT%\\files.tar" || goto failed`,
+		`del "%OUT%\\files.tar"`);
+	lines.push(
+		`if exist scripts\\ xcopy /e /i /q scripts "%OUT%\\tar\\scripts" >nul`,
+		`set "COMMIT="`,
+		`for /f %%c in ('git rev-parse --short HEAD 2^>nul') do set "COMMIT=%%c"`,
+		`set "DIRTY=n"`,
+		`for /f %%d in ('git status --porcelain 2^>nul') do set "DIRTY=y"`);
+	if (csharp) lines.push(`set "APPSETTINGS=server"`, `if /i "%SEND_APPSETTINGS%"=="y" set "APPSETTINGS=build"`);
+	lines.push(`tar -C "%OUT%\\tar" -czf "%OUT%\\build.tgz" . || goto failed`);
+	if (token) lines.push(
+		`set "QUERY=commit=!COMMIT!&dirty=!DIRTY!${csharp ? "&appsettings=!APPSETTINGS!" : ""}"`,
+		`for %%k in (%KEEP%) do set "QUERY=!QUERY!&keep=%%k"`,
+		`curl -sS -N --fail-with-body -X POST -T "%OUT%\\build.tgz" -H "Authorization: Bearer !TOKEN!" "%HARBOR%/api/publish/%SITE%?!QUERY!" > "%OUT%\\log"`,
+		`set "CODE=!errorlevel!"`,
+		`type "%OUT%\\log"`,
+		`set "LAST="`,
+		`for /f "usebackq delims=" %%l in ("%OUT%\\log") do set "LAST=%%l"`,
+		`if not "!CODE!"=="0" goto failed`,
+		`if not "!LAST!"=="Harbor: OK" goto failed`);
+	else lines.push(
+		`set "KEEPARGS="`,
+		`for %%k in (%KEEP%) do set "KEEPARGS=!KEEPARGS! '--keep=%%k'"`,
+		`ssh -p %PORT% %SERVER% "harbor site receive-build ${quote(site)} --stdin${csharp ? ` --binding ${quote(binding)} --https ${https} --environment ${quote(environment)} --appsettings !APPSETTINGS!` : ""} --by '%USERNAME%@%COMPUTERNAME%' --commit '!COMMIT!' --dirty !DIRTY!!KEEPARGS!" < "%OUT%\\build.tgz" || goto failed`);
+	lines.push(
+		`rmdir /s /q "%OUT%"`,
+		"echo Published.",
+		"exit /b 0",
+		":failed",
+		`if exist "%OUT%" rmdir /s /q "%OUT%"`,
+		"echo The publish failed.",
+		"exit /b 1");
+	return lines.join("\r\n") + "\r\n";
 }
 function showLocalPublish(options) {
 	const dialog = $("#dlg-local-publish");
-	const script = localPublishScript(options);
-	$("#local-publish-intro").textContent = `${options.site} runs the build you publish from your computer. Its project must build the same dll.`;
-	$("#local-publish-script").textContent = script;
-	$("#local-publish-note").textContent = "Your machine needs the .NET SDK and SSH access to this server as root (an SSH key). The build is framework-dependent, for the server's architecture: the server runs it with its own .NET. KEEP and SEND_APPSETTINGS at the top of the script set what the site keeps on the server.";
-	$("#local-publish-copy").onclick = () => run(async () => { await copyText(script, dialog); toast("Script copied.", "ok"); });
+	const form = dialog.querySelector("form");
+	// The computer guessed from the browser, the access as it was chosen last; both can be changed
+	const windows = /win/i.test(navigator.userAgentData?.platform || navigator.platform || "");
+	let saved = {};
+	try { saved = JSON.parse(localStorage.getItem("harbor-local-publish") || "{}"); } catch (_) { /* none */ }
+	form.elements.lp_system.value = saved.system || (windows ? "windows" : "unix");
+	form.elements.lp_access.value = saved.access || (currentUser.admin ? "ssh" : "token");
+	const render = () => {
+		const system = form.elements.lp_system.value;
+		const access = form.elements.lp_access.value;
+		try { localStorage.setItem("harbor-local-publish", JSON.stringify({ system, access })); } catch (_) { /* not kept */ }
+		const file = system === "windows" ? "publish-harbor.cmd" : "publish-harbor.sh";
+		const script = localPublishScript({ ...options, system, access });
+		const kind = options.kind === "python" ? "Python" : options.kind === "html" ? "static" : "C#";
+		$("#local-publish-intro").textContent = kind === "C#" ? `${options.site} runs the build you publish from your computer. Its project must build the same dll.`
+			: `${options.site} runs the ${kind} files you publish from your computer.`;
+		const step = (...parts) => el("li", {}, ...parts.map((part) => part.code ? el("code", { textContent: part.code }) : part));
+		$("#local-publish-steps").replaceChildren(
+			step("Save the script as ", { code: file }, " in your project's folder" + (system === "windows" ? "." : ", and make it runnable: "), ...(system === "windows" ? [] : [{ code: `chmod +x ${file}` }])),
+			step("Run it there: ", { code: system === "windows" ? file : `./${file}` }, kind === "C#" ? ". It builds the project for this server and sends the build;" : ". It sends the files;",
+				" Harbor checks it, puts it in place" + (kind === "static" ? "." : " and checks that the site answers.")));
+		$("#local-publish-script").textContent = script;
+		$("#local-publish-note").textContent = (kind === "C#" ? "Your computer needs the .NET SDK. " : "")
+			+ (access === "token" ? "With a publish token the script publishes over HTTPS as you, to the sites you may publish." : "With SSH it logs in as root with your SSH key.")
+			+ " KEEP at the top of the script sets what the site keeps on the server.";
+		$("#local-publish-copy").onclick = () => run(async () => { await copyText(script, dialog); toast("Script copied.", "ok"); });
+		$("#local-publish-token").hidden = access !== "token";
+		if (access === "token") renderPublishToken();
+	};
+	form.elements.lp_system.forEach((input) => { input.onchange = render; });
+	form.elements.lp_access.forEach((input) => { input.onchange = render; });
+	render();
 	dialog.showModal();
+}
+// Your publish token, where the script is: whether you have one, a new one shown this once with the command that
+// saves it where the script looks, or none. Without one the script uses SSH as root
+async function renderPublishToken(made = null) {
+	const box = $("#local-publish-token");
+	const server = location.hostname.replace(/^admin\./, "");
+	const dialog = $("#dlg-local-publish");
+	const info = made || await api("/api/publish-token").catch(() => ({ exists: false }));
+	const when = (value) => value ? new Date(value).toLocaleString() : "never";
+	const button = (label, action, className = "") => el("button", { type: "button", className, textContent: label, onclick: () => run(action) });
+	const make = async () => {
+		if (info.exists && !(await ask({ title: "Make a new publish token?", message: "The token you have stops working: save the new one where you used it.", input: false, ok: "Make new token" }))) return;
+		renderPublishToken(await api("/api/publish-token", { method: "POST" }));
+	};
+	const remove = async () => {
+		if (!(await ask({ title: "Remove your publish token?", message: "Publishing with it stops; the script then uses SSH.", input: false, ok: "Remove", danger: true }))) return;
+		renderPublishToken(await api("/api/publish-token", { method: "DELETE" }));
+	};
+	const head = el("div", { className: "local-publish-token-head" },
+		el("span", { className: "local-publish-token-icon", "aria-hidden": "true" }, svgIcon("key")),
+		el("div", {}, el("strong", { textContent: "Publish without SSH: your publish token" }),
+			el("small", { textContent: info.exists ? `You have one, made ${when(info.made)}, last used ${when(info.used)}. It is shown only when it is made.`
+				: "With a token the script publishes over HTTPS to Harbor, as you, to the sites you may publish. Without one it uses SSH as root." })));
+	const actions = el("div", { className: "local-publish-token-actions" },
+		button(info.exists ? "Make a new token" : "Make a token", make, info.exists ? "" : "primary"),
+		...(info.exists ? [button("Remove", remove, "tool-danger")] : []));
+	const shown = [];
+	if (info.token) {
+		const save = `mkdir -p ~/.config/vns-harbor && printf '%s' '${info.token}' > ~/.config/vns-harbor/${server}.token && chmod 600 ~/.config/vns-harbor/${server}.token`;
+		shown.push(el("p", { className: "hint", textContent: "Your new token. Copy it now: Harbor keeps only a fingerprint of it. Run this on your machine to save it where the script looks:" }),
+			el("pre", { className: "local-publish-script local-publish-token-save", textContent: save }),
+			button("Copy command", async () => { await copyText(save, dialog); toast("Command copied.", "ok"); }));
+	}
+	box.replaceChildren(head, actions, ...shown);
 }
 
 const prodDialog = $("#dlg-prod");

@@ -34,7 +34,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 import ptyprocess
-from flask import Flask, abort, g, has_request_context, jsonify, redirect, render_template, request, send_file, send_from_directory, session
+from flask import Flask, Response, abort, g, has_request_context, jsonify, redirect, render_template, request, send_file, send_from_directory, session, stream_with_context
 from flask_sock import Sock
 from werkzeug.exceptions import HTTPException
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -85,6 +85,9 @@ _data_sync_spec = importlib.util.spec_from_file_location("vns_data_sync", os.pat
 _data_sync_module = importlib.util.module_from_spec(_data_sync_spec)
 _data_sync_spec.loader.exec_module(_data_sync_module)
 ADMIN_SITE = cfg.get("admin_site", "")
+_tokens_spec = importlib.util.spec_from_file_location("vns_publish_tokens", os.path.join(LIB_DIR, "publish_tokens.py"))
+_publish_tokens = importlib.util.module_from_spec(_tokens_spec)
+_tokens_spec.loader.exec_module(_publish_tokens)
 _access_spec = importlib.util.spec_from_file_location("vns_access", os.path.join(LIB_DIR, "access.py"))
 access = importlib.util.module_from_spec(_access_spec)
 _access_spec.loader.exec_module(access)
@@ -213,6 +216,13 @@ def protect():
         g.harbor_site = harbor_token_site(request.headers.get("Authorization", ""))
         if g.harbor_site is None:
             return jsonify(error="Not a site Harbor knows"), 401
+        return None
+    # A publish from a machine without SSH: a user's publish token, no session (publish_api below)
+    if request.path.startswith("/api/publish/"):
+        user_id = _publish_tokens.user_for(request.headers.get("Authorization", ""))
+        g.user = access.find(cfg, user_id) if user_id else None
+        if g.user is None:
+            return jsonify(error="Not a publish token Harbor knows. Make one with Publish from your machine on the site in Harbor."), 401
         return None
     if request.method not in ("GET", "HEAD", "OPTIONS"):
         sent = request.headers.get("X-CSRF-Token") or request.form.get("csrf", "")
@@ -2596,6 +2606,145 @@ def harbor_api_task(sid):
     return jsonify(running=task.running, exit=task.exit, steps=steps[-200:])
 
 
+# A build sent to POST /api/publish/<site>, until harbor site receive-build has read it (root only)
+PUBLISH_UPLOADS = "/var/lib/harbor/incoming"
+
+
+@app.route("/api/publish-token", methods=["GET", "POST", "DELETE"])
+def api_publish_token():
+    """The logged-in user's publish token: whether they have one, a new one (shown this once), or none"""
+    user = me()
+    if request.method == "POST":
+        return jsonify(token=_publish_tokens.make(user["id"]), **_publish_tokens.info(user["id"]))
+    if request.method == "DELETE":
+        _publish_tokens.remove(user["id"])
+    return jsonify(**_publish_tokens.info(user["id"]))
+
+
+def publish_target(name):
+    """A site published from a machine that the token's user may publish: here, a build with no project, not an
+    environment of a site elsewhere, not the admin. A new site is made in Harbor, not by a publish"""
+    if not isinstance(name, str) or not NAME_RE.match(name) or not os.path.isdir(os.path.join(WEB_ROOT, name)):
+        abort(404, f"No site {name} here. Make it in Harbor first (New site, Published from an external source).")
+    site = site_arg({"site": name})
+    if not access.can(g.user, site, "main", "publish"):
+        abort(403, f"You may not publish {site}.")
+    if glob.glob(os.path.join(WEB_ROOT, site, "*.csproj")) or managed_by(site) or site == ADMIN_SITE:
+        abort(400, f"{site} is not published from a machine: it is built here, or managed from another server.")
+    return site
+
+
+@app.route("/api/publish/<name>/info")
+def publish_api_info(name):
+    """What the publish script asks before it builds: the server's architecture"""
+    publish_target(name)
+    return jsonify(architecture=os.uname().machine)
+
+
+@app.route("/api/publish/<name>/architecture")
+def publish_api_architecture(name):
+    """The same as plain text, for a script that cannot read JSON (Windows' cmd)"""
+    publish_target(name)
+    return Response(os.uname().machine + "\n", mimetype="text/plain")
+
+
+@app.route("/api/publish/<name>", methods=["POST"])
+def publish_api(name):
+    """A build from a machine, as a tar (build/ and scripts/): harbor site receive-build --stdin, its output streamed
+    back as it comes, and a last line Harbor: OK, or Harbor: FAILED (exit n) that the script checks"""
+    site = publish_target(name)
+    commit = request.args.get("commit", "")
+    dirty = request.args.get("dirty", "")
+    appsettings = request.args.get("appsettings", "")
+    keep = request.args.getlist("keep")
+    if not re.fullmatch(r"[0-9a-f]{0,40}", commit) or dirty not in ("", "y", "n") or appsettings not in ("", "build", "server") or len(keep) > 20:
+        abort(400, "Invalid publish options")
+    if not request.content_length:
+        abort(411, "Send the build with its length (curl -T).")
+    os.makedirs(PUBLISH_UPLOADS, exist_ok=True)
+    descriptor, upload = tempfile.mkstemp(dir=PUBLISH_UPLOADS, prefix=f".{site}-upload-")
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            while True:
+                chunk = request.stream.read(1024 * 1024)
+                if not chunk:
+                    break
+                stream.write(chunk)
+    except Exception:
+        os.unlink(upload)
+        raise
+    who = (g.user.get("name") or g.user.get("username") or g.user.get("id") or "") + " (publish token)"
+    argv = ["/usr/bin/python3", HARBOR_COMMAND, "site", "receive-build", site, "--stdin", "--by", who[:120],
+            *(["--commit", commit] if commit else []), *(["--dirty", dirty] if dirty else []),
+            *(["--appsettings", appsettings] if appsettings else []), *(f"--keep={path}" for path in keep)]
+    app.logger.info("Publish of %s from a machine by %s", site, who)
+
+    def output():
+        try:
+            with open(upload, "rb") as build:
+                process = subprocess.Popen(argv, stdin=build, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                           errors="replace", bufsize=1, cwd="/",
+                                           env={key: value for key, value in os.environ.items() if key != "HARBOR_PROGRESS"})
+                for line in process.stdout:
+                    yield line
+                code = process.wait()
+            yield "Harbor: OK\n" if code == 0 else f"Harbor: FAILED (exit {code})\n"
+        finally:
+            os.unlink(upload)
+    # Line by line as it runs: nothing between it and the machine may hold the output back
+    return Response(stream_with_context(output()), mimetype="text/plain",
+                    headers={"Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no"})
+
+
+# A Python site's outdated packages, as pip last told them: {site: (when, [{name, version, latest}])}
+PIP_OUTDATED = {}
+PIP_OUTDATED_FOR = 3600
+
+
+def requirement_names(path):
+    """The packages a requirements.txt names, as pip compares them (lower case, - for _ and .)"""
+    names = set()
+    for line in read_text(path).splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line or line.startswith("-"):
+            continue
+        match = re.match(r"[A-Za-z0-9][A-Za-z0-9._-]*", line)
+        if match:
+            names.add(re.sub(r"[-_.]+", "-", match.group(0)).lower())
+    return names
+
+
+def python_outdated(site, refresh=False):
+    """The packages in a Python site's requirements.txt that have newer versions (pip list --outdated in its venv),
+    kept an hour: Update Python packages is shown only when there are some"""
+    root = os.path.join(WEB_ROOT, site)
+    pip = os.path.join(root, "venv/bin/pip")
+    if not os.path.isfile(pip):
+        return []
+    known = PIP_OUTDATED.get(site)
+    if known and not refresh and time.time() - known[0] < PIP_OUTDATED_FOR:
+        return known[1]
+    try:
+        result = subprocess.run([pip, "list", "--outdated", "--format=json", "--disable-pip-version-check"], capture_output=True,
+                                text=True, timeout=90, cwd=root, env=dict(os.environ, PIP_NO_INPUT="1"))
+        listed = json.loads(result.stdout or "[]") if result.returncode == 0 else []
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        app.logger.warning("Could not list outdated packages of %s: %s", site, exc)
+        return []
+    wanted = requirement_names(os.path.join(root, "app/requirements.txt"))
+    found = [{"name": item.get("name", ""), "version": item.get("version", ""), "latest": item.get("latest_version", "")}
+             for item in listed if isinstance(item, dict)
+             and (not wanted or re.sub(r"[-_.]+", "-", str(item.get("name", ""))).lower() in wanted)]
+    PIP_OUTDATED[site] = (time.time(), found)
+    return found
+
+
+@app.route("/api/sites/<name>/python-outdated")
+def api_python_outdated(name):
+    site = site_arg({"site": name})
+    return jsonify(outdated=python_outdated(site, request.args.get("refresh") == "1"))
+
+
 @app.route("/api/sites/<name>/backoffice-login")
 def api_backoffice_login(name):
     """A one-time link that logs in to the site's backoffice as its chosen Umbraco user (the VNS.Harbor package), or
@@ -3564,6 +3713,9 @@ def build_command(data):
     """Validate a terminal request and return (title, argv, cwd). User input is never shell code."""
     kind = data.get("kind")
     bash = "/bin/bash"
+    # Updating a Python site's packages: what pip said was outdated is asked again afterwards
+    if kind == "script" and data.get("script") == "update_packages.sh":
+        PIP_OUTDATED.pop(data.get("site"), None)
     if kind in ("windows_move", "windows_move_refresh", "windows_move_refresh_all", "windows_move_take_over"):
         # Environments on Windows moved to a Linux server Harbor knows (harbor/environments/windows_move.py)
         harbor = ["/usr/bin/python3", HARBOR_COMMAND, "env", "windows-move"]

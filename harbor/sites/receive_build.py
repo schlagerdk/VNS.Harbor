@@ -110,7 +110,9 @@ def service_dll(system, site):
 def answer_port(system, site):
     """The port the site's service answers on (its --urls), or ''"""
     service = system.path(site.service_path)
-    match = re.search(r"--urls[ =\"']+https?://[^:/\s\"']+:(\d+)", service.read_text() if service.is_file() else "")
+    text = service.read_text() if service.is_file() else ""
+    # dotnet … --urls http://localhost:PORT, or gunicorn --bind 127.0.0.1:PORT
+    match = re.search(r"--urls[ =\"']+https?://[^:/\s\"']+:(\d+)", text) or re.search(r"--bind[ =]+[0-9.]+:(\d+)", text)
     return match[1] if match else ""
 
 
@@ -177,25 +179,62 @@ def receive_build(system, name, binding="", https="n", environment="Production",
         publish(system, name, binding, https, environment, keep, appsettings, {"by": by, "commit": commit, "dirty": dirty == "y"})
 
 
+def site_kind(system, site):
+    """What a site here runs, as its publish puts it in place: csharp (a build, its service runs its dll), python (its
+    app folder, run by gunicorn) or html (static files, no service). '' when there is no site yet"""
+    root = system.path(site.site_root)
+    if not root.exists():
+        return ""
+    if (root / "app/app.py").is_file() or (root / "venv").is_dir():
+        return "python"
+    if system.path(site.service_path).is_file() or any(root.glob("*.runtimeconfig.json")) or any(root.glob("_publish/*.runtimeconfig.json")):
+        return "csharp"
+    return "html"
+
+
+def destination(system, site, kind):
+    """The folder a publish of a kind of site goes into"""
+    from harbor.sites.tools import working_folder
+    if kind == "python":
+        return system.path(f"{site.site_root}/app")
+    if kind == "html":
+        return system.path(site.site_root)
+    return system.path(working_folder(system, site))
+
+
+def check_build(system, site, kind, incoming, kept):
+    """The build is what the site runs, and has none of what it keeps on the server: else nothing is changed"""
+    if kind == "python" and not (incoming / "app.py").is_file():
+        raise Stop(f"The build has no app.py, which {site.name} runs (gunicorn app:app). Send the app folder.")
+    if kind == "html" and not any(incoming.iterdir()):
+        raise Stop("The build is empty.")
+    if kind == "csharp":
+        dll = service_dll(system, site)
+        if dll and not (incoming / dll).is_file():
+            raise Stop(f"The build has no {dll}, which {site.name}'s service starts. Nothing was changed: the project must build {dll}.")
+    # What the site keeps here must not be in its build: it would be left out, and that is a fault in the project
+    for path in (*(NEVER_IN_BUILD if kind == "csharp" else ()), *kept):
+        if any(incoming.glob(path.strip("/"))):
+            raise Stop(f"The build has {path}, which this site keeps on the server, so it would be left out. "
+                       "Nothing was changed: the project should not publish it.")
+
+
 def publish(system, name, binding, https, environment, keep, appsettings, who):
     from harbor.core.templates import Site
-    from harbor.sites.tools import working_folder
     incoming = system.path(f"{INCOMING}/{name}")
-    if not any(incoming.glob("*.runtimeconfig.json")):
-        raise Stop(f"No build in {INCOMING}/{name}: run the publish script on your machine, which sends it there.")
     site = Site(name)
     root = system.path(site.site_root)
+    kind = site_kind(system, site)
     found = read_json(marker(system, name))
     if not isinstance(found, dict):
         found = {}
     kept = keep_paths(keep) if keep is not None else keep_paths(found.get("keep"))
     appsettings = appsettings or found.get("appsettings") or "server"
-    # What the site keeps here must not be in its build: it would be left out, and that is a fault in the project
-    for path in (*NEVER_IN_BUILD, *kept):
-        if any(incoming.glob(path.strip("/"))):
-            raise Stop(f"The build has {path}, which this site keeps on the server, so it would be left out. "
-                       "Nothing was changed: the project should not publish it.")
     if not root.exists():
+        # Only a C# site is made by its first publish; a Python or HTML site is made in Harbor first
+        if not any(incoming.glob("*.runtimeconfig.json")):
+            raise Stop(f"No site {name} here, and the build is not a C# build to make one from. Make the site in Harbor first.")
+        check_build(system, site, "csharp", incoming, kept)
         from harbor.sites.setup import setup_site
         system.step(f"First publish: set up {name} from the build")
         root.mkdir(parents=True)
@@ -207,20 +246,20 @@ def publish(system, name, binding, https, environment, keep, appsettings, who):
     else:
         if any(root.glob("*.csproj")):
             raise Stop(f"{name} has a project here: it is built here, not published from a machine.")
-        dll = service_dll(system, site)
-        if dll and not (incoming / dll).is_file():
-            raise Stop(f"The build has no {dll}, which {name}'s service starts. Nothing was changed: the project must build {dll}.")
-        folder = system.path(working_folder(system, site))
+        if not incoming.is_dir() or (kind == "csharp" and not any(incoming.glob("*.runtimeconfig.json"))):
+            raise Stop(f"No build in {INCOMING}/{name}: run the publish script on your machine, which sends it there.")
+        check_build(system, site, kind, incoming, kept)
+        folder = destination(system, site, kind)
+        folder.mkdir(parents=True, exist_ok=True)
         arguments = excluded(kept, appsettings)
-        # The build there, for harbor site rollback: without what the site has here
+        # What is there now, for harbor site rollback: without what the site has here
         previous = system.path(f"{PREVIOUS}/{name}")
         previous.mkdir(parents=True, exist_ok=True)
+        before = (folder / "requirements.txt").read_bytes() if (folder / "requirements.txt").is_file() else b""
         system.run("rsync", "-a", "--delete", *arguments, f"{folder}/", f"{previous}/")
-        system.step(f"Copy the new build into {folder}" + (f", keeping {', '.join(kept)}" if kept else ""))
+        system.step(f"Copy the new {'build' if kind == 'csharp' else 'files'} into {folder}" + (f", keeping {', '.join(kept)}" if kept else ""))
         put_in_place(system, site, incoming, folder, arguments)
-        system.step(f"Restart {name}")
-        system.run("systemctl", "restart", site.service_name, check=False)
-        check_running(system, site, failed=f" harbor site rollback {name} puts the build before it back.")
+        restart(system, site, kind, folder, before, f" harbor site rollback {name} puts what it had before back.")
     publishes = [entry for entry in found.get("publishes", []) if isinstance(entry, dict)]
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     publishes = ([{"time": now, **{key: value for key, value in who.items() if value}}] + publishes)[:HISTORY]
@@ -228,12 +267,25 @@ def publish(system, name, binding, https, environment, keep, appsettings, who):
     # The binding is the one it was made with: a later publish does not change it (Change bindings does)
     write_json(marker(system, name), {**found, "binding": found.get("binding") or binding or name, "keep": kept,
                                        "appsettings": appsettings, "published": now, "publishes": publishes})
-    system.say(f"{name} runs the build from your machine.")
+    system.say(f"{name} runs what you published from your machine.")
+
+
+def restart(system, site, kind, folder, requirements_before, failed=""):
+    """After a publish: a Python site's packages when its requirements changed, then the site restarted and checked.
+    A static site has nothing to restart"""
+    if kind == "html":
+        return
+    if kind == "python" and (folder / "requirements.txt").is_file() and (folder / "requirements.txt").read_bytes() != requirements_before:
+        system.step("Install the packages in requirements.txt")
+        system.run("sudo", "-u", "www-data", "./venv/bin/pip", "install", "--upgrade", "-r", "app/requirements.txt", cwd=site.site_root)
+    system.step(f"Restart {site.name}")
+    system.run("systemctl", "restart", site.service_name, check=False)
+    check_running(system, site, failed=failed)
 
 
 def put_in_place(system, site, source, folder, arguments):
-    """A build into the folder the site runs from: by content (a new build can have the same sizes and times), what
-    the build no longer has removed, the site's data and kept paths left alone, and the folder's own rights kept"""
+    """Files into the folder they run from: by content (a new build can have the same sizes and times), what is no
+    longer sent removed, the site's data and kept paths left alone, and the folder's own rights kept"""
     protect = [argument for pattern in PROTECTED for argument in ("--filter", f"P {pattern}")]
     system.run("rsync", "-a", "--checksum", "--delete", "--no-perms", "--no-owner", "--no-group", *protect, *arguments,
                f"{source}/", f"{folder}/")
@@ -244,25 +296,25 @@ def put_in_place(system, site, source, folder, arguments):
 
 
 def rollback(system, name):
-    """The build before the last publish put back, the site restarted and checked"""
+    """What the site had before its last publish put back, the site restarted and checked"""
     from harbor.core.templates import Site
-    from harbor.sites.tools import working_folder
     name = normalize_site_name(name)
     site = Site(name)
+    kind = site_kind(system, site)
     previous = system.path(f"{PREVIOUS}/{name}")
-    if not any(previous.glob("*.runtimeconfig.json")):
-        raise Stop(f"{name} has no build from before its last publish to go back to.")
+    if not kind or not previous.is_dir() or not any(previous.iterdir()):
+        raise Stop(f"{name} has nothing from before its last publish to go back to.")
     found = read_json(marker(system, name)) or {}
-    dll = service_dll(system, site)
-    if dll and not (previous / dll).is_file():
-        raise Stop(f"The build before has no {dll}, which {name}'s service starts. Nothing was changed.")
-    folder = system.path(working_folder(system, site))
-    system.step(f"Put the build before the last publish back into {folder}")
+    if kind == "csharp":
+        dll = service_dll(system, site)
+        if dll and not (previous / dll).is_file():
+            raise Stop(f"What it had before has no {dll}, which {name}'s service starts. Nothing was changed.")
+    folder = destination(system, site, kind)
+    before = (folder / "requirements.txt").read_bytes() if (folder / "requirements.txt").is_file() else b""
+    system.step(f"Put what {name} had before its last publish back into {folder}")
     put_in_place(system, site, previous, folder, excluded(keep_paths(found.get("keep")), found.get("appsettings") or "server"))
-    system.step(f"Restart {name}")
-    system.run("systemctl", "restart", site.service_name, check=False)
-    check_running(system, site)
-    system.say(f"{name} runs the build it had before its last publish.")
+    restart(system, site, kind, folder, before)
+    system.say(f"{name} runs what it had before its last publish.")
 
 
 def own_scripts(system, name, site):

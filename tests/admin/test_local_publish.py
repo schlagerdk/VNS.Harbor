@@ -12,23 +12,24 @@ class LocalPublishScriptTests(unittest.TestCase):
         source = (APP / "static/app.js").read_text()
         start = source.index("function localPublishScript(")
         code = source[start:source.index("\nfunction showLocalPublish(", start)]
-        run = 'const location = { hostname: "admin.web-02.example.com" };\n' + code + f"\nprocess.stdout.write(localPublishScript({json.dumps(options)}));"
-        return subprocess.run(["node", "-e", run], capture_output=True, text=True, check=True).stdout
+        run = 'const location = { hostname: "admin.web-02.example.com", origin: "https://admin.web-02.example.com" };\n' + code + f"\nprocess.stdout.write(localPublishScript({json.dumps(options)}));"
+        # As bytes: Windows' line ends as they are
+        return subprocess.run(["node", "-e", run], capture_output=True, check=True).stdout.decode()
 
     def test_the_script_is_bash_that_sends_the_build_and_runs_receive_build(self):
-        text = self.script(site="shop.example.com", binding="www.shop.example.com", https="y", environment="Production")
+        text = self.script(site="shop.example.com", binding="www.shop.example.com", https="y", environment="Production", access="ssh")
         subprocess.run(["bash", "-n"], input=text, text=True, check=True)
         self.assertIn("SERVER='root@web-02.example.com'", text, "this server, by the name its admin is reached by")
-        self.assertIn('dotnet publish "$PROJECT" -c Release -r "$RID" --self-contained false -o "$OUT/build"', text)
+        self.assertIn('dotnet publish "$PROJECT" -c Release -r "$RID" --self-contained false -o "$OUT/tar/build"', text)
         self.assertIn("x86_64) RID=linux-x64 ;;", text, "the server's architecture, asked")
         self.assertIn("aarch64|arm64) RID=linux-arm64 ;;", text)
-        self.assertIn('tar -C "$OUT" -czf - . | "${SSH[@]}" "$REMOTE"', text, "one tar over one login")
+        self.assertIn('tar -C "$OUT/tar" -czf - . | "${SSH[@]}" "$REMOTE"', text, "one tar over one login")
         self.assertIn("ControlMaster=auto", text, "the two ssh calls share one login")
         self.assertNotIn("rsync", text, "nothing that needs a newer rsync than macOS has")
 
     def remote(self, binding, keep=()):
         """The command the script runs on the server, as the server's shell splits it"""
-        text = self.script(site="shop.example.com", binding=binding, https="n", environment="Test")
+        text = self.script(site="shop.example.com", binding=binding, https="n", environment="Test", access="ssh")
         start = text.index('REMOTE="$(printf')
         build = text[start:text.index("\nCOPYFILE_DISABLE", start)]
         keeps = " ".join(f"'{path}'" for path in keep)
@@ -48,6 +49,42 @@ class LocalPublishScriptTests(unittest.TestCase):
         args = self.remote("shop.example.com", keep=("/wwwroot/", "/files/"))
         self.assertIn("--keep=/wwwroot/", args)
         self.assertIn("--keep=/files/", args)
+
+    def test_with_a_token_it_publishes_over_https_and_fails_on_a_failed_publish(self):
+        text = self.script(site="shop.example.com", binding="shop.example.com", https="n", environment="Production", access="token")
+        subprocess.run(["bash", "-n"], input=text, text=True, check=True)
+        self.assertNotIn("ssh ", text, "no SSH at all")
+        self.assertIn("HARBOR='https://admin.web-02.example.com'", text)
+        self.assertIn('TOKEN_FILE="$HOME/.config/vns-harbor/web-02.example.com.token"', text)
+        self.assertIn('"$HARBOR/api/publish/$SITE/architecture"', text)
+        self.assertIn('[ "$(tail -n 1 "$OUT/log")" = "Harbor: OK" ]', text, "the last line decides")
+
+    def test_python_and_static_sites_send_their_files(self):
+        for kind, source in (("python", "app"), ("html", ".")):
+            for access in ("token", "ssh"):
+                with self.subTest(kind=kind, access=access):
+                    text = self.script(site="shop.example.com", binding="shop.example.com", https="n", environment="Production", kind=kind, access=access)
+                    subprocess.run(["bash", "-n"], input=text, text=True, check=True)
+                    self.assertIn(f"SOURCE='{source}'", text)
+                    self.assertNotIn("dotnet", text)
+                    self.assertNotIn("appsettings", text.lower().replace("appsettings.<environment>", ""))
+
+    def test_windows_gets_a_cmd_script(self):
+        for kind in ("csharp", "python"):
+            for access in ("token", "ssh"):
+                with self.subTest(kind=kind, access=access):
+                    text = self.script(site="shop.example.com", binding="shop.example.com", https="y", environment="Production",
+                                       kind=kind, access=access, system="windows")
+                    self.assertTrue(text.startswith("@echo off\r\n"), "cmd, with Windows' line ends")
+                    self.assertNotIn("\n", text.replace("\r\n", ""))
+                    self.assertIn("goto failed", text)
+                    self.assertIn(":failed\r\n", text)
+                    if access == "token":
+                        self.assertIn('if not "!LAST!"=="Harbor: OK" goto failed', text)
+                        self.assertIn("%USERPROFILE%\\.config\\vns-harbor\\web-02.example.com.token", text)
+                    else:
+                        self.assertIn('< "%OUT%\\build.tgz" || goto failed', text, "the tar to ssh by redirection: binary safe")
+                    self.assertEqual("dotnet publish" in text, kind == "csharp")
 
     def test_the_button_works_on_a_site_not_published_from_a_machine_yet(self):
         """A build-only site set up before 1.0.32 has no local_publish: the button failed on null.binding"""

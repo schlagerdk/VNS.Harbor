@@ -1715,3 +1715,31 @@ dialog .windows-field input, dialog .windows-field select { width: 100%; min-hei
 	background: #0b0d12; color: #d6deeb; font: 12px/1.55 ui-monospace, Menlo, Consolas, monospace; white-space: pre; user-select: all; }
 /* New site: Published from an external source, across the C# options under the environment */
 #csharp-options .external-choice { grid-column: 1 / -1; margin: 2px 0 10px; }
+/* Publish from your machine: the publish token, easy to find above the script */
+.local-publish-token { display: grid; gap: 10px; margin: 0 0 12px; padding: 12px 14px; border: 1px solid rgba(163,113,247,.3); border-radius: 12px; background: rgba(163,113,247,.07); }
+.local-publish-token-head { display: flex; gap: 12px; align-items: flex-start; }
+.local-publish-token-head > div { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.local-publish-token-head small { color: var(--muted); font-size: 12px; line-height: 1.45; }
+.local-publish-token-icon { flex: none; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; color: #fff; background: linear-gradient(135deg, #8b5cf6, #6c7bff); }
+.local-publish-token-icon .ico { width: 16px; height: 16px; }
+.local-publish-token-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.local-publish-token-save { max-height: none; white-space: pre-wrap; word-break: break-all; }
+.local-publish-token > button { justify-self: start; }
+/* Publish from your machine: which computer, and which access */
+.local-publish-choices { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin: 2px 0 12px; }
+.lp-choice { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.lp-choice .choice-label { flex-basis: 100%; font-size: 12px; color: var(--muted); }
+.lp-choice label { flex: 1; display: flex; }
+.lp-choice input { position: absolute; opacity: 0; pointer-events: none; }
+.lp-choice span:not(.choice-label) { flex: 1; text-align: center; padding: 7px 10px; border: 1px solid var(--line); border-radius: 9px; cursor: pointer; font-size: 13px; color: var(--muted); background: rgba(255,255,255,.02); }
+.lp-choice input:checked + span { color: var(--text); border-color: #a371f7; background: rgba(163,113,247,.15); box-shadow: 0 0 0 1px #a371f7 inset; }
+.local-publish-token[hidden] { display: none; }
+@media (max-width: 560px) { .local-publish-choices { grid-template-columns: 1fr; } }
+.detail-title .detail-title-action[hidden] { display: none; }
+/* Publish from your machine: as wide as the dialog, never wider. The script scrolls in its own box */
+#dlg-local-publish { width: min(820px, 94vw); overflow-x: hidden; }
+#dlg-local-publish form { min-width: 0; }
+/* The script wraps its long lines: no sideways scrolling, and the header and footer keep the dialog's full width */
+#dlg-local-publish .local-publish-script { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; overflow-x: hidden; overflow-y: auto; }
+#dlg-local-publish .local-publish-choices { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+#dlg-local-publish .local-publish-steps code { overflow-wrap: anywhere; }
