@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.34] - 2026-11-17
+
+### Fixes
+
+- Publish from your machine opens on a site set up before 1.0.32 too: it failed with null is not an object (site.local_publish.binding) where the site had not been published from a machine yet
+
 ## [1.0.33] - 2026-11-17
 
 ### Fixes

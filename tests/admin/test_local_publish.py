@@ -31,5 +31,13 @@ class LocalPublishScriptTests(unittest.TestCase):
         self.assertEqual(echoed, "a'; rm -rf / #")
 
 
+    def test_the_button_works_on_a_site_not_published_from_a_machine_yet(self):
+        """A build-only site set up before 1.0.32 has no local_publish: the button failed on null.binding"""
+        source = (APP / "static/app.js").read_text()
+        start = source.index('addManage("Publish from your machine…"')
+        call = source[start:source.index("}));", start)]
+        self.assertIn("site.local_publish?.binding", call)
+        self.assertNotIn("site.local_publish.binding", call)
+
 if __name__ == "__main__":
     unittest.main()

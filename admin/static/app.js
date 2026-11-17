@@ -1790,7 +1790,7 @@ function envPanel(site, env) {
 	// environment of a site elsewhere): the script that sends it a new build
 	const buildOnly = !site.has_project && (site.kind === "csharp" || site.kind === "umbraco") && !site.managed_by && !site.admin;
 	if (currentUser.admin && (site.local_publish || buildOnly) && !isTarget(env)) addManage("Publish from your machine…", () => showLocalPublish({
-		site: site.name, binding: site.local_publish.binding || bindingLabel(env), https: env.scheme === "https" ? "y" : "n", environment: env.environment || "Production" }));
+		site: site.name, binding: site.local_publish?.binding || bindingLabel(env), https: env.scheme === "https" ? "y" : "n", environment: env.environment || "Production" }));
 	// Moved from Windows, here as an environment: its data fetched again, and taken over once the address has moved
 	if (currentUser.admin && env.windows_move && isTarget(env)) {
 		addManage("Refresh from Windows…", () => refreshMovedFromWindows(site, env));
