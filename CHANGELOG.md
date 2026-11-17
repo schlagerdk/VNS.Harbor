@@ -2,6 +2,13 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.39] - 2026-11-17
+
+### Fixes
+
+- A publish from a machine leaves what Python writes as it runs alone (__pycache__, *.pyc): the first publish to a Python site stopped on it, as a file the site has and the build does not
+- The SSH server and port in the publish script can be given when it runs (SERVER=root@linux-01 ./publish-harbor.sh), for a server whose SSH is not open on its public name. A publish token needs no SSH
+
 ## [1.0.38] - 2026-11-17
 
 ### Fixes

@@ -19,7 +19,7 @@ class LocalPublishScriptTests(unittest.TestCase):
     def test_the_script_is_bash_that_sends_the_build_and_runs_receive_build(self):
         text = self.script(site="shop.example.com", binding="www.shop.example.com", https="y", environment="Production", access="ssh")
         subprocess.run(["bash", "-n"], input=text, text=True, check=True)
-        self.assertIn("SERVER='root@web-02.example.com'", text, "this server, by the name its admin is reached by")
+        self.assertIn('SERVER="${SERVER:-root@web-02.example.com}"', text, "this server, by the name its admin is reached by, unless given")
         self.assertIn('dotnet publish "$PROJECT" -c Release -r "$RID" --self-contained false -o "$OUT/tar/build"', text)
         self.assertIn("x86_64) RID=linux-x64 ;;", text, "the server's architecture, asked")
         self.assertIn("aarch64|arm64) RID=linux-arm64 ;;", text)

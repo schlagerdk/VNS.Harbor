@@ -2929,7 +2929,9 @@ function publishBash({ site, binding, https, environment, csharp, source, server
 		...(token ? [`HARBOR=${quote(admin)}`,
 			"# Your publish token (Publish from your machine in Harbor): in HARBOR_TOKEN, or in this file",
 			`TOKEN_FILE="$HOME/.config/vns-harbor/${server}.token"`]
-			: [`SERVER=${quote("root@" + server)}`, "PORT=22"]),
+			: ["# The server as you reach it over SSH: change it, or give it when you run the script, when SSH is not open on",
+				"# its public name (SERVER=root@linux-01 ./publish-harbor.sh). A publish token needs no SSH",
+				`SERVER="\${SERVER:-${"root@" + server}}"`, 'PORT="${PORT:-22}"']),
 		...(csharp ? ["# The project to publish: the only .csproj in this folder, or name it: PROJECT=Site.csproj ./publish-harbor.sh",
 			'PROJECT="${PROJECT:-}"']
 			: source === "app"
@@ -3009,7 +3011,8 @@ function publishCmd({ site, binding, https, environment, csharp, source, server,
 		...(token ? [`set "HARBOR=${admin}"`,
 			"rem Your publish token (Publish from your machine in Harbor): in HARBOR_TOKEN, or in this file",
 			`set "TOKEN_FILE=%USERPROFILE%\\.config\\vns-harbor\\${server}.token"`]
-			: [`set "SERVER=root@${server}"`, `set "PORT=22"`]),
+			: ["rem The server as you reach it over SSH: change it when SSH is not open on its public name. A publish token needs no SSH",
+				`if not defined SERVER set "SERVER=root@${server}"`, `if not defined PORT set "PORT=22"`]),
 		...(csharp ? ["rem The project to publish: the only .csproj in this folder, or name it here", `set "PROJECT="`]
 			: source === "app"
 				? ["rem The folder whose files are published: app when the project has app\\app.py, else this folder. Name it to choose", `set "SOURCE="`]

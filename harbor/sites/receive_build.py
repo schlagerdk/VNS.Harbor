@@ -28,7 +28,9 @@ INCOMING = "/var/lib/harbor/incoming"
 PREVIOUS = "/var/lib/harbor/previous"
 # What the site has here and a build never brings (rsync leaves excluded paths alone, also with --delete)
 SERVER_DATA = ("/umbraco/Data/", "/umbraco/Logs/", "/umbraco/mediacache/", "/wwwroot/media/", "/App_Data/", "/app_data/",
-               "/vns-harbor.json", "/logs/", "/scripts/", "/.vns-publish/")
+               "/vns-harbor.json", "/logs/", "/scripts/", "/.vns-publish/",
+               # What Python writes as it runs (compiled modules): never a site's own, nor a reason to stop a publish
+               "__pycache__/", "*.pyc")
 # A build with one of these is a project that publishes what belongs on the server: stopped, not left out quietly
 NEVER_IN_BUILD = ("/App_Data/", "/app_data/", "/umbraco/Data/")
 # Updated, but nothing deleted there: packages' own files, and settings a later sync may have added

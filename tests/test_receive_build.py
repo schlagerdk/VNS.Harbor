@@ -261,6 +261,17 @@ class ReceiveBuildTests(unittest.TestCase):
         self.build({"main.py": "x"})
         self.assertEqual(main(["site", "receive-build", "shop.dk"], self.system()), 1, "no app.py: not what the site runs")
 
+    def test_what_python_writes_as_it_runs_is_not_the_sites_own(self):
+        """The first publish stopped on __pycache__/app.cpython-314.pyc, as a file the site has and the build does not"""
+        site = self.root / "var/www/shop.dk"
+        for name, text in (("app/app.py", "v1"), ("app/__pycache__/app.cpython-314.pyc", "compiled"), ("venv/bin/pip", "")):
+            (site / name).parent.mkdir(parents=True, exist_ok=True)
+            (site / name).write_text(text)
+        self.build({"app.py": "v2"})
+        system = self.system()
+        self.assertEqual(main(["site", "receive-build", "shop.dk"], system), 0, system.said)
+        self.assertEqual((site / "app/app.py").read_text(), "v2")
+
     def test_an_html_site_gets_its_files_and_keeps_its_scripts_root(self):
         site = self.root / "var/www/shop.dk"
         (site / "scripts").mkdir(parents=True)
