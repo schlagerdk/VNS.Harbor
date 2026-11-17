@@ -2932,7 +2932,10 @@ function publishBash({ site, binding, https, environment, csharp, source, server
 			: [`SERVER=${quote("root@" + server)}`, "PORT=22"]),
 		...(csharp ? ["# The project to publish: the only .csproj in this folder, or name it: PROJECT=Site.csproj ./publish-harbor.sh",
 			'PROJECT="${PROJECT:-}"']
-			: [`# The folder whose files are published`, `SOURCE=${quote(source)}`]),
+			: source === "app"
+				? ["# The folder whose files are published: app when the project has app/app.py, else this folder (where app.py is).",
+					"# Name it to choose: SOURCE=src ./publish-harbor.sh", 'SOURCE="${SOURCE:-}"']
+				: [`# The folder whose files are published`, `SOURCE=${quote(source)}`]),
 		"# Paths the site keeps on the server from every publish, such as /wwwroot/ or /.env. The first publish to a site",
 		"# with files the publish would delete stops until you choose: the paths it keeps, or KEEP=(none) to let them go.",
 		"# KEEP=(/wwwroot/)",
@@ -2960,6 +2963,14 @@ function publishBash({ site, binding, https, environment, csharp, source, server
 		"esac",
 		'dotnet publish "$PROJECT" -c Release -r "$RID" --self-contained false -o "$OUT/tar/build"');
 	else lines.push(
+		...(source === "app" ? [
+			'if [ -z "$SOURCE" ]; then',
+			'\tif [ -f app/app.py ]; then SOURCE=app; elif [ -f app.py ]; then SOURCE=.; fi',
+			"fi",
+			'if [ -z "$SOURCE" ] || [ ! -f "$SOURCE/app.py" ]; then',
+			'\techo "No app.py here or in app/: the site runs app.py (gunicorn app:app). Name the folder: SOURCE=src $0" >&2',
+			"\texit 1",
+			"fi"] : []),
 		'COPYFILE_DISABLE=1 tar -C "$SOURCE" --exclude=./.git --exclude=./node_modules --exclude=./.venv --exclude=./venv --exclude=__pycache__ \\',
 		'\t--exclude=./scripts --exclude="./publish-harbor.*" -cf - . | tar -C "$OUT/tar/build" -xf -');
 	lines.push(
@@ -3000,7 +3011,9 @@ function publishCmd({ site, binding, https, environment, csharp, source, server,
 			`set "TOKEN_FILE=%USERPROFILE%\\.config\\vns-harbor\\${server}.token"`]
 			: [`set "SERVER=root@${server}"`, `set "PORT=22"`]),
 		...(csharp ? ["rem The project to publish: the only .csproj in this folder, or name it here", `set "PROJECT="`]
-			: ["rem The folder whose files are published", `set "SOURCE=${source}"`]),
+			: source === "app"
+				? ["rem The folder whose files are published: app when the project has app\\app.py, else this folder. Name it to choose", `set "SOURCE="`]
+				: ["rem The folder whose files are published", `set "SOURCE=${source}"`]),
 		"rem Paths the site keeps on the server from every publish, separated by spaces, such as /wwwroot/ or /.env.",
 		"rem The first publish to a site with files the publish would delete stops until you choose: the paths, or none",
 		`set "KEEP="`,
@@ -3023,6 +3036,10 @@ function publishCmd({ site, binding, https, environment, csharp, source, server,
 		`if "!ARCH!"=="x86_64" (set "RID=linux-x64") else if "!ARCH!"=="aarch64" (set "RID=linux-arm64") else (echo The server's architecture is not one .NET publishes for & goto failed)`,
 		`dotnet publish "!PROJECT!" -c Release -r !RID! --self-contained false -o "%OUT%\\tar\\build" || goto failed`);
 	else lines.push(
+		...(source === "app" ? [
+			`if not defined SOURCE if exist app\\app.py (set "SOURCE=app") else if exist app.py (set "SOURCE=.")`,
+			`if not defined SOURCE (echo No app.py here or in app: the site runs app.py, gunicorn app:app. Name the folder in SOURCE & goto failed)`,
+			`if not exist "%SOURCE%\\app.py" (echo No app.py in %SOURCE% & goto failed)`] : []),
 		`tar -C "%SOURCE%" --exclude=./.git --exclude=./node_modules --exclude=./.venv --exclude=./venv --exclude=__pycache__ --exclude=./scripts --exclude="./publish-harbor.*" -cf "%OUT%\\files.tar" . || goto failed`,
 		`tar -C "%OUT%\\tar\\build" -xf "%OUT%\\files.tar" || goto failed`,
 		`del "%OUT%\\files.tar"`);

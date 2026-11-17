@@ -65,9 +65,28 @@ class LocalPublishScriptTests(unittest.TestCase):
                 with self.subTest(kind=kind, access=access):
                     text = self.script(site="shop.example.com", binding="shop.example.com", https="n", environment="Production", kind=kind, access=access)
                     subprocess.run(["bash", "-n"], input=text, text=True, check=True)
-                    self.assertIn(f"SOURCE='{source}'", text)
+                    self.assertIn('SOURCE="${SOURCE:-}"' if kind == "python" else f"SOURCE='{source}'", text)
                     self.assertNotIn("dotnet", text)
                     self.assertNotIn("appsettings", text.lower().replace("appsettings.<environment>", ""))
+
+    def test_a_python_project_with_app_py_in_its_folder_or_in_app(self):
+        """A project with app.py beside the script failed: tar: could not chdir to 'app'"""
+        import shutil
+        import tempfile
+        text = self.script(site="py.example.com", binding="py.example.com", https="n", environment="Production", kind="python", access="ssh")
+        start = text.index('if [ -z "$SOURCE" ]; then')
+        check = text[start:text.index("COPYFILE_DISABLE", start)]
+        for layout, expected in ((("app.py",), "."), (("app/app.py",), "app"), ((), None)):
+            with self.subTest(layout=layout), tempfile.TemporaryDirectory() as folder:
+                for name in layout:
+                    (Path(folder) / name).parent.mkdir(parents=True, exist_ok=True)
+                    (Path(folder) / name).write_text("app")
+                ran = subprocess.run(["/bin/bash", "-c", 'set -u\nSOURCE=""\n' + check + '\necho "$SOURCE"'], cwd=folder, capture_output=True, text=True)
+                if expected is None:
+                    self.assertNotEqual(ran.returncode, 0)
+                    self.assertIn("No app.py here or in app/", ran.stderr)
+                else:
+                    self.assertEqual(ran.stdout.strip(), expected)
 
     def test_windows_gets_a_cmd_script(self):
         for kind in ("csharp", "python"):

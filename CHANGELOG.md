@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.38] - 2026-11-17
+
+### Fixes
+
+- The publish script of a Python site finds the folder to send: app when the project has app/app.py, else the project's own folder when app.py is there (it failed with tar: could not chdir to 'app'). SOURCE names another, and without an app.py it says so
+
 ## [1.0.37] - 2026-11-17
 
 ### Fixes
