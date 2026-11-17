@@ -13,7 +13,7 @@ from werkzeug.exceptions import BadRequest
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
 APP = ROOT_DIR / "admin"
-NAMES = ("HARBOR_SCRIPTS", "HARBOR_TARGET_SCRIPTS", "site_migrated", "migrated_site_json", "custom_scripts_dir", "migrated_scripts",
+NAMES = ("HARBOR_SCRIPTS", "HARBOR_TARGET_SCRIPTS", "site_migrated", "migrated_site_json", "custom_scripts_dir", "own_scripts_dir", "migrated_scripts",
          "target_scripts", "harbor_script_command", "publish_entry")
 
 
@@ -29,7 +29,9 @@ class MigratedScriptTests(unittest.TestCase):
                    "HARBOR_SITES": str(self.root / "state"), "WEB_ROOT": str(self.root / "www"),
                    "SCRIPT_RE": re.compile(r"^[A-Za-z0-9_.-]+\.sh$"), "TARGET_SCRIPTS": ("publish_prod.sh", "sync_prod.sh", "clear_logs_prod.sh"),
                    "target_folder": lambda root, target: os.path.join(root, "scripts", "targets", target),
-                   "target_scope": lambda target: "prod" if target == "prod" else "target-" + target}
+                   "target_scope": lambda target: "prod" if target == "prod" else "target-" + target,
+                   # A script the admin runs is root's: here the tests' own user makes them
+                   "runnable": lambda path: path}
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "migrated scripts", "exec"), self.ns)
         state = self.root / "state/shop.dk"
         state.mkdir(parents=True)
