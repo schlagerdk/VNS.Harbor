@@ -68,6 +68,11 @@ def _setup_site(args, system):
     setup_site(system, args.site, args.binding, args.certificate, args.environment)
 
 
+def _create_external(args, system):
+    from harbor.sites.receive_build import create_external
+    create_external(system, args.site, args.project, args.binding, args.https, args.environment)
+
+
 def _receive_build(args, system):
     from harbor.sites.receive_build import receive_build
     receive_build(system, args.site, args.binding, args.https, args.environment)
@@ -506,6 +511,14 @@ def parser():
     command.add_argument("certificate", nargs="?", default="", help="y or n")
     command.add_argument("environment", nargs="?", default="")
     command.set_defaults(handler=_setup_site)
+    command = site.add_parser("create-external", help="a C# site published from an external source: made now from an empty "
+                              "web project's build (the project is not kept), to be replaced by builds of PROJECT.dll")
+    command.add_argument("site")
+    command.add_argument("--project", required=True, help="the dll the site runs, as the published project names it")
+    command.add_argument("--binding", default="", help="the binding, or * to answer any name")
+    command.add_argument("--https", default="n", choices=("y", "n"))
+    command.add_argument("--environment", default="Production", choices=("Development", "Test", "Staging", "Production"))
+    command.set_defaults(handler=_create_external)
     command = site.add_parser("receive-build", help="a C# site published from a developer's machine: the build it sent to "
                               "/var/lib/harbor/incoming/<site> set up (the first time) or put in place, and the site restarted")
     command.add_argument("site")

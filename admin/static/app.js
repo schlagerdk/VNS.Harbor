@@ -873,6 +873,7 @@ const buttonStyles = {
 	"Test config": ["activity", "teal"], "Error logs": ["file", "teal"],
 	"Admin app log": ["file", "gray"], "Apache error logs": ["file", "teal"],
 	"Copy site": ["file", "blue"],
+	"Publish from your machine…": ["upload", "green"],
 	"Issue certificate": ["shield", "teal"], "Change environment": ["sliders", "purple"], "Sync setup…": ["sliders", "teal"], "Sync data…": ["sync", "pink"], "Change bindings": ["globe", "blue"],
 	"Check service": ["activity", "teal"], "Test Apache config": ["activity", "teal"], "Admin site": ["manage", "gray"],
 	"Remove environment": ["server", "amber"], "Edit service": ["pencil", "amber"], "Edit config": ["pencil", "amber"], "Edit web.config": ["pencil", "amber"], "Edit appsettings.json": ["pencil", "amber"], "Delete*": ["trash", "red"],
@@ -1647,10 +1648,11 @@ function envPanel(site, env) {
 			])));
 	}
 	if (site.kind === "umbraco" && address.url) meta.append(el("dt", { textContent: "Backoffice" }), el("dd", {}, backofficeLogin(openLink((bindingLabel(env) || address.hostname) + "/umbraco", address.url + "umbraco", address.title), site, env, address.url + "umbraco")));
-	if (site.kind === "csharp" || site.kind === "umbraco") {
+	// A site with no connection in its settings has no datasource to show
+	if ((site.kind === "csharp" || site.kind === "umbraco") && env.database) {
 		meta.append(el("dt", { textContent: "Datasource" }), el("dd", {
 			className: "database-name",
-			textContent: (env.database || "Unknown") + (env.database_server ? ` (${env.database_server.replace(/^\.(?=$|[\\,])/, "localhost")})` : ""),
+			textContent: env.database + (env.database_server ? ` (${env.database_server.replace(/^\.(?=$|[\\,])/, "localhost")})` : ""),
 			title: "Inferred from database configuration; connection and server edition are not tested.",
 		}));
 		if (env.database_name) meta.append(el("dt", { textContent: "Database" }), el("dd", {
@@ -2782,20 +2784,27 @@ async function loadDotnetTemplates() {
 	return templateRequest;
 }
 function syncSiteForm() {
-	// From my machine: a C# site with no project here, so only its environment is asked for
-	const fromMachine = siteForm.type.value === "local";
+	// Published from an external source: a C# site with no project here, so only its environment is asked for
 	const csharp = siteForm.type.value === "csharp";
-	$("#csharp-options").hidden = !csharp && !fromMachine;
+	const fromMachine = csharp && siteForm.elements.external.checked;
+	$("#csharp-options").hidden = !csharp;
 	for (const field of $("#csharp-options").querySelectorAll(".csharp-here")) field.hidden = fromMachine;
-	$("#template-name-option").hidden = !csharp;
-	$("#template-status").hidden = !csharp;
-	siteForm.version.disabled = !csharp;
-	siteForm.elements.template.disabled = !csharp;
+	$("#template-name-option").hidden = !csharp || fromMachine;
+	// The dll the site runs: the project published to it later must build the same
+	$("#project-label").textContent = fromMachine ? "Project name (its dll)" : "C# project name";
+	// The local publish folder follows the environment until it is typed over: _development, _test, …
+	const publish = siteForm.elements.publish;
+	const suggested = "_" + (siteForm.elements.environment.value || "Development").toLowerCase();
+	if (!publish.dataset.edited) publish.value = suggested;
+	$("#template-status").hidden = !csharp || fromMachine;
+	siteForm.version.disabled = !csharp || fromMachine;
+	siteForm.elements.template.disabled = !csharp || fromMachine;
 	syncTemplateVersion();
 	// The templates are for those who may create sites; the dialog loads them when it opens
 	if (csharp && currentUser.create_sites) run(loadDotnetTemplates);
 }
-siteForm.addEventListener("change", (event) => { if (event.target.name === "type") syncSiteForm(); });
+siteForm.addEventListener("change", (event) => { if (["type", "external", "environment"].includes(event.target.name)) syncSiteForm(); });
+siteForm.elements.publish.addEventListener("input", () => { siteForm.elements.publish.dataset.edited = "1"; });
 // Choosing a kind with the mouse moves on to the folder name. Arrow keys between the kinds keep the focus there.
 siteForm.addEventListener("click", (event) => {
 	if (event.detail > 0 && event.target.closest(".type-card")) setTimeout(() => siteForm.site.focus());
@@ -2835,7 +2844,7 @@ $("#setup-site-dns").replaceChildren(dnsCard($("#form-setup-site").binding, { on
 // The binding's message is about the certificate choice as well: any change clears it, or the browser keeps
 // refusing the form before it is checked again
 for (const type of ["input", "change"]) siteForm.addEventListener(type, () => siteForm.binding.setCustomValidity(""));
-$("#btn-new-site").onclick = () => { siteForm.reset(); siteForm.elements.template.setCustomValidity(""); siteForm.binding.setCustomValidity(""); delete siteForm.binding.dataset.edited; syncSiteForm(); dialog.showModal(); siteForm.site.focus(); };
+$("#btn-new-site").onclick = () => { siteForm.reset(); siteForm.elements.template.setCustomValidity(""); siteForm.binding.setCustomValidity(""); delete siteForm.binding.dataset.edited; delete siteForm.elements.publish.dataset.edited; syncSiteForm(); dialog.showModal(); siteForm.site.focus(); };
 $("#btn-new-site").addEventListener("click", () => siteHttps.reset());
 $("#btn-empty-new-site").onclick = () => $("#btn-new-site").click();
 $("#site-cancel").onclick = (e) => { e.preventDefault(); dialog.close(); };
@@ -2843,7 +2852,7 @@ siteForm.onsubmit = (event) => {
 	event.preventDefault();
 	run(async () => {
 		const field = siteForm.elements.template;
-		if (siteForm.type.value === "csharp") {
+		if (siteForm.type.value === "csharp" && !siteForm.elements.external.checked) {
 			if (templateRequest) await templateRequest;
 			else if (!templatesLoaded) await loadDotnetTemplates();
 			const name = field.value.trim();
@@ -2861,10 +2870,13 @@ siteForm.onsubmit = (event) => {
 		if (data.type === "csharp" && data.template?.toLowerCase() === "umbraco" && !data.version?.trim()) {
 			data.version = defaultUmbracoVersion;
 		}
-		if (data.type === "local") {
-			// Nothing is made here yet: the first run of the script sets the site up with its build
+		if (data.type === "csharp" && data.external) {
+			// Made and running now from an empty project's build; the script to publish to it is shown when it is done
+			data.kind = "create_site";
+			const t = await openTask(data);
 			dialog.close();
-			showLocalPublish({ site: data.site.trim(), binding: data.binding, https: data.certificate === "y" ? "y" : "n", environment: data.environment || "Production", first: true });
+			const options = { site: data.site.trim(), binding: data.binding, https: data.certificate === "y" ? "y" : "n", environment: data.environment || "Production" };
+			if (t) t.afterTask = () => { if (t.taskState !== "failed") showLocalPublish(options); };
 			return;
 		}
 		data.kind = "create_site";
@@ -2897,9 +2909,7 @@ ssh -p "$PORT" "$SERVER" harbor site receive-build "$SITE" --binding ${quote(bin
 function showLocalPublish(options) {
 	const dialog = $("#dlg-local-publish");
 	const script = localPublishScript(options);
-	$("#local-publish-intro").textContent = options.first
-		? `${options.site} is made on this server the first time you run the script, from the build it sends.`
-		: `${options.site} runs the build you publish from your computer.`;
+	$("#local-publish-intro").textContent = `${options.site} runs the build you publish from your computer. Its project must build the same dll.`;
 	$("#local-publish-script").textContent = script;
 	$("#local-publish-note").textContent = "Your machine needs the .NET SDK, rsync and SSH access to this server as root (an SSH key). The build is framework-dependent: the server runs it with its own .NET.";
 	$("#local-publish-copy").onclick = () => run(async () => { await copyText(script, dialog); toast("Script copied.", "ok"); });

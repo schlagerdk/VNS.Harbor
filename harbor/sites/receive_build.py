@@ -24,6 +24,43 @@ KEPT = ("/appsettings*.json", "/umbraco/Data/", "/umbraco/Logs/", "/umbraco/medi
 PROTECTED = ("/App_Plugins/**", "/wwwroot/App_Plugins/**", "/uSync/**")
 
 
+def create_external(system, name, project, binding="", https="n", environment="Production"):
+    """A site that is published from an external source, made now and running: an empty web project of that name is
+    built here (as the build user, never root), its build put where a publish from a machine lands, and the project
+    removed. The site is then set up from that build, as the first publish would. A project published to it later must
+    build the same dll ({project}.dll)."""
+    import shutil
+    from harbor.core.dotnet import runtime_identifier
+    from harbor.core.paths import LIB
+    from harbor.core.templates import Site
+    try:
+        name = normalize_site_name(name)
+    except ValueError:
+        raise Stop("Invalid site name. Use a DNS name containing only letters, numbers, dots and hyphens.") from None
+    site = Site(name)
+    root = system.path(site.site_root)
+    if root.exists():
+        raise Stop(f"{site.site_root} exists already.")
+    root.mkdir(parents=True)
+    try:
+        system.step(f"Create an empty web project {project}, built to start the site with")
+        system.run("dotnet", "new", "web", "--name", project, "--output", ".", "--force", cwd=site.site_root)
+        system.step(f"Build {project}.dll")
+        identifier = runtime_identifier(system.output("uname", "-m"))
+        system.run("python3", str(LIB / "build_as.py"), "--", "dotnet", "publish", f"{site.site_root}/{project}.csproj", "-c", "Release",
+                   "-p:PublishDir=_publish", "--runtime", identifier, "--self-contained", "false", "--nologo", cwd=site.site_root)
+        incoming = system.path(f"{INCOMING}/{name}")
+        if incoming.exists():
+            shutil.rmtree(incoming)
+        incoming.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(root / "_publish"), str(incoming))
+    finally:
+        # Only the build is kept: the folder is made again from it, with no project
+        shutil.rmtree(root, ignore_errors=True)
+    receive_build(system, name, binding, https, environment)
+    system.say(f"Publish {project} from your machine to replace it: it must build {project}.dll.")
+
+
 def marker(system, name):
     return site_state(system, name) / "local-publish.json"
 

@@ -2001,7 +2001,9 @@ def dotnet_template_output(arguments):
     root = dotnet_root_dir()
     if root:
         env["DOTNET_ROOT"] = root
-    result = subprocess.run(["dotnet", "new", *arguments], capture_output=True, text=True, timeout=60, env=env)
+    # From a folder that is always there: dotnet asks for its working folder as it starts, and the admin's own can be a
+    # release folder an update has just replaced ("Could not load installed .NET templates")
+    result = subprocess.run(["dotnet", "new", *arguments], capture_output=True, text=True, timeout=60, env=env, cwd="/")
     if result.returncode:
         raise ValueError((result.stderr or result.stdout).strip() or "dotnet template command failed")
     return result.stdout
@@ -4035,6 +4037,16 @@ def build_command(data):
                 abort(400, display_dns_name(binding) + " does not point to this server yet, so no certificate can be issued. "
                       "Create the site with HTTP only, and use Issue certificate once DNS points here.")
         args = [site, site_type, "", "", "", binding, "", "", certificate]
+        if site_type == "csharp" and data.get("external"):
+            # Published from an external source: made now from an empty project's build, which its publishes replace
+            project = data.get("project") or service_name(site)
+            if project == data.get("site"):
+                project = service_name(site)
+            environment = data.get("environment") or "Production"
+            if not isinstance(project, str) or not PROJECT_RE.match(project) or environment not in ("Development", "Test", "Staging", "Production"):
+                abort(400, "Invalid project name or environment")
+            return "Create: " + site, ["/usr/bin/python3", HARBOR_COMMAND, "site", "create-external", site, "--project", project,
+                                       "--binding", binding, "--https", certificate, "--environment", environment], HARBOR_DIR
         if site_type == "csharp":
             legacy = "csharp" in data
             template = data.get("template") or ""

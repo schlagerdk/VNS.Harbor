@@ -1713,3 +1713,5 @@ dialog .windows-field input, dialog .windows-field select { width: 100%; min-hei
 .local-publish-steps code, #local-publish-note code { font-size: 12px; padding: 1px 5px; border-radius: 5px; background: rgba(255,255,255,.06); }
 .local-publish-script { max-height: 320px; margin: 0; padding: 12px 14px; overflow: auto; border: 1px solid var(--line); border-radius: 10px;
 	background: #0b0d12; color: #d6deeb; font: 12px/1.55 ui-monospace, Menlo, Consolas, monospace; white-space: pre; user-select: all; }
+/* New site: Published from an external source, across the C# options under the environment */
+#csharp-options .external-choice { grid-column: 1 / -1; margin: 2px 0 10px; }

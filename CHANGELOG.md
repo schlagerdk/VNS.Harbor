@@ -2,6 +2,14 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.32] - 2026-11-17
+
+### Fixes
+
+- New site no longer fails with Could not load installed .NET templates after an update: dotnet is run from / , not from the admin's working folder, which an update can have replaced
+- A site with no connection string in its settings shows no Datasource, not Unknown. Unknown is kept for a connection Harbor cannot tell
+- New site: From my machine is an option of C# now, Published from an external source. The site is made and runs at once (harbor site create-external): an empty web project with its name is built as the build user, only its build is kept, and the site is set up from it with its service, Apache config and certificate. A project published to it from a machine must build the same dll. The environment comes first in the C# options again, and the local publish folder follows it (_development, _test, _staging, _production) until it is typed over
+
 ## [1.0.31] - 2026-11-17
 
 ### Features

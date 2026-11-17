@@ -78,6 +78,33 @@ class ReceiveBuildTests(unittest.TestCase):
             self.assertEqual((site / name).read_text(), text, name)
         self.assertIn("systemctl restart shop.dk", system.commands)
 
+    def test_create_external_makes_a_running_site_with_only_the_build(self):
+        """Published from an external source: an empty project's build starts it, and only the build is kept"""
+        root = self.root / "var/www/shop.dk"
+
+        def build(argv, stdin=None):
+            publish = root / "_publish"
+            publish.mkdir(parents=True)
+            for name in ("Shop.dll", "Shop.runtimeconfig.json", "appsettings.json"):
+                (publish / name).write_text(name)
+            return Result(0)
+
+        def new(argv, stdin=None):
+            (root / "Shop.csproj").write_text("<Project/>")
+            (root / "Program.cs").write_text("app")
+            return Result(0)
+        system = RecordingSystem(root=self.root, answers={"rsync": real_rsync, "python3": build, "dotnet new": new, "uname -m": "x86_64"})
+        with mock.patch("harbor.sites.setup.setup_site") as setup:
+            code = main(["site", "create-external", "shop.dk", "--project", "Shop", "--binding", "shop.dk", "--environment", "Test"], system)
+        self.assertEqual(code, 0, system.said)
+        setup.assert_called_once_with(system, "shop.dk", "shop.dk", "n", "Test")
+        self.assertEqual(sorted(path.name for path in root.iterdir()), ["Shop.dll", "Shop.runtimeconfig.json", "appsettings.json"], "no project")
+        self.assertTrue((self.root / "var/lib/harbor/sites/shop.dk/local-publish.json").is_file(), "published from a machine from now on")
+        build_command = next(command for command in system.commands if "build_as.py" in command)
+        self.assertNotIn("sudo", build_command)
+        code = main(["site", "create-external", "shop.dk", "--project", "Shop"], RecordingSystem(root=self.root))
+        self.assertEqual(code, 1, "not over a site that is there")
+
     def test_a_site_with_a_project_here_is_not_replaced(self):
         site = self.root / "var/www/shop.dk"
         site.mkdir(parents=True)

@@ -166,7 +166,8 @@ def database_details(root, environment="", variables=None):
                     servers.add(server)
         if name:
             names.add(name)
-    return {"database": next(iter(providers)) if len(providers) == 1 else "Unknown",
+    # No connection at all: a site without a database ("", not shown), not one Harbor cannot tell
+    return {"database": next(iter(providers)) if len(providers) == 1 else "Unknown" if providers else "",
             "database_name": " / ".join(sorted(names)),
             "database_server": " / ".join(sorted(servers))}
 

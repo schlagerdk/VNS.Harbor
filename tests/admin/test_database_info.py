@@ -72,9 +72,10 @@ class DatabaseInfoTests(unittest.TestCase):
         self.assertIn("a//b/*c*/,}", parsed["ConnectionStrings"]["umbracoDbDSN"])
 
     def test_missing_empty_and_invalid_config(self):
-        self.assertEqual(database.database_type(self.root), "Unknown")
+        # No connection at all: no datasource (not shown), unlike one Harbor cannot tell
+        self.assertEqual(database.database_type(self.root), "")
         self.settings("", "Microsoft.Data.Sqlite")
-        self.assertEqual(database.database_type(self.root), "Unknown")
+        self.assertEqual(database.database_type(self.root), "", "an empty connection string is no connection")
         for text in ("{", "[]"):
             (self.root / "appsettings.json").write_text(text)
             with self.assertRaises(ValueError):
@@ -189,7 +190,7 @@ with patch.dict(os.environ, {"SITE":"prod.test", "UNIT":"prod.test", "DATABASE_C
                            detail.index('\n\tif (site.kind === "umbraco"', detail.index('if (env.aliases && env.aliases.length)'))]
         # The link shows the alias as it is written (an international name in its own letters) and opens its DNS name
         self.assertIn('openLink(aliasLabels(env)[index], scheme + "://" + alias + "/")', alias_row)
-        start = detail.index('\tif (site.kind === "csharp" || site.kind === "umbraco")')
+        start = detail.index('\tif ((site.kind === "csharp" || site.kind === "umbraco") && env.database)')
         row = detail[start:detail.index('\n\tif (env.port)', start)]
         harness = r"""
 const assert = require("node:assert/strict");
@@ -211,11 +212,12 @@ for (const kind of ["csharp", "umbraco", "python", "html"]) {
         const site = {kind}, env = {database, database_name: "MyApplication", database_server: database === "SQLite" ? "" : "172.23.3.21"};
         const meta = {children: [], append(...items) {this.children.push(...items);}};
         ROW
-        if (kind === "csharp" || kind === "umbraco") {
+        // No datasource (no connection in its settings): no row
+        if ((kind === "csharp" || kind === "umbraco") && database) {
             assert.equal(meta.children[0].tag, "dt");
             assert.equal(meta.children[0].textContent, "Datasource");
             assert.equal(meta.children[1].tag, "dd");
-            assert.equal(meta.children[1].textContent, (database || "Unknown") + (env.database_server ? " (172.23.3.21)" : ""));
+            assert.equal(meta.children[1].textContent, database + (env.database_server ? " (172.23.3.21)" : ""));
             assert.equal(meta.children[2].textContent, "Database");
             assert.equal(meta.children[3].textContent, "MyApplication");
         } else assert.equal(meta.children.length, 0);
