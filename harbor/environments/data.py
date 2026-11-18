@@ -95,6 +95,7 @@ class DataSync:
             if not force and "Updated" not in result:
                 system.say(f"Nothing changed, so {site.service_name} is not restarted.")
                 return
+            system.plan([f"Restart {site.service_name}"])
             system.step(f"Restart {site.service_name}")
             system.run("systemctl", "restart", site.service_name)
             return
@@ -114,6 +115,7 @@ class DataSync:
                     return
                 share.rclone("rcat", f"{share.target}/appsettings.json", input=Path(file).read_text())
                 # IIS restarts the app when web.config changes
+                system.plan(["Restart the IIS app"])
                 system.step("Restart the IIS app")
                 share.rclone("touch", f"{share.target}/web.config")
                 return
@@ -126,6 +128,7 @@ class DataSync:
             settings.remote_exec(system, environment, f"tee {path} >/dev/null", input=Path(file).read_text(), capture=True)
             settings.remote_exec(system, environment, f"chown www-data:www-data {path}")
             unit = service_name(environment.FOLDER)
+            system.plan([f"Restart {unit} on {environment.description}"])
             system.step(f"Restart {unit} on {environment.description}")
             settings.remote_exec(system, environment, f"systemctl restart {shlex.quote(unit)}")
 
@@ -153,14 +156,22 @@ class DataSync:
             return ""
         return history.settings_behind(self.system, self.site, destination, source=source, kinds=tuple(kinds))
 
+    def steps(self, source, destination, dry_run):
+        """The steps of one destination: what it gets, the data, and its import"""
+        kinds = self.kinds(source, destination)
+        # The sites by the environment they are, as the admin and the dashboard name them
+        source_name, destination_name = display_name(self.system, self.site, source), display_name(self.system, self.site, destination)
+        return [f"{destination_name}: {' and '.join(kinds)} from {source_name}. Nothing is deleted on {destination_name}.",
+                f"Data from {source_name} to {destination_name}", *([] if dry_run else [f"Import on {destination_name}"])]
+
     def sync_one(self, source, destination, dry_run, settings_first=False):
         """One destination: the data merged in, then a restart to import it. The settings must be in sync first; with
         settings_first (Sync everything) they are synced first when they are behind."""
         system = self.system
         kinds = self.kinds(source, destination)
-        # The sites by the environment they are, as the admin and the dashboard name them
-        source_name, destination_name = display_name(system, self.site, source), display_name(system, self.site, destination)
-        system.step(f"{destination_name}: {' and '.join(kinds)} from {source_name}. Nothing is deleted on {destination_name}.")
+        destination_name = display_name(system, self.site, destination)
+        steps = self.steps(source, destination, dry_run)
+        system.step(steps[0])
         def sync(*args, **options):
             try:
                 sync_environments(system, self.site.name, *args, dry_run=dry_run, **options)
@@ -170,20 +181,22 @@ class DataSync:
                 raise Failed() from None
         behind = self.settings_behind(destination, source, kinds)
         if behind and settings_first:
-            system.step(f"Settings from {display_name(system, self.site, 'main')} to {destination_name}: {behind[0].lower() + behind[1:]}")
+            first = f"Settings from {display_name(system, self.site, 'main')} to {destination_name}: {behind[0].lower() + behind[1:]}"
+            system.plan([first])
+            system.step(first)
             sync("main", destination)
             behind = "" if dry_run else self.settings_behind(destination, source, kinds)
         if behind:
             system.warn(f"{behind}. Sync settings first, or use Sync everything: data is only merged into a site with the same document types.")
             raise Failed()
-        system.step(f"Data from {source_name} to {destination_name}")
+        system.step(steps[1])
         sync(source, destination, data=",".join(kinds))
         if dry_run:
             system.say(f"DRY RUN: {destination_name} is not restarted.")
             return
         # The destination imports what it received at startup. Its settings are applied again on the way, so a
         # destination edited by hand still imports.
-        system.step(f"Import on {destination_name}")
+        system.step(steps[2])
         try:
             self.apply_settings(destination, force=True)
         except (CommandFailed, Stop):
@@ -198,6 +211,7 @@ def data_sync(system, name, action, source="", destinations="", option=""):
     data = DataSync(system, site)
     if action == "settings":
         data.valid(source)
+        system.plan([f"Sync setup for {source}"])
         system.step(f"Sync setup for {source}")
         try:
             data.apply_settings(source)
@@ -229,6 +243,7 @@ def data_sync(system, name, action, source="", destinations="", option=""):
         raise Stop(f"{source} has no content written by uSync yet, so there is no content to sync.\n"
                    "uSync writes content when it is saved, and all of it when a site that may send data starts.\n"
                    f"Save Sync setup on {source}, which restarts it, or restart it, then sync again.")
+    system.plan([step for destination in named for step in data.steps(source, destination, dry_run)])
     failed = []
     for destination in named:
         try:

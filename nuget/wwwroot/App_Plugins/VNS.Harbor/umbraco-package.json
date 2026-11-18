@@ -1,20 +1,20 @@
 {
   "$schema": "../../umbraco-package-schema.json",
   "name": "VNS.Harbor",
-  "version": "18.3.1.7",
+  "version": "18.3.2",
   "allowPublicAccess": false,
   "extensions": [
     {
       "type": "condition",
       "alias": "VNS.Harbor.Condition.HasDestinations",
       "name": "VNS Harbor Sync: something to sync",
-      "api": "/App_Plugins/VNS.Harbor/condition.js?v=18.3.1.7"
+      "api": "/App_Plugins/VNS.Harbor/condition.js?v=18.3.2"
     },
     {
       "type": "dashboard",
       "alias": "VNS.Harbor.Dashboard",
       "name": "VNS Harbor Sync",
-      "element": "/App_Plugins/VNS.Harbor/dashboard.js?v=18.3.1.7",
+      "element": "/App_Plugins/VNS.Harbor/dashboard.js?v=18.3.2",
       "weight": 5,
       "meta": {
         "label": "VNS Harbor Sync",

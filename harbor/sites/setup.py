@@ -136,12 +136,16 @@ def setup_site(system, name="", binding="", certificate="", environment=""):
         site.environment = environment
 
     reservation = None
+    build = kind_of_folder == "project" and not system.path(f"{site.publish_root}/{project}.dll").is_file()
+    system.plan([*([f"Issue a certificate for {binding}"] if certificate == "y" else []), *([f"Build the project into {publish}"] if build else []),
+                 "Set up Apache" if kind_of_folder == "html" else "Set up Apache and start the service"])
     try:
         if kind_of_folder == "html":
             site.doc_root = site.site_root
             if certificate == "y":
                 system.step(f"Issue a certificate for {binding}")
                 issue_certificate(system, site, binding)
+            system.step("Set up Apache")
             install_apache_config(system, site, SOLUTION / "html/apache.conf.tpl", certificate=certificate == "y")
             install_missing_scripts(system, site, "common")
         else:
@@ -182,6 +186,7 @@ def setup_site(system, name="", binding="", certificate="", environment=""):
                 system.run("chmod", "-R", "go-w", str(scripts))
             conf = kind_folder / "apache.conf.tpl"
             service = kind_folder / "service.tpl"
+            system.step("Set up Apache and start the service")
             install_apache_config(system, site, conf if conf.is_file() else SOLUTION / "csharp/apache.conf.tpl", certificate=certificate == "y")
             install_service(system, site, service if service.is_file() else SOLUTION / "csharp/service.tpl")
     except (CommandFailed, RuntimeError, ValueError) as error:

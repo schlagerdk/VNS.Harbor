@@ -139,6 +139,7 @@ def add_windows(system, name, share, user, password, domain=""):
         raise Stop(f"There is a server {name} already.")
     if not SHARE.fullmatch(share) or not WINDOWS_USER.fullmatch(user or "") or not DOMAIN.fullmatch(domain or "") or not password:
         raise Stop("Give the share as //server/share/folder, the login and its password.")
+    system.plan([f"Log in to {share}"])
     system.step(f"Log in to {share}")
     open_share(system, share, user, password, domain)
     found = servers(system)
@@ -213,6 +214,7 @@ def add(system, name, host, user="root", port="22", password=""):
     # again has a new one), and this one is learnt as it logs in now
     if not any(other["host"] == host and int(other["port"]) == int(port) for other in servers(system, "linux").values()):
         forget_host_key(system, host, port)
+    system.plan([*([f"Put Harbor's key on {host}"] if password else []), f"Log in to {host} with Harbor's key"])
     if password:
         system.step(f"Put Harbor's key on {host}")
         command = ("umask 077; mkdir -p ~/.ssh && touch ~/.ssh/authorized_keys && "
@@ -277,6 +279,7 @@ def set_host(system, name, host):
     # A key seen at the new address belongs to what was there before (such as the server it takes over from)
     if not any(other["host"] == host and int(other["port"]) == int(entry["port"]) for other in servers(system, "linux").values()):
         forget_host_key(system, host, entry["port"])
+    system.plan([f"Log in to {host} with Harbor's key"])
     system.step(f"Log in to {host} with Harbor's key")
     if not remote(system, trial, "true", check=False).ok:
         raise Stop(f"Harbor cannot log in to {entry['user']}@{host}. Has the server got its new address yet?")
@@ -345,6 +348,7 @@ def remove(system, name, uninstall=False, revoke_key=False):
     if uninstall or revoke_key:
         if not remote(system, entry, "true", check=False).ok:
             raise Stop(f"{name} does not answer, so Harbor cannot be uninstalled or its key taken out there. Remove it without them.")
+    system.plan([*([f"Uninstall Harbor on {name}"] if uninstall else []), *([f"Take Harbor's key off {name}"] if revoke_key else [])])
     if uninstall:
         system.step(f"Uninstall Harbor on {name}")
         remote(system, entry, "sh -s", input=UNINSTALL, capture=False)
@@ -442,6 +446,7 @@ def rollback(system, name):
         raise Stop(f"{name} does not answer: {' '.join(found['error'])}")
     if not found.get("rollback"):
         raise Stop(f"{name} has no earlier release of VNS Harbor to go back to.")
+    system.plan([f"Roll {name} back to Harbor {found['rollback']['name']}"])
     system.step(f"Roll {name} back to Harbor {found['rollback']['name']}")
     remote(system, entry, "python3 /opt/harbor/current/bin/harbor self rollback", capture=False)
     system.say(f"{name} runs Harbor {found['rollback']['name']} again.")
@@ -463,7 +468,9 @@ def install(system, name):
     if not found["compatible"]:
         raise Stop(f"{name} cannot run Harbor: " + "; ".join(found["problems"]))
     there = f"{RELEASES}/{release}"
-    if release.endswith("-dev") or not remote(system, entry, f"test -d {there}", check=False).ok:
+    copy = release.endswith("-dev") or not remote(system, entry, f"test -d {there}", check=False).ok
+    system.plan([*([f"Copy Harbor {release} to {name}"] if copy else []), f"Use Harbor {release} on {name}", f"Bring {name} up to Harbor {release}"])
+    if copy:
         system.step(f"Copy Harbor {release} to {name}")
         if not remote(system, entry, "command -v rsync", check=False).ok:
             remote(system, entry, "env DEBIAN_FRONTEND=noninteractive apt-get install -y -q rsync")

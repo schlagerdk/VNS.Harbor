@@ -928,6 +928,7 @@ def main(argv=None, system=None, keep=None):
     system = system or System()
     try:
         args.handler(args, system)
+        system.finished()
     except Stop as error:
         if str(error):
             system.warn(str(error))

@@ -111,6 +111,20 @@ def receive(system, incoming, sql_server=""):
         if project:
             build = target
     receive_state(system, folder, root_path)
+    # All the steps: each site set up (and built, when its project was renamed), then the certificates asked for
+    steps = []
+    for conf in sorted(folder.glob("*.conf")):
+        if conf.is_file():
+            name = site_name(conf.name[:-len(".conf")])
+            steps.append(f"Set up {name} with HTTP")
+            if name == build and (folder / f"{name}.service").is_file():
+                steps.append(f"Build {project}")
+    if (folder / "certificates").is_file():
+        lines = (folder / "certificates").read_text().splitlines()
+        main = site_name(lines[0] if lines else "")
+        steps += [f"Issue a certificate for {main}" if site_id == "main" else f"Issue a certificate for the environment {site_id}"
+                  for site_id in lines[1:] if site_id == "main" or re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", site_id)]
+    system.plan(steps)
     units = []
     for conf in sorted(folder.glob("*.conf")):
         if not conf.is_file():
@@ -308,6 +322,10 @@ def move_site(system, name):
     def copy_to_new_server(source, destination):
         system.run("rsync", "-aHz", "-e", " ".join(ssh), f"--rsync-path={sudo + ' ' if sudo else ''}rsync", source, f"{user}@{host}:{destination}", env=env)
 
+    stop_here = not copy or os.environ.get("VNS_COPY_STOP") == "y"
+    system.plan([f"Check {host}", *(["Stop the sites here, so their databases and files stay consistent while they are copied"] if stop_here else []),
+                 *(f"Copy {source} to {host}:{destination}" for source, destination in zip(folders, new_folders)),
+                 f"Set up the sites on {host}", *([] if copy else ["Remove the sites here"])])
     # ---- before anything is stopped: the new server must be ready, and have none of the sites
     system.step(f"Check {host}")
     # The new server's own harbor sets the sites up (harbor site receive)
@@ -355,7 +373,7 @@ def move_site(system, name):
         if os.environ.get("VNS_MOVE_HTTPS") == "y":
             (staging / "certificates").write_text("".join(f"{line}\n" for line in [new_site, *certificates]))
 
-        if not copy or os.environ.get("VNS_COPY_STOP") == "y":
+        if stop_here:
             system.step("Stop the sites here, so their databases and files stay consistent while they are copied")
             for each in names:
                 unit = service_name(each)

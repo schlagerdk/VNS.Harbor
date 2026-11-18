@@ -80,6 +80,8 @@ def update(system, ref=""):
             raise Stop("There is no release to update to yet." if not versions else f"Harbor is up to date ({installed_version() or versions[0]}).")
         ref = "v" + found[0]
     folder = Path(tempfile.mkdtemp(prefix="harbor-update-"))
+    # The fetched code's own steps come under Install
+    system.plan([f"Fetch {ref} from github.com/{REPOSITORY}", f"Install {ref}"])
     try:
         system.step(f"Fetch {ref} from github.com/{REPOSITORY}")
         system.run("git", "clone", "--quiet", "--depth", "1", "--branch", ref, f"https://github.com/{REPOSITORY}.git", str(folder / "source"))
@@ -102,6 +104,7 @@ def finish_update(system, source):
     then the rest done by the installed release itself (`self after-update`), so what it writes down names
     /opt/harbor/current and never the copy, which is removed"""
     from harbor.install import release
+    system.plan(["Install the release in /opt/harbor"])
     system.step("Install the release in /opt/harbor")
     release.install(system, source)
     result = system.run("python3", f"{release.CURRENT}/bin/harbor", "self", "after-update", check=False)
@@ -126,6 +129,8 @@ def after_update(system):
     from harbor.server.init import INITIALIZED
     harbor = str(BIN)
     worked = []
+    sites = admin.admin_sites(system)
+    system.plan(["Update the server-wide Apache configs", "Bring the sites up to date", *(f"Update the admin site {name}" for name in sites)])
     system.step("Update the server-wide Apache configs")
     # Apache's own name, so it does not warn that it cannot tell it (harbor server init sets it on a new server)
     worked.append(attempt(system, "Apache's ServerName was not set.", "python3", harbor, "server", "set-servername"))
@@ -147,7 +152,6 @@ def after_update(system):
         legacy.unlink()
         legacy.symlink_to(COMMAND)
         system.say(f"/vns/bin/harbor runs {COMMAND} now.")
-    sites = admin.admin_sites(system)
     for name in sites:
         system.step(f"Update the admin site {name}")
         admin.update(system, name)
@@ -254,6 +258,7 @@ def remove_vns(system):
             system.warn(f"{VNS} stays: its scripts hold the sa password, which Harbor does not have yet "
                         "(harbor sql import-sa-password).")
             return
+    system.plan([f"Remove {VNS}: VNS 1.x is no longer used"])
     system.step(f"Remove {VNS}: VNS 1.x is no longer used")
     backups = system.path("/var/lib/harbor/backups")
     backups.mkdir(parents=True, exist_ok=True)

@@ -48,7 +48,15 @@ class CreateSiteTests(unittest.TestCase):
         commands = [line for line in without_temporary(harbor_commands(system))
                     if not line.startswith("bash TEMP ") and not line.startswith("dotnet add package VNS.Harbor")]
         self.assertEqual(commands, without_temporary(self.old.commands()))
+        if code == 0:
+            self.assertPlanned(system)
         return result, system
+
+    def assertPlanned(self, system):
+        """The admin's window shows every step from the start: the plan is the steps the creation took"""
+        plans = [steps for kind, steps in system.events if kind == "plan"]
+        self.assertEqual(len(plans), 1, system.events)
+        self.assertEqual(plans[0], [text for kind, text in system.events if kind == "step"])
 
     def test_html(self):
         for certificate in ("n", "y"):

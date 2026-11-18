@@ -166,7 +166,9 @@ def rollback(system):
         raise Stop(why)
     link(system, CURRENT, f"releases/{earlier['name']}")
     system.say(f"Harbor {earlier['name']} is in use again ({CURRENT}).")
-    for name in admin.admin_sites(system):
+    names = admin.admin_sites(system)
+    system.plan([f"Start the admin site {name} on {earlier['name']}" for name in names])
+    for name in names:
         system.step(f"Start the admin site {name} on {earlier['name']}")
         # The earlier release's own code moves the admin: it knows what that release needs
         system.run("python3", f"{CURRENT}/bin/harbor", "admin", "update", name)

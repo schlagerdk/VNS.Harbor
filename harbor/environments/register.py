@@ -77,6 +77,8 @@ def register_environment(system, name):
     unit = service_name(folder)
 
     # Read what is needed from the server. The answer is parsed, never executed.
+    system.plan([f"Read {folder} on {environment.IP}", f"Add {folder} as an environment of {name}",
+                 f"Note on {environment.IP} that {folder} is managed from here"])
     system.step(f"Read {folder} on {environment.IP}")
     script = f"FOLDER={bash_quote(folder)}\nUNIT={bash_quote(unit)}\n" + READ_SITE
     result = settings.remote_exec(system, environment, "bash -s", input=script, capture=True, check=False)

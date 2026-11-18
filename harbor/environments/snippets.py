@@ -51,6 +51,8 @@ def carry_snippets(system, name, target="prod"):
     main_config = system.path(f"/etc/apache2/sites-available/{site.name}.conf")
     if not main_config.is_file():
         return
+    # Also within a publish: a step of its own, there when it comes
+    system.plan(["Carry the main site's config snippets"])
     system.step("Carry the main site's config snippets")
     try:
         # All the helper prints, its last line break too, as the script piped it to base64

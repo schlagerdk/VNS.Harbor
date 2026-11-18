@@ -58,6 +58,7 @@ def create_external(system, name, project, binding="", https="n", environment="P
     if root.exists():
         raise Stop(f"{site.site_root} exists already.")
     root.mkdir(parents=True)
+    system.plan([f"Create an empty web project {project}, built to start the site with", f"Build {project}.dll"])
     try:
         system.step(f"Create an empty web project {project}, built to start the site with")
         system.run("dotnet", "new", "web", "--name", project, "--output", ".", "--force", cwd=site.site_root)
@@ -123,7 +124,9 @@ def check_running(system, site, wait=60, failed=""):
     """After a restart: the service runs and answers on its port (any answer but a server error), or Stop with its log,
     so the script on the machine fails too. A site that starts slowly (Umbraco) has a minute"""
     port = answer_port(system, site)
-    system.step(f"Check that {site.name} runs" + (f" and answers on port {port}" if port else ""))
+    system.step(f"Check that {site.name} runs")
+    if port:
+        system.say(f"It must answer on port {port}")
     active, code = False, ""
     for attempt in range(max(1, wait // 3)):
         active = system.run("systemctl", "is-active", "--quiet", site.service_name, check=False).ok
@@ -176,6 +179,7 @@ def receive_build(system, name, binding="", https="n", environment="Production",
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise Stop(f"{name} is being published already. Try again when that is done.") from None
+        system.plan([*(["Unpack the build"] if stream is not None else []), *publish_steps(system, name, keep)])
         if stream is not None:
             system.step("Unpack the build")
             unpack(system, name, stream)
@@ -220,6 +224,23 @@ def check_build(system, site, kind, incoming, kept):
         if any(incoming.glob(path.strip("/"))):
             raise Stop(f"The build has {path}, which this site keeps on the server, so it would be left out. "
                        "Nothing was changed: the project should not publish it.")
+
+
+def copy_step(kind, folder, kept):
+    return f"Copy the new {'build' if kind == 'csharp' else 'files'} into {folder}" + (f", keeping {', '.join(kept)}" if kept else "")
+
+
+def publish_steps(system, name, keep):
+    """The steps of a publish, before the build is unpacked. A Python site's packages, and the site's own scripts,
+    are steps of their own when they come (the build decides)"""
+    from harbor.core.templates import Site
+    site = Site(name)
+    if not system.path(site.site_root).exists():
+        return [f"First publish: set up {name} from the build", f"Check that {name} runs"]
+    kind = site_kind(system, site)
+    found = read_json(marker(system, name))
+    kept = keep_paths(keep) if keep is not None else keep_paths(found.get("keep") if isinstance(found, dict) else None)
+    return [copy_step(kind, destination(system, site, kind), kept), *([] if kind == "html" else [f"Restart {name}", f"Check that {name} runs"])]
 
 
 def publish(system, name, binding, https, environment, keep, appsettings, who):
@@ -271,7 +292,7 @@ def publish(system, name, binding, https, environment, keep, appsettings, who):
         # still leave the last one that ran
         if found.get("ok", True):
             system.run("rsync", "-a", "--delete", *arguments, f"{folder}/", f"{previous}/")
-        system.step(f"Copy the new {'build' if kind == 'csharp' else 'files'} into {folder}" + (f", keeping {', '.join(kept)}" if kept else ""))
+        system.step(copy_step(kind, folder, kept))
         try:
             put_in_place(system, site, incoming, folder, arguments)
             restart(system, site, kind, folder, before, f" harbor site rollback {name} puts what it had before back.")
@@ -309,6 +330,7 @@ def restart(system, site, kind, folder, requirements_before, failed=""):
     if kind == "html":
         return
     if kind == "python" and (folder / "requirements.txt").is_file() and (folder / "requirements.txt").read_bytes() != requirements_before:
+        system.plan(["Install the packages in requirements.txt"])
         system.step("Install the packages in requirements.txt")
         system.run("sudo", "-u", "www-data", "./venv/bin/pip", "install", "--upgrade", "-r", "app/requirements.txt", cwd=site.site_root)
     system.step(f"Restart {site.name}")
@@ -344,6 +366,7 @@ def rollback(system, name):
             raise Stop(f"What it had before has no {dll}, which {name}'s service starts. Nothing was changed.")
     folder = destination(system, site, kind)
     before = (folder / "requirements.txt").read_bytes() if (folder / "requirements.txt").is_file() else b""
+    system.plan([f"Put what {name} had before its last publish back into {folder}", *([] if kind == "html" else [f"Restart {name}", f"Check that {name} runs"])])
     system.step(f"Put what {name} had before its last publish back into {folder}")
     put_in_place(system, site, previous, folder, excluded(keep_paths(found.get("keep")), found.get("appsettings") or "server"))
     restart(system, site, kind, folder, before)
@@ -368,6 +391,7 @@ def own_scripts(system, name, site):
         before = set(before) if isinstance(before, list) else set()
         now = {path.name for path in sent.glob("*.sh") if path.is_file()}
         if now or before & {path.name for path in target.glob("*.sh")}:
+            system.plan(["Put the site's own scripts where only root can change them"])
             system.step("Put the site's own scripts where only root can change them")
         target.mkdir(parents=True, exist_ok=True)
         system.run("rsync", "-a", "--no-perms", "--chmod=D755,F755", "--include", "*.sh", "--exclude", "*", f"{sent}/", f"{target}/")

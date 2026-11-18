@@ -92,6 +92,7 @@ def cron(system, on):
         if not missing:
             system.say("The backup and log shrink jobs are in root's crontab.")
             return
+        system.plan(["Add the backup and log shrink jobs to root's crontab"])
         system.step("Add the backup and log shrink jobs to root's crontab")
         lines += missing
     else:
@@ -99,6 +100,7 @@ def cron(system, on):
         if not mine:
             system.say("The backup and log shrink jobs are not in root's crontab.")
             return
+        system.plan(["Take the backup and log shrink jobs out of root's crontab"])
         system.step("Take the backup and log shrink jobs out of root's crontab")
         lines = [line for line in lines if line not in mine]
     system.run("crontab", "-", input="".join(line + "\n" for line in lines))
@@ -120,6 +122,7 @@ def cron_upgrade(system):
     if not changed:
         system.say("The backup and log shrink jobs run harbor already, or are not there.")
         return
+    system.plan(["Let the backup and log shrink jobs run harbor"])
     system.step("Let the backup and log shrink jobs run harbor")
     system.run("crontab", "-", input="".join(line + "\n" for line in lines))
     system.say(f"{', '.join(changed)} run harbor now.")
@@ -138,6 +141,7 @@ def dotnet_install(system, channel, update=False):
     if before and not update:
         system.say(f".NET {channel} is installed (SDK {before['sdk'] or '-'}, runtime {before['runtime'] or '-'}).")
         return
+    system.plan([f"{'Update' if before else 'Install'} .NET {channel}"])
     system.step(f"{'Update' if before else 'Install'} .NET {channel}")
     ensure_channel(system, channel, force=update)
     # The site services run /usr/bin/dotnet
@@ -189,6 +193,7 @@ def dotnet_remove(system, channel):
     using = sites_using(system, channel)
     if using:
         raise Stop(f".NET {channel} is used by {', '.join(using)}: move them to another version first.")
+    system.plan([f"Remove .NET {channel}"])
     system.step(f"Remove .NET {channel}")
     root = system.path(DOTNET_DIR)
     prefix = channel.split(".")[0] + ".0."
@@ -255,6 +260,7 @@ def crontab_save(system, entries):
         if not job_parts(f"{schedule} {command}"):
             raise Stop(f"Not a schedule: {schedule} (five fields, such as 15 */4 * * *, or @daily, @reboot)")
         lines.append(f"{schedule} {command}")
+    system.plan(["Save root's crontab"])
     system.step("Save root's crontab")
     system.run("crontab", "-", input="".join(line + "\n" for line in lines))
     system.say(f"Root's crontab has {sum(1 for entry in entries if entry.get('kind') != 'other')} jobs.")
@@ -265,6 +271,7 @@ def node_install(system, major):
     """Node.js of a major version from NodeSource's repository, replacing another major version"""
     if not re.fullmatch(r"[0-9]{2}", str(major)) or int(major) < 18:
         raise Stop(f"Not a Node.js version: {major} (such as 22 or 24)")
+    system.plan([f"Add the Node.js {major} repository", f"Install Node.js {major}"])
     system.step(f"Add the Node.js {major} repository")
     with tempfile.NamedTemporaryFile(suffix=".sh") as setup:
         system.run("curl", "-fsSL", NODESOURCE.format(major), "-o", setup.name)
@@ -281,6 +288,7 @@ def node_remove(system):
     if not installed(system, "nodejs"):
         system.say("Node.js is not installed.")
         return
+    system.plan(["Remove Node.js"])
     system.step("Remove Node.js")
     system.run("apt-get", "remove", "--purge", "-y", "nodejs")
     for listing in system.path("/etc/apt/sources.list.d").glob("nodesource*"):

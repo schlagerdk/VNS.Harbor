@@ -2,6 +2,14 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.42] - 2026-11-18
+
+### Changes
+
+- Every action shows all its steps from the start, in the order it takes them: those still to come are greyed, so you see how far it is and what is left. A step it does not get to (it failed before, or a site it was for is gone) is shown as not taken. Steps that only show once it runs (a Python site's packages, say) come in where they belong. Create, setup and publish have new steps of their own: setting up Apache and starting the service, cleaning up, starting the site and checking that it runs
+- A new Umbraco site is offered the newest Umbraco 18 on nuget.org (18.3.2 now), not the version Harbor was released with. It is asked in the background and kept an hour; without nuget.org it is the known version. A new major version (19) stays a choice of its own, as the templates and the VNS.Harbor package follow 18
+- A new server can be shared over Samba: harbor server init (which the install runs) asks, and when wanted installs Samba and shares / as root under the server's short name (linux-03 on linux-03.vns.dk), for root with a Samba password the install asks for. Without a terminal it says how to set it later (smbpasswd -a root). A share there already, and a password root has, stay as they are
+
 ## [1.0.41] - 2026-11-17
 
 ### Fixes

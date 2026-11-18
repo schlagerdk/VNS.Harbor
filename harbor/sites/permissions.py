@@ -25,6 +25,7 @@ def fix_permissions(system, name, scope="test", target="prod"):
         raise Stop("Invalid site name. Use a DNS name containing only letters, numbers, dots and hyphens.") from None
     site = Site(name)
     if scope == "test":
+        system.plan([f"Fix permissions of {name}"])
         system.step(f"Fix permissions of {name}")
         system.run("sudo", "env", f"SITE={name}", f"ROOT={site.site_root}", "python3", str(HELPER))
     elif scope == "prod":
@@ -33,6 +34,7 @@ def fix_permissions(system, name, scope="test", target="prod"):
             normalize_site_name(environment.FOLDER)
         except ValueError:
             raise Stop("Invalid site name. Use a DNS name containing only letters, numbers, dots and hyphens.") from None
+        system.plan([f"Fix permissions of {environment.FOLDER} on {environment.description}"])
         system.step(f"Fix permissions of {environment.FOLDER} on {environment.description}")
         variables = f"SITE={shlex.quote(environment.FOLDER)} ROOT={shlex.quote(environment.root)}"
         settings.remote_exec(system, environment, f"env {variables} python3 -", input=remote_helper())

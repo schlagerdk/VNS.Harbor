@@ -79,10 +79,34 @@ class Deletion:
         self.site = site
         self.certificates = bool(re.fullmatch(r"[yY]|[yY][eE][sS]", delete_certificates or ""))
 
+    def service_steps(self, name):
+        return [f"Stop, disable and delete service {name}"] if self.system.path(f"/etc/systemd/system/{service_name(name)}.service").is_file() else []
+
+    def certificate_steps(self, domain, removed):
+        """The certificate's step, as it will be once the sites in removed are gone"""
+        if not self.certificates or not domain:
+            return []
+        try:
+            validate_binding(domain)
+        except ValueError:
+            return []
+        return [] if self.shared(domain, removed) else [f"Revoke and remove certificate for {domain}"]
+
+    def shared(self, domain, removed=()):
+        """Whether another enabled site uses the name; the configs of the sites in removed are taken as gone already"""
+        for conf in sorted(self.system.path("/etc/apache2/sites-enabled").glob("*.conf")):
+            if not conf.exists() or conf.stem in removed or conf.resolve().stem in removed:
+                continue
+            for line in conf.read_text(errors="replace").splitlines():
+                fields = line.split()
+                if fields[:1] in (["ServerName"], ["ServerAlias"]) and domain.lower() in (name.lower() for name in fields[1:]):
+                    return True
+        return False
+
     def service_and_config(self, name):
         system = self.system
         unit = service_name(name)
-        if system.path(f"/etc/systemd/system/{unit}.service").is_file():
+        if self.service_steps(name):
             system.step(f"Stop, disable and delete service {name}")
             system.run("systemctl", "stop", unit, check=False)
             system.run("systemctl", "disable", unit, check=False)
@@ -107,14 +131,9 @@ class Deletion:
             validate_binding(domain)
         except ValueError as error:
             raise Stop(str(error)) from None
-        for conf in sorted(system.path("/etc/apache2/sites-enabled").glob("*.conf")):
-            if not conf.exists():
-                continue
-            for line in conf.read_text(errors="replace").splitlines():
-                fields = line.split()
-                if fields[:1] in (["ServerName"], ["ServerAlias"]) and domain.lower() in (name.lower() for name in fields[1:]):
-                    system.say(f"Keep certificate for {domain}; another enabled site uses it.")
-                    return
+        if self.shared(domain):
+            system.say(f"Keep certificate for {domain}; another enabled site uses it.")
+            return
         system.step(f"Revoke and remove certificate for {domain}")
         system.run(ACME, "--revoke", "-d", domain, check=False)
         system.run(ACME, "--remove", "-d", domain, check=False)
@@ -186,6 +205,31 @@ def delete_site(system, name="", delete_certificates="", scope="all", target="")
                 raise Stop(f"The folder {local_path} is nested too deep inside the site folder to keep it. Delete all instead.")
             keep.append(local_path[len(site.site_root) + 1:].rstrip("/"))
 
+    # ---- all the steps, before the first
+    ubuntu_default = False
+    default_conf = system.path("/etc/apache2/sites-available/000-default.conf")
+    if name == "html" and default_conf.is_file():
+        ubuntu_default = re.search(rf"(?m)^[ \t]*DocumentRoot[ \t]+{re.escape(site.root_path)}/html/?[ \t]*$", default_conf.read_text()) is not None
+    steps, removed = [], set()
+    for target_id in targets:
+        found = values(target_id)
+        if found.get("TARGET") == "windows":
+            continue
+        if found.get("LOCAL_PATH", ""):
+            removed.add(found.get("FOLDER", ""))
+            steps += deletion.service_steps(found.get("FOLDER", ""))
+            steps += deletion.certificate_steps(found.get("BINDING", ""), removed)
+        else:
+            steps.append(f"Delete the remote production site ({found.get('FOLDER', '')})")
+    if scope != "prod":
+        removed.add(name)
+        steps += deletion.service_steps(name)
+        steps.append(f"Delete the site files (environment folders {' '.join(keep)} and scripts are kept)" if scope == "test" and keep
+                     else "Delete site and files")
+        if not ubuntu_default:
+            steps += deletion.certificate_steps(binding, removed)
+    system.plan(steps)
+
     # ---- environments
     for target_id in targets:
         found = values(target_id)
@@ -252,11 +296,7 @@ def delete_site(system, name="", delete_certificates="", scope="all", target="")
                         local.rename(local.with_name(f"{script}.sh"))
 
     # Ubuntu's own default site serves /var/www/html from 000-default.conf and default-ssl.conf, not from a config
-    # named after the folder. Deleting the html folder removes both, so they no longer answer any name.
-    ubuntu_default = False
-    default_conf = system.path("/etc/apache2/sites-available/000-default.conf")
-    if name == "html" and default_conf.is_file():
-        ubuntu_default = re.search(rf"(?m)^[ \t]*DocumentRoot[ \t]+{re.escape(site.root_path)}/html/?[ \t]*$", default_conf.read_text()) is not None
+    # named after the folder. Deleting the html folder removes both, so they no longer answer any name (ubuntu_default).
 
     # ---- the site itself
     if scope != "prod":

@@ -81,6 +81,10 @@ def copy(system, source, target):
         shutil.copyfile(source, target)
 
 
+SERVICE_STEP = "Set up Apache and start the service"
+ANY_NAME_STEP = "Answer any name that no other site has"
+
+
 class Creation:
     def __init__(self, system, arguments):
         self.system = system
@@ -151,9 +155,32 @@ class Creation:
         if system.path(self.site.service_path).exists():
             raise Stop(f"A service already uses this site's canonical name: {self.site.service_name}")
 
+    def certificate_step(self):
+        return [f"Issue a certificate for {self.binding}"] if self.certificate == "y" else []
+
+    def plan(self):
+        """All the steps of the site's creation, once every answer is given, so the admin's window shows those to come"""
+        if self.type == "html":
+            steps = ["Create html", *self.certificate_step(), "Set up Apache"]
+        elif self.type == "python":
+            steps = [*self.certificate_step(), "Create python app and virtual environment", SERVICE_STEP]
+        elif self.csharp_kind == "umbraco":
+            major = int(self.umbraco_version.split(".")[0])
+            steps = [*self.certificate_step(), "Create new umbraco instance in folder", "Install VNS Umbraco and uSync package",
+                     *(["Install VNS Harbor package"] if major >= 18 else []), "Publish site", SERVICE_STEP]
+        else:
+            steps = [*([self.template_package_step()] if self.umbraco_version else []), *self.certificate_step(),
+                     f"Create .NET project from template: {self.template_name}", f"Build {self.project_name}", SERVICE_STEP]
+        if self.answers_any:
+            steps.append(ANY_NAME_STEP)
+        self.system.plan(steps)
+
+    def template_package_step(self):
+        return f"Install template package: {self.template_package}@{self.umbraco_version}"
+
     def https(self):
         if self.certificate == "y":
-            self.system.step(f"Issue a certificate for {self.binding}")
+            self.system.step(self.certificate_step()[0])
             issue_certificate(self.system, self.site, self.binding)
 
     def port(self):
@@ -163,16 +190,19 @@ class Creation:
     def create_html(self):
         system, site = self.system, self.site
         site.doc_root = site.site_root
+        self.plan()
         system.step("Create html")
         system.path(site.doc_root).mkdir(parents=True, exist_ok=True)
         render_to(system, site, SOLUTION / "html/site/index.html", f"{site.doc_root}/index.html")
         self.https()
+        system.step("Set up Apache")
         install_apache_config(system, site, SOLUTION / "html/apache.conf.tpl", certificate=self.certificate == "y")
         install_scripts(system, site, "common")
 
     def create_python(self):
         system, site = self.system, self.site
         site.doc_root = f"{site.site_root}/wwwroot"
+        self.plan()
         self.port()
         for folder in (f"{site.site_root}/app", site.doc_root, f"/var/lib/vns-roots/{self.name}"):
             system.path(folder).mkdir(parents=True, exist_ok=True)
@@ -183,6 +213,7 @@ class Creation:
         system.run("python3", "-m", "venv", f"{site.site_root}/venv")
         system.run(f"{site.site_root}/venv/bin/pip", "install", "-r", f"{site.site_root}/app/requirements.txt")
         system.run("chown", "-R", "www-data:www-data", f"{site.site_root}/app", f"{site.site_root}/venv")
+        system.step(SERVICE_STEP)
         install_scripts(system, site, "common", "service", "python")
         install_apache_config(system, site, SOLUTION / "python/apache.conf.tpl", certificate=self.certificate == "y")
         install_service(system, site, SOLUTION / "python/service.tpl")
@@ -231,9 +262,12 @@ class Creation:
                 if (not re.fullmatch(r"[0-9][A-Za-z0-9.+-]*", self.umbraco_version)
                         or not TEMPLATE_NAME.fullmatch(self.template_package)):
                     raise Stop("A template version requires a valid NuGet template package (argument 12) and version.")
-                system.say(f"Install template package: {self.template_package}@{self.umbraco_version}")
+                self.plan()
+                system.step(self.template_package_step())
                 system.run("dotnet", "new", "install", f"{self.template_package}@{self.umbraco_version}", "--force")
         site.dotnet_version = self.dotnet_version
+        if not (self.csharp_kind == "empty" and self.umbraco_version):
+            self.plan()
 
         self.port()
         for folder in (site.site_root, site.doc_root):
@@ -259,6 +293,7 @@ class Creation:
 
         # The service runs as www-data and needs to write inside the publish folder only
         system.run("chown", "-R", "www-data:www-data", f"{site.site_root}/{site.publish_folder}")
+        system.step(SERVICE_STEP)
         conf, service = kind_folder / "apache.conf.tpl", kind_folder / "service.tpl"
         install_apache_config(system, site, conf if conf.is_file() else SOLUTION / "csharp/apache.conf.tpl", certificate=self.certificate == "y")
         install_service(system, site, service if service.is_file() else SOLUTION / "csharp/service.tpl")
@@ -338,6 +373,7 @@ class Creation:
             if self.reservation:
                 self.reservation.release()
         if self.answers_any:
+            system.step(ANY_NAME_STEP)
             try:
                 make_default_site(system, self.site)
             except RuntimeError as error:

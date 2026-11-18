@@ -111,6 +111,7 @@ def move(system, name, target, server_name, alias=""):
     write_json(links_path(system, name), found)
     if alias:
         from harbor.environments.bindings import change_binding
+        system.plan([f"Add the temporary alias {alias}"])
         system.step(f"Add the temporary alias {alias}")
         change_binding(system, name, environment.BINDING, alias, yes=True, target=new_id)
     system.say(f"{environment.BINDING} runs on {server_name} on HTTP, as the environment {new_id}. Windows still runs it: "
@@ -121,6 +122,8 @@ def move(system, name, target, server_name, alias=""):
 def move_all(system, items, server_name):
     """Several environments, one at a time: one that fails is told, and the rest go on"""
     failed = []
+    # Each one's own steps come under it as it runs
+    system.plan([f"==== {item.get('site')}: {item.get('target')}" for item in items])
     for item in items:
         system.step(f"==== {item.get('site')}: {item.get('target')}")
         try:
@@ -158,10 +161,13 @@ def refresh(system, name, new_id, pause=False):
     try:
         includes = [argument for pattern in DATABASE[1] for argument in ("--include", pattern)]
         has_database = share.rclone("lsf", f"{share.target}/{DATABASE[0]}", *includes, check=False, capture=True).stdout.strip()
-        for folder in FOLDERS:
-            if share.rclone("lsf", f"{share.target}/{folder}", "--max-depth", "1", check=False, capture=True).ok:
-                system.step(f"Fetch {folder}")
-                share.rclone("copy", f"{share.target}/{folder}", f"{work}/{folder}", "--create-empty-src-dirs", "--modify-window", "2s", "--stats", "0")
+        present = [folder for folder in FOLDERS if share.rclone("lsf", f"{share.target}/{folder}", "--max-depth", "1", check=False, capture=True).ok]
+        system.plan([*(f"Fetch {folder}" for folder in present), *(["Fetch the SQLite database", f"Stop {linux.BINDING} on {linux.IP} while its database is replaced"]
+                                                                   if has_database else []),
+                     f"Copy the data to {linux.IP}", *([f"Start {linux.BINDING} on {linux.IP}"] if has_database else [])])
+        for folder in present:
+            system.step(f"Fetch {folder}")
+            share.rclone("copy", f"{share.target}/{folder}", f"{work}/{folder}", "--create-empty-src-dirs", "--modify-window", "2s", "--stats", "0")
         if has_database:
             if pause:
                 share.take_offline()
@@ -197,6 +203,7 @@ def refresh_all(system, pause=False):
     if not moved:
         raise Stop("No environment has been copied from Windows (or all have been taken over).")
     failed = []
+    system.plan([f"==== {name}: {new_id}" for name, new_id in moved])
     for name, new_id in moved:
         system.step(f"==== {name}: {new_id}")
         try:
@@ -218,6 +225,7 @@ def take_over(system, name, new_id):
     site = Site(name)
     entry = _link(system, name, new_id)
     linux = settings.load(system, site.site_root, new_id)
+    system.plan(["Remove the temporary alias", "Remove the environment on Windows from Harbor (its IIS site is not touched)"])
     system.step("Remove the temporary alias")
     change_binding(system, name, linux.BINDING, "", yes=True, target=new_id)
     issue_certificate(system, name, new_id, yes=True)

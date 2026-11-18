@@ -51,7 +51,8 @@ git -C "${source}/harbor" rev-parse HEAD >"${source}/harbor/.vns-version"
 python3 "${source}/harbor/bin/harbor" self install "${source}/harbor"
 
 echo "== The server, ready for sites"
-harbor server init
+# It asks for root's Samba password
+harbor server init <"${tty}"
 
 if [[ -n $(python3 -c 'import sys; sys.path.insert(0, "/opt/harbor/current"); from harbor.install.admin import admin_sites; from harbor.core.system import System; print(" ".join(admin_sites(System())))') ]]; then
 	echo "The admin site is there already."

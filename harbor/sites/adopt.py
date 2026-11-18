@@ -94,6 +94,7 @@ def adopt_site(system, adopted, main_name):
     assembly = next((match[1] for match in re.finditer(r"<AssemblyName>(.*)</AssemblyName>", project)), "") or main.project_name
     if assembly != dll:
         raise Stop(f"{adopted} runs {dll}.dll, but {main_name} builds {assembly}.dll. A publish would break the site.")
+    system.plan([f"Make {adopted} an environment of {main_name}"])
     system.step(f"Make {adopted} an environment of {main_name}")
     created = run_create_prod(system, site, {"VNS_PROD_MODAL": "1", "VNS_PROD_NO_PUBLISH": "1", "VNS_PROD_TARGET": "local",
                                              "VNS_PROD_LOCAL_PATH": working, "VNS_PROD_FOLDER": adopted, "VNS_PROD_BINDING": binding,

@@ -113,6 +113,7 @@ def apply(system, users, known, accounts, ours):
     for user_id in [key for key in known if key not in wanted]:
         name = known[user_id].get("linux", "")
         if name in accounts and name in ours:
+            system.plan([f"Remove the Linux user {name}"])
             system.step(f"Remove the Linux user {name}")
             system.run("pkill", "-KILL", "-u", name, check=False, capture=True)
             system.run("userdel", "--remove", name, check=False, capture=True)
@@ -125,6 +126,7 @@ def apply(system, users, known, accounts, ours):
                 # The name went to a user Harbor does not manage: this user gets another one
                 name = ""
             name = name or free_name(user["username"], set(accounts) | {item.get("linux") for item in known.values()})
+            system.plan([f"Make the Linux user {name} for {user['username']}"])
             system.step(f"Make the Linux user {name} for {user['username']}")
             system.run("useradd", "--create-home", "--user-group", "--groups", GROUP, "--shell", SHELL,
                        "--comment", comment(user), name)
@@ -170,6 +172,7 @@ def wanted_sites(system, users, names):
 
 def acl_tools(system):
     if not system.which("setfacl"):
+        system.plan(["Install the acl tools"])
         system.step("Install the acl tools")
         system.run("apt-get", "install", "-y", "-q", "acl", capture=True, env={"DEBIAN_FRONTEND": "noninteractive"})
 
@@ -213,6 +216,7 @@ def sync_sites(system, users, names):
     try:
         for site in [site for site in groups if site not in wanted]:
             group = groups.pop(site)
+            system.plan([f"Take the group {group} off {site}"])
             system.step(f"Take the group {group} off {site}")
             if system.path(f"{WEB_ROOT}/{site}").is_dir() and system.which("setfacl"):
                 revoke_folder(system, f"{WEB_ROOT}/{site}", group)
@@ -223,6 +227,7 @@ def sync_sites(system, users, names):
                 acl_tools(system)
                 if not group_exists(system, group):
                     system.run("groupadd", group)
+                system.plan([f"Give the group {group} the folder of {site}"])
                 system.step(f"Give the group {group} the folder of {site}")
                 grant_folder(system, site, group)
                 groups[site] = group
@@ -268,6 +273,7 @@ def keep_sites_closed(system, closed):
                 if mode & 0o007:
                     acl_tools(system)
                     folder = f"{WEB_ROOT}/{path.name}"
+                    system.plan([f"Close the folder of {path.name} to others"])
                     system.step(f"Close the folder of {path.name} to others")
                     # www-data first, so the site is never without it
                     system.run("setfacl", "-m", "u:www-data:rX", folder)
@@ -277,6 +283,7 @@ def keep_sites_closed(system, closed):
             for site, mode in sorted(record.items()):
                 folder = f"{WEB_ROOT}/{site}"
                 if system.path(folder).is_dir():
+                    system.plan([f"Open the folder of {site} again"])
                     system.step(f"Open the folder of {site} again")
                     system.run("chmod", mode, folder)
                     system.run("setfacl", "-x", "u:www-data", folder, check=False, capture=True)

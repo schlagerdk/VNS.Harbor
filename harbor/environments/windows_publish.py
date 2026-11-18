@@ -36,6 +36,11 @@ def publish_windows(system, site, environment, project, local_publish, dry_run=F
     output = work / "publish"
     share = None
     copying = False
+    from harbor.environments.publish import build_configuration
+    configuration = build_configuration(environment)
+    named = environment.other.get("ENVIRONMENT", "")
+    build = f"Publish {environment.BINDING or environment.FOLDER} ({named + ', ' if named else ''}{configuration}, win-x64)"
+    system.plan([f"Check {environment.WINDOWS_SHARE}", build, *([] if dry_run else [f"Copy to {environment.WINDOWS_SHARE}", f"Check {site_url}"])])
     try:
         system.step(f"Check {environment.WINDOWS_SHARE}")
         try:
@@ -48,10 +53,7 @@ def publish_windows(system, site, environment, project, local_publish, dry_run=F
         web_config_name = next((line for line in listing if line.lower() == "web.config"), "")
 
         # Built here first, so the site stays up if the build fails
-        from harbor.environments.publish import build_configuration
-        configuration = build_configuration(environment)
-        named = environment.other.get("ENVIRONMENT", "")
-        system.step(f"Publish {environment.BINDING or environment.FOLDER} ({named + ', ' if named else ''}{configuration}, win-x64)")
+        system.step(build)
         system.run("python3", str(LIB / "build_as.py"), "--", "dotnet", "publish", f"{project}.csproj", "-c", configuration, f"-p:PublishDir={output}/",
                    f"-p:EnvironmentName={environment.other.get('ENVIRONMENT', '')}", f"-p:CustomAfterMicrosoftCommonTargets={LIB}/publish.targets",
                    "--runtime", "win-x64", "--self-contained", "false", "--nologo", cwd=site.site_root)

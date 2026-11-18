@@ -357,3 +357,52 @@ class DefaultPageTests(Server):
         remove_default_page(system)
         self.assertTrue((html / "index.html").is_file())
         self.assertEqual(system.commands, [])
+
+
+class SambaTests(Server):
+    def test_the_server_is_shared_by_its_short_name_and_root_gets_a_password(self):
+        from harbor.server.init import share_over_samba
+        conf = self.root / "etc/samba/smb.conf"
+        conf.parent.mkdir(parents=True)
+        conf.write_text("[global]\n   workgroup = WORKGROUP\n")
+        system = RecordingSystem(root=self.root, answers={"hostname -f": "linux-03.vns.dk", "pdbedit -u root": Result(1, "", "")},
+                                 replies=["secret", "secret"])
+        share_over_samba(system)
+        text = conf.read_text()
+        self.assertTrue(text.startswith("[global]\n   workgroup = WORKGROUP\n"))
+        self.assertIn("\n[linux-03]\n   path = /\n", text)
+        self.assertIn("force user = root", text)
+        self.assertIn("smbpasswd -a -s root", system.commands)
+        self.assertEqual(system.inputs[system.commands.index("smbpasswd -a -s root")], "secret\nsecret\n")
+        self.assertIn("systemctl enable --now smbd nmbd", system.commands)
+        self.assertIn("systemctl reload smbd", system.commands)
+
+    def test_again_it_changes_nothing_and_without_a_terminal_it_only_says_how(self):
+        from harbor.server.init import share_over_samba
+        conf = self.root / "etc/samba/smb.conf"
+        conf.parent.mkdir(parents=True)
+        conf.write_text("[linux-03]\n   path = /srv\n")
+        system = RecordingSystem(root=self.root, answers={"hostname -f": "linux-03.vns.dk", "pdbedit -u root": Result(1, "", "")})
+        share_over_samba(system)
+        self.assertEqual(conf.read_text(), "[linux-03]\n   path = /srv\n")
+        self.assertFalse(any(line.startswith("smbpasswd") for line in system.commands))
+        self.assertIn("Root has no Samba password yet: set it with smbpasswd -a root", system.said)
+        self.assertNotIn("systemctl reload smbd", system.commands)
+
+    def test_it_is_asked_and_only_made_when_wanted(self):
+        from harbor.server.init import wants_samba
+        answers = {"hostname -f": "linux-03.vns.dk"}
+        for reply, expected in (("", True), ("y", True), ("n", False)):
+            system = RecordingSystem(root=self.root, answers=answers, replies=[reply] if reply else [""])
+            self.assertEqual(wants_samba(system), expected, reply)
+            self.assertEqual(system.asked, ["Share the whole server over Samba, as root? [Y/n]: "])
+        # Nobody to ask: not made
+        system = RecordingSystem(root=self.root, answers=answers)
+        self.assertFalse(wants_samba(system))
+        self.assertEqual(system.asked, [])
+        # A share there already is kept up without a question
+        conf = self.root / "etc/samba/smb.conf"
+        conf.parent.mkdir(parents=True)
+        conf.write_text("[linux-03]\n   path = /\n")
+        system = RecordingSystem(root=self.root, answers=answers)
+        self.assertTrue(wants_samba(system))

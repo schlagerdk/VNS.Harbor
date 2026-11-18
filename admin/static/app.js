@@ -4991,7 +4991,7 @@ function updateProcesses() {
 			showTaskWindow(t);
 		} }, el("span", { className: "process-state", "aria-hidden": "true" }),
 			el("span", { className: "process-text" }, el("span", { className: "process-title", textContent: t.taskTitle }),
-				el("span", { className: "process-sub", textContent: t.steps.length && state === "running" ? t.steps[t.steps.length - 1].text : text }))));
+				el("span", { className: "process-sub", textContent: lastReachedStep(t) && state === "running" ? lastReachedStep(t).text : text }))));
 	}));
 }
 $("#btn-processes").onclick = (event) => {
@@ -5130,6 +5130,44 @@ function taskStateIcon(state) {
 	svg.querySelector("path").setAttribute("d", paths[state]);
 	return svg;
 }
+// A command can plan its steps (harbor/core/system.py plan): those not reached yet are shown as still to come, and each
+// step it reports is the next of them. A step that is not in the plan comes before those still to come.
+function reachedStep(step) { return !step.pending && !step.skipped; }
+function lastReachedStep(t) { return t.steps.filter(reachedStep).pop(); }
+function addTaskStep(t, event) {
+	const site = event.site ? String(event.site) : "";
+	const firstPending = t.steps.findIndex((step) => step.pending && step.site === site);
+	if (event.type === "plan") {
+		const planned = (Array.isArray(event.steps) ? event.steps : []).map((text) => ({ type: "step", text: String(text), site, pending: true }));
+		t.steps.splice(firstPending < 0 ? t.steps.length : firstPending, 0, ...planned);
+		return;
+	}
+	const text = String(event.text || "");
+	if (event.type === "skip") {
+		const at = t.steps.findIndex((step) => step.pending && step.site === site && step.text === text);
+		if (at >= 0) Object.assign(t.steps[at], { pending: false, skipped: true });
+		return;
+	}
+	if (event.type === "step" && firstPending >= 0) {
+		const at = t.steps.findIndex((step, index) => index >= firstPending && step.pending && step.site === site && step.text === text);
+		if (at >= 0) {
+			// Planned steps it went past were not needed
+			for (let index = firstPending; index < at; index++) if (t.steps[index].pending && t.steps[index].site === site) Object.assign(t.steps[index], { pending: false, skipped: true });
+			t.steps[at].pending = false;
+			return;
+		}
+	}
+	t.steps.splice(firstPending < 0 ? t.steps.length : firstPending, 0, { type: event.type, text, site });
+}
+// The step it is on in view: the list scrolls with it, also when it was scrolled away
+function followTaskStep() {
+	const list = $("#task-steps");
+	const current = list.querySelector(".task-step.active, .task-step.failed") || [...list.querySelectorAll(".task-step:not(.pending):not(.skipped)")].pop();
+	if (!current) { list.scrollTop = 0; return; }
+	const below = current.offsetTop + current.offsetHeight + (current.nextElementSibling ? current.nextElementSibling.offsetHeight : 0);
+	if (below > list.scrollTop + list.clientHeight) list.scrollTop = below - list.clientHeight;
+	else if (current.offsetTop < list.scrollTop) list.scrollTop = current.offsetTop;
+}
 function renderTask(t) {
 	if (taskShown !== t) return;
 	const state = t.taskState || "running";
@@ -5143,17 +5181,24 @@ function renderTask(t) {
 		: closing ? "Done – closing" : state === "done" ? "Done" : state === "warning" ? "Finished with warnings: see the output" : `Failed${t.exitCode ? ` (exit ${t.exitCode})` : ""}: see the output`;
 	// The newest step is always in view: at the bottom when the window opens and with each new step, also when the
 	// list was scrolled up
-	const list = $("#task-steps");
-	const follow = t.followSteps || t.steps.length !== t.stepsShown;
+	const reached = t.steps.filter(reachedStep).length;
+	const follow = t.followSteps || reached !== t.stepsShown;
 	t.followSteps = false;
-	t.stepsShown = t.steps.length;
+	t.stepsShown = reached;
 	// Several sites at once (Multi action): each site's newest step is active while that site runs, failed if it failed
 	const lastOfSite = {};
-	t.steps.forEach((step, index) => { if (step.site) lastOfSite[step.site] = index; });
+	let lastIndex = -1;
+	t.steps.forEach((step, index) => {
+		if (!reachedStep(step)) return;
+		if (step.site) lastOfSite[step.site] = index;
+		else lastIndex = index;
+	});
 	$("#task-steps").replaceChildren(...t.steps.map((step, index) => {
-		const last = index === t.steps.length - 1;
+		const last = index === lastIndex;
 		const siteState = step.site && t.siteStates ? t.siteStates[step.site] : "";
-		const kind = step.type === "warning" ? "warning"
+		// Still to come while it runs; not taken when it has ended
+		const running = state === "running" && (!step.site || !siteState || siteState === "running");
+		const kind = step.skipped || (step.pending && !running) ? "skipped" : step.pending ? "pending" : step.type === "warning" ? "warning"
 			: step.site && siteState ? (lastOfSite[step.site] === index && siteState === "running" && state === "running" ? "active"
 				: lastOfSite[step.site] === index && siteState === "failed" ? "failed" : "done")
 			: last && state === "running" ? "active" : last && state === "failed" ? "failed" : "done";
@@ -5162,9 +5207,9 @@ function renderTask(t) {
 		return el("li", { className: `task-step ${kind}` }, el("span", { className: "task-step-mark", "aria-hidden": "true" }), el("span", { textContent: text }));
 	}));
 	$("#task-steps").hidden = !t.steps.length;
-	if (follow) list.scrollTop = list.scrollHeight;
+	if (follow) followTaskStep();
 	// A script without steps shows what it is doing now
-	$("#task-current").textContent = state === "running" && !t.steps.length ? t.lastLine || "Starting…" : "";
+	$("#task-current").textContent = state === "running" && !reached ? t.lastLine || "Starting…" : "";
 	$("#task-current").hidden = !$("#task-current").textContent;
 	$("#task-background").hidden = state !== "running";
 	// A window that closes by itself has no Close button to miss
@@ -5187,7 +5232,7 @@ function showTaskWindow(t) {
 	renderTask(t);
 	if (!taskDialog.open) taskDialog.showModal();
 	// Once the window has its size
-	requestAnimationFrame(() => { $("#task-steps").scrollTop = $("#task-steps").scrollHeight; });
+	requestAnimationFrame(followTaskStep);
 	clearInterval(t.clock);
 	t.clock = setInterval(() => (t.taskState === "running" ? renderTask(t) : clearInterval(t.clock)), 1000);
 }
@@ -5289,7 +5334,7 @@ function connectTerminal(t) {
 			const lines = message.o.replace(ANSI, "").split("\n").map((line) => line.trim()).filter(Boolean);
 			if (lines.length) {
 				t.lastLine = lines[lines.length - 1].slice(0, 200);
-				if (taskShown === t && !t.steps.length) renderTask(t);
+				if (taskShown === t && !lastReachedStep(t)) renderTask(t);
 			}
 		}
 		if (message.x !== undefined) {
@@ -5345,7 +5390,7 @@ function openTerminal(id, title, autoClose, sites = [], running = true, scope = 
 		if (!data.startsWith("harbor;")) return false;
 		try {
 			const event = JSON.parse(data.slice("harbor;".length));
-			if (event.type === "step" || event.type === "warning") t.steps.push({ type: event.type, text: String(event.text || ""), site: event.site ? String(event.site) : "" });
+			if (["step", "warning", "plan", "skip"].includes(event.type)) addTaskStep(t, event);
 			// Multi action: a site has started or ended (several run at once)
 			if (event.type === "site" && event.site) (t.siteStates ||= {})[event.site] = String(event.state || "");
 			renderTask(t);

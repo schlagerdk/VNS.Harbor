@@ -74,6 +74,7 @@ def configure(system, wanted):
     after = SSHD if wanted else None
     if before == after:
         return
+    system.plan(["Let the admin's users use SFTP" if wanted else "Take SFTP for the admin's users away"])
     system.step("Let the admin's users use SFTP" if wanted else "Take SFTP for the admin's users away")
     if after is None:
         path.unlink()

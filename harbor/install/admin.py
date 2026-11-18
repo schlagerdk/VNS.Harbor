@@ -153,6 +153,7 @@ def update(system, name=""):
     name = choose(system, name)
     site = Site(name)
     data = f"{site.site_root}/app"
+    system.plan(["Update the admin's Python packages", f"Restart the admin site {name}"])
     system.step("Update the admin's Python packages")
     prepare_python(system)
     download_vendor(system, data)
@@ -223,6 +224,7 @@ def install(system, name="", binding="", user="", https="", allowed=None):
     site.doc_root = f"{site.site_root}/wwwroot"
     if system.path(site.site_root).exists():
         raise Stop(f"{site.site_root} already exists.")
+    system.plan([*([f"Issue a certificate for {binding}"] if https else []), "Prepare the admin's Python", "Create the login", "Start the admin site"])
     reservation = allocate_port(system, name)
     try:
         site.port_http = str(reservation.port)

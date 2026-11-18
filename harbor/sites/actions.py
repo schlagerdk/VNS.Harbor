@@ -59,6 +59,7 @@ def issue_certificate(system, name, yes=False):
         require_acme(system)
     except RuntimeError as error:
         raise Stop(str(error)) from None
+    system.plan([f"Issue certificate for {' '.join(domains)}", "Install the certificate"])
     system.step(f"Issue certificate for {' '.join(domains)}")
     for domain in domains:
         clean_stale_acme(system, site, domain)
@@ -102,6 +103,7 @@ def change_environment(system, name, given=""):
     for line in text.splitlines():
         if "_ENVIRONMENT" in line:
             system.say(line)
+    system.plan([f"Restart {site.service_name} as {environment}"])
     system.step(f"Restart {site.service_name} as {environment}")
     system.run("systemctl", "daemon-reload")
     system.run("systemctl", "restart", site.service_name)

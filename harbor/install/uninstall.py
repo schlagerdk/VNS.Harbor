@@ -35,6 +35,8 @@ def uninstall(system, assume_yes=False):
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     archive = f"{BACKUP_FOLDER}/harbor-{stamp}.tar.gz"
     kept = [path.lstrip("/") for path in ("/var/lib/harbor", "/etc/harbor") if system.path(path).exists()]
+    system.plan([*(["Keep Harbor's state and secrets"] if kept else []), *(f"Remove the admin site {site}" for site in admin.admin_sites(system)),
+                 "Remove the Linux users Harbor made", "Take Harbor's jobs out of cron", "Remove Harbor"])
     if kept:
         system.step("Keep Harbor's state and secrets")
         if not system.run("tar", "-czf", archive, "-C", "/", *kept, check=False).ok:

@@ -172,6 +172,9 @@ def import_site(system, unc, folder, binding, user, password, domain="", aliases
     if not project and ("global.asax" in lower or any(item.endswith(".dll") for item in lower)):
         raise Stop(f"{folder} is a classic ASP.NET site (.NET Framework): it runs on Windows only.")
     kind = "project" if project else "html"
+    setup = f"Set up {name} on HTTP" + (", as an HTML site" if kind == "html" else ", as Production")
+    system.plan([f"Copy {folder} from Windows" + {"project": "", "html": ", as static files"}[kind], setup,
+                 *([f"Add the temporary aliases {aliases}"] if aliases else [])])
     system.step(f"Copy {folder} from Windows" + {"project": "", "html": ", as static files"}[kind])
     # A project without its builds; static files as they are. IIS's own files never.
     left_out = LEFT_OUT + PUBLISH_LEFT_OUT if project else ("/web.config", "/app_offline.htm")
@@ -186,7 +189,7 @@ def import_site(system, unc, folder, binding, user, password, domain="", aliases
         raise Stop(f"{folder} could not be copied from Windows.") from None
     lower_case_folders(system.path(site.site_root))
     keep_source(system, name, unc, folder, user, password, domain, kind)
-    system.step(f"Set up {name} on HTTP" + (", as an HTML site" if kind == "html" else ", as Production"))
+    system.step(setup)
     setup_site(system, name, binding, "n", "Production")
     if aliases:
         from harbor.sites.bindings import change_binding
@@ -199,6 +202,7 @@ def import_site(system, unc, folder, binding, user, password, domain="", aliases
 def import_all(system, unc, sites, user, password, domain=""):
     """Several folders, one at a time: one that fails is told, and the rest go on"""
     failed = []
+    system.plan([f"==== {item.get('folder', '')} as {item.get('binding') or item.get('folder', '')}" for item in sites])
     for item in sites:
         folder, binding = item.get("folder", ""), item.get("binding") or item.get("folder", "")
         system.step(f"==== {folder} as {binding}")
@@ -223,6 +227,7 @@ def refresh_all(system, pause=False):
     if not names:
         raise Stop("No site here was imported from Windows (or all have been taken over).")
     failed = []
+    system.plan([f"==== {name}" for name in names])
     for name in names:
         system.step(f"==== {name}")
         try:
@@ -251,6 +256,7 @@ def refresh(system, name, pause=False):
     here = run_folder(system, name)
     if found.get("kind") == "html":
         # Static files: all of them, as they are on Windows (a file deleted there stays here, as with media)
+        system.plan(["Copy the site's files"])
         system.step("Copy the site's files")
         remote.rclone("copy", remote.target, str(system.path(here)), "--exclude", "/web.config", "--exclude", "/app_offline.htm",
                       "--create-empty-src-dirs", "--modify-window", "2s", "--stats", "0")
@@ -260,6 +266,9 @@ def refresh(system, name, pause=False):
     database = DATA[0]
     has_database = remote.rclone("lsf", f"{remote.target}/{database[0]}", *[a for p in database[1] for a in ("--include", p)],
                                  check=False, capture=True).stdout.strip()
+    present = [folder for folder, _ in DATA[1:] if remote.rclone("lsf", f"{remote.target}/{folder}", "--max-depth", "1", check=False, capture=True).ok]
+    system.plan([*(["Stop the site here while its database is replaced", "Copy the SQLite database"] if has_database else []),
+                 *(f"Copy {folder}" for folder in present), *(["Start the site here"] if has_database else [])])
     stopped = False
     try:
         if has_database:
@@ -276,9 +285,7 @@ def refresh(system, name, pause=False):
             system.step("Copy the SQLite database")
             remote.rclone("copy", f"{remote.target}/{database[0]}", str(target), *[a for p in database[1] for a in ("--include", p)],
                           "--modify-window", "2s", "--stats", "0")
-        for folder, _ in DATA[1:]:
-            if not remote.rclone("lsf", f"{remote.target}/{folder}", "--max-depth", "1", check=False, capture=True).ok:
-                continue
+        for folder in present:
             system.step(f"Copy {folder}")
             remote.rclone("copy", f"{remote.target}/{folder}", str(system.path(f"{here}/{folder}")), "--create-empty-src-dirs",
                           "--modify-window", "2s", "--stats", "0")
@@ -311,6 +318,7 @@ def take_over(system, name):
     site = Site(name)
     config = system.path(site.config_path)
     binding = next((line.split()[1] for line in config.read_text().splitlines() if line.split()[:1] == ["ServerName"]), name) if config.is_file() else name
+    system.plan(["Remove the temporary aliases"])
     system.step("Remove the temporary aliases")
     change_binding(system, name, binding, "", yes=True)
     issue_certificate(system, name, yes=True)

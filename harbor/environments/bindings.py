@@ -175,6 +175,7 @@ def change_binding(system, name="", new_binding="", aliases=None, yes=False, tar
     umbraco = "1" if system.path(f"{Path(environment.script).parent}/sync_prod.sh").is_file() else "n"
     variables = (f"SITE='{environment.FOLDER}' OLD='{old_binding}' NEW='{new_binding}' ALIASES='{' '.join(new_aliases)}' "
                  f"ROOT='{environment.root}' ACME_SERVER='{ACME_SERVER}' MAIL='{environment.ADMIN_MAIL or site.admin_mail}' UMBRACO='{umbraco}'")
+    system.plan([f"Change the binding to {new_binding} on {environment.description}"])
     system.step(f"Change the binding to {new_binding} on {environment.description}")
     result = settings.remote_run(system, environment, variables, CHANGE_BINDING, check=False)
     if not result.ok:

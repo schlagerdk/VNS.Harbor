@@ -110,6 +110,7 @@ def issue_certificate(system, name, target="prod", yes=False):
     umbraco = "1" if system.path(f"{Path(environment.script).parent}/sync_prod.sh").is_file() else "n"
     variables = (f"SITE='{environment.FOLDER}' BINDING='{environment.BINDING.lower()}' ACME_SERVER='{ACME_SERVER}' "
                  f"ROOT='{environment.root}' MAIL='{environment.ADMIN_MAIL or site.admin_mail}' UMBRACO='{umbraco}'")
+    system.plan([f"Issue a certificate for {environment.BINDING} on {environment.description}"])
     system.step(f"Issue a certificate for {environment.BINDING} on {environment.description}")
     if not settings.remote_run(system, environment, variables, ISSUE_CERTIFICATE, check=False).ok:
         raise Stop("", 1)
@@ -123,10 +124,12 @@ def change_environment(system, name, target="prod", given=""):
     chosen = choose_environment(system, given)
     if environment.windows:
         share = Share(system, environment).connect()
+        system.plan([f"Set {chosen} in web.config"])
         system.step(f"Set {chosen} in web.config")
         share.set_environment(chosen, str(INSTALL))
         system.say(f"Now: {chosen} (web.config). IIS restarts the app.")
     else:
+        system.plan([f"Restart {environment.FOLDER} as {chosen}"])
         system.step(f"Restart {environment.FOLDER} as {chosen}")
         if not settings.remote_run(system, environment, f"SITE='{environment.FOLDER}' ENVIRONMENT='{chosen}'", CHANGE_ENVIRONMENT, check=False).ok:
             raise Stop("", 1)

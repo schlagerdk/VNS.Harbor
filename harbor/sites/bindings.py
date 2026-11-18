@@ -122,6 +122,10 @@ def change_binding(system, name="", new_binding="", aliases=None, yes=False):
             publish = os.path.basename(working)
     settings = system.path(f"{site.site_root}/{publish}/appsettings.json")
 
+    revoke = bool(old_binding and new_binding != old_binding and https
+                  and not (old_binding in new_aliases or enabled_elsewhere(system, site, old_binding) is not None))
+    system.plan([f"Change the binding to {new_binding}", *([f"Issue a certificate for {new_binding}"] if https else []),
+                 *([f"Revoke and remove certificate for {old_binding}"] if revoke else [])])
     with tempfile.TemporaryDirectory() as backup:
         backup = Path(backup)
         shutil.copy2(config, backup / "site.conf")
@@ -189,7 +193,8 @@ def change_binding(system, name="", new_binding="", aliases=None, yes=False):
                 config.write_text(replace_server_aliases(render(read_template(f"{site.harbor_dir}/templates/sites/common/apache-temp.conf.tpl"), site), new_aliases))
                 if not system.run("apache2ctl", "configtest", check=False).ok or not system.run("systemctl", "reload", "apache2", check=False).ok:
                     fail()
-                system.step(f"Issue certificate for {' '.join(domains)}")
+                system.step(f"Issue a certificate for {new_binding}")
+                system.say(f"Names in the certificate: {' '.join(domains)}")
                 for domain in domains:
                     if domain not in (old_binding, name):
                         clean_stale_acme(system, site, domain)
@@ -225,8 +230,7 @@ def change_binding(system, name="", new_binding="", aliases=None, yes=False):
         system.run("systemctl", "reload", "apache2")
 
     if old_binding and new_binding != old_binding and https:
-        in_use = old_binding in new_aliases or enabled_elsewhere(system, site, old_binding) is not None
-        if in_use:
+        if not revoke:
             system.say(f"Previous binding {old_binding} is still used; keeping its certificate.")
         else:
             system.step(f"Revoke and remove certificate for {old_binding}")

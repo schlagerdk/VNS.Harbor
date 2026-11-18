@@ -272,6 +272,7 @@ def finish_migrated(system, main, request, target_id, no_publish, has_files):
         return
     for key in ("VNS_PROD_PASSWORD", "VNS_PROD_SMB_PASSWORD"):
         os.environ.pop(key, None)
+    system.plan([f"Publish to {request.environment}", *([f"Sync content to {request.environment}"] if main.kind == "umbraco" else [])])
     system.step(f"Publish to {request.environment}")
     published = system.run("python3", str(BIN), "env", "publish", main.name, env={"VNS_TARGET": target_id}, check=False)
     if not published.ok:

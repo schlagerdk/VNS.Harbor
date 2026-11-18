@@ -75,6 +75,13 @@ def copy_site(system, source_name, target_name, binding, database="", project=No
         raise Stop(f"{source_name} has environments, which a copy leaves out. Move them first, or copy it and delete it afterwards.")
     unit = source.service_name if system.path(source.service_path).is_file() else ""
     stopped = bool(unit) and (stop_source or bool(remove_source)) and system.run("systemctl", "is-active", "--quiet", unit, check=False).ok
+    # All the steps, as copy_files takes them
+    https = system.path(source.config_path).is_file() and bool(re.search(r"(?mi)^[ \t]*SSLEngine[ \t]+on", system.path(source.config_path).read_text()))
+    build = bool(project) and not system.path(f"{source.site_root}/{project}.csproj").is_file()
+    system.plan([*([f"Stop {source_name} while it is copied"] if stopped else []), f"Copy {source_name} to {target_name}",
+                 *([f"Issue a certificate for {binding}"] if https else []),
+                 *(([f"Build {project}"] if build else [f"Start {target_name}"]) if system.path(source.service_path).is_file() else []),
+                 *([f"Start {source_name} again"] if stopped and not remove_source else [])])
     if stopped:
         system.step(f"Stop {source_name} while it is copied")
         system.run("systemctl", "stop", unit)
@@ -101,6 +108,7 @@ def remove(system, name, what):
     binding = next((line.split()[1] for line in system.path(site.config_path).read_text().splitlines()
                     if line.split()[:1] == ["ServerName"] and len(line.split()) > 1), "") if system.path(site.config_path).is_file() else ""
     deletion = Deletion(system, site, "y")
+    system.plan([*deletion.service_steps(name), *(deletion.certificate_steps(binding, {name}) if binding and "." in binding else [])])
     deletion.service_and_config(name)
     # Its certificate goes unless the copy kept the binding
     if binding and "." in binding:

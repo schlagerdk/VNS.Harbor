@@ -1365,12 +1365,16 @@ dialog.task-dialog { width: min(560px, calc(100vw - 32px)); }
 .task-state .ico { width: 22px; height: 22px; margin: 0; stroke-width: 2.6; }
 .task-spinner { width: 20px; height: 20px; border: 2.5px solid rgba(255, 255, 255, .35); border-top-color: #fff; border-radius: 50%; animation: update-spin .8s linear infinite; }
 #task-status { font-variant-numeric: tabular-nums; }
-.task-steps { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 2px; max-height: 40vh; overflow-y: auto; }
+.task-steps { list-style: none; margin: 0 0 12px; padding: 0; display: grid; position: relative; gap: 2px; max-height: 40vh; overflow-y: auto; }
 .task-steps[hidden] { display: none; }
 .task-step { display: flex; align-items: flex-start; gap: 10px; padding: 6px 2px; font-size: 13.5px; color: var(--muted); }
 .task-step.active { color: var(--text); font-weight: 600; }
 .task-step.failed { color: var(--red); font-weight: 600; }
 .task-step.warning { color: #d29922; }
+/* Still to come, and those it did not take (it failed before them) */
+.task-step.pending { opacity: .7; }
+.task-step.skipped { opacity: .45; }
+.task-step.skipped .task-step-mark { border-style: dashed; }
 .task-step-mark { flex: none; position: relative; width: 16px; height: 16px; margin-top: 1px; border-radius: 50%; border: 1.5px solid var(--line); }
 .task-step.done .task-step-mark { border-color: var(--green); background: var(--green) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230d1117' stroke-width='4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5'/%3E%3C/svg%3E") center / 10px no-repeat; }
 .task-step.active .task-step-mark { border-color: var(--blue); border-top-color: transparent; animation: update-spin .8s linear infinite; }

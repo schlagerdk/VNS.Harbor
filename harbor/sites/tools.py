@@ -128,9 +128,11 @@ def reissue_certificate(system, name):
         require_acme(system)
     except (ValueError, RuntimeError) as error:
         raise Stop(str(error)) from None
-    system.step(f"Issue certificate for {' '.join(domains)}")
+    issue = f"Issue certificate for {' '.join(domains)}"
+    system.plan([issue, "Reload apache"])
+    system.step(issue)
     system.run(ACME, "--issue", "--apache", "--server", ACME_SERVER, "--force", *(argument for domain in domains for argument in ("-d", domain)))
-    system.say("Reload apache")
+    system.step("Reload apache")
     system.run("systemctl", "reload", "apache2")
 
 
@@ -142,6 +144,7 @@ def outdated(system, name):
         raise Stop("dotnet SDK not found. Please install it first.")
     # dotnet-outdated is an apphost that needs DOTNET_ROOT when .NET is not in /usr/share/dotnet
     env = {} if os.environ.get("DOTNET_ROOT") else {"DOTNET_ROOT": os.path.dirname(os.path.realpath(dotnet))}
+    system.plan(["Running dotnet outdated..."])
     system.step("Running dotnet outdated...")
     output = system.run("dotnet", "outdated", capture=True, check=False, env=env, cwd=site.site_root)
     system.say((output.stdout + output.stderr).rstrip("\n"))
@@ -149,6 +152,7 @@ def outdated(system, name):
         system.say("\nDone.")
         return
     if system.ask("\nDo you want to upgrade the packages? (y/n): ").strip() in ("y", "Y"):
+        system.plan(["Running dotnet outdated --upgrade..."])
         system.step("Running dotnet outdated --upgrade...")
         system.run("dotnet", "outdated", "--upgrade", env=env, cwd=site.site_root)
         system.say("Upgrade completed.")
@@ -191,18 +195,21 @@ def publish(system, name, configuration="", folder="", environment_name=""):
     folder = os.path.relpath(working, site.site_root) if working != site.site_root else "."
     unit = site.service_name
     stopped = False
+    # Which site, as it reads in Publish all among its environments
+    named = environment_name or service_environment(system, site)
+    build = f"Publish {site.name} ({named + ', ' if named else ''}{configuration})"
+    system.plan([f"Stop {unit}", build, "Clean up", f"Start {unit}", f"Check {unit} runs"])
     try:
         system.step(f"Stop {unit}")
         system.run("systemctl", "stop", unit)
         stopped = True
-        # Which site, as it reads in Publish all among its environments
-        named = environment_name or service_environment(system, site)
-        system.step(f"Publish {site.name} ({named + ', ' if named else ''}{configuration})")
+        system.step(build)
         shutil.rmtree(system.path(f"{working}/runtimes"), ignore_errors=True)
         system.run("python3", str(LIB / "build_as.py"), "--", "dotnet", "publish", project.name, "-c", configuration, f"-p:PublishDir={folder}",
                    *([f"-p:EnvironmentName={environment_name}"] if environment_name else []),
                    f"-p:CustomAfterMicrosoftCommonTargets={LIB}/publish.targets", "--runtime", runtime_identifier(system.output("uname", "-m")),
                    "--self-contained", "false", "--nologo", cwd=site.site_root)
+        system.step("Clean up")
         system.say("Delete bin")
         shutil.rmtree(system.path(f"{site.site_root}/bin"), ignore_errors=True)
         if "Umbraco.Cms" in project.read_text(errors="replace"):
@@ -213,6 +220,7 @@ def publish(system, name, configuration="", folder="", environment_name=""):
             shutil.rmtree(system.path(f"{site.site_root}/App_Plugins"), ignore_errors=True)
         system.run("chown", "-R", "www-data:www-data", folder, cwd=site.site_root)
         system.run("python3", str(LIB / "sql_startup.py"), unit)
+        system.step(f"Start {unit}")
         system.run("systemctl", "start", unit)
         stopped = False
     except CommandFailed as error:
@@ -221,6 +229,7 @@ def publish(system, name, configuration="", folder="", environment_name=""):
         # Always bring the site back up, also if the publish fails
         if stopped:
             system.run("systemctl", "start", unit, check=False)
+    system.step(f"Check {unit} runs")
     keep_connection(system, site, "main")
     system.sleep(2)
     system.run("systemctl", "status", unit, "--no-pager", check=False)

@@ -218,6 +218,7 @@ def migrate(system, name):
     for place in (system.path(BACKUPS), backups):
         place.chmod(0o700)
     backup = backups / f"{stamp}.tar.gz"
+    system.plan([f"Back up the scripts of {name}", f"Take Harbor's scripts out of {name}"])
     system.step(f"Back up the scripts of {name}")
     with tarfile.open(backup, "w:gz") as archive:
         for part in ("scripts", ".vns-publish"):
@@ -256,6 +257,7 @@ def rollback(system, name):
     if not backup.is_file():
         raise Stop(f"The backup of {name} is gone: {marker.get('backup', '')}")
     folder = system.path(site.site_root)
+    system.plan([f"Put the scripts of {name} back"])
     system.step(f"Put the scripts of {name} back")
     with tarfile.open(backup) as archive:
         members = [member for member in archive.getmembers() if member.name.split("/")[0] in ("scripts", ".vns-publish")

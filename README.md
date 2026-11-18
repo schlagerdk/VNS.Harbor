@@ -41,7 +41,7 @@ curl -fsSL https://raw.githubusercontent.com/schlagerdk/VNS.Harbor/main/install.
 
 1. **Base setup:** the time zone (Europe/Copenhagen), time sync, updates, and the few packages Harbor needs.
 2. **Harbor:** the newest release in `/opt/harbor`.
-3. **The server:** made ready for sites with `harbor server init` (Apache and its modules, acme.sh, .NET 11, 10 and 8, the Umbraco and VNS templates, the keep-alive job). Then it offers to set up the admin site (`harbor admin install`).
+3. **The server:** made ready for sites with `harbor server init` (Apache and its modules, acme.sh, .NET 11, 10 and 8, the Umbraco and VNS templates, when wanted (it asks) a Samba share of / as root named by the server's short name, with a Samba password for root it asks for, the keep-alive job). Then it offers to set up the admin site (`harbor admin install`).
 
 `HARBOR_REF=v1.0.0` installs that release instead of the newest.
 

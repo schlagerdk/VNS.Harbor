@@ -194,6 +194,12 @@ class Move:
                 quiet("systemctl", "reload", "apache2")
             system.run("systemctl", "start", self.old_unit, check=False)
 
+        # The binding changes after, when another is asked for (the config keeps its ServerName)
+        old_binding = next((line.split()[1] for line in system.path(self.old_conf).read_text().splitlines()
+                            if line.split()[:1] == ["ServerName"] and len(line.split()) > 1), "")
+        rebind = bool(self.request["BINDING"]) and self.request["BINDING"].lower() != old_binding.lower()
+        system.plan([f"Stop {self.old_name}", "Update the service and the Apache config", "Update the environment's settings",
+                     *([f"Change the binding to {self.request['BINDING']}"] if rebind else [])])
         try:
             system.step(f"Stop {self.old_name}")
             system.run("systemctl", "stop", self.old_unit)
@@ -437,6 +443,13 @@ class Move:
             self.source_host = (addresses[0] if addresses else "") or system.output("hostname", "-f", check=False) or system.output("hostname", check=False)
 
         moved = source_stopped = destination_started = False
+        stop_source = not self.copy or os.environ.get("VNS_COPY_STOP") == "y"
+        certificate = ([f"Issue a certificate for {self.request['BINDING'] or 'the binding'}"]
+                       if os.environ.get("VNS_MOVE_HTTPS") == "y" and self.destination != "windows" else [])
+        system.plan([*([f"Stop {self.old_name}, so its database and files stay consistent while they are copied"] if stop_source else []),
+                     *([f"Fetch {self.old_root}"] if self.source_remote or self.source_windows else []),
+                     *(["Publish to the new server"] if self.destination == "windows" else ["Copy everything to the destination", "Set up the destination"]),
+                     *([] if self.copy else [f"Remove {self.old_name} from where it was"]), *certificate])
         try:
             # Also checks the login, before anything is stopped
             main = settings.load_main_site(system, site)
@@ -449,7 +462,7 @@ class Move:
             self.request.update(PASSWORD="", SMB_PASSWORD="")
             self.destination_is_free(moving)
 
-            if not self.copy or os.environ.get("VNS_COPY_STOP") == "y":
+            if stop_source:
                 system.step(f"Stop {self.old_name}, so its database and files stay consistent while they are copied")
                 source_stopped = True
                 self.source_control("stop")
@@ -483,13 +496,16 @@ class Move:
                 elif not self.source_windows:
                     architecture = system.output("uname", "-m")
                 if self.source_windows:
-                    system.step("A Windows build cannot run on Linux, so the project is built for it")
+                    system.step("Set up the destination")
+                    system.say("A Windows build cannot run on Linux, so the project is built for it")
                     self.publish(moving, VNS_MOVING="1")
                 elif architecture == self.server_architecture(moving):
-                    system.step("Create the service and Apache config")
+                    system.step("Set up the destination")
+                    system.say("Create the service and Apache config")
                     self.publish(moving, VNS_PUBLISH_TRACKED=f"target-{moving}", VNS_MIGRATE_ONLY="1")
                 else:
-                    system.step("The destination has another CPU architecture, so the project is built for it")
+                    system.step("Set up the destination")
+                    system.say("The destination has another CPU architecture, so the project is built for it")
                     self.publish(moving, VNS_MOVING="1")
             moved = True
         except BaseException as error:

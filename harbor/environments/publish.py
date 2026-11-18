@@ -410,10 +410,14 @@ class Publish:
             identifier = runtime_identifier(system.output("uname", "-m") if self.local else self.remote("uname -m", capture=True).stdout.strip())
             if self.local:
                 self.exclude_local_target()
+            configuration = build_configuration(environment)
+            named = environment.other.get("ENVIRONMENT", "")
+            build = f"Publish {environment.FOLDER} ({named + ', ' if named else ''}{configuration})"
+            prepare = f"Prepare {environment.FOLDER} on {environment.IP or 'this server'}"
+            copy = f"Publish to local folder {self.root}" if self.local else f"Upload to {self.host}:{self.root}"
+            system.plan([prepare, "Start service"] if self.migrate_only else [build, prepare, copy, "Start service"])
             if not self.migrate_only:
-                configuration = build_configuration(environment)
-                named = environment.other.get("ENVIRONMENT", "")
-                system.step(f"Publish {environment.FOLDER} ({named + ', ' if named else ''}{configuration})")
+                system.step(build)
                 system.run("python3", str(LIB / "build_as.py"), "--", "dotnet", "publish", f"{self.project}.csproj", "-c", configuration,
                            f"-p:PublishDir={output}", f"-p:CustomAfterMicrosoftCommonTargets={LIB}/publish.targets", "--runtime", identifier,
                            "--self-contained", "false", "--nologo", cwd=site.site_root)
@@ -422,17 +426,17 @@ class Publish:
             umbraco = "1" if any("Umbraco.Cms" in path.read_text(errors="replace") for path in system.path(site.site_root).glob("*.csproj")) else "0"
             variables = (f"SITE='{environment.FOLDER}' BINDING='{environment.BINDING}' ENVIRONMENT='{environment.other.get('ENVIRONMENT', '')}' "
                          f"MAIL='{environment.ADMIN_MAIL}' PROJECT='{self.project}' UMBRACO='{umbraco}' ROOT='{self.root}' HTTPS='{environment.HTTPS}'")
-            system.step(f"Prepare {environment.FOLDER} on {environment.IP or 'this server'}")
+            system.step(prepare)
             self.run_script(variables, PREPARE)
 
             if not self.migrate_only:
                 if self.local:
-                    system.step(f"Publish to local folder {self.root}")
+                    system.step(copy)
                     system.path(self.root).mkdir(parents=True, exist_ok=True)
                     destination = f"{system.path(self.root)}/"
                     exists = system.path(f"{self.root}/appsettings.json").is_file()
                 else:
-                    system.step(f"Upload to {self.host}:{self.root}")
+                    system.step(copy)
                     destination = f"{self.host}:{self.root}/"
                     exists = self.remote(f"{self.sudo} test -f '{self.root}/appsettings.json'", check=False).ok
                 # Schema files are never uploaded. Once the site exists there, its content, settings and data are never

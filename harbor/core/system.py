@@ -105,9 +105,20 @@ class System:
                 raise Stop("", 1) from None
             return ""
 
+    def interactive(self):
+        """Whether someone is at the terminal to answer a question"""
+        return sys.stdin.isatty()
+
     def event(self, kind, text):
         if progress_wanted():
             sys.stdout.write(PROGRESS.format(json.dumps({"type": kind, "text": text})))
+            sys.stdout.flush()
+
+    def plan(self, steps):
+        """The steps the command will take, before it takes the first: the admin's window shows those still to come.
+        Each step() then is the next of them; a step that is not in the plan is shown where it comes."""
+        if progress_wanted():
+            sys.stdout.write(PROGRESS.format(json.dumps({"type": "plan", "steps": list(steps)})))
             sys.stdout.flush()
 
     def step(self, text):
@@ -115,12 +126,23 @@ class System:
         self.event("step", text)
         self.say(text)
 
+    def skip(self, text):
+        """A planned step that turned out not to be needed (a site that is gone, say): shown as not taken"""
+        self.event("skip", text)
+
+    def finished(self):
+        """The command has ended well"""
+
     def say(self, text):
         print(text, flush=True)
 
     def warn(self, text):
         self.event("warning", text)
         print(text, file=sys.stderr, flush=True)
+
+
+class PlanMismatch(AssertionError):
+    """In a test: a command's steps are not those it planned, so the admin's window would show them wrong"""
 
 
 @dataclass
@@ -138,6 +160,9 @@ class RecordingSystem(System):
     programs: set = field(default_factory=set)
     replies: list = field(default_factory=list)
     asked: list = field(default_factory=list)
+    pending: list = field(default_factory=list)
+    planned: bool = False
+    warned: bool = False
 
     def __post_init__(self):
         self.root = Path(self.root)
@@ -166,8 +191,42 @@ class RecordingSystem(System):
     def event(self, kind, text):
         self.events.append((kind, text))
 
+    def plan(self, steps):
+        """As the admin's window: a plan made while another runs (a command within a command) comes before the rest of it"""
+        self.events.append(("plan", list(steps)))
+        self.planned = True
+        self.pending[:0] = list(steps)
+
+    def step(self, text):
+        """Once a command has a plan, each step is the next of it"""
+        if not self.planned:
+            raise PlanMismatch(f"Step {text!r} comes without a plan: the admin's window cannot show it from the start")
+        if self.planned:
+            # After a warning (one of several sites failed, say) the steps before this one were not taken, as the window shows
+            if self.warned and text in self.pending:
+                del self.pending[:self.pending.index(text)]
+            if not self.pending or self.pending[0] != text:
+                raise PlanMismatch(f"Step {text!r} is not the next of the plan, which has {self.pending!r} still to come")
+            self.pending.pop(0)
+            self.warned = False
+        super().step(text)
+
+    def skip(self, text):
+        if self.planned:
+            if not self.pending or self.pending[0] != text:
+                raise PlanMismatch(f"Skipped {text!r} is not the next of the plan, which has {self.pending!r} still to come")
+            self.pending.pop(0)
+        self.events.append(("skip", text))
+
+    def finished(self):
+        if self.pending:
+            raise PlanMismatch(f"The command ended well without the steps it planned: {self.pending!r}")
+
     def which(self, program):
         return program in self.programs
+
+    def interactive(self):
+        return bool(self.replies)
 
     def ask(self, prompt, secret=False):
         self.asked.append(prompt)
@@ -179,4 +238,5 @@ class RecordingSystem(System):
         self.said.append(text)
 
     def warn(self, text):
+        self.warned = True
         self.said.append(text)

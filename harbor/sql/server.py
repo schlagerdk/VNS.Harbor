@@ -75,6 +75,7 @@ def microsoft_keys(system):
 
 def install_tools(system, version_id):
     """mssql-tools18 (sqlcmd) from Microsoft's repository for this Ubuntu"""
+    system.plan(["Add Microsoft tools repository", "Install mssql-tools18"])
     system.step("Add Microsoft tools repository")
     listing = system.run("curl", "-fsSL", f"{BASE_URL}/config/ubuntu/{version_id}/prod.list", capture=True).stdout
     system.path("/etc/apt/sources.list.d/mssql-release.list").write_text(listing)
@@ -116,6 +117,7 @@ def uninstall_sql_tools(system, assume_yes=None):
     if not confirm(system, "Remove SQL command-line tools (sqlcmd)? [y/N]: ", assume_yes):
         system.say("SQL tools kept")
         return
+    system.plan(["Remove SQL command-line tools"])
     system.step("Remove SQL command-line tools")
     system.run("apt-get", "remove", "--purge", "-y", *packages)
     system.path("/etc/profile.d/mssql-tools.sh").unlink(missing_ok=True)
@@ -251,6 +253,7 @@ def install_server(system, edition="", with_tools=None, assume_yes=None, older_u
     repository = os.environ.get("SQL_UBUNTU_VERSION") or version_id
     if not system.which("gpg"):
         system.run("apt-get", "install", "-y", "gnupg")
+    system.plan(["Add Microsoft signing keys"])
     system.step("Add Microsoft signing keys")
     system.run("bash", "-c", KEYS)
 
@@ -272,7 +275,10 @@ def install_server(system, edition="", with_tools=None, assume_yes=None, older_u
                 raise Stop(f"No repository found for Ubuntu {repository}")
         system.say(f"Installing SQL Server {version} using the Ubuntu {repository} repository (server runs Ubuntu {version_id})")
         # SQL Server 2025 requires libldap-2.5-0, which is not available in Ubuntu 24.04+
-        if version == "2025" and not system.run("apt-cache", "show", "libldap-2.5-0", check=False, capture=True).ok and not installed(system, "libldap-2.5-0"):
+        libldap = version == "2025" and not system.run("apt-cache", "show", "libldap-2.5-0", check=False, capture=True).ok and not installed(system, "libldap-2.5-0")
+        system.plan([*(["Install libldap-2.5-0"] if libldap else []), "Add SQL Server repository", "Install mssql-server",
+                     *([f"Set up SQL Server ({edition})"] if edition else []), "Create backup folder"])
+        if libldap:
             system.step("Install libldap-2.5-0")
             with tempfile.NamedTemporaryFile(suffix=".deb") as package:
                 system.run("curl", "-fsSL", LIBLDAP, "-o", package.name)
@@ -317,6 +323,7 @@ def update_server(system, assume_yes=None):
     if not installed(system, "mssql-server"):
         raise Stop("mssql-server is not installed - run install_server.sh first")
     system.say(f"Installed version: {system.output('dpkg-query', '-W', '-f=${Version}', 'mssql-server')}")
+    system.plan(["Check for updates"])
     system.step("Check for updates")
     system.run("apt-get", "update")
     upgradable = system.run("apt", "list", "--upgradable", check=False, capture=True).stdout
@@ -328,6 +335,7 @@ def update_server(system, assume_yes=None):
             system.say("Aborted")
             raise Stop("", 1)
         system.run("apt-get", "install", "--only-upgrade", "-y", "mssql-server")
+        system.plan(["Restart service"])
         system.step("Restart service")
         system.run("systemctl", "restart", "mssql-server")
     if installed(system, "mssql-tools18"):
@@ -343,6 +351,7 @@ def uninstall_server(system, assume_yes=None, delete_data=None, with_tools=None)
         if not confirm(system, "Continue? [y/N]: ", assume_yes):
             system.say("Aborted")
             raise Stop("", 1)
+        system.plan(["Stop and disable service", "Remove mssql-server"])
         system.step("Stop and disable service")
         system.run("systemctl", "stop", "mssql-server", check=False)
         system.run("systemctl", "disable", "mssql-server", check=False)

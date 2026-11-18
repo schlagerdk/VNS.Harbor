@@ -1992,11 +1992,57 @@ def api_package_updates():
                 return error("Could not start package update checks", 500)
         return jsonify(**UPDATE_CHECK)
 
+# The newest Umbraco on nuget.org, asked in the background and kept an hour (a failed ask is tried again in 5 minutes)
+NEWEST_UMBRACO = {"versions": [], "checked": 0.0, "asking": False}
+NEWEST_UMBRACO_LOCK = threading.Lock()
+
+
+def umbraco_version_key(version):
+    return [int(part) if part.isdigit() else 0 for part in version.split("+")[0].split(".")]
+
+
+def newest_umbraco_of(versions, major):
+    """The newest stable Umbraco of the given major version, or none"""
+    fitting = [item for item in versions if isinstance(item, str) and VERSION_RE.fullmatch(item) and "-" not in item
+               and item.split(".")[0] == major]
+    return max(fitting, key=umbraco_version_key) if fitting else ""
+
+
+def ask_newest_umbraco():
+    versions = None
+    try:
+        request = urllib.request.Request("https://api.nuget.org/v3-flatcontainer/umbraco.cms/index.json", headers={"User-Agent": "VNS-Harbor"})
+        with urllib.request.urlopen(request, timeout=10) as response:
+            versions = json.loads(response.read(4 * 1024 * 1024).decode("utf-8")).get("versions")
+    except (OSError, ValueError) as exc:
+        app.logger.warning("Could not read Umbraco's versions on nuget.org: %s", exc)
+    with NEWEST_UMBRACO_LOCK:
+        NEWEST_UMBRACO["asking"] = False
+        if isinstance(versions, list):
+            NEWEST_UMBRACO.update(versions=versions, checked=time.time())
+        else:
+            NEWEST_UMBRACO["checked"] = time.time() - 3600 + 300
+
+
 def default_umbraco_version():
-    """The Umbraco version a new site gets when none is given (harbor site create)."""
+    """The Umbraco version a new site gets when none is given: the newest on nuget.org of the major version harbor site
+    create is made for (DEFAULT_UMBRACO_VERSION: its templates and the VNS.Harbor package follow that major), else that
+    version itself. Never waits for nuget.org: the first ask gives the known version and asks in the background."""
     text = read_text(os.path.join(HARBOR_DIR, "harbor/sites/create.py")) or ""
     match = re.search(r'^DEFAULT_UMBRACO_VERSION = "([0-9][0-9A-Za-z.\-]*)"', text, re.M)
-    return match.group(1) if match else ""
+    known = match.group(1) if match else ""
+    if not known:
+        return ""
+    with NEWEST_UMBRACO_LOCK:
+        if not NEWEST_UMBRACO["asking"] and time.time() - NEWEST_UMBRACO["checked"] > 3600:
+            NEWEST_UMBRACO["asking"] = True
+            try:
+                threading.Thread(target=ask_newest_umbraco, daemon=True).start()
+            except RuntimeError:
+                NEWEST_UMBRACO["asking"] = False
+        versions = NEWEST_UMBRACO["versions"]
+    newest = newest_umbraco_of(versions, known.split(".")[0])
+    return newest if newest and umbraco_version_key(newest) > umbraco_version_key(known) else known
 
 
 def parse_dotnet_templates(output):
@@ -2638,7 +2684,8 @@ def harbor_api_task(sid):
             event = json.loads(match.group(1))
         except ValueError:
             continue
-        if isinstance(event, dict) and isinstance(event.get("text"), str):
+        # A step not taken (skip) is no step of the dashboard's list
+        if isinstance(event, dict) and isinstance(event.get("text"), str) and event.get("type", "step") in ("step", "warning", "warn"):
             steps.append({"type": event.get("type", "step"), "text": event["text"]})
     return jsonify(running=task.running, exit=task.exit, steps=steps[-200:])
 

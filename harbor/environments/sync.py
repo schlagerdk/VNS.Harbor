@@ -244,13 +244,15 @@ def sync_environments(system, name, source_id, to, data="", dry_run=False):
 
     sync = Sync(system, site, data, dry_run)
     work = None
+    copy = f"Copy {sync.what} from {display_name(system, site, source_id)}"
+    system.plan([*([] if source_id == "main" else [copy]), *(f"Sync {sync.what} to {display_name(system, site, target)}" for target in destinations)])
     try:
         if source_id == "main":
             source = sync.local(sync.main_folder())
         else:
             work = tempfile.mkdtemp()
             source = work
-            system.step(f"Copy {sync.what} from {display_name(system, site, source_id)}")
+            system.step(copy)
             try:
                 sync.pull(source_id, source)
             except CommandFailed as error:
@@ -285,6 +287,7 @@ def sync_environments(system, name, source_id, to, data="", dry_run=False):
         for target in destinations:
             if sync.missing(target):
                 system.say(f"{display_name(system, site, target)}: SKIPPED (the site no longer exists on the server)")
+                system.skip(f"Sync {sync.what} to {display_name(system, site, target)}")
                 continue
             system.step(f"Sync {sync.what} to {display_name(system, site, target)}")
             try:
