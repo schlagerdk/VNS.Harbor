@@ -1982,11 +1982,11 @@ function envPanel(site, env) {
 	if (actions.children.length) panel.append(actions);
 	if (manage.children.length) panel.append(manage);
 	// Tools that are rarely the point of the row stand to the right: clearing logs, editing files, the syncs, custom scripts,
-	// and logs, shell and files beside Stop and Restart. Only with something to their left, so a row of edit
-	// buttons alone (on Windows) stays at the left.
+	// and logs, shell and files. Always, also with nothing to their left (an HTML site has no service to start or check),
+	// so every kind of site has them in the same place.
 	for (const row of [quick, sync, extraTools, actions]) {
 		const first = row && [...row.children].find((node) => node.classList.contains("script-menu") || /^(Clear logs|Sync settings…|Sync data…|Edit .*|Logs|Shell|Files)$/.test(node.textContent));
-		if (first && first !== row.firstElementChild) first.classList.add("push-right");
+		if (first) first.classList.add("push-right");
 	}
 	// A phone keeps what is used on the go: publish, the syncs, start or stop, restart, logs, clearing them, checking the
 	// service, a certificate, the environment's kind and Remove environment. A site is not deleted from a phone. The rest
