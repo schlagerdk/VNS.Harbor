@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.46] - 2026-11-18
+
+### Fixes
+
+- Umbraco 18+ sites get an image signing key, and sites no longer say what they run in their Server header (1.0.45)
+
 ## [1.0.45] - 2026-11-18
 
 ### Fixes
