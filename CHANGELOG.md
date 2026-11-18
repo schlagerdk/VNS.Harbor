@@ -2,6 +2,13 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.47] - 2026-11-18
+
+### Fixes
+
+- Harbor no longer gives Umbraco 18+ sites an image signing key, and takes off the one 1.0.46 gave them (by the update, and as a site is published): with it, Umbraco answered 400 to an image URL a site makes by hand (media.Url() + "?width=400"), and those images broke. A site that wants the key sets it itself and makes its image URLs with GetCropUrl
+- Update SQL Server no longer restarts SQL Server after the package: the package starts it, and a restart while it upgraded its databases hung for up to 30 minutes. It waits until SQL Server lets logins in instead
+
 ## [1.0.46] - 2026-11-18
 
 ### Fixes

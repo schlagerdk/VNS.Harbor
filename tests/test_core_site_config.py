@@ -75,7 +75,8 @@ class SiteConfigTests(unittest.TestCase):
     def same(self, result):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.new.files(), self.old.files())
-        self.assertEqual([line for line in self.system.commands], self.old.commands())
+        # harbor sets up the service's security settings (lib/harden_service.py), which the script did not
+        self.assertEqual([line for line in self.system.commands if "harden_service.py" not in line], self.old.commands())
 
     def site_vars(self):
         return ('_site=shop.dk; _binding=shop.dk; _projectName=Shop; _portHttp=4010; set_site_vars; '

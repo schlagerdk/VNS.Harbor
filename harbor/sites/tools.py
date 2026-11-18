@@ -254,7 +254,7 @@ def publish(system, name, configuration="", folder="", environment_name=""):
             shutil.rmtree(system.path(f"{site.site_root}/App_Plugins"), ignore_errors=True)
         system.run("chown", "-R", "www-data:www-data", folder, cwd=site.site_root)
         system.run("python3", str(LIB / "sql_startup.py"), unit)
-        # No Server header from Kestrel, and Umbraco 18+'s image signing key: from this start
+        # Harbor's image signing key from 1.0.46 taken off (harden_service.py)
         system.run("python3", str(LIB / "harden_service.py"), unit, check=False)
         system.step(f"Start {unit}")
         system.run("systemctl", "start", unit)

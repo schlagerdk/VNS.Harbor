@@ -318,6 +318,25 @@ def install_server(system, edition="", with_tools=None, assume_yes=None, older_u
         system.say("SQL tools installation skipped")
 
 
+def wait_for_logins(system, seconds=900):
+    """Until SQL Server lets sa in: after an update it upgrades its databases first, and only it may log in meanwhile"""
+    from harbor.sql.databases import sa_password
+    if not system.path(SQLCMD).is_file():
+        return
+    password = sa_password(system)
+    waited = 0
+    while waited < seconds:
+        if system.run(SQLCMD, "-C", "-S", "LOCALHOST", "-U", "sa", "-l", "5", "-Q", "SELECT 1", env={"SQLCMDPASSWORD": password},
+                      check=False, capture=True).ok:
+            system.say("SQL Server has upgraded its databases and lets logins in.")
+            return
+        if waited % 30 == 0:
+            system.say("SQL Server is upgrading its databases (script upgrade mode): logins wait until it is done…")
+        system.sleep(5)
+        waited += 5
+    system.warn(f"SQL Server did not let sa in within {seconds // 60} minutes. Look at /var/opt/mssql/log/errorlog.")
+
+
 def update_server(system, assume_yes=None):
     """SQL Server (and sqlcmd) to the latest version in its repository. A new major version needs install_server."""
     if not installed(system, "mssql-server"):
@@ -335,9 +354,14 @@ def update_server(system, assume_yes=None):
             system.say("Aborted")
             raise Stop("", 1)
         system.run("apt-get", "install", "--only-upgrade", "-y", "mssql-server")
-        system.plan(["Restart service"])
-        system.step("Restart service")
-        system.run("systemctl", "restart", "mssql-server")
+        # The package starts SQL Server itself, which then upgrades its databases ("script upgrade mode"). A restart
+        # then hung: SQL Server does not stop while it upgrades, and systemd waits up to 30 minutes (kikayo). So it is
+        # started only when it does not run, and waited for until it lets a login in.
+        system.plan(["Start SQL Server and let it upgrade its databases"])
+        system.step("Start SQL Server and let it upgrade its databases")
+        if system.output("systemctl", "is-active", "mssql-server", check=False) != "active":
+            system.run("systemctl", "start", "mssql-server")
+        wait_for_logins(system)
     if installed(system, "mssql-tools18"):
         system.run("apt-get", "install", "--only-upgrade", "-y", "mssql-tools18")
     system.say(f"Version now: {system.output('dpkg-query', '-W', '-f=${Version}', 'mssql-server')}")

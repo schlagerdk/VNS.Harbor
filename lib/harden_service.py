@@ -1,11 +1,5 @@
-"""An Umbraco 18 or newer site's service, in a drop-in of Harbor's own (vns-security.conf): a secret key of its own for
-signing image URLs (Umbraco:CMS:Imaging:HMACSecretKey), kept for root only and never changed once made, as a new one
-would make the signed URLs it gave out invalid. (Kestrel's Server header is not set here: Kestrel does not read it from
-its settings. Apache takes it off, vns-headers.conf.)
-
-Settings in the service, not in appsettings.json, so a publish never takes them away. The service is not restarted:
-they count from its next start (a publish, Restart). Run by the update for every service, and by the site's
-creation and publish for its own.
+"""Harbor's image signing key (Umbraco:CMS:Imaging:HMACSecretKey) taken off the services it was put on (1.0.46, in
+the drop-in vns-security.conf). With it, Umbraco answers 400 to an image URL made by hand, and sites' images broke.
 
     python3 harden_service.py <unit> [--no-reload]
     python3 harden_service.py --all
@@ -58,28 +52,20 @@ def key_file(unit):
 
 
 def harden(unit):
-    """The drop-in for an Umbraco 18+ site's service; whether it changed. Any other service: none (an earlier one goes)."""
+    """Harbor's image signing key taken off a service again; whether it changed. With a key, Umbraco answers 400 to an
+    image URL a site makes by hand (media.Url() + "?width=400"), which many sites do: their images broke
+    (test.poda.dk). A site that wants the key sets it itself, and makes its image URLs with GetCropUrl."""
     if not UNIT.fullmatch(unit):
         raise ValueError(f"Not a service: {unit}")
-    service = SERVICES / f"{unit}.service"
-    if not service.is_file():
-        return False
-    dll = dll_of(service.read_text(encoding="utf-8", errors="replace"))
-    if not dll:
-        return False
-    umbraco = umbraco_major(dll.parent)
     path = SERVICES / f"{unit}.service.d" / DROP_IN
-    if umbraco < 18:
-        if path.is_file():
-            path.unlink()
-            return True
+    if not path.is_file():
         return False
-    text = f"# Set by Harbor: Umbraco's image URLs signed with a key of the site's own\n[Service]\nEnvironmentFile={key_file(unit)}\n"
-    if path.is_file() and path.read_text(encoding="utf-8") == text:
-        return False
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text, encoding="utf-8")
-    print(f"{unit}: Umbraco {umbraco}'s image signing key. It counts from its next start.")
+    path.unlink()
+    try:
+        path.parent.rmdir()
+    except OSError:
+        pass
+    print(f"{unit}: Harbor's image signing key taken off. It counts from its next start.")
     return True
 
 
@@ -93,7 +79,7 @@ def main(argv=None):
     parser.add_argument("--all", action="store_true", help="every .NET site's service here")
     parser.add_argument("--no-reload", action="store_true", help="no systemctl daemon-reload (the caller does it)")
     args = parser.parse_args(argv)
-    units = [path.name[:-len(".service")] for path in sorted(SERVICES.glob("*.service"))] if args.all else [args.unit]
+    units = [path.parent.name[:-len(".service.d")] for path in sorted(SERVICES.glob(f"*.service.d/{DROP_IN}"))] if args.all else [args.unit]
     changed = False
     for unit in units:
         try:
@@ -103,7 +89,7 @@ def main(argv=None):
     if changed and not args.no_reload:
         reload()
     if args.all and not changed:
-        print("Every Umbraco 18+ site here has its image signing key.")
+        print("No service here has Harbor's image signing key.")
     return 0
 
 

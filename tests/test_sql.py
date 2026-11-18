@@ -1,3 +1,4 @@
+from unittest import mock
 """harbor sql against the scripts in sql/ (frozen in tests/legacy/sql).
 
 The database tools run against a fake sqlcmd on both sides: what is compared is the SQL it is given (rendered from
@@ -214,6 +215,21 @@ class ServerToolTests(unittest.TestCase):
         self.assertEqual(main(["sql", "update-server"], system), 0)
         self.assertIn("SQL Server is already up to date", system.said)
         self.assertNotIn("systemctl restart mssql-server", system.commands)
+
+    def test_an_update_waits_for_the_upgrade_and_does_not_restart(self):
+        root = Path(tempfile.mkdtemp())
+        (root / "opt/mssql-tools18/bin").mkdir(parents=True)
+        (root / "opt/mssql-tools18/bin/sqlcmd").write_text("")
+        tries = iter([Result(1, "", "Server is in script upgrade mode"), Result(1), Result(0)])
+        system = RecordingSystem(root=root, answers={"dpkg-query": "17.0.5065.9-3", "apt list": "Listing...\nmssql-server/noble 17.0.5065.9-3 amd64 [upgradable]\n",
+                                                    "systemctl is-active mssql-server": "active", "/opt/mssql-tools18/bin/sqlcmd": lambda argv: next(tries)},
+                                 replies=["y"])
+        with mock.patch.dict(os.environ, {"SQLCMDPASSWORD": "pw"}):
+            self.assertEqual(main(["sql", "update-server"], system), 0, system.said)
+        self.assertNotIn("systemctl restart mssql-server", system.commands)
+        self.assertNotIn("systemctl start mssql-server", system.commands, "the package started it")
+        self.assertEqual(sum(command.startswith("/opt/mssql-tools18/bin/sqlcmd") for command in system.commands), 3)
+        self.assertIn("SQL Server has upgraded its databases and lets logins in.", system.said)
 
     def test_install_tools_needs_ubuntu(self):
         root = Path(tempfile.mkdtemp())
