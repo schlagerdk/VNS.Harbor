@@ -6,6 +6,8 @@ All notable changes to VNS Harbor are listed here, newest first.
 
 ### Fixes
 
+- A new Umbraco 18+ site takes uploads up to 200 MB (Umbraco's own limit is about 28 MB) and resizes images to at most 5000 × 5000. Sites there already are not changed: Edit appsettings.json has both as snippets
+- Edit appsettings.json has snippets of Umbraco's settings, as Edit config has its rules: larger uploads (200 MB), image size limits, image cache, image memory pool, image URL signing (HMAC), content version cleanup, unattended upgrades, production runtime mode, stronger passwords, email (SMTP), no trailing slash, the Content Delivery API and less logging. Each is merged into the file where it belongs, after it says what it sets; chosen site by site, saved by hand
 - Harbor no longer gives Umbraco 18+ sites an image signing key, and takes off the one 1.0.46 gave them (by the update, and as a site is published): with it, Umbraco answered 400 to an image URL a site makes by hand (media.Url() + "?width=400"), and those images broke. A site that wants the key sets it itself and makes its image URLs with GetCropUrl
 - Update SQL Server no longer restarts SQL Server after the package: the package starts it, and a restart while it upgraded its databases hung for up to 30 minutes. It waits until SQL Server lets logins in instead
 

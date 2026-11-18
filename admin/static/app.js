@@ -4685,6 +4685,78 @@ const iisSnippets = {
 
 // Apache: the same rules for the HTTPS site. HTTP to HTTPS is not one: every site's HTTP part already sends there.
 // The first line of each is its name, as a comment, so it is found again.
+// Umbraco's settings for appsettings.json, from its documentation (docs.umbraco.com, Configuration): each a part of the
+// file, merged in where it belongs. Nothing is set for a site by Harbor itself: they are chosen here, site by site.
+const randomKey = () => btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(64))));
+const appsettingsSnippets = {
+	resize: { label: "Image size limits", icon: "sliders", line: "No image larger than 5000 × 5000: no huge resizes asked for in a URL",
+		values: () => ({ Umbraco: { CMS: { Imaging: { Resize: { MaxWidth: 5000, MaxHeight: 5000 } } } } }) },
+	imageCache: { label: "Image cache", icon: "clock", line: "Resized images kept a year, browsers keep them a week",
+		values: () => ({ Umbraco: { CMS: { Imaging: { Cache: { BrowserMaxAge: "7.00:00:00", CacheMaxAge: "365.00:00:00" } } } } }) },
+	imageMemory: { label: "Image memory pool", icon: "activity", line: "ImageSharp's own memory settings for resizing",
+		note: "Try it on a test site first, and look at its memory after: the other Memory settings decide its limits.",
+		values: () => ({ Umbraco: { CMS: { Imaging: { Memory: { Enabled: true } } } } }) },
+	hmac: { label: "Image URL signing (HMAC)", icon: "key", line: "Only signed image URLs are resized: a key of the site's own",
+		note: "With a key, an image URL made by hand (media.Url() + \"?width=400\") answers 400 and the image breaks. Only for a site that makes its image URLs with GetCropUrl. Try it on a test site first.",
+		values: () => ({ Umbraco: { CMS: { Imaging: { HMACSecretKey: randomKey() } } } }) },
+	uploads: { label: "Larger uploads", icon: "upload", line: "Media up to 200 MB in the backoffice (Umbraco's own limit is about 28 MB)",
+		note: "MaxRequestLength is in kilobytes: 204800 is 200 MB (2000 would be 2 MB, lower than Umbraco's own). Apache lets up to 1 GB through, and waits 5 minutes for an upload: a larger file over a slow line may need more time.",
+		values: () => ({ Umbraco: { CMS: { Runtime: { MaxRequestLength: 204800 } } } }) },
+	versions: { label: "Content version cleanup", icon: "eraser", line: "Old versions of content cleaned up: all kept a week, one a day for 90 days",
+		values: () => ({ Umbraco: { CMS: { Content: { ContentVersionCleanupPolicy: { EnableCleanup: true, KeepAllVersionsNewerThanDays: 7, KeepLatestVersionPerDayForDays: 90 } } } } }) },
+	unattended: { label: "Unattended upgrades", icon: "upload", line: "Umbraco upgrades its database itself after a new version is published",
+		values: () => ({ Umbraco: { CMS: { Unattended: { UpgradeUnattended: true } } } }) },
+	production: { label: "Production runtime mode", icon: "shield", line: "Settings locked for production: no models built at runtime, no debug",
+		note: "Production mode needs ModelsBuilder off (Nothing) and debug off, both set here too. The site must have its models in its code, built before it is published.",
+		values: () => ({ Umbraco: { CMS: { Runtime: { Mode: "Production" }, ModelsBuilder: { ModelsMode: "Nothing" }, Hosting: { Debug: false } } } }) },
+	passwords: { label: "Stronger backoffice passwords", icon: "lock", line: "Users' passwords at least 12 characters, with a symbol",
+		values: () => ({ Umbraco: { CMS: { Security: { UserPassword: { RequiredLength: 12, RequireNonLetterOrDigit: true } } } } }) },
+	smtp: { label: "Email (SMTP)", icon: "users", line: "How the site sends email: change the values after",
+		note: "The values are examples: set your own host, port, sender and login before you save.",
+		values: () => ({ Umbraco: { CMS: { Global: { Smtp: { From: "noreply@example.com", Host: "smtp.example.com", Port: 587, SecureSocketOptions: "StartTls", Username: "", Password: "" } } } } }) },
+	trailingSlash: { label: "No trailing slash", icon: "chevron", line: "Umbraco writes its own links without a / at the end",
+		note: "This only changes how Umbraco writes its links; it redirects nothing. With the Apache rule AddTrailingSlash in Edit config (it sends /page to /page/), every link Umbraco writes would then be redirected once: use one or the other.",
+		values: () => ({ Umbraco: { CMS: { RequestHandler: { AddTrailingSlash: false } } } }) },
+	deliveryApi: { label: "Content Delivery API", icon: "globe", line: "Content as JSON for a front end of its own, public",
+		values: () => ({ Umbraco: { CMS: { DeliveryApi: { Enabled: true, PublicAccess: true } } } }) },
+	logging: { label: "Less logging", icon: "file", line: "Only warnings and errors in the log",
+		values: () => ({ Serilog: { MinimumLevel: { Default: "Warning" } } }) },
+};
+// The paths and values a snippet sets, as lines: Umbraco:CMS:Imaging:Memory:Enabled = true
+function settingLines(values, prefix = "") {
+	return Object.entries(values).flatMap(([key, value]) => value && typeof value === "object" && !Array.isArray(value)
+		? settingLines(value, prefix + key + ":") : [`${prefix}${key} = ${JSON.stringify(value).replace(/^"(.{24}).{20,}(.{4})"$/, '"$1…$2"')}`]);
+}
+// A snippet merged into the file: only its own keys set, the rest as it was. The file is written again with its own
+// indentation; comments in it (allowed in appsettings.json) would go, so a file with them is left alone.
+function mergeSettings(target, values) {
+	for (const [key, value] of Object.entries(values)) {
+		const existing = Object.keys(target).find((name) => name.toLowerCase() === key.toLowerCase()) ?? key;
+		if (value && typeof value === "object" && !Array.isArray(value) && target[existing] && typeof target[existing] === "object") mergeSettings(target[existing], value);
+		else target[existing] = value;
+	}
+	return target;
+}
+async function insertAppsetting(key) {
+	const snippet = appsettingsSnippets[key];
+	const text = editorValue();
+	let data;
+	try {
+		data = JSON.parse(text.replace(/^\uFEFF/, "") || "{}");
+	} catch (error) {
+		throw new Error(/\/\/|\/\*/.test(text) ? "The file has comments: add the setting by hand, as writing it again would drop them." : `The file is not valid JSON: ${error.message}`);
+	}
+	const values = snippet.values();
+	const lines = settingLines(values);
+	if (!(await ask({ title: snippet.label, message: (snippet.note ? snippet.note + "\n\n" : "") + "Sets in appsettings.json:\n" + lines.join("\n"), input: false, ok: "Insert" }))) {
+		focusEditor();
+		return;
+	}
+	const indent = (/\n([ \t]+)"/.exec(text) || [, "  "])[1];
+	editorReplaceAll(JSON.stringify(mergeSettings(data, values), null, indent) + (text.endsWith("\n") ? "\n" : ""));
+	toast(`${snippet.label} inserted. Check it, then save; the site uses it from its next start.`, "ok");
+}
+
 const apacheSnippets = {
 	ignore: { label: "Ignore", build: (v) => `# Ignore
 RewriteRule ^/(?:${pathPattern(pathsOf(v.paths))})/ - [L]` },
@@ -4969,6 +5041,7 @@ function focusEditor(offset = null) {
 function snippetKind() {
 	const name = (openFile || "").split("/").pop().toLowerCase();
 	if (name === "web.config") return "iis";
+	if (/^appsettings(\.[\w-]+)?\.json$/.test(name)) return "appsettings";
 	if (configurationEditor?.kind === "conf" || (/\.conf$/.test(name) && /sites-(available|enabled)/.test(openFile || ""))) return "apache";
 	return "";
 }
@@ -4996,11 +5069,12 @@ function refreshSnippetMenu() {
 	menu.hidden = !kind;
 	closeSnippetMenu();
 	if (!kind) return;
-	const snippets = kind === "iis" ? iisSnippets : apacheSnippets;
+	const snippets = kind === "iis" ? iisSnippets : kind === "appsettings" ? appsettingsSnippets : apacheSnippets;
 	$("#editor-snippets-panel").replaceChildren(
-		el("div", { className: "snippet-panel-head" }, el("span", { textContent: kind === "iis" ? "IIS · WEB.CONFIG" : "APACHE · SITE CONFIG" }), el("strong", { textContent: "Insert a rule" })),
+		el("div", { className: "snippet-panel-head" }, el("span", { textContent: kind === "iis" ? "IIS · WEB.CONFIG" : kind === "appsettings" ? "UMBRACO · APPSETTINGS.JSON" : "APACHE · SITE CONFIG" }),
+			el("strong", { textContent: kind === "appsettings" ? "Insert a setting" : "Insert a rule" })),
 		...Object.entries(snippets).map(([key, snippet]) => {
-			const [icon, line] = snippetLooks[key] || ["file", ""];
+			const [icon, line] = kind === "appsettings" ? [snippet.icon, snippet.line] : snippetLooks[key] || ["file", ""];
 			return el("button", { type: "button", className: "snippet-item", role: "menuitem", onclick: () => { closeSnippetMenu(); run(() => insertSnippet(key)); } },
 				el("span", { className: "snippet-item-icon" }, svgIcon(icon)),
 				el("span", { className: "snippet-item-text" }, el("strong", { textContent: snippet.label }), el("small", { textContent: line })));
@@ -5083,6 +5157,7 @@ $("#editor-snippets").addEventListener("keydown", (event) => {
 async function insertSnippet(key) {
 	const kind = snippetKind();
 	if (!key || !kind) return;
+	if (kind === "appsettings") return insertAppsetting(key);
 	const snippet = (kind === "iis" ? iisSnippets : apacheSnippets)[key];
 	const answer = await askSnippet(key, snippet, editorValue());
 	if (!answer) {

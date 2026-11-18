@@ -1154,7 +1154,7 @@ dialog.editor .editor-toolbar > button, dialog.editor .editor-toolbar > select {
 .snippet-trigger { display: inline-flex; align-items: center; gap: 7px; height: 34px; border-color: rgba(88, 166, 255, .4); color: var(--blue); background: linear-gradient(135deg, rgba(88, 166, 255, .13), rgba(163, 113, 247, .1)); }
 .snippet-trigger .ico { width: 15px; height: 15px; margin: 0; }
 .snippet-trigger[aria-expanded="true"], .snippet-trigger:hover:not(:where(:disabled, .disabled, .off)) { background: rgba(88, 166, 255, .18); }
-.snippet-panel { position: absolute; top: calc(100% + 8px); right: 0; z-index: 30; width: min(340px, calc(100vw - 40px)); max-height: min(480px, 70vh); overflow: auto; padding: 8px; border: 1px solid rgba(88, 166, 255, .28); border-radius: 12px; background: linear-gradient(145deg, rgba(88, 166, 255, .08), transparent 48%), var(--panel); box-shadow: 0 18px 48px rgba(0, 0, 0, .55); }
+.snippet-panel { position: absolute; top: calc(100% + 8px); right: 0; z-index: 30; width: min(380px, calc(100vw - 40px)); max-height: min(480px, 70vh); overflow: auto; padding: 8px; border: 1px solid rgba(88, 166, 255, .28); border-radius: 12px; background: linear-gradient(145deg, rgba(88, 166, 255, .08), transparent 48%), var(--panel); box-shadow: 0 18px 48px rgba(0, 0, 0, .55); }
 .snippet-panel-head { display: grid; gap: 3px; margin: -8px -8px 6px; padding: 12px 14px 10px; border-bottom: 1px solid var(--line); }
 .snippet-panel-head span { color: var(--blue); font-size: 9px; font-weight: 700; letter-spacing: .13em; }
 .snippet-panel-head strong { font-size: 13px; }
@@ -1163,6 +1163,11 @@ dialog.editor .editor-toolbar > button, dialog.editor .editor-toolbar > select {
 .snippet-item-icon { display: grid; place-items: center; flex: none; width: 30px; height: 30px; border-radius: 8px; color: #b9d8ff; background: linear-gradient(135deg, rgba(88, 166, 255, .16), rgba(163, 113, 247, .16)); }
 .snippet-item-icon .ico { width: 15px; height: 15px; margin: 0; }
 .snippet-item-text { display: grid; gap: 1px; min-width: 0; }
+/* A snippet's line wraps under its name: buttons keep their text on one line, which ran off the panel sideways */
+.snippet-panel { overflow-x: hidden; }
+.snippet-item { white-space: normal; align-items: flex-start; }
+.snippet-item-icon { margin-top: 1px; }
+.snippet-item-text small { color: var(--muted); font-size: 12px; line-height: 1.35; overflow-wrap: anywhere; }
 .snippet-item-text strong { font-size: 13px; font-weight: 600; }
 .snippet-item-text small { color: var(--muted); font-size: 11.5px; }
 .snippet-fields select { width: 100%; }
