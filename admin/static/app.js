@@ -1839,10 +1839,10 @@ function envPanel(site, env) {
 		const first = row && [...row.children].find((node) => node.classList.contains("script-menu") || /^(Clear logs|Sync settings…|Sync data…|Edit .*|Logs|Shell|Files)$/.test(node.textContent));
 		if (first && first !== row.firstElementChild) first.classList.add("push-right");
 	}
-	// A phone keeps what is used on the go: publish, start or stop, restart, logs and delete.
+	// A phone keeps what is used on the go: publish, the syncs, start or stop, restart, logs and delete.
 	// The rest is on the desktop; rows left without buttons are hidden by the stylesheet.
 	for (const node of panel.querySelectorAll(".actions > *")) {
-		if (!/^(Publish|Start|Stop|Restart|Logs|Delete site|Remove environment)$/.test(node.textContent.trim())) node.classList.add("desktop-only");
+		if (!/^(Publish|Sync setup…|Sync data…|Sync settings…|Start|Stop|Restart|Logs|Delete site|Remove environment)$/.test(node.textContent.trim())) node.classList.add("desktop-only");
 	}
 	return panel;
 }

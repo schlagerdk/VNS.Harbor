@@ -458,6 +458,9 @@ dialog.files-dialog { padding: 18px; }
 @media (max-width: 800px) { .page-header .search-box { min-width: 0; width: 0; flex: 1; } .page-header:has(#search:not([hidden])) > .spacer { display: none; } .brand h1, .brand .host { display: none; } .envs { grid-template-columns: 1fr; } }
 @media (max-width: 800px) {
 	.env .desktop-only, .env .actions:not(:has(> button:not(.desktop-only))) { display: none; }
+	/* A hidden row between them hides the desktop's gap (the + sibling): the first row after the grouped ones gets it */
+	.env > .actions.quick { margin-bottom: 0 !important; }
+	.env > .actions.quick ~ .actions:not(.quick) { margin-top: 14px !important; }
 	.package-row { flex-wrap: nowrap; gap: 10px; }
 	.package-copy { flex: 1; }
 	.package-versions { flex: 0 0 auto; max-width: 55%; justify-content: flex-end; }
@@ -715,6 +718,9 @@ a.btn-link .ico { width: 13px; height: 13px; flex: none; }
 .sync-status-row.failed .sync-status-pill { background: rgba(248, 81, 73, .15); color: var(--red); }
 .sync-status-row.never .sync-status-pill { background: rgba(255, 255, 255, .06); color: var(--muted); }
 .sync-choice.up-to-date, .sync-choice.settings-behind { opacity: .6; cursor: not-allowed; }
+/* The title wraps before the label or check mark at the card's top right, not under it */
+.sync-choice.up-to-date .tc-title { padding-right: 96px; }
+.sync-choice:has(input:checked) .tc-title { padding-right: 18px; }
 .sync-choice.up-to-date::after { content: "Nothing to sync"; position: absolute; top: 10px; right: 12px; color: var(--green); font-size: 11px; font-weight: 700; }
 .sync-anyway-row { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin: 10px 0 0; font-size: 12px; }
 dialog .sync-settings-first { display: flex; flex-direction: row; align-items: flex-start; gap: 10px; margin: 14px 0 0; padding: 10px 12px; border: 1px solid rgba(210, 153, 34, .35); border-radius: 10px; background: rgba(210, 153, 34, .08); cursor: pointer; text-align: left; }
@@ -728,6 +734,19 @@ dialog .sync-settings-first input { flex: none; width: 16px; height: 16px; min-h
 .sync-recent tr:first-child td { border-top: 0; }
 .sync-recent-result { text-align: right; color: var(--green); }
 .sync-recent tr.failed .sync-recent-result { color: var(--red); }
+/* A phone has no room for the table's five columns: each sync becomes a small block, where to and the result at the top */
+@media (max-width: 560px) {
+	.sync-recent table, .sync-recent tbody { display: block; }
+	.sync-recent tr { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 2px 10px; padding: 6px 0; border-top: 1px solid var(--line); }
+	.sync-recent tr:first-child { border-top: 0; }
+	.sync-recent td { padding: 0; border: 0; white-space: normal; overflow-wrap: anywhere; }
+	.sync-recent td:empty { display: none; }
+	.sync-recent td:nth-child(2) { grid-row: 1; grid-column: 1 / 3; font-weight: 600; }
+	.sync-recent td:nth-child(5) { grid-row: 1; grid-column: 3; }
+	.sync-recent td:nth-child(1) { grid-row: 2; grid-column: 1; }
+	.sync-recent td:nth-child(4) { grid-row: 2; grid-column: 2 / 4; }
+	.sync-recent td:nth-child(3) { grid-row: 3; grid-column: 1 / -1; color: var(--muted); }
+}
 .sync-chip { padding: 1px 8px; border-radius: 999px; background: color-mix(in srgb, var(--env-tone) 16%, transparent); color: var(--env-tone); font-size: 11px; font-weight: 600; text-transform: capitalize; }
 @media (max-width: 440px) { .sync-choices { grid-template-columns: 1fr; } }
 dialog.newsite .sync-options ~ .hint { margin-top: 12px; }

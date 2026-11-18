@@ -2,6 +2,14 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.43] - 2026-11-18
+
+### Fixes
+
+- A phone has the sync buttons on an environment's card (Sync setup…, Sync data…, Sync settings…), beside Publish, Start, Stop, Restart and Logs
+- On a phone, the Deploy row no longer touches the line above the Site row when the rows between them are hidden
+- The sync dialog fits a phone: Recent syncs is a short block per sync instead of a wide table, and a destination's name wraps before "Nothing to sync" or the check mark instead of running under it
+
 ## [1.0.42] - 2026-11-18
 
 ### Changes
