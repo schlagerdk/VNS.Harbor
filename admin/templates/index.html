@@ -59,25 +59,31 @@
   <div class="user">
     <button id="btn-settings" class="ghost" title="Server" aria-label="Server" aria-haspopup="true">⚙<span class="btn-label"> Server</span> <span id="system-update-badge" class="badge system-update-available" hidden>Update available</span></button>
     <div id="settings-menu" class="menu" hidden>
-      <div class="menu-group" role="group" aria-label="Tools">
-        <div class="menu-group-title">Tools</div>
-        <button id="btn-server-shell" type="button">Server shell</button>
+      <!-- No titles: the lines between the groups say enough. Shell and files, tools and servers, Apache and Windows, the admin. -->
+      <div class="menu-group" role="group" aria-label="Shell and files">
+        <button id="btn-server-shell" type="button">Shell</button>
         <button id="btn-browse" type="button">Files (/)</button>
-        <button id="settings-server-tools" type="button">Server tools…</button>
-        <button id="settings-servers" type="button">Servers…</button>
-        <button id="settings-windows-move" type="button">Copy from Windows…</button>
-        <button id="settings-windows-import" type="button">Import from Windows…</button>
       </div>
-      <div class="menu-group" role="group" aria-label="Apache">
-        <div class="menu-group-title">Apache</div>
-        <button id="settings-apache-test" type="button">Test config</button>
-        <button id="settings-apache-logs" type="button">Error logs</button>
-        <button id="settings-restart-apache" type="button" class="menu-danger" title="All sites on this server are briefly unavailable">Restart Apache</button>
+      <div class="menu-group" role="group" aria-label="Tools and servers">
+        <button id="settings-server-tools" type="button">Tools…</button>
+        <button id="settings-servers" type="button">Servers…</button>
+      </div>
+      <div class="menu-group" role="group" aria-label="Apache and Windows">
+        <button id="settings-apache-fold" type="button" class="menu-fold" data-icon="feather" data-fold-tone="teal" aria-expanded="false" aria-controls="settings-apache-sub">Apache</button>
+        <div id="settings-apache-sub" class="menu-sub" hidden>
+          <button id="settings-apache-conf" type="button" title="/etc/apache2/apache2.conf">Edit conf</button>
+          <button id="settings-apache-test" type="button">Test config</button>
+          <button id="settings-apache-logs" type="button">Error logs</button>
+          <button id="settings-restart-apache" type="button" class="menu-danger" title="Restart Apache: all sites on this server are briefly unavailable">Restart</button>
+        </div>
+        <button id="settings-windows-fold" type="button" class="menu-fold" data-icon="windows" data-fold-tone="blue" aria-expanded="false" aria-controls="settings-windows-sub">Windows</button>
+        <div id="settings-windows-sub" class="menu-sub" hidden>
+          <button id="settings-windows-move" type="button" title="Copy a site's environment from a Windows server here, while it stays live there">Copy sites…</button>
+          <button id="settings-windows-import" type="button" title="Import sites from a Windows server's share">Import sites…</button>
+        </div>
       </div>
       <div id="settings-admin-group" class="menu-group" role="group" aria-label="Admin" hidden>
-        <div class="menu-group-title">Admin</div>
         <button id="settings-admin-site" type="button" hidden>Admin site</button>
-        <button id="settings-admin-logs" type="button">Admin app log</button>
       </div>
       <div class="settings-footer">
         <span id="settings-version" class="settings-version"></span>
@@ -565,9 +571,9 @@
       <label>Folder name <input name="site" required placeholder="www.example.com" autocomplete="off" spellcheck="false"></label>
       <label>Binding (domain) <input name="binding" placeholder="Empty: answers any name" autocomplete="off" spellcheck="false"></label>
     </div>
-    <input type="hidden" name="certificate" value="y">
-    <div class="copy-options https-choice"><label class="sync-option copy-option secure"><input name="https_choice" type="checkbox" checked><span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span><span class="sync-option-text"><span class="sync-option-title">Set up with HTTPS</span><span class="sync-option-sub">A certificate is issued as the site is created, and HTTP goes to HTTPS</span></span></label></div>
+    <input type="hidden" name="certificate" value="n">
     <div id="site-dns"></div>
+    <div class="copy-options https-choice"><label class="sync-option copy-option secure"><input name="https_choice" type="checkbox"><span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span><span class="sync-option-text"><span class="sync-option-title">Set up with HTTPS</span><span class="sync-option-sub">A certificate is issued as the site is created, and HTTP goes to HTTPS</span></span></label></div>
     <div id="csharp-options">
       <div class="ns-section">C# options</div>
       <div class="ns-grid">
@@ -610,8 +616,8 @@
       <label id="prod-binding-row">Binding (domain) <input name="binding" required autocomplete="off" spellcheck="false"></label>
     </div>
     <input type="hidden" name="https" value="y">
-    <div class="copy-options https-choice"><label class="sync-option copy-option secure" id="prod-protocol-row"><input name="https_card" type="checkbox" checked><span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span><span class="sync-option-text"><span class="sync-option-title">Set up with HTTPS</span><span class="sync-option-sub" id="prod-protocol-hint"></span></span></label></div>
     <div id="prod-dns" hidden></div>
+    <div class="copy-options https-choice"><label class="sync-option copy-option secure" id="prod-protocol-row"><input name="https_card" type="checkbox" checked><span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span><span class="sync-option-text"><span class="sync-option-title">Set up with HTTPS</span><span class="sync-option-sub" id="prod-protocol-hint"></span></span></label></div>
     <div id="prod-remote-options">
       <div class="ns-section">SSH connection</div>
       <div class="ns-grid" id="prod-remote-fields">
@@ -620,7 +626,7 @@
         <label>SSH username <input name="user" required autocomplete="username" value="root"></label>
         <label>SSH password <input name="password" type="password" autocomplete="new-password" placeholder="Leave empty to use an SSH key"></label>
       </div>
-      <p class="hint">A password is optional when SSH keys are configured. If provided, it is saved in this site's root-only production script. If /var/www/&lt;folder&gt; on the server already holds this site, it is adopted as it is: its binding, protocol and environment are read from the server, and nothing is published or changed there.</p>
+      <p class="hint">If /var/www/&lt;folder&gt; on the server already holds this site, it is adopted as it is: its binding, protocol and environment are read from the server, and nothing is published or changed there.</p>
     </div>
     <div id="prod-windows-options" hidden>
       <div class="ns-section">Windows connection (SMB)</div>
@@ -738,9 +744,9 @@
       <label>Binding (domain) <input name="binding" autocomplete="off" spellcheck="false" placeholder="Empty: answers any name"></label>
       <div class="choice-field wide" id="setup-site-environment-row"><span class="choice-label">Environment</span><div class="env-choices" role="radiogroup" aria-label="Environment"><label class="env-choice env-development"><input type="radio" name="environment" value="Development"><span>Development</span></label><label class="env-choice env-test"><input type="radio" name="environment" value="Test" checked><span>Test</span></label><label class="env-choice env-staging"><input type="radio" name="environment" value="Staging"><span>Staging</span></label><label class="env-choice env-production"><input type="radio" name="environment" value="Production"><span>Production</span></label></div></div>
     </div>
-    <input type="hidden" name="certificate" value="y">
-    <div class="copy-options https-choice"><label class="sync-option copy-option secure"><input name="https_choice" type="checkbox" checked><span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span><span class="sync-option-text"><span class="sync-option-title">Set up with HTTPS</span><span class="sync-option-sub">A certificate is issued as the site is set up, and HTTP goes to HTTPS</span></span></label></div>
+    <input type="hidden" name="certificate" value="n">
     <div id="setup-site-dns"></div>
+    <div class="copy-options https-choice"><label class="sync-option copy-option secure"><input name="https_choice" type="checkbox"><span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span><span class="sync-option-text"><span class="sync-option-title">Set up with HTTPS</span><span class="sync-option-sub">A certificate is issued as the site is set up, and HTTP goes to HTTPS</span></span></label></div>
     <p class="hint" id="setup-site-hint"></p>
     <menu><button type="button" id="setup-site-cancel" class="cancel-link">Cancel</button><button type="submit" class="primary">Set up site</button></menu>
   </form>
@@ -797,6 +803,33 @@
     </header>
     <div id="server-action-fields" class="server-action-fields"></div>
     <menu><button type="button" id="server-action-cancel" class="cancel-link">Cancel</button><button type="submit" id="server-action-ok" class="primary"></button></menu>
+  </form>
+</dialog>
+
+<dialog id="dlg-admin-access" class="newsite" aria-labelledby="admin-access-title">
+  <form method="dialog" id="form-admin-access">
+    <header class="ns-head">
+      <span class="ns-icon" data-header-icon="shield" aria-hidden="true"></span>
+      <div><h2 id="admin-access-title">Who can reach the admin site</h2><p>It gives root access to this server: only your own addresses is strongly recommended.</p></div>
+    </header>
+    <fieldset class="server-editions">
+      <legend>Reached from</legend>
+      <label class="type-card"><input type="radio" name="access_mode" value="all"><span class="tc-title">Everywhere</span><span class="tc-sub">Anyone can reach the login</span></label>
+      <label class="type-card"><input type="radio" name="access_mode" value="some"><span class="tc-title">These addresses only</span><span class="tc-sub">Others get 403 from Apache</span></label>
+    </fieldset>
+    <div id="admin-access-list-row">
+      <label>IP addresses and ranges, one a line
+        <textarea id="admin-access-list" class="mono" rows="5" spellcheck="false" placeholder="203.0.113.7&#10;10.0.0.0/8"></textarea></label>
+      <div class="your-address">
+        <span class="your-address-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg></span>
+        <span class="your-address-text"><small>Your address now</small><strong id="admin-access-yours"></strong></span>
+        <span id="admin-access-mine-in" class="your-address-in" hidden><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>In the list</span>
+        <button type="button" id="admin-access-add-mine" class="small primary">+ Add it</button>
+      </div>
+    </div>
+    <label class="admin-access-lockout" id="admin-access-lockout-row" hidden><input type="checkbox" id="admin-access-lockout">
+      <span><strong>Lock me out</strong><small>Your address is not in the list: you lose the admin site at once, and get it back only from an address in it, or with harbor admin access on the server.</small></span></label>
+    <menu><button type="button" id="admin-access-cancel" class="cancel-link">Cancel</button><button type="submit" class="primary">Save</button></menu>
   </form>
 </dialog>
 
@@ -953,8 +986,7 @@
       <div><h2 id="windows-move-title">Copy from Windows</h2><p>Environments on a live Windows server, copied to a Linux server while Windows keeps running them. Nothing on Windows is changed, and the main sites stay here.</p></div>
     </header>
     <div id="windows-move-moved" class="windows-imported" hidden></div>
-    <label>To the Linux server <select name="server" required></select></label>
-    <p class="hint" id="windows-move-no-server" hidden>Add the Linux server in Servers first: Harbor reaches it with its own key.</p>
+    <div class="server-picker-row"><span class="server-picker-label">To the Linux server</span><select name="server" required></select></div>
     <label>Temporary alias <span class="muted">(optional, to test each one by before the address moves; {binding} is its binding)</span>
       <input name="alias" spellcheck="false" autocomplete="off" placeholder="{binding}.migrate.example.com"></label>
     <p class="hint">Each environment becomes a new environment of its site on the Linux server: built from the main site's project here, with the settings and files of the one on Windows (appsettings, umbraco, uSync, Views, wwwroot, App_Data), on HTTP. The one on Windows stays the live one until you take over. Refresh from Windows fetches the live data again (SQLite, media, uSync); Take over issues the certificate once the address has moved, and removes the Windows environment from Harbor without touching IIS.</p>
@@ -974,7 +1006,7 @@
     </header>
     <div id="windows-imported" class="windows-imported" hidden></div>
     <div class="ns-section">The Windows server</div>
-    <label id="windows-server-row" hidden>Server <select name="server"></select></label>
+    <div id="windows-server-row" class="server-picker-row"><span class="server-picker-label">Server</span><select name="server"></select></div>
     <div id="windows-login-fields">
       <label>Share <input name="share" required spellcheck="false" autocomplete="off" placeholder="//server/share/folder"></label>
       <div class="ns-grid">
@@ -983,7 +1015,7 @@
         <label>Domain <input name="domain" spellcheck="false" autocomplete="off" placeholder="Optional"></label>
       </div>
     </div>
-    <button type="button" id="windows-list" class="windows-list">Show the sites</button>
+    <div id="windows-list" class="windows-reading" hidden></div>
     <div id="windows-sites-section" hidden>
       <label>Temporary alias <span class="muted">(optional, to test each site by before the address moves; {binding} is the site's binding)</span>
         <input name="alias" spellcheck="false" autocomplete="off" placeholder="{binding}.migrate.example.com"></label>

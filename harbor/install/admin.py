@@ -265,6 +265,58 @@ def set_password(system, name=""):
     system.say("Password changed. Log in again.")
 
 
+LOCATION = re.compile(r"(?ms)^([ \t]*<Location />[ \t]*\n)(.*?)(^[ \t]*</Location>)")
+
+
+def access_conf(system, name):
+    return system.path(f"/etc/apache2/sites-available/{name}.conf")
+
+
+def allowed_addresses(system, name=""):
+    """The addresses and ranges allowed to reach the admin site (its Apache config, <Location />), or [] for everyone"""
+    name = choose(system, name)
+    path = access_conf(system, name)
+    text = path.read_text() if path.is_file() else ""
+    addresses = []
+    for match in LOCATION.finditer(text):
+        for line in match.group(2).splitlines():
+            words = line.split()
+            if words[:2] == ["Require", "ip"]:
+                addresses += [word for word in words[2:] if word not in addresses]
+    return addresses
+
+
+def set_allowed_addresses(system, name, addresses):
+    """Who may reach the admin site: these addresses and ranges, or everyone when there are none. Apache checks the
+    change before it is used, and one it refuses is taken back."""
+    name = choose(system, name)
+    addresses = [address for address in " ".join(addresses).replace(",", " ").split() if address]
+    for address in addresses:
+        if not ADDRESS.fullmatch(address):
+            raise Stop(f"Invalid IP address or range: {address}")
+    path = access_conf(system, name)
+    if not path.is_file():
+        raise Stop(f"{path} is not there.")
+    before = path.read_text()
+    rule = "Require ip " + " ".join(addresses) if addresses else "Require all granted"
+
+    def replace(match):
+        indent = re.match(r"[ \t]*", match.group(1)).group(0) + "  "
+        kept = [line for line in match.group(2).splitlines() if not line.strip().startswith("Require")]
+        return match.group(1) + "".join(line + "\n" for line in [indent + rule, *kept]) + match.group(3)
+    text, count = LOCATION.subn(replace, before)
+    if not count:
+        raise Stop(f"{path} has no <Location /> to set who may reach it.")
+    system.plan(["Set who may reach the admin site"])
+    system.step("Set who may reach the admin site")
+    path.write_text(text)
+    if not system.run("apache2ctl", "configtest", check=False, capture=True).ok:
+        path.write_text(before)
+        raise Stop("Apache refused the change, so it is taken back.")
+    system.run("systemctl", "reload", "apache2")
+    system.say(f"The admin site can be reached from {' '.join(addresses)} only." if addresses else "The admin site can be reached from everywhere.")
+
+
 def uninstall(system, name="", delete_certificate=""):
     """The admin site removed: files, login, service and Apache config. Other sites are not touched."""
     from harbor.sites.delete import delete_site

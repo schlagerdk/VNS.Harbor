@@ -129,3 +129,43 @@ class PublishApiTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LoginCsrfTests(unittest.TestCase):
+    """A sign-in page left open past the session's idle timeout still signs in; a form from another site does not"""
+
+    def setUp(self):
+        source = APP.read_text()
+        nodes = [node for node in ast.parse(source).body if isinstance(node, ast.FunctionDef) and node.name in ("protect", "csrf_token")]
+        app = Flask(__name__)
+        app.secret_key = "test"
+        from flask import session
+        self.ns = dict(app=app, request=request, jsonify=jsonify, g=g, hmac=__import__("hmac"), secrets=__import__("secrets"),
+                       session=session, urlparse=__import__("urllib.parse").parse.urlparse, access=access, cfg={},
+                       redirect=lambda path: ("redirect " + path, 302), session_user=lambda: None, harbor_token_site=lambda header: None,
+                       render_template=lambda name, **values: f"{name}: {values['error']}")
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), "protect", "exec"), self.ns)
+        app.add_url_rule("/login", "login", lambda: "signed in", methods=["GET", "POST"])
+        app.add_url_rule("/logout", "logout", lambda: "signed out", methods=["POST"])
+        app.add_url_rule("/api/sites", "sites", lambda: "sites", methods=["POST"])
+        self.client = app.test_client()
+
+    def test_a_stale_sign_in_page_from_this_site_signs_in(self):
+        sent = self.client.post("/login", data={"csrf": "old"}, headers={"Sec-Fetch-Site": "same-origin"})
+        self.assertEqual(sent.get_data(as_text=True), "signed in")
+
+    def test_a_sign_in_from_another_site_gets_a_fresh_page(self):
+        for site in ("cross-site", "same-site", None):
+            sent = self.client.post("/login", data={"csrf": "old"}, headers={"Sec-Fetch-Site": site} if site else {})
+            self.assertEqual(sent.status_code, 400)
+            self.assertEqual(sent.get_data(as_text=True), "login.html: The sign-in page had expired. Sign in again.")
+
+    def test_an_expired_session_is_sent_to_sign_in(self):
+        self.assertEqual(self.client.post("/api/sites", headers={"X-CSRF-Token": "old"}).status_code, 401)
+        self.assertEqual(self.client.post("/logout", data={"csrf": "old"}).get_data(as_text=True), "redirect /login")
+
+    def test_a_wrong_token_in_a_live_session_is_refused(self):
+        with self.client.session_transaction() as stored:
+            stored["csrf"] = "t"
+        refused = self.client.post("/api/sites", headers={"X-CSRF-Token": "old"})
+        self.assertEqual((refused.status_code, refused.json), (403, {"error": "Invalid CSRF token"}))

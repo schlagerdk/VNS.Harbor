@@ -226,8 +226,23 @@ def protect():
         return None
     if request.method not in ("GET", "HEAD", "OPTIONS"):
         sent = request.headers.get("X-CSRF-Token") or request.form.get("csrf", "")
-        if not hmac.compare_digest(sent, session.get("csrf", "")):
-            return jsonify(error="Invalid CSRF token"), 403
+        expected = session.get("csrf", "")
+        if not (expected and hmac.compare_digest(sent, expected)):
+            # A sign-in page left open past the session's idle timeout, or one from before a sign-in in another tab,
+            # sends a token the session no longer has. A form sent from this site's own page is no forgery: the
+            # browser says so in Sec-Fetch-Site, which no other site can set. Any other gets a fresh sign-in page.
+            if request.path == "/login":
+                if request.headers.get("Sec-Fetch-Site") != "same-origin":
+                    session.clear()
+                    return render_template("login.html", csrf=csrf_token(), error="The sign-in page had expired. Sign in again."), 400
+            elif request.path == "/logout" and not session.get("uid"):
+                return redirect("/login")
+            elif not expected:
+                # The session ran out: back to the sign-in page, as for any request without one
+                session.clear()
+                return jsonify(error="Not logged in"), 401
+            else:
+                return jsonify(error="Invalid CSRF token"), 403
     if request.path.startswith("/ws/") and urlparse(request.headers.get("Origin", "")).netloc != request.headers.get("Host", ""):
         return jsonify(error="Bad origin"), 403
     public = request.path == "/login" or request.path.startswith("/static/")
@@ -2285,7 +2300,7 @@ def servers_command(data):
             abort(400, "Nothing to change")
         return f"Edit server {name}", harbor + ["edit", name, *(["--name", new_name] if new_name else []), *(["--host", host] if host else [])], {}
     if action == "remove":
-        options = [*(["--uninstall"] if data.get("uninstall") is True else []), *(["--revoke-key"] if data.get("revoke_key") is True else [])]
+        options = ["--uninstall"] if data.get("uninstall") is True else []
         return f"Remove server {name}", harbor + ["remove", name, *options], {}
     abort(400, "Unknown action")
 
@@ -2315,6 +2330,66 @@ def api_server_crontab():
     if result.returncode:
         return error((result.stderr or result.stdout).strip().splitlines()[-1] if (result.stderr or result.stdout).strip() else "Root's crontab could not be saved.")
     audit("Saved root's crontab")
+    return jsonify(ok=True)
+
+
+@app.route("/api/server/crontab/log", methods=["POST"])
+def api_server_crontab_log():
+    """A job of root's crontab: when cron started it, and the end of its output (harbor server crontab log)"""
+    require_admin()
+    command = str((request.get_json(silent=True) or {}).get("command", "")).strip()
+    if not command or "\n" in command or len(command) > 4000:
+        return error("No job to show.")
+    try:
+        result = subprocess.run(["/usr/bin/python3", HARBOR_COMMAND, "server", "crontab", "log"], input=json.dumps({"command": command}),
+                                capture_output=True, text=True, timeout=60)
+        return jsonify(json.loads(result.stdout))
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        app.logger.error("harbor server crontab log: %s", exc)
+        return error("The job's log could not be read.", 502)
+
+
+@app.route("/api/admin-access", methods=["GET", "POST"])
+def api_admin_access():
+    """Who may reach this admin site (harbor admin access): read, or set. A list that leaves out the address this
+    request comes from would lock the one setting it out at once: that takes confirm_lockout."""
+    require_admin()
+    mine = client_ip()
+    if request.method == "GET":
+        try:
+            result = subprocess.run(["/usr/bin/python3", HARBOR_COMMAND, "admin", "access", ADMIN_SITE], capture_output=True, text=True, timeout=30)
+            return jsonify(addresses=json.loads(result.stdout)["addresses"], yours=mine)
+        except (OSError, subprocess.SubprocessError, ValueError, KeyError) as exc:
+            app.logger.error("harbor admin access: %s", exc)
+            return error("Who may reach the admin site could not be read.", 502)
+    data = request.get_json(silent=True) or {}
+    addresses = data.get("addresses")
+    if not isinstance(addresses, list) or len(addresses) > 100 or not all(isinstance(item, str) for item in addresses):
+        return error("No addresses given.")
+    networks = []
+    for item in addresses:
+        try:
+            networks.append(ipaddress.ip_network(item.strip(), strict=False))
+        except ValueError:
+            return error(f"Not an IP address or range: {item}")
+    try:
+        yours = ipaddress.ip_address(mine)
+        locked_out = bool(networks) and not any(yours in network for network in networks)
+    except ValueError:
+        locked_out = bool(networks)
+    if locked_out and data.get("confirm_lockout") is not True:
+        return error(f"Your address now, {mine}, is not among them: you would be locked out at once.", 409)
+    try:
+        result = subprocess.run(["/usr/bin/python3", HARBOR_COMMAND, "admin", "access", ADMIN_SITE,
+                                 *(["--allow", *[str(network) if network.num_addresses > 1 else str(network.network_address) for network in networks]] if networks else ["--everyone"])],
+                                capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError) as exc:
+        app.logger.error("harbor admin access: %s", exc)
+        return error("Who may reach the admin site could not be saved.", 502)
+    if result.returncode:
+        lines = (result.stderr or result.stdout).strip().splitlines()
+        return error(lines[-1] if lines else "Who may reach the admin site could not be saved.")
+    audit("Admin site reachable from " + (" ".join(addresses) if addresses else "everywhere"))
     return jsonify(ok=True)
 
 
@@ -2377,6 +2452,56 @@ def server_tool_command(data):
         return f"Install Node.js {major}", harbor + ["server", "node", "install", major], env
     if tool == "node_remove":
         return "Remove Node.js", harbor + ["server", "node", "remove"], env
+    if tool in ("samba_on", "samba_password"):
+        # Root's Samba password never on the command line. Sharing a server whose root has one already needs none.
+        password = data.get("samba_password")
+        if password or tool == "samba_password":
+            if not isinstance(password, str) or len(password) < 8 or len(password) > 128 or "\n" in password:
+                abort(400, "The Samba password needs at least 8 characters")
+            env["HARBOR_SAMBA_PASSWORD"] = password
+        if tool == "samba_on":
+            return "Share the server over Samba", harbor + ["server", "samba", "on"], env
+        return "Give root a new Samba password", harbor + ["server", "samba", "password"], env
+    if tool == "ssh_root":
+        mode = data.get("mode")
+        if mode not in ("yes", "prohibit-password", "no"):
+            abort(400, "Choose how root may log in")
+        return "Set root's SSH login", harbor + ["server", "ssh-root", mode], env
+    if tool == "samba_save":
+        share = data.get("share") if isinstance(data.get("share"), dict) else {}
+        name, path = str(share.get("name", "")).strip(), str(share.get("path", "")).strip()
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._ $-]{0,79}", name) or not path.startswith("/"):
+            abort(400, "Give the share a name and a full folder path")
+        texts = {key: str(share.get(key, "")).strip() for key in ("force_user", "valid_users", "comment")}
+        if any("\n" in value or len(value) > 200 for value in texts.values()):
+            abort(400, "A setting goes on one line")
+        old = str(data.get("old_name", "")).strip()
+        argv = ["server", "samba", "save-share", name, "--path", path, *(["--old-name", old] if old else []),
+                *(["--read-only"] if share.get("read_only") is True else []), *(["--hidden"] if share.get("browseable") is False else []),
+                *(["--guest-ok"] if share.get("guest_ok") is True else []),
+                *[part for key, flag in (("force_user", "--force-user"), ("valid_users", "--valid-users"), ("comment", "--comment")) if texts[key] for part in (flag, texts[key])]]
+        return f"{'Change' if old else 'Add'} the Samba share {name}", harbor + argv, env
+    if tool in ("samba_add_user", "samba_user_password", "samba_delete_user"):
+        name = str(data.get("name", "")).strip()
+        if not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", name):
+            abort(400, "A user name is lower case letters, digits, - and _")
+        if tool != "samba_delete_user":
+            password = data.get("samba_password")
+            if not isinstance(password, str) or len(password) < 8 or len(password) > 128 or "\n" in password:
+                abort(400, "The Samba password needs at least 8 characters")
+            env["HARBOR_SAMBA_PASSWORD"] = password
+        action = {"samba_add_user": "add-user", "samba_user_password": "user-password", "samba_delete_user": "delete-user"}[tool]
+        title = {"add-user": f"Add the Samba user {name}", "user-password": f"Give {name} a new Samba password", "delete-user": f"Delete the Samba user {name}"}[action]
+        return title, harbor + ["server", "samba", action, name], env
+    if tool == "samba_delete":
+        name = str(data.get("name", "")).strip()
+        if not name:
+            abort(400, "Choose a share")
+        return f"Delete the Samba share {name}", harbor + ["server", "samba", "delete-share", name], env
+    if tool in ("samba_start", "samba_stop"):
+        return f"Turn Samba {'on' if tool == 'samba_start' else 'off'}", harbor + ["server", "samba", tool[6:]], env
+    if tool == "samba_off":
+        return "Stop sharing the server over Samba", harbor + ["server", "samba", "off"], env
     abort(400, "Unknown tool")
 
 
@@ -3647,9 +3772,11 @@ def production_setup_env(data, site, moving=False):
         # move_env.sh uses the login saved for the source
         pass
     elif target == "windows":
+        # Another server is one in Servers: what is made where stays known, and its login is kept in one place
         kept = kept_server(data, "windows")
-        if kept:
-            data = {**data, "smb_share": kept["share"], "smb_user": kept["user"], "smb_password": kept["password"], "smb_domain": kept["domain"]}
+        if not kept:
+            abort(400, "Add the Windows server in Servers first, then choose it here")
+        data = {**data, "smb_share": kept["share"], "smb_user": kept["user"], "smb_password": kept["password"], "smb_domain": kept["domain"]}
         user = data.get("smb_user", "")
         password = data.get("smb_password", "")
         domain = data.get("smb_domain", "")
@@ -3666,6 +3793,8 @@ def production_setup_env(data, site, moving=False):
             "VNS_PROD_SMB_DOMAIN": domain,
         })
     else:
+        if not data.get("remote_server"):
+            abort(400, "Add the Linux server in Servers first, then choose it here")
         host, user, password, port = ssh_login(data)
         values.update({
             "VNS_PROD_IP": host,
@@ -3710,8 +3839,31 @@ def api_servers_kept():
                           "user": entry.get("user", ""), "domain": entry.get("domain", "")})
         else:
             found.append({"name": name, "kind": "linux", "label": f"{entry['user']}@{entry['host']}", "host": entry["host"],
-                          "user": entry["user"], "port": entry["port"], "public": entry.get("public", ""), "fqdn": entry.get("fqdn", "")})
+                          "user": entry["user"], "port": entry["port"], "public": entry.get("public", ""), "fqdn": entry.get("fqdn", ""),
+                          "names": entry.get("names") or []})
     return jsonify(servers=found)
+
+
+@app.route("/api/servers/<name>/wildcard")
+def api_server_wildcard(name):
+    """The domain a server has a wildcard for: one of its names (admin.<name>) or its full name, where any name under
+    it (a made-up one) resolves to the server's public address. Sites there are named under it: umb18.kikayo.dk."""
+    require_admin()
+    entry = learnt_servers().get(name)
+    if not entry or entry.get("kind") == "windows":
+        return error("Unknown server", 404)
+    targets = {entry.get("public"), entry.get("host")} - {None, ""}
+    probe = "harbor-check-" + secrets.token_hex(4)
+    for domain in [*(entry.get("names") or []), entry.get("fqdn") or ""]:
+        if not domain or not re.fullmatch(r"[a-z0-9-]+(\.[a-z0-9-]+)+", domain):
+            continue
+        try:
+            found = {info[4][0] for info in socket.getaddrinfo(f"{probe}.{domain}.", None, proto=socket.IPPROTO_TCP)}
+        except (socket.gaierror, UnicodeError, OSError):
+            continue
+        if found & targets or via_cloudflare(sorted(found)):
+            return jsonify(domain=domain)
+    return jsonify(domain="")
 
 
 def learnt_servers():
@@ -5048,6 +5200,40 @@ def managed_config(site, kind):
     if action == "apply":
         REMOTE_STATUS.pop(remote_key(site, target), None)
     return jsonify(response)
+
+
+APACHE_CONF = "/etc/apache2/apache2.conf"
+
+
+@app.route("/api/server/apache-config", methods=["GET", "POST"])
+def apache_config():
+    """Apache's own config (apache2.conf) in the editor, as a site's config: read, saved, and applied only when
+    apache2ctl configtest passes. Administrators only: it can start programs as root."""
+    require_admin()
+    data = (request.get_json(silent=True) or {}) if request.method == "POST" else {"action": "read"}
+    action = data.get("action") if isinstance(data, dict) else None
+    if action == "read":
+        try:
+            with open(APACHE_CONF, encoding="utf-8") as stream:
+                return jsonify(path=APACHE_CONF, content=stream.read(), encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            return error(f"{APACHE_CONF} could not be read: {exc}", 502)
+    if action == "save":
+        content = data.get("content")
+        if not isinstance(content, str) or "\0" in content:
+            return error("Expected the config as text")
+        # In place, so its owner and rights stay
+        with open(APACHE_CONF, "w", encoding="utf-8") as stream:
+            stream.write(content)
+        audit("Saved " + APACHE_CONF)
+        return jsonify(ok=True)
+    if action == "apply":
+        test = subprocess.run(["apache2ctl", "configtest"], capture_output=True, text=True, timeout=60)
+        if test.returncode:
+            return error("The config test failed, so Apache was not reloaded: " + (test.stderr or test.stdout).strip(), 502)
+        subprocess.run(["systemctl", "reload", "apache2"], capture_output=True, text=True, timeout=60, check=False)
+        return jsonify(ok=True, output=test.stdout + test.stderr)
+    return error("Unknown configuration action")
 
 
 def windows_files(site, target, data):

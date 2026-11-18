@@ -43,6 +43,25 @@ def ensure_channel(system, channel, force=False):
             extra = ["--skip-non-versioned-files"]
         system.run("bash", installer.name, "--channel", channel, "--install-dir", DOTNET_DIR, *extra)
         system.run("bash", installer.name, "--channel", channel, "--runtime", "aspnetcore", "--install-dir", DOTNET_DIR, *extra)
+    setup(system)
+
+
+def setup(system):
+    """What the sites need around .NET, made when the first .NET comes (harbor server init installs none: a site, or
+    Add version in Server tools, installs the .NET it needs): /usr/bin/dotnet for the site services, DOTNET_ROOT for
+    a shell, dotnet-outdated for the package checks and the VNS templates. A server where /usr/bin/dotnet is has it."""
+    link = system.path("/usr/bin/dotnet")
+    if link.exists() or link.is_symlink():
+        return
+    system.say("Set up .NET for the sites: /usr/bin/dotnet, DOTNET_ROOT, dotnet-outdated and the VNS templates")
+    link.parent.mkdir(parents=True, exist_ok=True)
+    link.symlink_to(f"{DOTNET_DIR}/dotnet")
+    system.path("/etc/profile.d").mkdir(parents=True, exist_ok=True)
+    system.path("/etc/profile.d/dotnet.sh").write_text(f"export DOTNET_ROOT={DOTNET_DIR}\n")
+    dotnet = {"DOTNET_ROOT": DOTNET_DIR}
+    if not system.run("dotnet", "tool", "install", "--tool-path", "/usr/local/bin", "dotnet-outdated-tool", env=dotnet, check=False, capture=True).ok:
+        system.run("dotnet", "tool", "update", "--tool-path", "/usr/local/bin", "dotnet-outdated-tool", env=dotnet, check=False)
+    system.run("dotnet", "new", "install", "VNS.Templates", "--force", env=dotnet, check=False)
 
 
 def target_framework(project_text):

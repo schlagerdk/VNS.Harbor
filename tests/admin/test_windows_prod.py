@@ -519,6 +519,15 @@ class AliasDomainTests(unittest.TestCase):
         self.assertEqual(self.ns["alias_domain"]({"fqdn": "prod-01.example.com"}), "prod-01.example.com", "its full name, without names")
 
 
+def kept_from_dialog(data, kind):
+    """Servers, as the tests have it: the server chosen holds what the dialog used to send"""
+    if not data.get("windows_server" if kind == "windows" else "remote_server"):
+        return None
+    if kind == "windows":
+        return {"share": data.get("smb_share", ""), "user": data.get("smb_user", ""), "password": data.get("smb_password", ""), "domain": data.get("smb_domain", "")}
+    return {"host": data.get("host", ""), "user": data.get("user", ""), "port": str(data.get("ssh_port", "22"))}
+
+
 class ProductionSetupTests(unittest.TestCase):
     def setUp(self):
         source = (ROOT_DIR / "admin/app.py").read_text()
@@ -537,7 +546,8 @@ class ProductionSetupTests(unittest.TestCase):
                    "_normalize_site_name": normalize_site_name, "service_name": service_name}
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "production env", "exec"), self.ns)
         add_target_helpers(self.ns)
-        self.windows = dict(target="windows", folder="prod.test", binding="prod.test", smb_share="//10.0.0.1/share$/sites",
+        self.ns["kept_server"] = kept_from_dialog
+        self.windows = dict(target="windows", windows_server="win", folder="prod.test", binding="prod.test", smb_share="//10.0.0.1/share$/sites",
                             smb_user="Administrator", smb_password="secret", smb_domain="VNS", https="n")
 
     def setup_env(self, data):
@@ -575,7 +585,7 @@ class ProductionSetupTests(unittest.TestCase):
         local = dict(target="local", folder="prod.test", binding="prod.test", local_path=str(self.scripts.parent / "_prod"))
         self.assertEqual(self.setup_env(local)["VNS_PROD_HTTPS"], "y")
         self.assertEqual(self.setup_env(local | {"https": "n"})["VNS_PROD_HTTPS"], "n")
-        remote = dict(target="remote", folder="prod.test", binding="prod.test", host="server.test", user="root", ssh_port="22", https="n")
+        remote = dict(target="remote", remote_server="server", folder="prod.test", binding="prod.test", host="server.test", user="root", ssh_port="22", https="n")
         self.assertEqual(self.setup_env(remote)["VNS_PROD_HTTPS"], "n")
 
     def test_saved_settings_are_read_without_the_password(self):

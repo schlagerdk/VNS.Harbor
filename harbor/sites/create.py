@@ -250,9 +250,14 @@ class Creation:
                 if not match or (int(match[1]), int(match[2])) < (3, 2):
                     raise Stop("Umbraco 13 requires version 13.3.2 or newer for VNS.Umbraco.")
                 self.dotnet_version = "net8.0"
-                ensure_channel(system, "8.0")
+            # The .NET the site builds on, installed first when it is not here (as after Remove in Server tools):
+            # without it the Umbraco template says only "is not supported", and the site is left half made
+            ensure_channel(system, self.dotnet_version.removeprefix("net"))
             self.umbraco_version = site.umbraco_version = version
         else:
+            # An SDK for dotnet new: the default .NET, installed when it is not here. The project's own .NET follows
+            # from it (configure_project).
+            ensure_channel(system, self.dotnet_version.removeprefix("net"))
             if not self.template_provided:
                 self.template_name = ask(system, self.template_name, "Template name (optional)", "web")
             self.template_name = self.template_name or "web"

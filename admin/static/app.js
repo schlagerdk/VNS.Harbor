@@ -392,6 +392,111 @@ function formatSqlSize(megabytes) {
 	return megabytes >= 1000 ? Number((megabytes / 1000).toFixed(2)) + " GB" : megabytes + " MB";
 }
 
+// The passwords typed in Harbor's dialogs (SSH, Samba, sa, Windows shares) are for a server, not for this site: the
+// browser is not to offer to save them. Once a dialog's form is sent (its handler has read the values) and when a
+// dialog closes, its password fields are emptied, so there is nothing to save; and password managers are told to keep
+// out. The sign-in page is another page: there the browser may keep the login.
+// Safari takes any field it sees a password typed into for a password, also a text field that shows dots, and offers to
+// save it as the form is sent or as the page is left (a reload). So a dialog's password never stands in a field: the
+// field is a plain text field that holds only dots, and what is typed, pasted or deleted in it is kept here (secret),
+// which the field's value gives back to the dialogs as before. Safari finds nothing but dots to save.
+const VALUE = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
+function secretField(input) {
+	if (input.dataset.secret) return;
+	input.dataset.secret = "1";
+	let secret = VALUE.get.call(input) || "";
+	const show = () => VALUE.set.call(input, "•".repeat(secret.length));
+	input.addEventListener("beforeinput", (event) => {
+		const start = input.selectionStart ?? secret.length, end = input.selectionEnd ?? secret.length;
+		let next = secret, caret = start;
+		const type = event.inputType || "";
+		if (type.startsWith("insert")) {
+			const text = (event.data ?? event.dataTransfer?.getData("text/plain") ?? "").replace(/[\r\n]/g, "");
+			next = secret.slice(0, start) + text + secret.slice(end);
+			caret = start + text.length;
+		} else if (type.startsWith("delete")) {
+			if (start !== end) next = secret.slice(0, start) + secret.slice(end);
+			else if (type === "deleteContentBackward") { next = secret.slice(0, Math.max(0, start - 1)) + secret.slice(end); caret = Math.max(0, start - 1); }
+			else if (type === "deleteContentForward") next = secret.slice(0, start) + secret.slice(end + 1);
+			// A word or a line back (Option or Cmd with Backspace): all before the caret, as there are no words to see
+			else if (/Backward/.test(type)) { next = secret.slice(end); caret = 0; }
+			else if (/Forward/.test(type)) next = secret.slice(0, start);
+		} else if (type === "historyUndo" || type === "historyRedo") {
+			event.preventDefault();
+			return;
+		}
+		event.preventDefault();
+		secret = next;
+		show();
+		input.setSelectionRange(caret, caret);
+		input.dispatchEvent(new Event("input", { bubbles: true }));
+	});
+	// Its value is the password for the dialogs; set (to empty, or a password given back) it shows as many dots
+	Object.defineProperty(input, "value", { configurable: true, get: () => secret, set: (value) => { secret = String(value ?? ""); show(); } });
+	input.form?.addEventListener("reset", () => setTimeout(() => { secret = ""; show(); }));
+	show();
+}
+function maskPasswords(root) {
+	for (const input of root.querySelectorAll("input[type=password], input.masked-password")) {
+		if (!input.closest("dialog")) continue;
+		input.type = "text";
+		input.classList.add("masked-password");
+		input.setAttribute("autocomplete", "off");
+		input.spellcheck = false;
+		input.setAttribute("autocapitalize", "off");
+		input.setAttribute("autocorrect", "off");
+		secretField(input);
+	}
+}
+maskPasswords(document);
+new MutationObserver((changes) => {
+	for (const change of changes) for (const node of change.addedNodes) if (node.nodeType === 1) maskPasswords(node.matches?.("input") ? node.parentElement || node : node);
+}).observe(document.body, { childList: true, subtree: true });
+// Safari offers to save a password the moment a form with one is sent, before any of Harbor's code runs. So a dialog's
+// form with a password is never sent the browser's way: its submit button and Enter are caught, the browser's own
+// checks of the fields run (reportValidity), and the form's submit handlers are run with a submit event of our own,
+// which sends nothing. A form of method dialog that its handler leaves be is closed as the browser would.
+const holdsPassword = (form) => form?.closest("dialog") && form.querySelector("input[type=password], input.masked-password");
+function submitInPlace(form, submitter) {
+	if (!form.noValidate && !form.reportValidity()) return;
+	const event = typeof SubmitEvent === "function"
+		? new SubmitEvent("submit", { bubbles: true, cancelable: true, submitter })
+		: new Event("submit", { bubbles: true, cancelable: true });
+	const sent = form.dispatchEvent(event);
+	if (sent && form.method === "dialog") form.closest("dialog")?.close(submitter?.value || "");
+	setTimeout(() => { const dialog = form.closest("dialog"); if (dialog && !dialog.open) forgetPasswords(dialog); });
+}
+document.addEventListener("click", (event) => {
+	const submitter = event.target.closest?.("button, input[type=submit]");
+	if (!submitter || !(submitter.type === "submit") || submitter.disabled) return;
+	const form = submitter.form;
+	if (!holdsPassword(form)) return;
+	event.preventDefault();
+	submitInPlace(form, submitter);
+}, true);
+document.addEventListener("keydown", (event) => {
+	if (event.key !== "Enter" || event.isComposing || !event.target.matches?.("input:not([type=checkbox]):not([type=radio]):not([type=button]):not([type=submit])")) return;
+	const form = event.target.form;
+	if (!holdsPassword(form)) return;
+	event.preventDefault();
+	const submitter = form.querySelector("button[type=submit]:not([disabled]), button:not([type]):not([disabled])");
+	if (submitter) submitInPlace(form, submitter);
+}, true);
+const forgetPasswords = (root) => { for (const input of root.querySelectorAll("input[type=password], input.masked-password")) input.value = ""; };
+document.addEventListener("submit", (event) => {
+	const dialog = event.target.closest?.("dialog");
+	// Only when the dialog is gone: one that stays (two passwords not the same) keeps what was typed
+	if (dialog) setTimeout(() => { if (!dialog.open) forgetPasswords(dialog); });
+});
+document.addEventListener("close", (event) => { if (event.target.matches?.("dialog")) forgetPasswords(event.target); }, true);
+document.addEventListener("focusin", (event) => {
+	const input = event.target;
+	if (!input.matches?.("dialog input[type=password], dialog input.masked-password")) return;
+	// "off": new-password is what Safari offers to save, also on a text field
+	input.autocomplete = input.classList.contains("masked-password") ? "off" : "new-password";
+	for (const name of ["data-1p-ignore", "data-lpignore", "data-bwignore", "data-form-type"]) input.setAttribute(name, name === "data-form-type" ? "other" : "true");
+});
+
 async function api(url, options = {}) {
 	options.headers = Object.assign({ "X-CSRF-Token": csrf }, options.headers || {});
 	if (options.json !== undefined) {
@@ -405,6 +510,8 @@ async function api(url, options = {}) {
 		throw new Error("Not logged in");
 	}
 	const data = await response.json().catch(() => ({}));
+	// Apache answers 502 or 503 itself while the admin site starts (after an update): no JSON of its own
+	if ((response.status === 502 || response.status === 503) && !data.error) throw new Error("The admin site is starting. Try again in a moment.");
 	if (!response.ok) throw new Error(data.error || response.statusText);
 	return data;
 }
@@ -832,6 +939,10 @@ const iconPaths = {
 	back: "M19 12H5M12 19l-7-7 7-7",
 	upload: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12",
 	chevron: "M9 6l6 6-6 6",
+	"eye-off": "M9.88 9.88a3 3 0 1 0 4.24 4.24M10.73 5.08A10.4 10.4 0 0 1 12 5c7 0 10 7 10 7a13.2 13.2 0 0 1-1.67 2.68M6.61 6.61A13.5 13.5 0 0 0 2 12s3 7 10 7a9.7 9.7 0 0 0 5.39-1.61M2 2l20 20",
+	check: "M20 6 9 17l-5-5",
+	windows: "M3 5.6 10 4.6V11H3ZM12 4.3 21 3v8h-9ZM3 13h7v6.4l-7-1ZM12 13h9v8l-9-1.3Z",
+	feather: "M20.24 12.24a6 6 0 0 0-8.49-8.49L5 10.5V19h8.5zM16 8 2 22M17.5 15H9",
 	download: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3",
 	user: "M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z",
 	logout: "M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9",
@@ -869,9 +980,9 @@ const buttonStyles = {
 	"Migrate…": ["server", "purple"],
 	"Check outdated": ["download", "amber"], "Restart": ["restart", "amber"], "Restart Apache": ["restart", "amber"],
 	"Stop": ["stop", "red"], "Clear logs": ["eraser", "gray"], "Logs": ["file", "gray"],
-	"SQL Server": ["server", "purple"], "Web server": ["globe", "blue"], "Preferences…": ["sliders", "purple"], "Server tools…": ["package", "purple"], "Backoffice login…": ["key", "purple"], "Move out…": ["undo", "amber"], "Servers…": ["server", "blue"], "Import from Windows…": ["download", "blue"], "Copy from Windows…": ["download", "purple"], "Refresh from Windows…": ["download", "blue"], "Take over…": ["shield", "green"], "Files (/)": ["folder", "blue"],
+	"SQL Server": ["server", "purple"], "Web server": ["globe", "blue"], "Preferences…": ["sliders", "purple"], "Server tools…": ["package", "purple"], "Tools…": ["package", "purple"], "Backoffice login…": ["key", "purple"], "Move out…": ["undo", "amber"], "Servers…": ["server", "blue"], "Import from Windows…": ["download", "blue"], "Copy from Windows…": ["download", "purple"], "Import sites…": ["download", "blue"], "Copy sites…": ["download", "purple"], "Edit conf": ["pencil", "amber"], "Refresh from Windows…": ["download", "blue"], "Take over…": ["shield", "green"], "Files (/)": ["folder", "blue"],
 	"Test config": ["activity", "teal"], "Error logs": ["file", "teal"],
-	"Admin app log": ["file", "gray"], "Apache error logs": ["file", "teal"],
+	"Apache error logs": ["file", "teal"], "Who can reach it…": ["shield", "purple"],
 	"Copy site": ["file", "blue"],
 	"Publish from your machine…": ["upload", "green"],
 	"Issue certificate": ["shield", "teal"], "Change environment": ["sliders", "purple"], "Sync setup…": ["sliders", "teal"], "Sync data…": ["sync", "pink"], "Change bindings": ["globe", "blue"],
@@ -928,10 +1039,16 @@ function renderMultiSelection() {
 	$("#btn-multi-cancel").hidden = !multiSelecting;
 }
 
+// A phone always shows the lists (of sites, and of a site's environments): it has no buttons to choose, and the
+// lists are made for its width. Its choice on the desktop is kept for when the window is wide again.
+const phoneWidth = matchMedia("(max-width: 800px)");
 // The overview as cards in a grid (the default) or as a list with a row per site, remembered in this browser
-let siteLayout = "grid";
-try { if (localStorage.getItem("vns-site-layout") === "list") siteLayout = "list"; } catch (error) {}
+let siteLayoutChoice = "grid";
+try { if (localStorage.getItem("vns-site-layout") === "list") siteLayoutChoice = "list"; } catch (error) {}
+const layoutOf = (choice) => phoneWidth.matches ? "list" : choice;
+let siteLayout = layoutOf(siteLayoutChoice);
 function applySiteLayout() {
+	siteLayout = layoutOf(siteLayoutChoice);
 	$("#sites").classList.toggle("list", siteLayout === "list");
 	$("#layout-grid").setAttribute("aria-pressed", String(siteLayout === "grid"));
 	$("#layout-list").setAttribute("aria-pressed", String(siteLayout === "list"));
@@ -940,7 +1057,7 @@ $("#layout-grid").append(svgIcon("grid"));
 $("#layout-list").append(svgIcon("rows"));
 for (const layout of ["grid", "list"]) {
 	$("#layout-" + layout).onclick = () => {
-		siteLayout = layout;
+		siteLayoutChoice = layout;
 		try { localStorage.setItem("vns-site-layout", layout); } catch (error) {}
 		renderSites();
 	};
@@ -1142,6 +1259,18 @@ function environmentLabel(site, env) {
 	return site.kind === "python" ? "Live" : env.environment || (site.kind === "csharp" || site.kind === "umbraco" ? "Unknown" : env.label);
 }
 
+// Where the site has more environments of the same kind (subsites, each in a folder of its own, as kikayo.dk's),
+// a small label with the environment's folder tells them apart: their badges and Frontend buttons are alike. Every
+// environment of such a site has it, the main site too, so its rows look alike.
+function envFolderLabel(site, env) {
+	const kinds = site.environments.map((other) => environmentLabel(site, other));
+	if (new Set(kinds).size === kinds.length) return null;
+	const folder = envFolderName(env) || (env.folder || env.path || "").replace(/\/+$/, "").split("/").pop() || bindingLabel(env);
+	if (!folder) return null;
+	const where = env.mode === "windows" ? env.folder : env.mode === "remote" ? `${env.host}:/var/www/${env.folder}` : "/var/www/" + (env.path || env.folder);
+	return el("span", { className: "env-folder", textContent: folder, title: "Folder: " + where });
+}
+
 function publishBadge(env) {
 	const labels = { pending: "Publish pending", unknown: "Publish status unknown" };
 	const label = labels[env.publish_status];
@@ -1162,13 +1291,17 @@ function compactEnvironmentRow(site, env, environment) {
 		el("span", { className: "badge env-" + environment.toLowerCase(), textContent: environment }));
 	if (isRemoteEnv(env)) head.append(remoteIcon(env));
 	row.append(head);
+	// On a card beside the environment's badge; in the list in a column of its own
+	const folder = envFolderLabel(site, env);
+	if (folder) (siteLayout === "list" ? row : head).append(folder);
 	// The list has room for each environment's state, as its card on the site page shows it
 	if (siteLayout === "list") {
 		const known = env.unit || (env.mode === "windows" && env.state) || (env.mode === "remote" && env.state && env.state !== "unknown");
 		const state = known ? env.state || "unknown" : "";
 		const words = { active: "Active", inactive: "Stopped", failed: "Failed", activating: "Starting", deactivating: "Stopping", unknown: "Unknown" };
 		row.append(el("span", { className: "env-state", title: env.state_error || "" },
-			el("span", { className: "dot " + state }),
+			// A phone shows only the dot: its title says the state
+			el("span", { className: "dot " + state, title: state ? words[state] || state : env.mode === "remote" ? "Remote" : "Static" }),
 			el("span", { className: "badge " + (state ? "state-" + state : ""), textContent: state ? words[state] || state : env.mode === "remote" ? "Remote" : "Static" })));
 	}
 	if (isMissingEnv(env)) row.append(el("span", { className: "badge env-missing", textContent: "Not found on server", title: `The site no longer exists on ${env.host}.` }));
@@ -1179,7 +1312,7 @@ function compactEnvironmentRow(site, env, environment) {
 		else head.append(el("span", { className: "publish-pending-icon", title: "Publish pending: " + badge.title, ariaLabel: "Publish pending" }, svgIcon("upload")));
 	}
 	if (address.url) {
-		const frontend = openLink(bindingLabel(env) || address.hostname, address.url, environment + ": " + address.title, true);
+		const frontend = openLink("Frontend", address.url, environment + ": " + address.title, true);
 		frontend.classList.add("frontend");
 		const links = el("div", { className: "site-environment-links" }, frontend);
 		if (site.kind === "umbraco") {
@@ -1422,11 +1555,14 @@ function renderSite(name) {
 	if (site.has_project && hasProd(site) && site.scripts.includes("publish_prod.sh") && ["publish_local.sh", "publish.sh"].some((file) => site.scripts.includes(file))) {
 		const deleted = site.environments.filter(isMissingEnv).map((env) => bindingLabel(env) || env.folder);
 		const skipped = deleted.length ? `\nSkipped, as they no longer exist on their servers: ${deleted.join(", ")}.` : "";
-		targetsActions.append(el("button", { textContent: "Publish environments", className: "desktop-only", title: "Publish to every environment, not the main site", onclick: () => run(async () => {
+		const publishEnvironments = el("button", { textContent: "Publish environments", title: "Publish to every environment, not the main site", onclick: () => run(async () => {
 			if (await ask({ title: "Publish environments?", message: `Build the main site and publish it to every environment, one at a time. The main site itself is not published. The services are restarted. If one fails, the rest are not published.${skipped}`, input: false, ok: "Publish environments" })) {
 				await openTask({ kind: "publish_both", site: site.name, environments_only: true });
 			}
-		}) }));
+		}) });
+		// A phone says Publish: it stands beside the syncs there. Its words are the same, so it keeps its icon.
+		publishEnvironments.replaceChildren("Publish", el("span", { className: "desktop-only", textContent: " environments" }));
+		targetsActions.append(publishEnvironments);
 		publishAll = el("button", { textContent: "Publish all", className: "detail-title-action", title: "Publish the main site, then every environment", onclick: () => run(async () => {
 			if (await ask({ title: "Publish all?", message: `Publish the main site, then every environment, one at a time. The services are restarted. If one fails, the rest are not published.${skipped}`, input: false, ok: "Publish all" })) {
 				await openTask({ kind: "publish_both", site: site.name });
@@ -1455,16 +1591,16 @@ function renderSite(name) {
 	const mainEnv = site.environments.find((env) => !isTarget(env));
 	if (mainEnv && site.kind === "umbraco" && !site.admin) {
 		if (dataSyncDestinations(site, mainEnv).length) {
-			targetsActions.append(el("button", { textContent: "Sync data…", className: "desktop-only", title: "Merge content and media from the main site into others", onclick: () => run(() => openSyncDialog(site, mainEnv, true)) }));
+			targetsActions.append(el("button", { textContent: "Sync data…", title: "Merge content and media from the main site into others", onclick: () => run(() => openSyncDialog(site, mainEnv, true)) }));
 		}
 		if (syncDestinations(site, mainEnv).length) {
-			targetsActions.append(el("button", { textContent: "Sync settings…", className: "desktop-only", title: "Sync settings from the main site", onclick: () => run(() => openSyncDialog(site, mainEnv)) }));
+			targetsActions.append(el("button", { textContent: "Sync settings…", title: "Sync settings from the main site", onclick: () => run(() => openSyncDialog(site, mainEnv)) }));
 		}
 	}
 	const danger = $("#site-danger");
 	danger.replaceChildren();
 	danger.hidden = site.admin || !hasProd(site);
-	if (!danger.hidden) danger.append(el("button", { textContent: "Delete everything", className: "danger", onclick: () => run(() => deleteSite(site, "all")) }));
+	if (!danger.hidden) danger.append(el("button", { textContent: "Delete everything", className: "danger desktop-only", onclick: () => run(() => deleteSite(site, "all")) }));
 	const title = el("div", { className: "detail-title" }, el("h2", { textContent: siteTitle(site) }), kindBadges(site));
 	if (site.not_set_up && site.setup_kind !== "python") {
 		title.append(el("button", { textContent: "Set up site…", className: "detail-title-action", onclick: () => run(() => openSetupSiteDialog(site)) }));
@@ -1485,7 +1621,7 @@ function renderSite(name) {
 		// What the filter matches: binding, aliases, environment, folder, server
 		panel.dataset.search = [env.binding, bindingLabel(env), ...(env.aliases || []), ...aliasLabels(env), env.environment,
 			env.folder, env.unit, env.path, env.host, env.target].filter(Boolean).join(" ").toLowerCase();
-		if (envLayout === "list") envListRow(panel, site.name + "/" + (env.target || "prod"), site, env);
+		if (layoutOf(envLayoutChoice) === "list") envListRow(panel, site.name + "/" + (env.target || "prod"), site, env);
 		targets.append(panel);
 	}
 	const canAddEnvironment = site.has_project && !site.admin && (site.kind === "csharp" || site.kind === "umbraco") && canAnywhere(site, "create_env");
@@ -1503,8 +1639,9 @@ function renderSite(name) {
 		search.value = "";
 		search.dataset.site = site.name;
 	}
+	// A phone has no filter (the stylesheet hides it): nothing it was given on a wide screen still hides environments
 	search.hidden = targets.childElementCount <= 2;
-	if (search.hidden) search.value = "";
+	if (search.hidden || phoneWidth.matches) search.value = "";
 	filterTargets();
 	$("#targets-empty").hidden = !(noEnvironments && canAddEnvironment);
 	targetsSection.hidden = noEnvironments && !canAddEnvironment;
@@ -1518,8 +1655,8 @@ function renderSite(name) {
 		if (updates.size > 1) {
 			packageActions.append(el("button", { textContent: "Update all", className: "small primary", onclick: () => run(() => updatePackages(site)) }));
 		}
-		packageActions.append(el("button", { textContent: "Add", className: "small package-add desktop-only", title: "Add package", onclick: () => run(() => openPackageDialog(site, "add")) }),
-			el("button", { textContent: "Remove", className: "small desktop-only", title: "Remove package", onclick: () => run(() => openPackageDialog(site, "remove")) }));
+		packageActions.append(el("button", { textContent: "Add", className: "small package-add", title: "Add package", onclick: () => run(() => openPackageDialog(site, "add")) }),
+			el("button", { textContent: "Remove", className: "small", title: "Remove package", onclick: () => run(() => openPackageDialog(site, "remove")) }));
 		const packageList = el("div", { className: "package-list" });
 		for (const item of packages) {
 			const update = updates.get(item.name.toLowerCase());
@@ -1546,9 +1683,18 @@ function renderSite(name) {
 		if (!packageList.children.length && !(site.package_errors || []).length) {
 			packageList.append(el("p", { className: "muted", textContent: "No packages to display." }));
 		}
+		// A phone shows the packages folded: the head unfolds them, and they stay so for the site while the page is open
+		const packagesToggle = el("button", { type: "button", className: "env-row-toggle package-toggle", title: "Show the packages", ariaLabel: "Show the packages" }, svgIcon("chevron"));
+		const foldPackages = (open) => {
+			packagesPanel.classList.toggle("unfolded", open);
+			packagesToggle.setAttribute("aria-expanded", String(open));
+			if (open) unfoldedPackages.add(site.name); else unfoldedPackages.delete(site.name);
+		};
+		foldPackages(unfoldedPackages.has(site.name));
 		packagesPanel.append(
-			el("div", { className: "package-head" },
-				el("div", { className: "package-heading" }, el("h3", { textContent: "NuGet packages" }), el("span", { className: "package-count", textContent: String(packages.length), title: "Visible package references" }))),
+			el("div", { className: "package-head", onclick: () => foldPackages(!packagesPanel.classList.contains("unfolded")) },
+				el("div", { className: "package-heading" }, el("h3", { textContent: "NuGet packages" }), el("span", { className: "package-count", textContent: String(packages.length), title: "Visible package references" })),
+				packagesToggle),
 			...(site.package_errors || []).map((message) => el("p", { className: "package-error", textContent: `Could not read package references: ${message}` })),
 			...(site.updates === "error" ? [el("p", { className: "package-error", textContent: "Package update check failed. Run Check to retry." })] : []),
 			...(site.updates === "available" && !updates.size ? [el("p", { className: "muted", textContent: "Run Check to load available package versions." })] : []),
@@ -1629,12 +1775,15 @@ function envPanel(site, env) {
 	const answered = env.mode === "windows" && env.state ? `Keep-alive ${formatDate(env.state_checked * 1000)}: ${env.state === "active" ? "answered" : env.state_error || "no answer"}` : "";
 	const heading = el("div", { className: "env-head" },
 		siteActivity(site, isTarget(env) ? "prod" : "main", isTarget(env) ? env.target || "prod" : ""),
-		el("span", { className: "dot " + dot, title: answered }),
+		// In the list of environments the dot stands alone: its title says the state
+		el("span", { className: "dot " + dot, title: answered || (known ? env.state || "unknown" : env.mode === "windows" ? "windows" : env.mode === "remote" ? "remote" : "static") }),
 		el("span", { className: "badge " + (known ? "state-" + (env.state || "unknown") : ""), title: answered, textContent: known ? env.state || "unknown" : env.mode === "windows" ? "windows" : env.mode === "remote" ? "remote" : "static" }));
 	const environment = site.kind === "python" ? "Live" : env.environment;
 	if (environment) heading.append(el("span", { className: "badge env-" + environment.toLowerCase(), textContent: environment }));
 	heading.append(httpsLock(env.https));
 	if (isRemoteEnv(env)) heading.append(remoteIcon(env));
+	// The admin site: who can reach it, at the right of its card's head
+	if (site.admin && !isTarget(env) && currentUser.admin) heading.append(el("button", { type: "button", textContent: "Who can reach it…", className: "small env-head-action", onclick: () => openAdminAccess() }));
 	if (missing) heading.append(el("span", { className: "badge env-missing", textContent: "Not found on server" }));
 	const pending = publishBadge(env);
 	if (pending && !missing) heading.append(el("div", { className: "publish-status" }, pending));
@@ -1733,7 +1882,7 @@ function envPanel(site, env) {
 		if (action && env.mode === "remote" && !env.host) continue;
 		if (action === "issue_certificate" && env.mode === "windows") continue;
 		if (action && !isTarget(env) && (!env.unit || site.admin) && action === "change_env") continue;
-		(action ? settings : quick).append(el("button", { textContent: label, className: "small" + (action === "change_env" ? " desktop-only" : ""), title: file || action, onclick: () => run(async () => {
+		(action ? settings : quick).append(el("button", { textContent: label, className: "small", title: file || action, onclick: () => run(async () => {
 			if (action === "change_env") { openEnvironmentDialog(site, env); return; }
 			const confirmText = missing && label === "Publish"
 				? `The site no longer exists on ${env.host}. This creates it again as a new installation, without its old content and database.`
@@ -1756,7 +1905,7 @@ function envPanel(site, env) {
 			sync.insertBefore(dataButton, [...sync.children].find((button) => button.textContent === "Sync settings…") || null);
 		}
 		// Setup first, at the left: the syncs it allows stand at the right
-		sync.prepend(el("button", { textContent: "Sync setup…", className: "small", title: dataSyncSummary(env), onclick: () => run(() => openDataSyncDialog(site, env)) }));
+		sync.prepend(el("button", { textContent: "Sync setup…", className: "small sync-setup", title: dataSyncSummary(env), onclick: () => run(() => openDataSyncDialog(site, env)) }));
 	}
 	if (!isTarget(env) && customScripts(site).length) quick.append(scriptSelect(site));
 	if (env.mode === "windows") {
@@ -1839,10 +1988,11 @@ function envPanel(site, env) {
 		const first = row && [...row.children].find((node) => node.classList.contains("script-menu") || /^(Clear logs|Sync settings…|Sync data…|Edit .*|Logs|Shell|Files)$/.test(node.textContent));
 		if (first && first !== row.firstElementChild) first.classList.add("push-right");
 	}
-	// A phone keeps what is used on the go: publish, the syncs, start or stop, restart, logs and delete.
-	// The rest is on the desktop; rows left without buttons are hidden by the stylesheet.
+	// A phone keeps what is used on the go: publish, the syncs, start or stop, restart, logs, clearing them, checking the
+	// service, a certificate, the environment's kind and Remove environment. A site is not deleted from a phone. The rest
+	// is on the desktop; rows left without buttons are hidden by the stylesheet.
 	for (const node of panel.querySelectorAll(".actions > *")) {
-		if (!/^(Publish|Sync setup…|Sync data…|Sync settings…|Start|Stop|Restart|Logs|Delete site|Remove environment)$/.test(node.textContent.trim())) node.classList.add("desktop-only");
+		if (!/^(Publish|Sync setup…|Sync data…|Sync settings…|Start|Stop|Restart|Logs|Clear logs|Check service|Issue certificate|Change environment|Remove environment)$/.test(node.textContent.trim())) node.classList.add("desktop-only");
 	}
 	return panel;
 }
@@ -1855,20 +2005,22 @@ async function serviceAction(site, env, action) {
 	await loadSites();
 }
 
-// The environments as cards (the default) or as a list: a row per environment with its most used buttons,
-// which unfolds to the whole card. The choice is remembered in this browser, the unfolded rows while the page is open.
-let envLayout = "grid";
-try { if (localStorage.getItem("vns-env-layout") === "list") envLayout = "list"; } catch (error) {}
+// The environments as cards (the default) or as a list: a row per environment with its Frontend and Backend,
+// which unfolds to the whole card with all its buttons. The choice is remembered in this browser, the unfolded rows while the page is open.
+let envLayoutChoice = "grid";
+try { if (localStorage.getItem("vns-env-layout") === "list") envLayoutChoice = "list"; } catch (error) {}
+let envLayout = layoutOf(envLayoutChoice);
 const unfoldedEnvs = new Set();
-const envRowButtons = ["Publish", "Clear logs", "Sync data…", "Sync settings…"];
+// The sites whose packages are unfolded on a phone, while the page is open
+const unfoldedPackages = new Set();
 function envListRow(panel, key, site, env) {
 	const head = panel.querySelector(".env-head");
-	const buttons = [...panel.querySelectorAll("button")];
 	// The environment's addresses, as on the overview's cards: the site, and Umbraco's backoffice
 	const address = environmentAddress(env);
 	const links = el("div", { className: "env-row-links" });
 	if (address.url && !isMissingEnv(env)) {
-		const frontend = openLink(bindingLabel(env) || address.hostname, address.url, address.title, true);
+		// Frontend: the row is named by the address already
+		const frontend = openLink("Frontend", address.url, address.title, true);
 		frontend.classList.add("frontend");
 		links.append(frontend);
 		if (site.kind === "umbraco") {
@@ -1876,26 +2028,6 @@ function envListRow(panel, key, site, env) {
 			backend.classList.add("backend");
 			links.append(backend);
 		}
-	}
-	const shortcuts = el("div", { className: "env-row-actions" });
-	// Each one clicks the card's own button, so it asks and does exactly the same. Publish stands in the row; the
-	// others are in its menu, so every row has the same buttons and none of them wraps.
-	const more = el("div", { className: "env-row-more-menu menu", hidden: true });
-	for (const label of envRowButtons) {
-		const original = buttons.find((button) => button.textContent.trim() === label);
-		if (!original) continue;
-		const run = (event) => { event.stopPropagation(); more.hidden = true; original.click(); };
-		if (label === "Publish") shortcuts.append(el("button", { type: "button", className: "small", textContent: label, title: original.title, onclick: run }));
-		else more.append(el("button", { type: "button", textContent: label, title: original.title, onclick: run }));
-	}
-	if (more.childElementCount) {
-		const opener = el("button", { type: "button", className: "small env-row-more", title: "More", ariaLabel: "More", "aria-haspopup": "true", textContent: "⋯" });
-		opener.onclick = (event) => {
-			event.stopPropagation();
-			for (const other of document.querySelectorAll(".env-row-more-menu")) if (other !== more) other.hidden = true;
-			more.hidden = !more.hidden;
-		};
-		shortcuts.append(el("div", { className: "env-row-more-wrap" }, opener, more));
 	}
 	const toggle = el("button", { type: "button", className: "env-row-toggle", title: "All buttons and details", ariaLabel: "Show all" }, svgIcon("chevron"));
 	const unfold = (open) => {
@@ -1920,14 +2052,12 @@ function envListRow(panel, key, site, env) {
 	const note = take((item) => item.classList.contains("publish-status") || item.classList.contains("env-missing"));
 	head.replaceChildren(column("env-col-name", title), column("env-col-status", status), column("env-col-kind", kind),
 		column("env-col-icons", icons), column("env-col-note", [...activity, ...note, ...parts.filter((item) => !item.dataset.placed)]),
-		el("div", { className: "env-col env-col-actions" }, ...(links.childElementCount ? [links] : []), shortcuts), toggle);
+		el("div", { className: "env-col env-col-actions" }, ...(links.childElementCount ? [links] : [])), toggle);
 	panel.classList.add("env-listed");
 	unfold(unfoldedEnvs.has(key));
 }
-document.addEventListener("click", (event) => {
-	if (!event.target.closest(".env-row-more-wrap")) for (const menu of document.querySelectorAll(".env-row-more-menu")) menu.hidden = true;
-});
 function applyEnvLayout() {
+	envLayout = layoutOf(envLayoutChoice);
 	$("#env-targets").classList.toggle("list", envLayout === "list");
 	$("#env-layout-grid").setAttribute("aria-pressed", String(envLayout === "grid"));
 	$("#env-layout-list").setAttribute("aria-pressed", String(envLayout === "list"));
@@ -1936,13 +2066,20 @@ $("#env-layout-grid").append(svgIcon("grid"));
 $("#env-layout-list").append(svgIcon("rows"));
 for (const layout of ["grid", "list"]) {
 	$("#env-layout-" + layout).onclick = () => {
-		envLayout = layout;
+		envLayoutChoice = layout;
 		try { localStorage.setItem("vns-env-layout", layout); } catch (error) {}
 		const name = currentView === "site" ? decodeURIComponent(location.hash.slice(6)) : "";
 		if (name) renderSite(name);
 	};
 }
 applyEnvLayout();
+// Turning a tablet, or making the window narrow or wide, draws the lists again in the layout that fits
+phoneWidth.addEventListener("change", () => {
+	if (!sitesLoaded) return;
+	renderSites();
+	const name = currentView === "site" ? decodeURIComponent(location.hash.slice(6)) : "";
+	if (name) renderSite(name);
+});
 
 const logsDialog = $("#dlg-logs");
 // Another log starts with every line shown, as a list
@@ -2070,7 +2207,8 @@ async function refreshLogs() {
 }
 $("#logs-refresh").onclick = () => run(refreshLogs);
 $("#logs-close").onclick = () => logsDialog.close();
-for (const source of ["admin", "apache"]) {
+// The admin site's own log is Logs on its page; the menu has Apache's
+for (const source of ["apache"]) {
 	$(`#settings-${source}-logs`).onclick = () => run(async () => {
 		logsTarget = { source };
 		resetLogView();
@@ -2103,27 +2241,71 @@ async function changeBinding(site, scope, env) {
 	}
 }
 
-// A server from Servers, chosen in a dialog instead of typing its address and login: its fields are filled and hidden,
-// and the server (by name) tells the rest. A Windows password stays on the server, never in the page.
+// A <select> of servers shown as cards: one per server, the chosen one blue with a tick, and a dashed Add server card
+// for that kind, which adds one over the dialog and, once it is added, runs added(name) to fetch the list again and
+// choose it. The select stays the form's field: the dialogs read and set it as before, and draw() follows it.
+function serverCardsFor(select, kind, added, labelOf = (option) => option.title || "") {
+	select.hidden = true;
+	select.tabIndex = -1;
+	const box = el("div", { className: "server-cards", role: "radiogroup", ariaLabel: kind === "windows" ? "Windows server" : "Linux server" });
+	select.after(box);
+	const draw = () => box.replaceChildren(...[...select.options].map((option) => el("button", {
+		type: "button", className: "server-card" + (option.value === select.value ? " chosen" : ""), role: "radio", ariaChecked: String(option.value === select.value),
+		onclick: () => { select.value = option.value; select.dispatchEvent(new Event("change")); },
+	}, el("span", { className: "server-card-icon" }, svgIcon(kind === "windows" ? "windows" : "server")),
+		el("span", { className: "server-card-text" }, el("strong", { textContent: option.value }), el("small", { textContent: labelOf(option) })),
+		el("span", { className: "server-card-check" }, svgIcon("check")))),
+	el("button", { type: "button", className: "server-card add", title: `Add a ${kind === "windows" ? "Windows" : "Linux"} server`,
+		onclick: () => askAddServer({ kind, after: async (name) => {
+			await added();
+			if ([...select.options].some((option) => option.value === name)) { select.value = name; select.dispatchEvent(new Event("change")); }
+			draw();
+		} }) },
+	el("span", { className: "server-card-icon" }, el("span", { textContent: "+" })),
+	el("span", { className: "server-card-text" }, el("strong", { textContent: "Add server" }), el("small", { textContent: kind === "windows" ? "A Windows share" : "Another Linux server" }))));
+	select.addEventListener("change", draw);
+	return { draw };
+}
+
+// A server from Servers, chosen in a dialog: another server is always one kept there (Add server), never one typed in
+// the dialog. Its fields are filled and hidden, and the server (by name) tells the rest. A Windows password stays on
+// the server, never in the page. onKept says how many there are, so a dialog offers another server only when there is one.
 const serverPickers = [];
 // The servers in Servers, as last asked: a DNS check uses a server's public address when its own is internal
 let keptServers = [];
 const publicAddressOf = (host) => (keptServers.find((item) => item.kind === "linux" && item.host === host)?.public) || "";
-function serverPicker(kind, fields, fill, { place = null, heading = null } = {}) {
+function serverPicker(kind, fields, fill, { place = null, heading = null, onKept = null } = {}) {
 	// Named by kind: a dialog can have both, and its own field called server (an SQL connection)
-	const select = el("select", { name: kind === "windows" ? "windows_server" : "remote_server", className: "server-picker" });
-	const row = el("label", { className: "server-picker-row" }, kind === "windows" ? "Windows server" : "Server", select);
+	// The servers as cards, one chosen, and a dashed card to add another of this kind. The select behind them is what the
+	// form sends, and what the dialogs read and set.
+	const select = el("select", { name: kind === "windows" ? "windows_server" : "remote_server", className: "server-picker", hidden: true, tabIndex: -1 });
+	const cards = el("div", { className: "server-cards", role: "radiogroup", ariaLabel: kind === "windows" ? "Windows server" : "Server" });
+	const row = el("div", { className: "server-picker-row" },
+		el("span", { className: "server-picker-label", textContent: kind === "windows" ? "Windows server" : "Server" }), cards, select);
 	row.hidden = true;
 	let kept = [];
+	const drawCards = () => {
+		cards.replaceChildren(...kept.map((item) => el("button", {
+			type: "button", className: "server-card" + (item.name === select.value ? " chosen" : ""), role: "radio", ariaChecked: String(item.name === select.value),
+			onclick: () => { select.value = item.name; select.dispatchEvent(new Event("change")); },
+		}, el("span", { className: "server-card-icon" }, svgIcon(kind === "windows" ? "windows" : "server")),
+			el("span", { className: "server-card-text" }, el("strong", { textContent: item.name }), el("small", { textContent: item.label })),
+			el("span", { className: "server-card-check" }, svgIcon("check")))),
+		el("button", { type: "button", className: "server-card add", title: `Add a ${kind === "windows" ? "Windows" : "Linux"} server`,
+			onclick: () => askAddServer({ kind, after: async (name) => {
+				await picker.refresh();
+				if ([...select.options].some((option) => option.value === name)) { select.value = name; select.dispatchEvent(new Event("change")); }
+			} }) },
+		el("span", { className: "server-card-icon" }, el("span", { textContent: "+" })),
+		el("span", { className: "server-card-text" }, el("strong", { textContent: "Add server" }), el("small", { textContent: kind === "windows" ? "A Windows share" : "Another Linux server" }))));
+	};
 	const choose = () => {
 		const chosen = kept.find((item) => item.name === select.value) || null;
-		fields.hidden = Boolean(chosen);
-		if (heading) heading.hidden = Boolean(chosen);
-		for (const input of fields.querySelectorAll("input")) {
-			if (input.dataset.required === undefined) input.dataset.required = input.required ? "1" : "";
-			input.required = !chosen && input.dataset.required === "1";
-		}
+		fields.hidden = true;
+		if (heading) heading.hidden = true;
+		for (const input of fields.querySelectorAll("input")) input.required = false;
 		fill(chosen);
+		drawCards();
 	};
 	select.onchange = choose;
 	const picker = {
@@ -2132,17 +2314,50 @@ function serverPicker(kind, fields, fill, { place = null, heading = null } = {})
 			const all = (await api("/api/servers/kept")).servers;
 			keptServers = all;
 			kept = all.filter((item) => item.kind === kind);
-			select.replaceChildren(el("option", { value: "", textContent: "Type it below" }),
-				...kept.map((item) => el("option", { value: item.name, textContent: `${item.name} (${item.label})` })));
+			select.replaceChildren(...kept.map((item) => el("option", { value: item.name, textContent: `${item.name} (${item.label})` })));
+			select.required = Boolean(kept.length);
 			row.hidden = !kept.length;
-			select.value = "";
+			select.value = kept[0]?.name || "";
 			choose();
+			if (onKept) onKept(kept.length);
 		},
 	};
 	if (place) place.append(row);
 	else fields.before(row);
 	serverPickers.push(picker);
 	return picker;
+}
+// A kind of server that Servers does not have yet: its card stays where it is, as a dashed card that opens Add server
+// for that kind over the dialog, which stays open. Once it is added, after chooses it there. Choosing the card is not
+// possible until there is one: another server is always one in Servers.
+function needsServer(card, needed, kind = "linux", after = null) {
+	if (!card) return;
+	const input = card.querySelector("input");
+	const sub = card.querySelector(".tc-sub");
+	if (sub.dataset.text === undefined) sub.dataset.text = sub.textContent;
+	card.classList.toggle("needs-server", needed);
+	input.disabled = needed;
+	sub.textContent = needed ? "Add one in Servers first" : sub.dataset.text;
+	card.onclick = needed ? (event) => { event.preventDefault(); askAddServer({ kind, after }); } : null;
+	card.title = needed ? `Add a ${kind === "windows" ? "Windows" : "Linux"} server` : "";
+}
+// Add environment offers a Linux or Windows server when Servers has one; else its card says where to add one
+function offerProdTarget(target, count) {
+	needsServer($("#prod-target-row").querySelector(`input[value=${target}]`)?.closest("label"), !count, target === "windows" ? "windows" : "linux", async (name) => {
+		// Added: the card is a card again, chosen, with the new server in its list
+		await refreshServerPickers();
+		prodForm.elements.target.value = target;
+		const select = prodForm.elements[target === "windows" ? "windows_server" : "remote_server"];
+		if (select && [...select.options].some((option) => option.value === name)) {
+			select.value = name;
+			select.dispatchEvent(new Event("change"));
+		}
+		syncProdForm();
+	});
+	if (!count && prodForm.elements.target.value === target) {
+		prodForm.elements.target.value = "local";
+		syncProdForm();
+	}
 }
 const refreshServerPickers = () => Promise.all(serverPickers.map((picker) => picker.refresh())).catch((error) => console.error(error));
 {
@@ -2153,16 +2368,44 @@ const refreshServerPickers = () => Promise.all(serverPickers.map((picker) => pic
 	serverPicker("linux", $("#prod-remote-fields"), (chosen) => {
 		if (chosen) set(prodForm, { host: chosen.host, ssh_port: chosen.port, user: chosen.user, password: "" });
 		prodForm.elements.host?.dispatchEvent(new Event("input"));
-	}, { place: $("#prod-remote-pick"), heading: sectionOf($("#prod-remote-fields")) });
+		// The folder and binding follow the server chosen (not what was typed), and DNS is checked against it. Its
+		// wildcard domain, if it has one, is asked once: then names go under it
+		if (prodForm.dataset.site) applyProdSuggestion();
+		if (chosen && !(chosen.name in serverWildcards)) {
+			api(`/api/servers/${encodeURIComponent(chosen.name)}/wildcard`).then(({ domain }) => {
+				serverWildcards[chosen.name] = domain;
+				if (domain && prodForm.dataset.site && prodForm.elements.remote_server?.value === chosen.name) applyProdSuggestion();
+			}).catch(() => {});
+		}
+	}, { place: $("#prod-remote-pick"), heading: sectionOf($("#prod-remote-fields")), onKept: (count) => offerProdTarget("remote", count) });
 	serverPicker("windows", $("#prod-windows-fields"), (chosen) => {
 		if (chosen) set(prodForm, { smb_share: chosen.share, smb_user: chosen.user, smb_domain: chosen.domain, smb_password: "" });
 		prodForm.elements.smb_share?.dispatchEvent(new Event("input"));
 		syncProdForm();
-	}, { place: $("#prod-windows-pick"), heading: sectionOf($("#prod-windows-fields")) });
+	}, { place: $("#prod-windows-pick"), heading: sectionOf($("#prod-windows-fields")), onKept: (count) => offerProdTarget("windows", count) });
 	serverPicker("linux", $("#copy-server-fields"), (chosen) => {
 		if (chosen) set(copyForm, { host: chosen.host, ssh_port: chosen.port, user: chosen.user, ssh_password: "" });
 		copyForm.elements.host?.dispatchEvent(new Event("input"));
-	});
+	}, { onKept: (count) => {
+		// Copy site to another server: only to one in Servers
+		const card = $("#copy-server-card");
+		// Offered by copySite to an administrator: without a server in Servers its card says where to add one
+		if (card.dataset.offered !== "1") return;
+		needsServer(card, !count, "linux", async (name) => {
+			await refreshServerPickers();
+			copyForm.elements.destination.value = "server";
+			copyForm.elements.destination[1].dispatchEvent(new Event("change", { bubbles: true }));
+			const select = copyForm.elements.remote_server;
+			if (select && [...select.options].some((option) => option.value === name)) {
+				select.value = name;
+				select.dispatchEvent(new Event("change"));
+			}
+		});
+		if (!count && copyForm.elements.destination.value === "server" && !copyForm.elements.destination[0].disabled) {
+			copyForm.elements.destination.value = "here";
+			copyForm.elements.destination[0].dispatchEvent(new Event("change", { bubbles: true }));
+		}
+	} });
 }
 
 async function copySite(site, main) {
@@ -2180,6 +2423,7 @@ async function copySite(site, main) {
 	$("#copy-here-card").hidden = !here;
 	field("destination")[0].disabled = !here;
 	$("#copy-server-card").hidden = !server;
+	$("#copy-server-card").dataset.offered = server ? "1" : "";
 	field("destination")[1].disabled = !server;
 	$("#copy-destination").hidden = !(here && server);
 	field("destination").value = here ? "here" : "server";
@@ -2418,7 +2662,7 @@ $("#search").oninput = (event) => {
 	renderSites();
 };
 $("#btn-server-shell").onclick = () => run(() => openTask({ kind: "shell" }));
-$("#settings-server-tools").onclick = () => { $("#settings-menu").hidden = true; openServerTools(); };
+$("#settings-server-tools").onclick = () => { $("#settings-menu").hidden = true; serverToolsScroll = null; openServerTools(); };
 $("#settings-servers").onclick = () => { $("#settings-menu").hidden = true; openServers(); };
 
 // Import from Windows: sites from a live Windows server, set up here on HTTP and kept the same until the address moves
@@ -2446,21 +2690,30 @@ $("#settings-windows-import").onclick = () => {
 		// another server's address; else its own full name
 		const reached = location.hostname.replace(/^admin\./, "");
 		suggestAlias(windowsForm.elements.alias, /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(reached) && !/^[0-9.]+$/.test(reached) ? reached.toLowerCase() : result.name);
-		// A Windows server kept in Servers: its share and login are used by harbor, never sent to the page
-		const select = windowsForm.elements.server;
-		select.replaceChildren(el("option", { value: "", textContent: "Type the share and login" }),
-			...result.servers.map((item) => el("option", { value: item.name, textContent: `${item.name} (${item.share})` })));
-		$("#windows-server-row").hidden = !result.servers.length;
-		select.value = result.servers.length === 1 ? result.servers[0].name : "";
+		fillWindowsServers(result.servers);
 		showWindowsLogin();
+		// The sites are read at once: there is nothing to choose before them
+		if (windowsForm.elements.server.value) await listWindowsSites();
 	});
 };
-function showWindowsLogin() {
-	const kept = Boolean(windowsForm.elements.server.value);
-	$("#windows-login-fields").hidden = kept;
-	for (const input of $("#windows-login-fields").querySelectorAll("input")) input.disabled = kept;
+// The Windows servers kept in Servers, as cards: their share and login are used by harbor, never sent to the page
+function fillWindowsServers(servers, chosen = "") {
+	const select = windowsForm.elements.server;
+	select.replaceChildren(...servers.map((item) => Object.assign(el("option", { value: item.name, textContent: item.name }), { title: item.share })));
+	select.required = true;
+	select.value = (servers.some((item) => item.name === chosen) ? chosen : servers[0]?.name) || "";
+	windowsImportCards.draw();
 }
-windowsForm.elements.server.onchange = showWindowsLogin;
+const windowsImportCards = serverCardsFor(windowsForm.elements.server, "windows", async () => {
+	fillWindowsServers((await api("/api/windows/imported")).servers, windowsForm.elements.server.value);
+});
+// A share and login are kept in Servers (Add server, Windows): Import uses one of those, never one typed here
+function showWindowsLogin() {
+	$("#windows-login-fields").hidden = true;
+	for (const input of $("#windows-login-fields").querySelectorAll("input")) input.disabled = true;
+}
+// Another server chosen: its sites
+windowsForm.elements.server.addEventListener("change", () => { showWindowsLogin(); run(listWindowsSites); });
 $("#windows-import-cancel").onclick = () => windowsDialog.close();
 const windowsLogin = () => windowsForm.elements.server.value ? { server: windowsForm.elements.server.value }
 	: Object.fromEntries(["share", "user", "password", "domain"].map((name) => [name, windowsForm.elements[name].value.trim()]));
@@ -2477,16 +2730,13 @@ $("#windows-select-all").onclick = () => {
 	for (const box of windowsChoices()) box.checked = !all;
 	updateWindowsChoice();
 };
-$("#windows-list").onclick = () => run(async () => {
+// The sites on the chosen Windows server, read when the dialog opens and when another server is chosen
+async function listWindowsSites() {
 	const login = windowsLogin();
-	// The first field that is missing is named, and has the focus
-	const missing = login.server ? null : [["share", "the share"], ["user", "the username"], ["password", "the password"]].find(([name]) => !login[name]);
-	if (missing) {
-		windowsForm.elements[missing[0]].focus();
-		throw new Error(`Give ${missing[1]} of the Windows server.`);
-	}
-	$("#windows-list").disabled = true;
-	$("#windows-list").textContent = "Reading the share…";
+	if (!login.server) return;
+	$("#windows-sites-section").hidden = true;
+	$("#windows-list").hidden = false;
+	$("#windows-list").replaceChildren(loadingState(`Reading the sites on ${login.server}…`));
 	try {
 		const result = await api("/api/windows/list", { json: login });
 		// One row per folder: what it holds, and whether it can be imported. Name and note together, the kind in a column of
@@ -2542,10 +2792,9 @@ $("#windows-list").onclick = () => run(async () => {
 		renderWindowsImported(result.imported);
 		updateWindowsChoice();
 	} finally {
-		$("#windows-list").disabled = false;
-		$("#windows-list").textContent = "Show the sites";
+		$("#windows-list").hidden = true;
 	}
-});
+}
 let windowsFilter = "can";
 function applyWindowsFilter() {
 	const text = $("#windows-filter-text").value.trim().toLowerCase();
@@ -2609,9 +2858,7 @@ function updateWindowsMoveChoice() {
 $("#settings-windows-move").onclick = () => run(async () => {
 	$("#settings-menu").hidden = true;
 	const result = await api("/api/windows-move");
-	windowsMoveForm.elements.server.replaceChildren(...result.servers.map((name) => el("option", { value: name, textContent: name })));
-	$("#windows-move-no-server").hidden = result.servers.length > 0;
-	windowsMoveNames = result.names || {};
+	fillWindowsMoveServers(result);
 	suggestAlias(windowsMoveForm.elements.alias, windowsMoveNames[windowsMoveForm.elements.server.value]);
 	const rows = result.environments.map((item) => {
 		const can = !item.moved_to;
@@ -2650,6 +2897,18 @@ $("#windows-move-filter").oninput = () => {
 	updateWindowsMoveChoice();
 };
 let windowsMoveNames = {};
+// The Linux servers in Servers, as cards, to copy the environments to
+function fillWindowsMoveServers(result, chosen = "") {
+	const select = windowsMoveForm.elements.server;
+	windowsMoveNames = result.names || {};
+	select.replaceChildren(...result.servers.map((name) => Object.assign(el("option", { value: name, textContent: name }), { title: windowsMoveNames[name] || "Linux server" })));
+	if (result.servers.includes(chosen)) select.value = chosen;
+	windowsMoveCards.draw();
+}
+const windowsMoveCards = serverCardsFor(windowsMoveForm.elements.server, "linux", async () => {
+	fillWindowsMoveServers(await api("/api/windows-move"), windowsMoveForm.elements.server.value);
+	updateWindowsMoveChoice();
+});
 windowsMoveForm.elements.server.onchange = () => {
 	suggestAlias(windowsMoveForm.elements.alias, windowsMoveNames[windowsMoveForm.elements.server.value]);
 	updateWindowsMoveChoice();
@@ -2828,13 +3087,13 @@ siteForm.site.oninput = () => { if (!siteForm.binding.dataset.edited) siteForm.b
 siteForm.binding.oninput = () => { siteForm.binding.dataset.edited = "1"; };
 // HTTPS as an option card, sent as certificate y or n. It is a choice only when the binding points here: the
 // certificate is issued as the site is made. An empty binding is the site for any name, where the server decides.
-// The choice comes back when DNS is right.
+// The choice comes back when DNS is right. Off at first: HTTPS is chosen, not taken for granted.
 function httpsChoice(form) {
 	const box = form.elements.https_choice;
 	const card = box.closest("label");
 	const sub = card.querySelector(".sync-option-sub");
 	const text = sub.textContent;
-	let chosen = true;
+	let chosen = false;
 	const send = () => { form.elements.certificate.value = box.checked ? "y" : "n"; };
 	box.addEventListener("change", () => {
 		chosen = box.checked;
@@ -2849,7 +3108,7 @@ function httpsChoice(form) {
 		box.checked = allowed && chosen;
 		send();
 	};
-	return { state, reset: () => { chosen = true; state("empty"); } };
+	return { state, reset: () => { chosen = false; state("empty"); } };
 }
 const siteHttps = httpsChoice(siteForm);
 const setupHttps = httpsChoice($("#form-setup-site"));
@@ -3226,7 +3485,8 @@ function syncProdForm() {
 			: "It starts with HTTP, as DNS may not point to the new server yet. Choose HTTPS when it does, or use Issue certificate on it later.";
 	}
 	// With HTTPS on Linux, DNS for the binding is checked against the server it runs on
-	$("#prod-dns").hidden = noSettings || windows || !https;
+	// Shown whether or not HTTPS is chosen: whether the name points to the server is the first thing to know
+	$("#prod-dns").hidden = noSettings || windows;
 	prodForm.folder.required = !noSettings;
 	prodForm.binding.required = true;
 	const fromWindows = prodForm.dataset.moveMode === "windows";
@@ -3267,9 +3527,23 @@ function syncProdForm() {
 	const previous = prodForm.dataset.target;
 	prodForm.dataset.target = target;
 	if (previous && previous !== target) applyProdSuggestion();
+	gateProdHttps();
 }
 // What the dialog suggests for a new environment or a copy: its folder, binding and folder here. On this server it is
 // <environment>-<site>; on another server Production keeps the site's own name and binding, the others get their own.
+// A name with this server's name in it, as on another server: umb18.linux-01.vns.dk on linux-02 is umb18.linux-02.vns.dk.
+// This server's name is the one its admin is reached by (admin.linux-01.vns.dk), the other's from Servers.
+// Each server's wildcard domain, by name, as asked (kept while the page is open: the lists of servers are fetched again)
+const serverWildcards = {};
+function onServer(name, server) {
+	// A wildcard on the server's own domain (*.kikayo.dk to it): the site's own part under it, umb18.kikayo.dk
+	const here = location.hostname.replace(/^admin\./, "").toLowerCase();
+	if (server?.wildcard && name.toLowerCase().endsWith("." + here)) return name.slice(0, -here.length) + server.wildcard;
+	const own = location.hostname.replace(/^admin\./, "").split(".")[0].toLowerCase();
+	const other = String(server?.fqdn || server?.name || "").split(".")[0].toLowerCase();
+	if (!own || !other || own === other || !/^[a-z0-9-]+$/.test(other)) return name;
+	return name.replace(new RegExp(`(^|\\.)${own.replace(/[-]/g, "\\-")}(?=\\.|$)`, "i"), `$1${other}`);
+}
 function prodSuggestion() {
 	const target = prodForm.elements.target.value;
 	const environment = (prodForm.elements.environment.value || "Production").toLowerCase();
@@ -3277,7 +3551,11 @@ function prodSuggestion() {
 	const own = `${environment}-${label}`;
 	// Only on another server: on this one, or the same one as the environment copied, the name is taken
 	const sameName = (target === "remote" || target === "windows") && environment === "production";
-	return { folder: sameName ? label : own, binding: sameName ? prodForm.dataset.mainBinding : own,
+	// On another Linux server the names follow its name, where they have this server's name in them
+	const found = target === "remote" ? keptServers.find((item) => item.kind === "linux" && item.name === prodForm.elements.remote_server?.value) : null;
+	const server = found ? { ...found, wildcard: serverWildcards[found.name] || "" } : null;
+	const follow = (name) => server ? onServer(name, server) : name;
+	return { folder: follow(sameName ? label : own), binding: follow(sameName ? prodForm.dataset.mainBinding : own),
 		// Here, in the main site's folder: _development, _test, _staging or _production
 		path: `/var/www/${prodForm.dataset.siteName}/_${environment}` };
 }
@@ -3394,15 +3672,34 @@ async function releaseEnvironment(site, env) {
 }
 $("#prod-target-row").addEventListener("change", syncProdForm);
 // HTTPS is an option card; the form sends https y or n, as the select it replaced did
+// HTTPS as in New site: a choice only once DNS for the binding points to the server the environment runs on (on
+// Windows IIS has the binding and its certificate). What was chosen comes back when DNS is right.
+let prodHttpsWanted = true;
+let prodDnsState = "empty";
+function gateProdHttps() {
+	const box = prodForm.elements.https_card;
+	const card = box.closest("label");
+	const allowed = prodForm.elements.target.value === "windows" || prodDnsState === "here";
+	box.disabled = !allowed;
+	card.classList.toggle("disabled", !allowed);
+	if (!allowed) $("#prod-protocol-hint").textContent = "Possible once DNS for the binding points to the server. Until then it runs on HTTP, and Issue certificate gives it one later";
+	box.checked = allowed && prodHttpsWanted;
+	prodForm.elements.https.value = box.checked ? "y" : "n";
+}
 function setProdHttps(value) {
-	prodForm.elements.https.value = value;
-	prodForm.elements.https_card.checked = value === "y";
+	prodHttpsWanted = value === "y";
+	gateProdHttps();
 }
 prodForm.elements.https_card.addEventListener("change", () => {
-	prodForm.elements.https.value = prodForm.elements.https_card.checked ? "y" : "n";
+	prodHttpsWanted = prodForm.elements.https_card.checked;
+	prodForm.elements.https.value = prodHttpsWanted ? "y" : "n";
 	syncProdForm();
 });
-$("#prod-dns").replaceChildren(dnsCard(prodForm.binding, { expect: () => {
+$("#prod-dns").replaceChildren(dnsCard(prodForm.binding, { onState: (state) => {
+	if (state === "checking") return;
+	prodDnsState = state;
+	gateProdHttps();
+}, expect: () => {
 	const target = prodForm.elements.target.value;
 	const host = target === "remote" ? prodForm.host.value.trim() : target === "same" ? prodForm.dataset.moveHost || "" : "";
 	// A server in Servers behind a router: DNS points to its public address
@@ -4795,6 +5092,21 @@ async function editFile(path, remoteSite = null) {
 	setDirty(false);
 }
 
+// Apache's own config (apache2.conf) in the editor, as a site's: Save asks to test it and reload Apache
+async function editApacheConfig() {
+	if (!(await discardOk())) return;
+	const url = "/api/server/apache-config";
+	const data = await api(url);
+	configurationEditor = { url, kind: "conf", encoding: "utf-8" };
+	openFile = data.path;
+	if (!editorDialog.open) editorDialog.showModal();
+	$("#editor-path").textContent = data.path;
+	$("#editor-status").textContent = "";
+	await showInEditor(data.path, data.content);
+	refreshSnippetMenu();
+	setDirty(false);
+}
+
 async function editConfiguration(site, env, kind) {
 	if (!(await discardOk())) return;
 	const url = `/api/sites/${encodeURIComponent(site.name)}/config/${kind}?scope=${env.mode === "remote" ? "remote" : "local"}&unit=${encodeURIComponent(env.unit)}${env.target && env.target !== "prod" ? "&target=" + encodeURIComponent(env.target) : ""}`;
@@ -6174,16 +6486,103 @@ $("#btn-settings").onclick = (event) => {
 	event.stopPropagation();
 	$("#user-menu").hidden = true;
 	settingsMenu.hidden = !settingsMenu.hidden;
-	// Copy from Windows only when a site here has an environment on Windows
-	$("#settings-windows-move").hidden = !allSites.some((site) => (site.environments || []).some((env) => env.mode === "windows"));
+	// It opens with Windows and Apache folded
+	for (const fold of settingsMenu.querySelectorAll(".menu-fold")) {
+		fold.setAttribute("aria-expanded", "false");
+		$("#" + fold.getAttribute("aria-controls")).hidden = true;
+	}
+	// Windows is for the few who have it: Copy sites when a site here has an environment on Windows, Import sites when
+	// a Windows server is kept in Servers, and Windows itself when either is there
+	showWindowsMenu();
+	run(async () => { windowsServerCount = (await api("/api/windows/imported")).servers.length; showWindowsMenu(); });
 	if (!settingsMenu.hidden) run(() => checkSystemUpdate(true));
 };
 document.addEventListener("click", () => { settingsMenu.hidden = true; });
 $("#settings-restart-apache").onclick = () => run(async () => {
 	if (await ask({ title: "Restart Apache?", message: "All sites on this server are briefly unavailable.", input: false, ok: "Restart", danger: true })) await openTask({ kind: "apache", tool: "restart" });
 });
+let windowsServerCount = 0;
+function showWindowsMenu() {
+	const copy = allSites.some((site) => (site.environments || []).some((env) => env.mode === "windows"));
+	$("#settings-windows-move").hidden = !copy;
+	$("#settings-windows-import").hidden = !windowsServerCount;
+	$("#settings-windows-fold").hidden = !copy && !windowsServerCount;
+	if ($("#settings-windows-fold").hidden) $("#settings-windows-sub").hidden = true;
+}
 $("#settings-admin-site").onclick = () => { const admin = allSites.find((s) => s.admin); if (admin) go(siteLink(admin.name)); };
+// Windows and Apache fold out in the menu, with their items under them: the menu stays short when it opens
+for (const fold of settingsMenu.querySelectorAll(".menu-fold")) {
+	// Its icon as the other items' (decorate): the same size, place and colour
+	fold.dataset.tone = fold.dataset.foldTone;
+	fold.prepend(svgIcon(fold.dataset.icon));
+	fold.append(el("span", { className: "menu-fold-chevron" }, svgIcon("chevron")));
+	fold.onclick = (event) => {
+		event.stopPropagation();
+		const sub = $("#" + fold.getAttribute("aria-controls"));
+		sub.hidden = !sub.hidden;
+		fold.setAttribute("aria-expanded", String(!sub.hidden));
+	};
+}
 $("#settings-apache-test").onclick = () => run(() => openTask({ kind: "apache", tool: "configtest" }));
+$("#settings-apache-conf").onclick = () => run(editApacheConfig);
+// Whether an address is a listed address, or in a listed IPv4 range (a.b.c.d/n); an IPv6 address only as it is listed
+function addressIn(address, item) {
+	if (address === item) return true;
+	const [base, bits] = item.split("/");
+	const v4 = (text) => /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.test(text) ? text.split(".").reduce((sum, part) => sum * 256 + Number(part), 0) : null;
+	const [mine, start] = [v4(address), v4(base)];
+	if (mine === null || start === null || bits === undefined) return false;
+	const size = 2 ** (32 - Math.min(32, Math.max(0, Number(bits))));
+	return Math.floor(mine / size) === Math.floor(start / size);
+}
+// Who can reach the admin site: everywhere, or some addresses (its Apache config), from a button on its page.
+// Leaving out your own address locks you out at once, so that is said and must be ticked.
+const openAdminAccess = () => run(async () => {
+	const dialog = $("#dlg-admin-access");
+	const { addresses, yours } = await api("/api/admin-access");
+	const list = $("#admin-access-list");
+	const mode = (value) => { for (const radio of dialog.querySelectorAll("[name=access_mode]")) radio.checked = radio.value === value; };
+	const lines = () => list.value.split(/[\s,]+/).map((item) => item.trim()).filter(Boolean);
+	const update = () => {
+		const some = dialog.querySelector("[name=access_mode]:checked")?.value === "some";
+		$("#admin-access-list-row").hidden = !some;
+		list.required = some;
+		$("#admin-access-lockout-row").hidden = true;
+		$("#admin-access-lockout").checked = false;
+	};
+	list.value = addresses.join("\n");
+	mode(addresses.length ? "some" : "all");
+	$("#admin-access-yours").textContent = yours;
+	// Whether your address is in the list, also within a range: Add it, or In the list
+	const showMine = () => {
+		const listed = lines().some((item) => addressIn(yours, item));
+		$("#admin-access-mine-in").hidden = !listed;
+		$("#admin-access-add-mine").hidden = listed;
+	};
+	$("#admin-access-add-mine").onclick = () => { if (!lines().includes(yours)) list.value = [...lines(), yours].join("\n"); showMine(); list.focus(); };
+	for (const radio of dialog.querySelectorAll("[name=access_mode]")) radio.onchange = update;
+	list.oninput = () => { $("#admin-access-lockout-row").hidden = true; showMine(); };
+	update();
+	showMine();
+	$("#admin-access-cancel").onclick = () => dialog.close();
+	$("#form-admin-access").onsubmit = (event) => {
+		event.preventDefault();
+		const some = dialog.querySelector("[name=access_mode]:checked")?.value === "some";
+		const payload = { addresses: some ? lines() : [], confirm_lockout: $("#admin-access-lockout").checked };
+		run(async () => {
+			try {
+				await api("/api/admin-access", { json: payload });
+			} catch (error) {
+				// Not saved: the list leaves out your address. Saying so, and asking for the tick.
+				if (/locked out/.test(error.message)) { $("#admin-access-lockout-row").hidden = false; throw error; }
+				throw error;
+			}
+			dialog.close();
+			toast(some ? `The admin site can be reached from ${payload.addresses.length} address${payload.addresses.length === 1 ? "" : "es"} only.` : "The admin site can be reached from everywhere.", "ok");
+		});
+	};
+	dialog.showModal();
+});
 // Release notes are Markdown: headings, lists and paragraphs, built as text so nothing in them runs
 function markdownBlock(text) {
 	const box = el("div", { className: "release-notes" });
@@ -6588,15 +6987,21 @@ const SQL_EDITIONS = [
 	["Enterprise", "Licensed: every feature"],
 ];
 
+// Where Server tools was scrolled to when an action took it away: it comes back there after the action, as it does
+// when it is drawn again in place (Refresh, a closed dialog over it). Opened from the menu it starts at the top.
+let serverToolsScroll = null;
 async function openServerTools() {
+	const keep = serverToolsDialog.open ? serverToolsDialog.scrollTop : serverToolsScroll;
+	serverToolsScroll = null;
 	if (!serverToolsDialog.open) serverToolsDialog.showModal();
 	const list = $("#server-tools-list");
 	list.setAttribute("aria-busy", "true");
-	if (!list.childElementCount) list.replaceChildren(el("div", { className: "server-tools-loading", textContent: "Looking at the server…" }));
+	if (!list.childElementCount) list.replaceChildren(loadingState("Looking at the server…"));
 	try {
 		const status = await api("/api/server/tools");
 		$("#server-tools-os").textContent = status.os.name ? `${status.os.name} · what this server has for its sites` : "What this server has for its sites";
 		list.replaceChildren(...serverToolCards(status));
+		if (keep) serverToolsDialog.scrollTop = keep;
 	} catch (error) {
 		list.replaceChildren(el("div", { className: "server-tools-loading", textContent: error.message }));
 	} finally {
@@ -6606,8 +7011,21 @@ async function openServerTools() {
 $("#server-tools-close").onclick = () => serverToolsDialog.close();
 $("#server-tools-refresh").onclick = () => openServerTools();
 
+// Waiting for a server: a ring that turns, and what is being done under it
+function loadingState(text, tag = "div") {
+	return el(tag, { className: "server-tools-loading loading-state", role: "status" },
+		el("span", { className: "loading-ring", ariaHidden: "true" }), el("span", { textContent: text }));
+}
+
 function toolButton(text, onclick, className = "") {
 	return el("button", { type: "button", textContent: text, className, onclick: () => run(onclick) });
+}
+
+// Update where there is one to have: "Update to <version>", green; "Up to date" when there is none; the plain Update
+// button when Harbor cannot tell (no answer from apt or Microsoft's list)
+function updateButton(newer, onclick) {
+	if (newer === false || newer === "") return el("span", { className: "tool-uptodate", textContent: "Up to date" }, svgIcon("check"));
+	return toolButton(newer ? `Update to ${newer}` : "Update", onclick, (newer ? "primary " : "ghost ") + "tool-row-action");
 }
 
 function toolCard({ icon, tone, title, detail, state, stateClass, text, rows, actions }) {
@@ -6643,7 +7061,7 @@ function serverToolCards(status) {
 			toolRow("SQL Server", sql.installed ? `Version ${sql.version}` + (sql.running ? "" : " · stopped") : "Not installed: not needed when the sites use a SQL Server elsewhere", {
 				on: sql.installed && sql.running,
 				action: rowActions(...(sql.installed
-					? [toolButton("Update", () => confirmServerTool("Update SQL Server?", "Takes the newest update of this version. The service restarts, so take a backup first.", "Update", { tool: "sql_update" }), "ghost tool-row-action"),
+					? [updateButton(sql.newer ?? null, () => confirmServerTool("Update SQL Server?", `Takes the newest update of this version${sql.newer ? ` (${sql.newer})` : ""}. The service restarts, so take a backup first.`, "Update", { tool: "sql_update" })),
 						toolButton("Remove…", () => askServerTool("sql_uninstall"), "ghost tool-row-action tool-danger")]
 					: [toolButton("Install…", () => askServerTool("sql_install", { older: sql.packages_for, ubuntu: status.os.version }), "primary tool-row-action")])),
 			}),
@@ -6694,30 +7112,94 @@ function serverToolCards(status) {
 		actions: [toolButton("Open…", openCrontab, "primary")],
 	}));
 	const installed = new Set(status.dotnet.map((item) => item.channel));
-	// The newest .NET is the host the others run on: it is never removed
-	const newestDotnet = status.dotnet.map((item) => item.channel).sort((a, b) => parseInt(b) - parseInt(a))[0];
 	const missing = DOTNET_CHANNELS.filter((channel) => !installed.has(channel));
 	cards.push(toolCard({
 		icon: "dotnet", tone: "pink", title: ".NET", detail: status.dotnet.length ? status.dotnet.map((item) => item.channel).join(" · ") : "Not installed",
 		state: status.dotnet.length ? `${status.dotnet.length} version${status.dotnet.length === 1 ? "" : "s"}` : "Not installed", stateClass: status.dotnet.length ? "ok" : "warn",
-		rows: status.dotnet.map((item) => toolRow(".NET " + item.channel, `SDK ${item.sdk || "—"} · runtime ${item.runtime || "—"}`, {
-			action: el("span", { className: "tool-row-actions" },
-				toolButton("Update", () => confirmServerTool(`Update .NET ${item.channel}?`, "Installs its newest SDK and ASP.NET Core runtime. Sites use the new runtime when they restart.", "Update", { tool: "dotnet_update", channel: item.channel }), "ghost tool-row-action"),
-				...(item.channel === newestDotnet ? [] : [toolButton("Remove", () => confirmServerTool(`Remove .NET ${item.channel}?`,
-					"Its SDKs and runtimes go from this server. It is refused while a site here builds or runs on it.", "Remove", { tool: "dotnet_remove", channel: item.channel }, true), "ghost tool-row-action tool-danger")])),
-		})),
+		rows: status.dotnet.flatMap((item) => {
+			const sites = item.sites || [];
+			const list = toolUsage(sites);
+			return [toolRow(".NET " + item.channel, `SDK ${item.sdk || "—"} · runtime ${item.runtime || "—"}`, {
+			action: el("span", { className: "tool-row-actions" }, usageToggle(sites, list),
+				updateButton(item.update === null || item.update === undefined ? null : item.update ? (item.latest_runtime || item.latest_sdk) : false,
+					() => confirmServerTool(`Update .NET ${item.channel}?`, `Installs its newest SDK${item.latest_sdk ? ` (${item.latest_sdk})` : ""} and ASP.NET Core runtime${item.latest_runtime ? ` (${item.latest_runtime})` : ""}. Sites use the new runtime when they restart.`, "Update", { tool: "dotnet_update", channel: item.channel })),
+				// Any version can go but one a site uses, or the only one: the button says why, rather than the task failing.
+				// The newest host stays when its version goes, so the others keep running.
+				Object.assign(toolButton("Remove", () => confirmServerTool(`Remove .NET ${item.channel}?`,
+					"Its SDKs and runtimes go from this server. The newest host stays, so the other versions keep running.", "Remove", { tool: "dotnet_remove", channel: item.channel }, true), "ghost tool-row-action tool-danger"),
+					sites.length ? { disabled: true, title: `Used by ${sites.map((site) => site.site).join(", ")}: move them to another version first` }
+						: status.dotnet.length === 1 ? { disabled: true, title: "The only version here: it stays" } : {})),
+		}), el("li", { className: "tool-usage-item" }, list)];
+		}),
 		actions: missing.length ? [toolButton("Add version…", () => askServerTool("dotnet_install", { channels: missing }))] : [],
 	}));
 	const node = status.node;
-	cards.push(toolCard({
+	const nodeSites = node.sites || [];
+	const nodeList = toolUsage(nodeSites, { major: node.version ? node.version.split(".")[0] : "" });
+	const nodeCard = toolCard({
 		icon: "hexagon", tone: "green", title: "Node.js", detail: node.version ? `Version ${node.version}` + (node.npm ? ` · npm ${node.npm}` : "") : "Not installed",
 		state: node.version ? "Installed" : "Not installed", stateClass: node.version ? "ok" : "",
 		text: node.version ? "" : "For sites that build their front end with npm. From NodeSource's repository.",
 		actions: node.version
-			? [toolButton("Change version…", () => askServerTool("node_install", { current: node.version.split(".")[0] })),
-				toolButton("Remove", () => confirmServerTool("Remove Node.js?", "node and npm go from this server.", "Remove", { tool: "node_remove" }, true), "tool-danger")]
-			: [toolButton("Install…", () => askServerTool("node_install"), "primary")],
+			? [usageToggle(nodeSites, nodeList),
+				...(node.newer ? [toolButton(`Update to ${node.newer.split(/[-+~]/)[0]}`, () => confirmServerTool("Update Node.js?", `Its newest ${node.version.split(".")[0]} (${node.newer}). Build the sites that use it after, and restart a service that runs node.`, "Update", { tool: "node_install", major: node.version.split(".")[0] }), "primary")] : []),
+				toolButton("Change version…", () => askServerTool("node_install", { current: node.version.split(".")[0], sites: nodeSites })),
+				toolButton("Remove", () => confirmServerTool("Remove Node.js?", "node and npm go from this server."
+					+ (nodeSites.length ? ` ${nodeSites.map((site) => site.site).join(", ")} use${nodeSites.length === 1 ? "s" : ""} it: their builds and services that need node stop working.` : ""),
+					"Remove", { tool: "node_remove" }, true), "tool-danger")]
+			: [toolButton("Install…", () => askServerTool("node_install", { sites: nodeSites }), "primary")],
+	});
+	if (node.version) nodeCard.append(nodeList);
+	cards.push(nodeCard);
+	// SSH: how root may log in. Harbor reaches other servers as root with a key, so a key only keeps that working.
+	const sshStatus = status.ssh || {};
+	const rootLogin = { yes: "Password or key", "prohibit-password": "Key only", no: "Off" }[sshStatus.root_login] || "Unknown";
+	cards.push(toolCard({
+		icon: "terminal", tone: "teal", title: "SSH", detail: `Root login: ${rootLogin}`,
+		state: sshStatus.running ? "Running" : "Stopped", stateClass: sshStatus.running ? "ok" : "bad",
+		text: sshStatus.root_login === "yes" ? "Root may log in with a password as well as a key. A key only is safer, and Harbor's own connections to its servers keep working with it." : "",
+		actions: [toolButton("Root login…", () => askServerTool("ssh_root", { current: sshStatus.root_login }))],
 	}));
+	// Samba: shares of the server's folders, the whole server as root among them. Turned on here, not asked when the
+	// server is set up.
+	const smb = status.samba || {};
+	const smbShares = smb.shares || [];
+	const shareText = (share) => [share.path || "—", share.read_only ? "read only" : "read and write",
+		share.force_user ? `as ${share.force_user}` : "", share.guest_ok ? "no login" : "", share.browseable ? "" : "hidden"].filter(Boolean).join(" · ");
+	const smbUsers = smb.users || [];
+	const sambaCard = toolCard({
+		icon: "server", tone: "amber", title: "Samba", detail: smb.installed ? `\\\\${smb.host || location.hostname} · user root` : "Share the server's files",
+		state: !smb.installed ? "Not installed" : !smbShares.length ? "No shares" : smb.running ? `${smbShares.length} share${smbShares.length === 1 ? "" : "s"}` : "Off",
+		stateClass: smb.installed && smbShares.length ? (smb.running ? "ok" : "bad") : "",
+		text: !smb.installed
+			? "Shares the whole server (/) as root over Samba, to work on its files from Finder or Explorer. Anyone with root's Samba password can change anything on it."
+			: !smb.password ? "Root has no Samba password yet: give it one to reach the shares." : "",
+		rows: smbShares.map((share) => toolRow(share.name, shareText(share), {
+			action: el("span", { className: "tool-row-actions" },
+				toolButton("Edit…", () => askServerTool("samba_save", { share, users: smbUsers }), "ghost tool-row-action"),
+				toolButton("Delete", () => confirmServerTool(`Delete the share ${share.name}?`, `${share.path} is not shared as ${share.name} any more. The folder and its files stay.`,
+					"Delete", { tool: "samba_delete", name: share.name }, true), "ghost tool-row-action tool-danger")),
+		})),
+		actions: !smb.installed
+			? [toolButton("Share the server…", () => askServerTool("samba_on", { hasPassword: smb.password }), "primary")]
+			: [toolButton("Add share…", () => askServerTool("samba_save", { users: smbUsers })),
+				toolButton("Add user…", () => askServerTool("samba_add_user")),
+				smb.running
+					? toolButton("Turn off", () => confirmServerTool("Turn Samba off?", "Its shares cannot be reached until it is turned on again. They stay as they are.", "Turn off", { tool: "samba_stop" }, true), "tool-danger")
+					: toolButton("Turn on", () => runServerTool({ tool: "samba_start" }), "primary")],
+	});
+	// The logins: root, and users made for Samba alone (no shell, no home). Each share says who may log in to it.
+	if (smb.installed && smbUsers.length) {
+		sambaCard.append(el("h4", { className: "tool-subhead", textContent: "Users" }), el("ul", { className: "tool-rows" }, ...smbUsers.map((user) => toolRow(user.name,
+			user.name === "root" ? "Every share it is let into, as root" : user.samba_only ? "For Samba alone: no shell, no home" : "Also a login on this server", {
+				action: el("span", { className: "tool-row-actions" },
+					toolButton("New password…", () => askServerTool(user.name === "root" ? "samba_password" : "samba_user_password", { name: user.name }), "ghost tool-row-action"),
+					...(user.name === "root" ? [] : [toolButton("Delete", () => confirmServerTool(`Delete the Samba user ${user.name}?`,
+						user.samba_only ? "Its Samba login and the Linux user made for it go. The files it wrote stay." : "Its Samba login goes. Its Linux user stays: it was there before.",
+						"Delete", { tool: "samba_delete_user", name: user.name }, true), "ghost tool-row-action tool-danger")])),
+			}))));
+	}
+	cards.push(sambaCard);
 	// One column of groups: each group's buttons beside its state, its rows the full width
 	for (const card of cards) {
 		const actions = card.querySelector(":scope > .tool-actions");
@@ -6727,6 +7209,7 @@ function serverToolCards(status) {
 }
 
 async function runServerTool(payload) {
+	serverToolsScroll = serverToolsDialog.scrollTop;
 	serverToolsDialog.close();
 	const t = await openTask({ kind: "server_tool", ...payload });
 	if (t) t.afterTask = openServerTools;
@@ -6736,11 +7219,75 @@ async function confirmServerTool(title, message, ok, payload, danger = false) {
 	if (await ask({ title, message, input: false, ok, danger })) await runServerTool(payload);
 }
 
+// A password and its repeat, side by side
+function sambaPasswordFields(required, label = "Samba password") {
+	return [el("div", { className: "ns-grid" },
+		el("label", {}, label, el("input", { name: "samba_password", type: "password", required, minLength: 8, maxLength: 128, autocomplete: "new-password" })),
+		el("label", {}, "Repeat password", el("input", { name: "samba_repeat", type: "password", required, minLength: 8, maxLength: 128, autocomplete: "new-password" })))];
+}
+
 function passwordFields() {
-	return [
+	return [el("div", { className: "ns-grid" },
 		el("label", {}, "sa password", el("input", { name: "sa_password", type: "password", required: true, minLength: 8, maxLength: 128, autocomplete: "new-password" })),
-		el("label", {}, "Repeat password", el("input", { name: "sa_repeat", type: "password", required: true, minLength: 8, maxLength: 128, autocomplete: "new-password" })),
-	];
+		el("label", {}, "Repeat password", el("input", { name: "sa_repeat", type: "password", required: true, minLength: 8, maxLength: 128, autocomplete: "new-password" })))];
+}
+
+// Whether a package.json's engines.node allows a Node.js major version: true, false, or null when it cannot be told.
+// Its common forms: 20, 20.x, ^20.1, ~20, >=18, >=18 <23, 18 - 22, and any of those joined by ||.
+function nodeEnginesAllow(range, major) {
+	if (!range || !range.trim() || range.trim() === "*") return null;
+	const wanted = Number(major);
+	const majorOf = (text) => { const found = /^v?(\d+)/.exec(text.trim()); return found ? Number(found[1]) : null; };
+	let understood = false;
+	const allows = range.split("||").some((part) => {
+		part = part.trim();
+		const span = /^(\S+)\s+-\s+(\S+)$/.exec(part);
+		if (span) {
+			const [low, high] = [majorOf(span[1]), majorOf(span[2])];
+			if (low === null || high === null) return false;
+			understood = true;
+			return wanted >= low && wanted <= high;
+		}
+		const tests = part.split(/\s+/).filter(Boolean).map((piece) => {
+			const found = /^(>=|<=|>|<|=|\^|~)?\s*v?(\d+)(?:\.(\d+|x|\*))?(?:\.(\d+|x|\*))?$/.exec(piece);
+			if (!found) return null;
+			const [operator = "", number] = [found[1], Number(found[2])];
+			const exact = found[3] && /\d/.test(found[3]) && Number(found[3]) > 0 || found[4] && /\d/.test(found[4]) && Number(found[4]) > 0;
+			return { ">=": wanted >= number, ">": exact ? wanted >= number : wanted > number, "<": exact ? wanted <= number : wanted < number,
+				"<=": wanted <= number }[operator] ?? wanted === number;
+		});
+		if (!tests.length || tests.includes(null)) return false;
+		understood = true;
+		return tests.every(Boolean);
+	});
+	return understood ? allows : null;
+}
+
+// What uses a tool: a list of sites, each with how (and for Node.js, whether the versions it wants include major)
+function toolUsage(sites, { major = "", installed = "" } = {}) {
+	const how = { project: "Its project builds on it", published: "What is published runs on it", "package.json": "Has a package.json", service: "Its service runs node" };
+	return el("ul", { className: "tool-usage" }, ...sites.map((item) => {
+		const fits = major ? nodeEnginesAllow(item.engines, major) : null;
+		const note = item.engines
+			? `Wants Node.js ${item.engines}`
+			: item.how === "package.json" || item.how === "service" ? "Says no version" : "";
+		return el("li", { className: "tool-usage-row" + (fits === false ? " misfit" : "") },
+			el("strong", { textContent: item.site }),
+			el("span", { className: "muted", textContent: [how[item.how] || item.how, item.path && item.how === "package.json" ? item.path : "", note].filter(Boolean).join(" · ") }),
+			...(major ? [el("span", { className: "tool-usage-fit " + (fits === false ? "bad" : fits ? "ok" : ""),
+				textContent: fits === false ? `Not ${major}` : fits ? `${major} fits` : installed && installed === major ? "Now" : "Test it" })] : []));
+	}));
+}
+
+// "Used by 3 sites": a button that unfolds the list under what it belongs to
+function usageToggle(sites, list) {
+	const count = sites.length;
+	const button = el("button", { type: "button", className: "ghost tool-row-action tool-usage-toggle", textContent: count ? `Used by ${count}` : "Not used",
+		title: count ? "Show the sites that use it" : "No site here uses it", disabled: !count, ariaExpanded: "false",
+		onclick: () => { list.hidden = !list.hidden; button.setAttribute("aria-expanded", String(!list.hidden)); } });
+	if (count) button.append(svgIcon("chevron"));
+	list.hidden = true;
+	return button;
 }
 
 function choiceCards(name, legend, options, checked) {
@@ -6804,6 +7351,7 @@ async function openCrontab() {
 	showCrontabList();
 	const list = $("#crontab-list");
 	list.setAttribute("aria-busy", "true");
+	if (!list.querySelector(".crontab-row")) list.replaceChildren(loadingState("Reading root's crontab…", "li"));
 	try {
 		crontabEntries = (await api("/api/server/crontab")).entries || [];
 		renderCrontab();
@@ -6814,11 +7362,52 @@ async function openCrontab() {
 	}
 }
 
+// Log under a job: when cron started it, and the end of its output with what looks like errors
+async function showCronLog(row, entry, button) {
+	const open = row.querySelector(".crontab-log");
+	if (open) { open.remove(); button.setAttribute("aria-expanded", "false"); return; }
+	button.setAttribute("aria-expanded", "true");
+	const panel = el("div", { className: "crontab-log", ariaBusy: "true" }, loadingState("Reading the job's log…"));
+	row.append(panel);
+	let log;
+	try {
+		log = await api("/api/server/crontab/log", { json: { command: entry.command } });
+	} catch (error) {
+		panel.replaceChildren(el("p", { className: "error", textContent: error.message }));
+		return;
+	}
+	panel.removeAttribute("aria-busy");
+	const output = log.output || {};
+	const ran = log.runs.length
+		? `Ran ${log.runs_count} time${log.runs_count === 1 ? "" : "s"} in ${log.days} days · last ${formatDate(log.runs[0])}`
+		: entry.schedule === "@reboot" ? `Not run in ${log.days} days: it runs when the server starts` : `Not run in the last ${log.days} days`;
+	const verdict = !output.kind
+		? ["", "Its output is not kept"]
+		: log.errors.length ? ["bad", `${log.errors.length} line${log.errors.length === 1 ? " looks" : "s look"} like errors`] : ["ok", "No errors in its output"];
+	panel.replaceChildren(
+		el("div", { className: "crontab-log-summary" },
+			el("span", { className: "tool-state " + (log.runs.length ? "ok" : "warn"), textContent: ran }),
+			el("span", { className: "tool-state " + verdict[0], textContent: verdict[1] })),
+		...(log.runs.length > 1 ? [el("p", { className: "crontab-log-runs muted", textContent: "Before: " + log.runs.slice(1, 6).map(formatDate).join(" · ") })] : []),
+		...(log.errors.length ? [el("div", { className: "crontab-log-block" }, el("h4", { textContent: "What looks like errors" }),
+			el("pre", { className: "crontab-log-errors", textContent: log.errors.join("\n") }))] : []),
+		output.kind
+			? el("div", { className: "crontab-log-block" },
+				el("h4", { textContent: output.kind === "file"
+					? `The end of ${output.where}` + (output.modified ? ` · written ${formatDate(output.modified * 1000)}` : " · not there yet")
+					: `The end of its output in the journal (logger -t ${output.where})` }),
+				el("pre", { className: "crontab-log-output", textContent: output.lines.length ? output.lines.join("\n") : "Nothing yet." }))
+			: el("p", { className: "hint", textContent: "Its output is not written anywhere. End the command with >> /var/log/name.log 2>&1 to keep it, and see here what went wrong." }),
+		el("p", { className: "hint", textContent: "cron does not record how a job ended: its output is what tells whether it went well." }));
+	const pre = panel.querySelector(".crontab-log-output");
+	if (pre) pre.scrollTop = pre.scrollHeight;
+}
+
 function renderCrontab() {
 	const jobs = crontabEntries.map((entry, index) => [entry, index]).filter(([entry]) => entry.kind === "job");
 	const kept = crontabEntries.length - jobs.length;
 	$("#crontab-count").textContent = `${jobs.length} job${jobs.length === 1 ? "" : "s"}` + (kept ? ` · ${kept} other line${kept === 1 ? "" : "s"} (variables, comments) kept as they are` : "");
-	$("#crontab-list").replaceChildren(...(jobs.length ? jobs.map(([entry, index]) => el("li", { className: "crontab-row" },
+	$("#crontab-list").replaceChildren(...(jobs.length ? jobs.map(([entry, index]) => { const row = el("li", { className: "crontab-row" },
 		el("span", { className: "crontab-icon" }, svgIcon(HARBOR_JOBS[entry.harbor] ? "database" : "clock")),
 		el("div", { className: "crontab-text" },
 			el("div", { className: "crontab-when" }, el("strong", { textContent: describeCron(entry.schedule) || "A schedule of its own" }),
@@ -6826,8 +7415,9 @@ function renderCrontab() {
 				...(HARBOR_JOBS[entry.harbor] ? [el("span", { className: "badge", textContent: HARBOR_JOBS[entry.harbor] })] : [])),
 			el("code", { className: "crontab-command", textContent: entry.command, title: entry.command })),
 		el("div", { className: "crontab-actions" },
+			Object.assign(toolButton("Log", () => showCronLog(row, entry, row.querySelector(".crontab-log-button")), "ghost crontab-log-button"), { ariaExpanded: "false" }),
 			toolButton("Edit", () => showCronForm(index), "ghost"),
-			toolButton("Delete", () => deleteCronJob(index), "ghost tool-danger"))))
+			toolButton("Delete", () => deleteCronJob(index), "ghost tool-danger"))); return row; })
 		: [el("li", { className: "server-tools-loading", textContent: "No scheduled jobs yet." })]));
 }
 
@@ -6849,6 +7439,68 @@ async function deleteCronJob(index) {
 	await saveCrontab(crontabEntries.filter((_, other) => other !== index), "The job is deleted.");
 }
 
+// A path for the shell: as it is when it has nothing the shell reads, otherwise in single quotes
+const shellPath = (path) => /^[A-Za-z0-9_.\/+=:,@-]+$/.test(path) ? path : `'${path.replace(/'/g, "'\\''")}'`;
+// The scripts a job can run by their interpreter, when they may not be run themselves
+const CRON_INTERPRETERS = { sh: "/bin/bash", bash: "/bin/bash", py: "/usr/bin/python3", js: "/usr/bin/node", mjs: "/usr/bin/node",
+	php: "/usr/bin/php", pl: "/usr/bin/perl" };
+const fileExtension = (name) => name.includes(".") ? name.split(".").pop().toLowerCase() : "";
+const cronRunnable = (item) => (item.permissions || "").charAt(3) === "x";
+// What Browse… offers: a file that may be run (its owner may execute it), or a script one of the interpreters runs
+const cronCanRun = (item) => !item.dir && (cronRunnable(item) || fileExtension(item.name) in CRON_INTERPRETERS);
+// The command for a chosen file: run directly when it may be run, else by its interpreter, with its output kept in
+// a log of its own name under /var/log
+function cronCommandFor(path, item) {
+	const name = path.split("/").pop();
+	const log = (name.replace(/\.[^.]+$/, "").replace(/[^A-Za-z0-9._-]+/g, "-") || "job") + ".log";
+	const interpreter = cronRunnable(item) ? "" : (CRON_INTERPRETERS[fileExtension(name)] || "") + (CRON_INTERPRETERS[fileExtension(name)] ? " " : "");
+	// cron reads % as a new line, also in quotes: \% keeps it
+	return `${interpreter}${shellPath(path).replace(/%/g, "\\%")} >> /var/log/${log} 2>&1`;
+}
+
+// Browse… beside the command: the server's folders, unfolded under it, to choose the file the job runs
+function cronBrowser(command) {
+	const list = el("ul", { className: "crontab-browse-list" });
+	const where = el("code", { className: "crontab-browse-path" });
+	const panel = el("div", { className: "crontab-browse", hidden: true },
+		el("div", { className: "crontab-browse-head" }, where,
+			el("button", { type: "button", className: "cancel-link", textContent: "Close", onclick: () => { panel.hidden = true; } })),
+		list);
+	const open = async (folder) => {
+		let data;
+		try {
+			data = await api("/api/server-fs/list?path=" + encodeURIComponent(folder));
+		} catch (error) {
+			// A folder that is not there (as /root/scripts on a new server): its parent, up to /
+			if (folder) return open(folder.split("/").slice(0, -1).join("/"));
+			throw error;
+		}
+		const path = data.path;
+		where.textContent = "/" + path;
+		// Folders, and the files a job can run: no web pages, images or configs
+		const items = data.items.filter((item) => item.dir || cronCanRun(item)).sort((a, b) => (b.dir - a.dir) || a.name.localeCompare(b.name));
+		const row = (label, icon, onclick, muted = false) => el("li", {}, el("button", { type: "button", className: "crontab-browse-item" + (muted ? " muted" : ""), onclick },
+			svgIcon(icon), el("span", { textContent: label })));
+		list.replaceChildren(
+			...(path ? [row("..", "back", () => run(() => open(path.split("/").slice(0, -1).join("/"))), true)] : []),
+			...items.map((item) => {
+				const full = (path ? "/" + path : "") + "/" + item.name;
+				return item.dir
+					? row(item.name, "folder", () => run(() => open(full.slice(1))))
+					: row(item.name, "file", () => { command.value = cronCommandFor(full, item); panel.hidden = true; command.focus(); });
+			}));
+		if (!items.length) list.append(el("li", { className: "muted crontab-browse-empty", textContent: "No scripts or programs in this folder" }));
+	};
+	const button = el("button", { type: "button", textContent: "Browse…", onclick: () => run(async () => {
+		if (!panel.hidden) { panel.hidden = true; return; }
+		// From the folder of the file the job runs now, or /root/scripts
+		const current = (command.value.trim().match(/(?:^|\s)(\/[^\s'"]+)/) || [])[1];
+		await open(current ? current.slice(1).split("/").slice(0, -1).join("/") : "root/scripts");
+		panel.hidden = false;
+	}) });
+	return { button, panel };
+}
+
 function showCronForm(index = null) {
 	const entry = index === null ? { schedule: "0 3 * * *", command: "" } : crontabEntries[index];
 	const form = $("#crontab-form");
@@ -6859,13 +7511,16 @@ function showCronForm(index = null) {
 	describe();
 	const command = el("input", { name: "command", value: entry.command, required: true, spellcheck: false, autocomplete: "off", className: "mono",
 		placeholder: "/root/scripts/cleanup.sh >> /var/log/cleanup.log 2>&1" });
+	const browse = cronBrowser(command);
 	form.replaceChildren(
 		el("h3", { textContent: index === null ? "Add a job" : "Edit the job" }),
 		el("label", {}, "When", when),
 		el("div", { className: "crontab-presets" }, ...CRON_PRESETS.map(([label, value]) => el("button", { type: "button", className: "chip", textContent: label,
 			onclick: () => { when.value = value; describe(); when.focus(); } }))),
 		said,
-		el("label", {}, "Command", command),
+		el("label", {}, "Command", el("span", { className: "crontab-command-field" }, command, browse.button)),
+		browse.panel,
+		el("p", { className: "hint", textContent: "Browse… shows the scripts and programs a job can run, and keeps the output in a log of the same name under /var/log." }),
 		el("div", { className: "crontab-form-actions" },
 			el("button", { type: "button", className: "cancel-link", textContent: "Cancel", onclick: showCrontabList }),
 			el("button", { type: "submit", className: "primary", textContent: index === null ? "Add job" : "Save" })));
@@ -6913,13 +7568,80 @@ function askServerTool(tool, options = {}) {
 				}), " to delete the databases, logs and backups"),
 				el("input", { name: "confirmation", autocomplete: "off", spellcheck: false, "aria-label": "Type DELETE to delete the databases" })),
 		]],
+		ssh_root: ["terminal", "Root login over SSH", "How root may log in to this server over SSH. Connections open now stay.", "Save", () => {
+			const choice = choiceCards("mode", "Root may log in", [["yes", "With a password or a key"], ["prohibit-password", "With a key only (recommended)"], ["no", "Not at all"]], options.current || "prohibit-password");
+			const note = el("p", { className: "server-action-note", hidden: true, textContent: "Servers that manage this one over SSH as root (its environments elsewhere, Copy site, Move) cannot reach it any more, and neither can you as root. Keep another way in before you turn it off." });
+			choice.addEventListener("change", () => { note.hidden = choice.querySelector("input:checked")?.value !== "no"; });
+			return [choice, note];
+		}],
+		samba_on: ["server", "Share the server over Samba", "The whole server (/) as root, for root with a Samba password of its own. Anyone with that password can change anything on the server.", "Share the server", () =>
+			options.hasPassword
+				? [el("p", { className: "hint", textContent: "Root has a Samba password already: it is kept. Give a new one here to change it." }), ...sambaPasswordFields(false, "Samba password for root")]
+				: sambaPasswordFields(true, "Samba password for root")],
+		samba_save: ["server", options.share ? `Edit the share ${options.share.name}` : "Add a share", "A folder of this server shared over Samba. Root and its Samba password reach it, unless it lets guests in.", options.share ? "Save" : "Add share", () => {
+			const share = options.share || { browseable: true, force_user: "root" };
+			const input = (name, label, value, attributes = {}) => el("label", {}, label, el("input", { name, value: value || "", autocomplete: "off", spellcheck: false, ...attributes }));
+			// Its files written as: one of three, side by side (a segmented choice, not a list to open)
+			const as = (share.force_user ?? "root") || "";
+			const writtenAs = el("div", { className: "samba-field" }, el("span", { className: "samba-field-label", textContent: "Files are written as" }),
+				el("div", { className: "samba-segments", role: "radiogroup", ariaLabel: "Files are written as" },
+					...[["root", "root", "Everything"], ["www-data", "www-data", "As the sites"], ["", "Who logs in", "Their own user"]].map(([value, title, sub]) =>
+						el("label", { className: "samba-segment" }, el("input", { type: "radio", name: "share_force_user", value, checked: as === value }),
+							el("strong", { textContent: title }), el("small", { textContent: sub })))));
+			// Who may log in: each user a chip, on or off. None on lets every Samba user in.
+			const users = options.users || [];
+			const chosen = share.valid_users ? share.valid_users.split(/[\s,]+/) : null;
+			const who = users.length > 1 ? [el("div", { className: "samba-field" }, el("span", { className: "samba-field-label", textContent: "Who may log in" }),
+				el("div", { className: "samba-chips" }, ...users.map((user) => el("label", { className: "samba-chip" },
+					el("input", { type: "checkbox", name: "share_user", value: user.name, checked: chosen ? chosen.includes(user.name) : user.name === "root" }),
+					svgIcon("check"), el("span", { textContent: user.name })))),
+				el("p", { className: "hint", textContent: "With none chosen, every Samba user may log in." }))] : [];
+			return [
+				el("div", { className: "ns-grid" },
+					input("share_name", "Name", share.name, { required: true, maxLength: 80, pattern: "[A-Za-z0-9][A-Za-z0-9._ $\\-]*", placeholder: "www" }),
+					input("share_path", "Folder", share.path, { required: true, placeholder: "/var/www", className: "mono" })),
+				writtenAs,
+				el("div", { className: "samba-options" },
+					checkOption("share_read_only", "Read only", "No changes", !!share.read_only, "lock", "blue"),
+					checkOption("share_hidden", "Hidden", "Not listed", share.browseable === false, "eye-off", "purple"),
+					checkOption("share_guest_ok", "No login", "Open to all", !!share.guest_ok, "users", "red")),
+				...who,
+				input("share_comment", "Description (optional)", share.comment, { maxLength: 200 }),
+			];
+		}],
+		samba_add_user: ["users", "Add a Samba user", "A login for the shares alone: its Linux user is made without a shell or a home, so it cannot log in to the server. It reaches no share until one lets it in.", "Add user", () => [
+			el("label", {}, "User name", el("input", { name: "name", required: true, maxLength: 32, pattern: "[a-z_][a-z0-9_\\-]*", autocomplete: "off", spellcheck: false, placeholder: "web" })),
+			...sambaPasswordFields(true)]],
+		samba_user_password: ["key", `${options.name}'s Samba password`, "The password it reaches the shares with.", "Save password", () => sambaPasswordFields(true)],
+		samba_password: ["key", "Root's Samba password", "The password root reaches the share with. It is not root's password on the server.", "Save password", () => sambaPasswordFields(true, "Samba password for root")],
 		sa_password: ["key", "sa password", "The password of the sa login on this SQL Server, for the backups and database scripts. It is checked against the server first.", "Save password", passwordFields],
 		dotnet_install: ["dotnet", "Add .NET", "Its SDK and ASP.NET Core runtime, beside the versions there.", "Install", () => [
 			choiceCards("channel", "Version", (options.channels || []).map((channel) => [channel, channel === "8.0" || channel === "10.0" ? "Long-term support" : "Standard-term support"]), (options.channels || [])[0]),
 		]],
-		node_install: ["hexagon", options.current ? "Change Node.js version" : "Install Node.js", "From NodeSource's repository. Another version is replaced.", options.current ? "Change version" : "Install", () => [
-			choiceCards("major", "Version", NODE_MAJORS.map((major) => [major, major === options.current ? "Installed now" : "LTS"]), NODE_MAJORS.find((major) => major !== options.current)),
-		]],
+		node_install: ["hexagon", options.current ? "Change Node.js version" : "Install Node.js", options.current
+			? `One version at a time: ${options.current} is removed and the chosen one put in its place. Packages installed with npm -g stay.`
+			: "From NodeSource's repository.", options.current ? "Change version" : "Install", () => {
+			// Changing, nothing is chosen for you; installing, the newest
+			const versions = choiceCards("major", "Version", NODE_MAJORS.map((major) => [major, major === options.current ? "Installed now" : "LTS"]), options.current ? null : NODE_MAJORS[0]);
+			const sites = options.sites || [];
+			if (!sites.length) return [versions];
+			// What the change means for the sites that use Node.js: whether the versions they want include the chosen one
+			const impact = el("div", { className: "tool-impact" });
+			const show = () => {
+				const major = versions.querySelector("input:checked")?.value || "";
+				const misfits = major ? sites.filter((site) => nodeEnginesAllow(site.engines, major) === false).length : 0;
+				impact.replaceChildren(
+					el("p", { className: misfits ? "server-action-note" : "hint", textContent: !major
+						? `${sites.length} site${sites.length === 1 ? " uses" : "s use"} Node.js. Choose a version to see whether it is one they want.`
+						: misfits
+						? `${misfits} of the ${sites.length} sites that use Node.js want${misfits === 1 ? "s" : ""} another version than ${major}. Their builds may fail until their package.json allows it.`
+						: `${sites.length} site${sites.length === 1 ? " uses" : "s use"} Node.js. Build them after the change, and restart a service that runs node.` }),
+					toolUsage(sites, { major, installed: options.current }));
+			};
+			versions.addEventListener("change", show);
+			show();
+			return [versions, impact];
+		}],
 	}[tool];
 	const [icon, title, text, ok, build] = setup;
 	$("#server-action-icon").replaceChildren(svgIcon(icon));
@@ -6947,6 +7669,12 @@ function askServerTool(tool, options = {}) {
 	form.onsubmit = (event) => {
 		event.preventDefault();
 		const values = form.elements;
+		if (values.samba_repeat && values.samba_password.value !== values.samba_repeat.value) {
+			values.samba_repeat.setCustomValidity("The passwords are not the same");
+			values.samba_repeat.reportValidity();
+			values.samba_repeat.oninput = () => values.samba_repeat.setCustomValidity("");
+			return;
+		}
 		if (values.sa_repeat && values.sa_password.value !== values.sa_repeat.value) {
 			values.sa_repeat.setCustomValidity("The passwords are not the same");
 			values.sa_repeat.reportValidity();
@@ -6960,7 +7688,18 @@ function askServerTool(tool, options = {}) {
 			return;
 		}
 		const payload = { tool };
-		for (const name of ["edition", "channel", "major", "sa_password", "confirmation"]) if (values[name]) payload[name] = values[name].value;
+		if (tool === "samba_add_user") payload.name = values.namedItem("name").value.trim();
+		if (tool === "samba_user_password") payload.name = options.name;
+		if (tool === "samba_save") {
+			payload.old_name = options.share?.name || "";
+			payload.share = { name: values.share_name.value.trim(), path: values.share_path.value.trim(),
+				read_only: values.share_read_only.checked, browseable: !values.share_hidden.checked, guest_ok: values.share_guest_ok.checked,
+				comment: values.share_comment.value.trim(), force_user: form.querySelector("[name=share_force_user]:checked")?.value ?? "root",
+				valid_users: (options.users || []).length > 1
+					? [...form.querySelectorAll("[name=share_user]:checked")].map((box) => box.value).join(" ")
+					: options.share?.valid_users || "" };
+		}
+		for (const name of ["edition", "channel", "major", "mode", "sa_password", "samba_password", "confirmation"]) if (values[name]?.value) payload[name] = values[name].value;
 		for (const name of ["with_tools", "delete_data"]) if (values[name]) payload[name] = values[name].checked;
 		if (tool === "sql_install" && options.older) payload.older_ubuntu = true;
 		serverActionDialog.close();
@@ -6994,13 +7733,23 @@ async function openServers() {
 	if (!serversDialog.open) serversDialog.showModal();
 	const list = $("#servers-list");
 	list.setAttribute("aria-busy", "true");
-	if (!list.childElementCount) list.replaceChildren(el("div", { className: "server-tools-loading", textContent: "Asking the servers…" }));
+	if (!list.childElementCount) list.replaceChildren(loadingState("Asking the servers…"));
 	try {
 		const data = await api("/api/servers");
 		$("#servers-release").textContent = data.release ? `This server runs Harbor ${data.release}` : "Other servers this Harbor works with";
 		const others = data.servers.filter((item) => !item.this).length;
 		$("#servers-count").textContent = `${others} other server${others === 1 ? "" : "s"}`;
-		list.replaceChildren(...data.servers.map((item) => serverCard(item, data.release)),
+		// Linux and Windows apart, each under a heading with its count: this server first among the Linux ones
+		const windows = data.servers.filter((item) => item.kind === "windows");
+		const linux = data.servers.filter((item) => item.kind !== "windows").sort((a, b) => (b.this ? 1 : 0) - (a.this ? 1 : 0));
+		const group = (icon, title, sub, items) => [el("div", { className: "servers-group" },
+			el("span", { className: "servers-group-icon" }, svgIcon(icon)),
+			el("span", { className: "servers-group-title", textContent: title }),
+			el("span", { className: "servers-group-count", textContent: String(items.length) }),
+			el("span", { className: "servers-group-sub", textContent: sub })),
+			...items.map((item) => serverCard(item, data.release))];
+		list.replaceChildren(...group("server", "Linux", "Harbor runs there: it installs and updates it from here", linux),
+			...(windows.length ? group("windows", "Windows", "Shares and their logins, to import and copy sites from", windows) : []),
 			...(data.servers.some((item) => !item.this) ? [] : [el("div", { className: "server-tools-loading", textContent: "No other servers yet. Add one to install and update Harbor there from here." })]));
 	} catch (error) {
 		list.replaceChildren(el("div", { className: "server-tools-loading", textContent: error.message }));
@@ -7035,13 +7784,15 @@ function compareVersions(a, b) {
 }
 
 function serverCard(item, release) {
-	// A Windows server: its share and login, kept for Import from Windows, with the Windows logo
+	// A Windows server: its share and login, for environments on it and Import from Windows, with the Windows logo. It
+	// stays while an environment here runs on it: what runs where is known from Servers.
 	if (item.kind === "windows") {
+		const remove = toolButton("Remove…", () => askRemoveServer(item), "tool-danger");
 		const card = toolCard({ icon: "server", tone: item.reachable ? "blue" : "amber", title: item.name, detail: item.share,
 			state: item.reachable ? "Share opens" : "Not reachable", stateClass: item.reachable ? "ok" : "bad",
-			rows: [toolRow("Kind", "Windows: kept for Import from Windows"), toolRow("Login", (item.domain ? item.domain + "\\" : "") + item.user),
+			rows: [toolRow("Login", (item.domain ? item.domain + "\\" : "") + item.user),
 				...(item.reachable ? [] : [toolRow("Error", (item.error || []).join(" ") || "No answer")])],
-			actions: [toolButton("Edit…", () => askEditServer(item)), toolButton("Remove…", () => confirmServers(`Remove ${item.name}?`, `Its share and login are forgotten here, with the password. Nothing on ${item.name} is changed.`, "Remove", { action: "remove", name: item.name }), "tool-danger")] });
+			actions: [toolButton("Edit…", () => askEditServer(item)), remove] });
 		card.querySelector(".tool-icon").innerHTML = osLogos.windows;
 		card.querySelector(".tool-icon").classList.add("os-icon");
 		return card;
@@ -7120,32 +7871,70 @@ function askEditServer(item) {
 	form.elements.new_name.focus();
 }
 
+// The environments of sites here that run on a Linux server (by its address)
+const linuxServerUsers = (item) => allSites.flatMap((site) => (site.environments || []).filter((env) => env.mode === "remote" && env.host === item.host)
+	.map((env) => `${siteLabel(site)} (${environmentLabel(site, env)})`));
+const windowsServerEnvs = (item) => {
+	const norm = (text) => String(text || "").replace(/\\/g, "/").trim().replace(/\/+$/, "").toLowerCase();
+	return allSites.flatMap((site) => (site.environments || [])
+		.filter((env) => env.mode === "windows" && norm(env.folder) && (norm(env.folder) === norm(item.share) || norm(env.folder).startsWith(norm(item.share) + "/")))
+		.map((env) => ({ site, env })));
+};
+const linuxServerEnvs = (item) => allSites.flatMap((site) => (site.environments || []).filter((env) => env.mode === "remote" && env.host === item.host)
+	.map((env) => ({ site, env })));
+// Remove: a server an environment here runs on stays in Servers. The dialog shows those environments (the link between
+// this server and that one), each opening its site's page to move or remove it, and Remove is off until there are none.
 function askRemoveServer(item) {
 	const form = $("#form-server-action");
-	$("#server-action-icon").replaceChildren(svgIcon("server"));
+	const windows = item.kind === "windows";
+	$("#server-action-icon").replaceChildren(svgIcon(windows ? "windows" : "server"));
 	$("#server-action-title").textContent = `Remove ${item.name}`;
-	$("#server-action-text").textContent = `Harbor forgets ${item.name} here. Its sites and its admin are never touched.`;
+	const envs = windows ? windowsServerEnvs(item) : linuxServerEnvs(item);
+	$("#server-action-text").textContent = envs.length
+		? `${item.name} cannot be removed: environments here run on it. Move or remove them first.`
+		: windows ? `Its share and login are forgotten here, with the password. Nothing on ${item.name} is changed.`
+			: `Harbor forgets ${item.name} here. Its sites and its admin are never touched.`;
 	const button = $("#server-action-ok");
 	button.textContent = "Remove server";
 	button.classList.add("danger");
 	button.classList.remove("primary");
+	button.disabled = envs.length > 0;
+	// The dialog is shared: its button is on again for the next one
+	serverActionDialog.addEventListener("close", () => { button.disabled = false; }, { once: true });
 	const reachable = item.reachable;
-	$("#server-action-fields").replaceChildren(
-		checkOption("uninstall", "Uninstall Harbor there", item.harbor ? `Harbor ${item.harbor.name} goes: /opt/harbor and the harbor command` : "Harbor is not installed there", false, "trash", "red"),
-		checkOption("revoke_key", "Take Harbor's key off it", "This server can no longer log in there; adding it again needs its password", false, "key", "amber"),
-		...(reachable ? [] : [el("p", { className: "hint", textContent: `${item.name} does not answer now, so it can only be forgotten here.` })]));
-	for (const name of ["uninstall", "revoke_key"]) form.elements[name].disabled = !reachable || (name === "uninstall" && !item.harbor);
+	const fields = [];
+	if (envs.length) {
+		fields.push(el("div", { className: "ns-section", textContent: "Used here by" }),
+			el("div", { className: "used-by-list" }, ...envs.map(({ site, env }) => el("button", {
+				type: "button", className: "used-by-item", title: `Open ${siteLabel(site)}`,
+				onclick: () => { serverActionDialog.close(); serversDialog.close(); if (isTarget(env)) unfoldedEnvs.add(site.name + "/" + (env.target || "prod")); go(siteLink(site.name)); },
+			}, el("span", { className: "badge env-" + environmentLabel(site, env).toLowerCase(), textContent: environmentLabel(site, env) }),
+				el("span", { className: "used-by-text" }, el("strong", { textContent: siteLabel(site) }), el("small", { textContent: bindingLabel(env) || env.folder || "" })),
+				el("span", { className: "used-by-open", textContent: "Open" }, svgIcon("chevron"))))));
+	} else if (!windows) {
+		const sql = (item.keep_harbor || []).find((reason) => reason.startsWith("SQL connections"));
+		fields.push(checkOption("uninstall", "Uninstall Harbor there", !item.harbor ? "Harbor is not installed there"
+				: (item.own_sites || []).length ? "Not while it has sites of its own"
+					: sql ? `Not while ${sql.replace(/^SQL connections here use it/, "SQL connections here use it")}` : `Harbor ${item.harbor.name} goes: /opt/harbor and the harbor command`, false, "trash", "red"),
+			// Harbor's key goes with it: said, not asked
+			el("p", { className: "hint", textContent: reachable ? `Harbor's key is taken off ${item.name}, so this server cannot log in there any more. Adding it again needs its password once.` : `${item.name} does not answer now, so it is only forgotten here, and Harbor's key stays there.` }));
+	}
+	$("#server-action-fields").replaceChildren(...fields);
+	if (form.elements.uninstall) form.elements.uninstall.disabled = !reachable || !item.harbor || (item.keep_harbor || []).length > 0;
 	form.onsubmit = (event) => {
 		event.preventDefault();
-		const values = form.elements;
+		if (envs.length) return;
+		const uninstall = Boolean(form.elements.uninstall?.checked);
 		serverActionDialog.close();
-		run(() => runServers({ action: "remove", name: item.name, uninstall: values.uninstall.checked, revoke_key: values.revoke_key.checked }));
+		run(() => runServers({ action: "remove", name: item.name, uninstall }));
 	};
 	serverActionDialog.showModal();
 	$("#server-action-cancel").focus();
 }
 
-function askAddServer() {
+// Add server: from Servers, or from a dialog that needs a server (Add environment, Copy site). From such a dialog the kind
+// is chosen already, that dialog stays open under it, and after is run once the server is added, to choose it there.
+function askAddServer({ kind: chosenKind = "linux", after = null } = {}) {
 	const form = $("#form-server-action");
 	$("#server-action-icon").replaceChildren(svgIcon("server"));
 	$("#server-action-title").textContent = "Add server";
@@ -7173,7 +7962,7 @@ function askAddServer() {
 			field("Username", { name: "smb_user", required: true, maxLength: 128 }),
 			field("Password", { name: "smb_password", type: "password", autocomplete: "new-password", required: true, maxLength: 256 })),
 		field("Domain", { name: "domain", placeholder: "Optional", maxLength: 128 }),
-		el("p", { className: "hint", textContent: "Harbor tries the login, then keeps the share and login for Import from Windows. The password is kept for root only; nothing is run on Windows." }));
+		el("p", { className: "hint", textContent: "Harbor tries the login, then keeps the share and login: Windows then shows in the Server menu, with Import sites. The password is kept for root only; nothing is run on Windows." }));
 	const showKind = () => {
 		const isWindows = form.elements.kind.value === "windows";
 		for (const [part, on] of [[linux, !isWindows], [windows, isWindows]]) {
@@ -7185,7 +7974,7 @@ function askAddServer() {
 			: "Harbor logs in once with the password and puts its own SSH key there. The password is not kept.";
 	};
 	$("#server-action-fields").replaceChildren(
-		el("div", { className: "type-cards" }, kind("linux", "Linux", "Over SSH: Harbor installs and updates it", true), kind("windows", "Windows", "A share and its login, for Import from Windows", false)),
+		el("div", { className: "type-cards" }, kind("linux", "Linux", "Over SSH: Harbor installs and updates it", chosenKind === "linux"), kind("windows", "Windows", "A share and its login, for Import from Windows", chosenKind === "windows")),
 		field("Name", { name: "name", required: true, pattern: "[a-z0-9][a-z0-9\\-]{0,62}", placeholder: "A short name for it, such as web-01", maxLength: 63 }),
 		linux, windows);
 	showKind();
@@ -7208,7 +7997,12 @@ function askAddServer() {
 			: { action: "add" };
 		if (values.kind.value !== "windows") for (const name of ["name", "host", "user", "port", "password"]) payload[name] = values[name].value.trim();
 		serverActionDialog.close();
-		run(() => runServers(payload));
+		if (after) {
+			run(async () => {
+				const t = await openTask({ kind: "servers", ...payload });
+				if (t) t.afterTask = () => { if (t.taskState !== "failed") run(() => after(payload.name)); };
+			});
+		} else run(() => runServers(payload));
 	};
 	serverActionDialog.showModal();
 	form.elements.name.focus();

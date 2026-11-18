@@ -12,11 +12,16 @@ UUID = re.compile(rb"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12
 STAMP = re.compile(rb'(var cacheDate = ")[0-9]{12}(")')
 
 
+DOTNET_10 = {"/usr/lib/dotnet/dotnet --list-sdks": "10.0.100 [/usr/lib/dotnet/sdk]",
+             "/usr/lib/dotnet/dotnet --list-runtimes": "Microsoft.AspNetCore.App 10.0.1 [/usr/lib/dotnet/shared/Microsoft.AspNetCore.App]"}
+
+
 def comparable(files):
-    """The files without what differs each time: a new UUID, the minute the site was made, and the virtual environment"""
+    """The files without what differs each time: a new UUID, the minute the site was made, and the virtual environment.
+    Nor .NET in /usr/lib/dotnet and its link: harbor has .NET 10 there (DOTNET_10), which the script never looked for."""
     found = {}
     for name, content in files.items():
-        if "/venv/" in f"/{name}/":
+        if "/venv/" in f"/{name}/" or name.startswith(("usr/lib/dotnet", "usr/bin/dotnet")):
             continue
         if isinstance(content, bytes):
             content = STAMP.sub(rb"\1STAMP\2", UUID.sub(b"UUID", content))
@@ -36,9 +41,20 @@ class CreateSiteTests(unittest.TestCase):
         if make:
             for server in (self.old, self.new):
                 make(server)
+        # .NET 10 is here on both, as on a server: harbor checks for it before making a C# site (the script did not)
+        for server in (self.old, self.new):
+            program = server.root / "usr/lib/dotnet/dotnet"
+            program.parent.mkdir(parents=True, exist_ok=True)
+            program.write_text("#!/bin/bash\n" + "".join(f'[[ "$*" == "{command.split(" ", 1)[1]}" ]] && echo "{answer}"\n' for command, answer in DOTNET_10.items()) + "exit 0\n")
+            program.chmod(0o755)
+            # And set up for the sites (harbor.core.dotnet.setup), as a server with .NET is
+            link = server.root / "usr/bin/dotnet"
+            link.parent.mkdir(parents=True, exist_ok=True)
+            if not link.is_symlink():
+                link.symlink_to("/usr/lib/dotnet/dotnet")
         self.old.log.write_text("")
         result = self.old.run_legacy("create_site.sh", *args, stdin=stdin)
-        system = self.new.system(replies=replies or [])
+        system = self.new.system(replies=replies or [], answers=DOTNET_10)
         code = main(["site", "create", *args], system)
         self.assertEqual(code, result.returncode, (result.stdout[-2000:], result.stderr, system.said))
         self.assertEqual(*as_migrated(self, comparable(self.new.files()), comparable(self.old.files())))
@@ -46,7 +62,8 @@ class CreateSiteTests(unittest.TestCase):
         # The script ran the .NET installer with bash, which the fake server does not record
         # VNS.Harbor is added to an Umbraco 17+ site by harbor, which the script did not (test_umbraco_gets_vns_harbor)
         commands = [line for line in without_temporary(harbor_commands(system))
-                    if not line.startswith("bash TEMP ") and not line.startswith("dotnet add package VNS.Harbor")]
+                    if not line.startswith("bash TEMP ") and not line.startswith("dotnet add package VNS.Harbor")
+                    and not line.startswith("/usr/lib/dotnet/dotnet --list-")]
         self.assertEqual(commands, without_temporary(self.old.commands()))
         if code == 0:
             self.assertPlanned(system)
@@ -100,6 +117,28 @@ class CreateSiteTests(unittest.TestCase):
         system = self.new.system()
         self.assertEqual(main(["site", "create", "older.dk", "csharp", "umbraco", "13.3.1", "Older", "older.dk", "", "Debug", "n"], system), result.returncode)
         self.assertEqual(system.said[-1], result.stderr.strip())
+
+    def test_the_dotnet_a_site_needs_is_installed_first(self):
+        # .NET 10 removed in Server tools, only 8.0 left: an Umbraco 18 site installs .NET 10 before its template
+        server = Server(tempfile.mkdtemp(), "x")
+        (server.root / "usr/lib/dotnet").mkdir(parents=True)
+        (server.root / "usr/lib/dotnet/dotnet").write_text("")
+        system = server.system(answers={"/usr/lib/dotnet/dotnet --list-sdks": "8.0.404 [x]",
+                                        "/usr/lib/dotnet/dotnet --list-runtimes": "Microsoft.AspNetCore.App 8.0.11 [x]"})
+        self.assertEqual(main(["site", "create", "x.dk", "csharp", "umbraco", "18.3.1", "X", "x.dk", "_publish", "Release", "n"], system), 0, system.said)
+        installs = [index for index, line in enumerate(system.commands) if line.startswith("bash ") and "--channel 10.0" in line]
+        template = system.commands.index("dotnet new install Umbraco.Templates@18.3.1 --force")
+        self.assertTrue(installs and installs[-1] < template, system.commands)
+        self.assertIn("Install .NET 10.0 SDK and ASP.NET Core runtime", system.said)
+
+    def test_the_first_dotnet_sets_up_what_the_sites_need(self):
+        # A new server: harbor server init installs no .NET, the first site does, with /usr/bin/dotnet and the rest
+        server = Server(tempfile.mkdtemp(), "x")
+        system = server.system()
+        self.assertEqual(main(["site", "create", "x.dk", "csharp", "umbraco", "18.3.1", "X", "x.dk", "_publish", "Release", "n"], system), 0, system.said)
+        self.assertEqual(__import__("os").readlink(server.root / "usr/bin/dotnet"), "/usr/lib/dotnet/dotnet")
+        self.assertEqual((server.root / "etc/profile.d/dotnet.sh").read_text(), "export DOTNET_ROOT=/usr/lib/dotnet\n")
+        self.assertIn("dotnet tool install --tool-path /usr/local/bin dotnet-outdated-tool", system.commands)
 
     def test_a_dotnet_template(self):
         def template_output(server):

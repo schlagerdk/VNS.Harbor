@@ -2,11 +2,13 @@
 password in sql/, the backup and log shrink cron jobs, .NET and Node.js. The admin's Server tools window shows status()
 and runs the rest as tasks.
 """
+import json
 import re
 import shutil
 import tempfile
 
 from harbor.core.dotnet import DOTNET_DIR, ensure_channel
+from harbor.server import samba, ssh
 from harbor.core.system import Stop
 from harbor.state.store import read_json
 from harbor.sql.databases import PLACEHOLDER, SA_SECRET, SQL_DIR, SQLCMD
@@ -55,6 +57,81 @@ def dotnet(system):
             for channel, found in sorted(channels.items(), key=lambda item: key(item[0]), reverse=True)]
 
 
+RELEASES = "https://builds.dotnet.microsoft.com/dotnet/release-metadata/{}/releases.json"
+RELEASES_CACHE = "/var/lib/vns/dotnet-releases.json"
+RELEASES_AGE = 6 * 60 * 60
+
+
+def apt_candidate(system, package):
+    """(installed, the version apt would install) of a package, as apt's lists have them now; "" for none"""
+    found = system.output("apt-cache", "policy", package, check=False)
+    installed = re.search(r"(?m)^\s*Installed:\s*(\S+)", found or "")
+    candidate = re.search(r"(?m)^\s*Candidate:\s*(\S+)", found or "")
+    clean = lambda match: "" if not match or match.group(1) == "(none)" else match.group(1)
+    return clean(installed), clean(candidate)
+
+
+def newer_package(system, package):
+    """The version apt would update a package to, or "" when it is up to date (or not installed)"""
+    installed, candidate = apt_candidate(system, package)
+    if not installed or not candidate or candidate == installed:
+        return ""
+    return candidate if system.run("dpkg", "--compare-versions", candidate, "gt", installed, check=False, capture=True).ok else ""
+
+
+def dotnet_latest(system, channels):
+    """The newest SDK and runtime of each .NET channel, from Microsoft's release list, kept for six hours so Server
+    tools stays quick. A channel it cannot tell is left out: its Update button is shown as it was."""
+    import time
+    path = system.path(RELEASES_CACHE)
+    try:
+        cache = json.loads(path.read_text()) if path.is_file() else {}
+    except ValueError:
+        cache = {}
+    now = time.time()
+    found, changed = {}, False
+    for channel in channels:
+        entry = cache.get(channel) or {}
+        if now - entry.get("at", 0) > RELEASES_AGE:
+            fetched = system.run("curl", "-fsS", "--max-time", "6", RELEASES.format(channel), check=False, capture=True)
+            try:
+                data = json.loads(fetched.stdout) if fetched.ok else {}
+                entry = {"at": now, "sdk": data.get("latest-sdk", ""), "runtime": data.get("latest-runtime", "")}
+                changed = True
+            except ValueError:
+                entry = {}
+        if entry.get("sdk") or entry.get("runtime"):
+            found[channel] = {"sdk": entry.get("sdk", ""), "runtime": entry.get("runtime", "")}
+            cache[channel] = entry
+    if changed:
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(cache))
+        except OSError:
+            pass
+    return found
+
+
+def version_key(version):
+    return [int(part) if part.isdigit() else -1 for part in re.split(r"[.-]", version or "")]
+
+
+def dotnet_updates(system, items):
+    """Each installed channel with what an update would bring: latest_sdk and latest_runtime when newer, update true or
+    false, or update None when it cannot be told"""
+    latest = dotnet_latest(system, [item["channel"] for item in items])
+    result = []
+    for item in items:
+        known = latest.get(item["channel"])
+        if not known:
+            result.append({**item, "update": None})
+            continue
+        sdk = known["sdk"] if known["sdk"] and version_key(known["sdk"]) > version_key(item["sdk"]) else ""
+        runtime = known["runtime"] if known["runtime"] and version_key(known["runtime"]) > version_key(item["runtime"]) else ""
+        result.append({**item, "update": bool(sdk or runtime), "latest_sdk": sdk, "latest_runtime": runtime})
+    return result
+
+
 def status(system, sql_folder=SQL_DIR):
     """Everything the Server tools window shows"""
     try:
@@ -66,19 +143,26 @@ def status(system, sql_folder=SQL_DIR):
     mine = {line for name in JOBS for line in job_lines(table, name)}
     others = [line for line in table.splitlines() if line.strip() and not line.lstrip().startswith("#") and line not in mine]
     node = system.output("node", "--version", check=False) if system.which("node") else ""
+    usage = dotnet_usage(system)
     return {
         "os": {"name": release.get("PRETTY_NAME", ""), "id": release.get("ID", ""), "version": release.get("VERSION_ID", "")},
         "sql_server": {"installed": installed(system, "mssql-server"), "version": package_version(system, "mssql-server"),
+                       "newer": newer_package(system, "mssql-server"),
                        "running": system.output("systemctl", "is-active", "mssql-server", check=False) == "active",
                        # Microsoft publishes SQL Server for some Ubuntu versions only: on another it is installed from these
                        "packages_for": "" if release.get("VERSION_ID", "") in SUPPORTED_UBUNTU else FALLBACK_UBUNTU},
-        "sql_tools": {"installed": system.path(SQLCMD).is_file(), "version": package_version(system, "mssql-tools18")},
+        "sql_tools": {"installed": system.path(SQLCMD).is_file(), "version": package_version(system, "mssql-tools18"),
+                      "newer": newer_package(system, "mssql-tools18")},
         "sa_password": {"scripts": len(scripts),
                         "set": bool((read_json(system.path(SA_SECRET)) or {}).get("sa_password"))
                         or (bool(scripts) and not any(f"'{PLACEHOLDER}'" in path.read_text(errors="replace") for path in scripts))},
         "cron": {"jobs": {name: bool(job_lines(table, name)) for name in JOBS}, "others": others},
-        "dotnet": dotnet(system),
-        "node": {"version": node.lstrip("v"), "npm": system.output("npm", "--version", check=False) if node else ""},
+        "dotnet": [{**item, "sites": usage.get(item["channel"].split(".")[0], [])} for item in dotnet_updates(system, dotnet(system))],
+        "node": {"version": node.lstrip("v"), "npm": system.output("npm", "--version", check=False) if node else "",
+                 "newer": newer_package(system, "nodejs") if node else "",
+                 "sites": node_usage(system)},
+        "samba": samba.status(system),
+        "ssh": ssh.status(system),
     }
 
 
@@ -143,11 +227,8 @@ def dotnet_install(system, channel, update=False):
         return
     system.plan([f"{'Update' if before else 'Install'} .NET {channel}"])
     system.step(f"{'Update' if before else 'Install'} .NET {channel}")
+    # Also what the sites need around it (/usr/bin/dotnet and the rest), with the first .NET
     ensure_channel(system, channel, force=update)
-    # The site services run /usr/bin/dotnet
-    link = system.path("/usr/bin/dotnet")
-    if not link.exists() and not link.is_symlink():
-        link.symlink_to(f"{DOTNET_DIR}/dotnet")
     after = {item["channel"]: item for item in dotnet(system)}.get(channel)
     if not after or not after["sdk"] or not after["runtime"]:
         raise Stop(f".NET {channel} was not installed in {DOTNET_DIR}.")
@@ -157,39 +238,89 @@ def dotnet_install(system, channel, update=False):
         system.say(f".NET {channel}: SDK {after['sdk']}, runtime {after['runtime']}. Sites start on the new runtime when they restart.")
 
 
-def sites_using(system, channel):
-    """The sites here that build or run on a .NET channel: their project (TargetFramework, an SDK pinned in global.json)
-    or what they publish (runtimeconfig.json)"""
-    major = channel.split(".")[0]
-    framework = re.compile(rf"<TargetFrameworks?>[^<]*\bnet{major}\.0\b")
-    runtime = re.compile(rf'"(?:tfm|version)"\s*:\s*"(?:net)?{major}\.0[\.\d]*"')
+def site_folders(system):
+    """The sites' folders in /var/www (not links to them)"""
     web = system.path("/var/www")
-    found = []
-    for site in sorted(web.iterdir()) if web.is_dir() else []:
-        if not site.is_dir() or site.is_symlink():
-            continue
-        files = [*site.glob("*.csproj"), *site.glob("global.json"), *site.glob("*.runtimeconfig.json"), *site.glob("*/*.runtimeconfig.json")]
-        for path in files:
+    return [site for site in sorted(web.iterdir()) if site.is_dir() and not site.is_symlink()] if web.is_dir() else []
+
+
+def dotnet_usage(system):
+    """Per .NET major version, the sites here that build or run on it: by their project (TargetFramework, an SDK
+    pinned in global.json) or by what they publish (runtimeconfig.json). One pass over /var/www for every version."""
+    framework = re.compile(r"<TargetFrameworks?>([^<]*)<")
+    runtime = re.compile(r'"(?:tfm|version)"\s*:\s*"(?:net)?([0-9]+)\.0[.\d]*"')
+    pinned = re.compile(r'"version"\s*:\s*"([0-9]+)\.0\.')
+    usage = {}
+    for site in site_folders(system):
+        found = {}
+        for path in [*site.glob("*.csproj"), *site.glob("global.json"), *site.glob("*.runtimeconfig.json"), *site.glob("*/*.runtimeconfig.json")]:
             try:
                 text = path.read_text(errors="replace")
             except OSError:
                 continue
-            if (framework if path.suffix == ".csproj" else runtime).search(text) or (path.name == "global.json" and f'"{major}.0.' in text):
-                found.append(site.name)
-                break
-    return found
+            if path.suffix == ".csproj":
+                majors = re.findall(r"\bnet([0-9]+)\.0\b", " ".join(framework.findall(text)))
+                how = "project"
+            elif path.name == "global.json":
+                majors, how = pinned.findall(text), "project"
+            else:
+                majors, how = runtime.findall(text), "published"
+            for major in majors:
+                # The project says more than what is published from it
+                if found.get(major) != "project":
+                    found[major] = how
+        for major, how in found.items():
+            usage.setdefault(major, []).append({"site": site.name, "how": how})
+    return usage
+
+
+def sites_using(system, channel):
+    """The sites here that build or run on a .NET channel"""
+    return [item["site"] for item in dotnet_usage(system).get(channel.split(".")[0], [])]
+
+
+NODE_PROGRAM = re.compile(r"(^|[\s/=])(node|nodejs|npm|npx|pm2)(\s|$)")
+
+
+def node_usage(system):
+    """The sites here that use Node.js: a package.json in the site (not in node_modules), whose engines say which
+    versions it wants, or a service of the site that runs node, npm or pm2"""
+    found = {}
+    for site in site_folders(system):
+        for pattern in ("package.json", "*/package.json", "*/*/package.json"):
+            for path in sorted(site.glob(pattern)):
+                if "node_modules" in path.parts:
+                    continue
+                try:
+                    engines = (json.loads(path.read_text(errors="replace")).get("engines") or {}).get("node", "")
+                except (OSError, ValueError, AttributeError):
+                    engines = ""
+                entry = found.setdefault(site.name, {"site": site.name, "how": "package.json", "path": str(path.relative_to(site)),
+                                                     "engines": engines if isinstance(engines, str) else ""})
+                if not entry["engines"] and isinstance(engines, str) and engines:
+                    entry["engines"] = engines
+    units = system.path("/etc/systemd/system")
+    for unit in sorted(units.glob("*.service")) if units.is_dir() else []:
+        try:
+            lines = unit.read_text(errors="replace").splitlines()
+        except OSError:
+            continue
+        if any(line.strip().startswith("ExecStart") and NODE_PROGRAM.search(line.split("=", 1)[-1]) for line in lines):
+            name = unit.name[:-len(".service")]
+            found.setdefault(name, {"site": name, "how": "service", "path": unit.name, "engines": ""})
+    return sorted(found.values(), key=lambda item: item["site"])
 
 
 def dotnet_remove(system, channel):
-    """A channel's SDKs and runtimes taken out of /usr/lib/dotnet. Never the newest (its host runs the others), and never
-    one a site here uses."""
+    """A channel's SDKs and runtimes taken out of /usr/lib/dotnet. Never one a site here uses, nor the only one. The
+    newest host (host/fxr) stays, also when its version goes: dotnet runs every version with the newest host there is,
+    and a newer host runs older versions."""
     channel = channel_of(channel)
     installed_channels = [item["channel"] for item in dotnet(system)]
     if channel not in installed_channels:
         raise Stop(f".NET {channel} is not installed.")
-    newest = max(installed_channels, key=lambda item: int(item.split(".")[0]))
-    if channel == newest:
-        raise Stop(f".NET {channel} is the newest here: its host runs the other versions, so it stays.")
+    if len(installed_channels) == 1:
+        raise Stop(f".NET {channel} is the only version here, so it stays.")
     using = sites_using(system, channel)
     if using:
         raise Stop(f".NET {channel} is used by {', '.join(using)}: move them to another version first.")
@@ -197,16 +328,22 @@ def dotnet_remove(system, channel):
     system.step(f"Remove .NET {channel}")
     root = system.path(DOTNET_DIR)
     prefix = channel.split(".")[0] + ".0."
+    hosts = [path for path in (root / "host/fxr").iterdir() if path.is_dir()] if (root / "host/fxr").is_dir() else []
+
+    def version_key(path):
+        return [int(part) if part.isdigit() else -1 for part in re.split(r"[.-]", path.name)]
+    newest_host = max(hosts, key=version_key, default=None)
     removed = 0
     for parent in ("sdk", "sdk-manifests", "templates", "host/fxr", "shared/Microsoft.NETCore.App", "shared/Microsoft.AspNetCore.App",
                    "packs/Microsoft.NETCore.App.Ref", "packs/Microsoft.AspNetCore.App.Ref", "packs/Microsoft.NETCore.App.Host.linux-x64",
                    "packs/Microsoft.NETCore.App.Host.linux-arm64"):
         folder = root / parent
         for path in sorted(folder.glob(prefix + "*")) if folder.is_dir() else []:
-            if path.is_dir() and not path.is_symlink():
+            if path.is_dir() and not path.is_symlink() and path != newest_host:
                 shutil.rmtree(path)
                 removed += 1
-    system.say(f".NET {channel} is removed ({removed} folders). The other versions stay.")
+    kept = f" Its host {newest_host.name} stays: the other versions run on it." if newest_host and newest_host.name.startswith(prefix) else ""
+    system.say(f".NET {channel} is removed ({removed} folders). The other versions stay.{kept}")
 
 
 # ---- cron: root's crontab, line by line
@@ -266,22 +403,77 @@ def crontab_save(system, entries):
     system.say(f"Root's crontab has {sum(1 for entry in entries if entry.get('kind') != 'other')} jobs.")
 
 
+ERROR_LINE = re.compile(r"\b(error|errors|failed|failure|fatal|exception|traceback|denied|cannot|could not|unable to)\b", re.I)
+RUN_LINE = re.compile(r"^(\S+) \S+ CRON\[\d+\]: \(root\) CMD \((.*)\)$")
+
+
+def job_output(command):
+    """Where a job's output goes: ("file", path) for > or >> to a file, ("tag", tag) for | logger -t tag, or None"""
+    found = re.search(r"(?<![0-9&])>>?\s*(['\"]?)(/[^\s'\"]+)\1", command)
+    if found:
+        # Thrown away: nothing to show
+        return None if found.group(2) == "/dev/null" else ("file", found.group(2))
+    found = re.search(r"\|\s*(?:/usr/bin/)?logger\b[^|]*?\s-t\s*(['\"]?)([^\s'\"]+)\1", command)
+    return ("tag", found.group(2)) if found else None
+
+
+def tail_text(path, lines=80, size=65536):
+    with open(path, "rb") as stream:
+        stream.seek(0, 2)
+        stream.seek(max(0, stream.tell() - size))
+        text = stream.read().decode("utf-8", "replace")
+    return text.splitlines()[-lines:]
+
+
+def crontab_log(system, command, days=14):
+    """What is known of a job: when cron started it (its journal, the last days), and the end of its output with the
+    lines that look like errors. cron does not log how a job ended, so its output is what tells."""
+    command = str(command).strip()
+    found = system.run("journalctl", "-u", "cron", "--since", f"-{days}d", "-o", "short-iso", "--no-pager", "--case-sensitive=true",
+                       "-g", "CMD \\(" + re.escape(command[:900]), check=False, capture=True)
+    runs = [match.group(1) for match in map(RUN_LINE.match, (found.stdout if found.ok else "").splitlines())
+            if match and match.group(2) == command]
+    output = {"kind": "", "where": "", "modified": None, "lines": []}
+    target = job_output(command)
+    if target and target[0] == "file":
+        path = system.path(target[1])
+        output.update(kind="file", where=target[1])
+        try:
+            output.update(modified=int(path.stat().st_mtime), lines=tail_text(path))
+        except OSError:
+            pass
+    elif target:
+        logged = system.run("journalctl", "-t", target[1], "-n", "80", "-o", "short-iso", "--no-pager", check=False, capture=True)
+        output.update(kind="tag", where=target[1], lines=(logged.stdout if logged.ok else "").splitlines()[-80:])
+    # SQL Server's line after every DBCC says "error" without being one
+    errors = [line for line in output["lines"] if ERROR_LINE.search(line) and not line.startswith("DBCC execution completed.")][-20:]
+    return {"command": command, "days": days, "runs": runs[-50:][::-1], "runs_count": len(runs), "output": output, "errors": errors}
+
+
 # ---- Node.js
 def node_install(system, major):
-    """Node.js of a major version from NodeSource's repository, replacing another major version"""
+    """Node.js of a major version from NodeSource's repository. There is one nodejs package: another major version is
+    replaced by it, also a newer one (apt does not go down a version by itself, so the version is named). Packages
+    installed with npm -g stay in /usr/lib/node_modules."""
     if not re.fullmatch(r"[0-9]{2}", str(major)) or int(major) < 18:
         raise Stop(f"Not a Node.js version: {major} (such as 22 or 24)")
-    system.plan([f"Add the Node.js {major} repository", f"Install Node.js {major}"])
+    before = system.output("node", "--version", check=False) if system.which("node") else ""
+    install = f"Install Node.js {major}" + (f" in place of {before.lstrip('v')}" if before and not before.startswith(f"v{major}.") else "")
+    system.plan([f"Add the Node.js {major} repository", install])
     system.step(f"Add the Node.js {major} repository")
     with tempfile.NamedTemporaryFile(suffix=".sh") as setup:
         system.run("curl", "-fsSL", NODESOURCE.format(major), "-o", setup.name)
         system.run("bash", setup.name)
-    system.step(f"Install Node.js {major}")
-    system.run("apt-get", "install", "-y", "nodejs")
+    system.step(install)
+    # The newest of the major version the repository has: named, so it replaces a newer one too
+    offered = re.findall(r"(?m)^\s*nodejs\s*\|\s*(\S+)\s*\|", system.output("apt-cache", "madison", "nodejs", check=False))
+    wanted = next((version for version in offered if version.startswith(f"{major}.")), "")
+    system.run("apt-get", "install", "-y", "--allow-downgrades", f"nodejs={wanted}" if wanted else "nodejs")
     version = system.output("node", "--version", check=False)
     if not version.startswith(f"v{major}."):
         raise Stop(f"Node.js {major} was not installed (node --version: {version or 'none'}).")
-    system.say(f"Node.js {version.lstrip('v')} with npm {system.output('npm', '--version', check=False)}")
+    replaced = f", in place of {before.lstrip('v')}" if before and before != version else ""
+    system.say(f"Node.js {version.lstrip('v')} with npm {system.output('npm', '--version', check=False)}{replaced}")
 
 
 def node_remove(system):

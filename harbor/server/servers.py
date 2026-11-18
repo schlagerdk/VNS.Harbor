@@ -77,6 +77,19 @@ for name in sorted(os.listdir("/etc/systemd/system")) if os.path.isdir("/etc/sys
     if match:
         admin = match.group(1)
 found["admin"] = admin
+# Its own sites: the folders in /var/www that are not the admin, nor an environment managed from another server (a
+# note in /var/lib/vns-managed). While it has any, Harbor is needed there.
+try:
+    managed = set(os.listdir("/var/lib/vns-managed"))
+except OSError:
+    managed = set()
+own = []
+for name in sorted(os.listdir("/var/www")) if os.path.isdir("/var/www") else []:
+    path = os.path.join("/var/www", name)
+    if name in (admin, "html") or name.startswith(".") or name in managed or os.path.islink(path) or not os.path.isdir(path):
+        continue
+    own.append(name)
+found["own_sites"] = own
 # The names the admin is reached by (its ServerName and aliases): a site's temporary alias goes under the one that
 # reaches the server now
 found["admin_names"] = []
@@ -332,22 +345,167 @@ echo "Harbor is uninstalled. The sites are not touched."
 """
 
 
-def remove(system, name, uninstall=False, revoke_key=False):
-    """A server forgotten here. With uninstall Harbor goes from it too (only /opt/harbor and its command), with
-    revoke_key Harbor's key is taken out of authorized_keys there, so this server can no longer log in."""
+def same_share(share, under):
+    """Whether a folder in a Windows share is in another share (//host/share$/sites/shop in //host/share$/sites)"""
+    norm = lambda text: str(text or "").replace("\\", "/").strip().rstrip("/").lower()
+    return bool(norm(under)) and (norm(share) == norm(under) or norm(share).startswith(norm(under) + "/"))
+
+
+def environments_on(system, host, share=""):
+    """The environments of sites here that run on a server: a Linux one by its address (they publish and sync with
+    Harbor's key, so it stays there while they are), a Windows one by its share (each its folder in it)"""
+    import glob
+    import json
+    import re as _re
+    from harbor.environments.settings import parse
+    found = []
+    for path in sorted(glob.glob(str(system.path("/var/lib/harbor/sites")) + "/*/environments/*.json")):
+        try:
+            data = json.loads(open(path, encoding="utf-8").read())
+        except (OSError, ValueError):
+            continue
+        if isinstance(data, dict) and ((host and data.get("IP") == host) or (share and same_share(data.get("WINDOWS_SHARE"), share))):
+            parts = path.split("/")
+            found.append(f"{parts[-3]} ({parts[-1][:-len('.json')]})")
+    # Sites not migrated yet: the settings in their publish script
+    for path in sorted(glob.glob(str(system.path("/var/www")) + "/*/scripts/publish_prod.sh") + glob.glob(str(system.path("/var/www")) + "/*/scripts/targets/*/publish_prod.sh")):
+        try:
+            values = parse(open(path, encoding="utf-8", errors="replace").read())
+        except (OSError, ValueError):
+            continue
+        if (host and values.get("IP") == host) or (share and same_share(values.get("WINDOWS_SHARE"), share)):
+            site = _re.search(r"/var/www/([^/]+)/scripts", path.replace(str(system.path("/")), "/", 1))
+            label = site.group(1) if site else path
+            if not any(item.startswith(label + " ") for item in found):
+                found.append(label)
+    return found
+
+
+def sql_connections_to(system, entry, name):
+    """The SQL connections of the admin here that reach a server (by its address, names or SSH): they use it"""
+    import glob
+    addresses = {value.lower() for value in (entry.get("host"), entry.get("public"), entry.get("fqdn"), name, *(entry.get("names") or [])) if value}
+    found = []
+    for path in glob.glob(str(system.path("/var/www")) + "/*/app/sql-connections.json"):
+        try:
+            items = json.loads(open(path, encoding="utf-8").read())
+        except (OSError, ValueError):
+            continue
+        for item in items if isinstance(items, list) else []:
+            hosts = {str(item.get(key, "")).lower().split(",")[0].split("\\")[0] for key in ("host", "ssh_host") if item.get(key)}
+            if hosts & addresses:
+                found.append(item.get("name") or item.get("host"))
+    return found
+
+
+def uninstall_blockers(system, name, entry, found):
+    """Why Harbor must stay on a server: sites of its own (not environments managed from another server), or an SQL
+    connection here that reaches it"""
+    reasons = []
+    own = found.get("own_sites") or []
+    if own:
+        reasons.append(f"it has sites of its own: {', '.join(own[:5])}{' and more' if len(own) > 5 else ''}")
+    connections = sql_connections_to(system, entry, name)
+    if connections:
+        reasons.append(f"SQL connections here use it: {', '.join(connections)}")
+    return reasons
+
+
+def adopt_environment_servers(system):
+    """The servers the environments here run on, put in Servers where they are not: an environment made before a server
+    had to be chosen from Servers (or by an older release) is then known by it, and can be chosen and removed as the
+    others. Nothing is done on those servers: a Linux one is named by its own hostname when Harbor's key reaches it,
+    else by its address; a Windows one gets the share and login its environment has. Run by the update."""
+    from harbor.environments import settings
+    found = servers(system)
+    added = []
+
+    def free(name):
+        name = re.sub(r"[^a-z0-9-]+", "-", name.lower()).strip("-")[:56] or "server"
+        candidate, number = name, 2
+        while candidate in found:
+            candidate, number = f"{name}-{number}", number + 1
+        return candidate
+
+    web = system.path("/var/www")
+    state = system.path(settings.STATE)
+    names = sorted({path.name for folder in (web, state) if folder.is_dir() for path in folder.iterdir() if path.is_dir()})
+    for site in names:
+        root = f"/var/www/{site}"
+        for target in settings.target_ids(system, root):
+            try:
+                values = settings.values(system, root, target) or {}
+            except settings.SettingsError:
+                continue
+            if values.get("TARGET") == "windows":
+                share = values.get("WINDOWS_SHARE", "").replace("\\", "/").rstrip("/").rsplit("/", 1)[0]
+                if not SHARE.fullmatch(share) or any(same_share(values.get("WINDOWS_SHARE"), entry.get("share")) for entry in found.values() if entry.get("kind") == "windows"):
+                    continue
+                name = free("windows-" + share.lstrip("/").split("/")[0])
+                found[name] = {"kind": "windows", "share": share, "user": values.get("SMB_USER", ""), "domain": values.get("SMB_DOMAIN", ""),
+                               "added": datetime.now(timezone.utc).isoformat(timespec="seconds"), "adopted": True}
+                if values.get("SMB_PASSWORD"):
+                    secrets = system.path(SECRETS)
+                    secrets.mkdir(parents=True, exist_ok=True)
+                    secrets.chmod(0o700)
+                    write_json(secrets / f"{name}.json", {"password": values["SMB_PASSWORD"]}, private=True)
+                added.append(f"{name} ({share})")
+                continue
+            host = values.get("IP", "")
+            if not host or not HOST.fullmatch(host) or any(entry.get("host") == host for entry in found.values() if entry.get("kind") != "windows"):
+                continue
+            user = values.get("USER") or "root"
+            port = int(values.get("SSH_PORT") or 22) if str(values.get("SSH_PORT") or "22").isdigit() else 22
+            entry = {"host": host, "user": user if USER.fullmatch(user) else "root", "port": port}
+            known = remote(system, entry, "hostname -s", check=False)
+            hostname = known.stdout.strip().splitlines()[-1] if known.ok and known.stdout.strip() else ""
+            name = free(hostname if NAME.fullmatch(hostname.lower()) else "server-" + host.replace(".", "-").replace(":", "-"))
+            found[name] = {**entry, "added": datetime.now(timezone.utc).isoformat(timespec="seconds"), "adopted": True}
+            added.append(f"{name} ({user}@{host})")
+    if added:
+        write_json(system.path(SERVERS), found)
+        system.say(f"Servers the environments here run on, added to Servers: {', '.join(added)}.")
+    else:
+        system.say("Every server the environments here run on is in Servers.")
+    return added
+
+
+def remove(system, name, uninstall=False):
+    """A server forgotten here. Harbor's key goes from it too (authorized_keys there), so this server cannot log in
+    there any more unseen: always, unless an environment of a site here runs there (it publishes and syncs with the
+    key), or the server does not answer. With uninstall Harbor goes from it too (only /opt/harbor and its command),
+    unless it is used there (uninstall_blockers)."""
     found = servers(system)
     entry = found.get(name)
     if entry is None:
         raise Stop(f"No server {name}.")
     if entry.get("kind") == "windows":
+        # An environment on it is made from it: it stays in Servers while there is one, so what runs where is known
+        using = environments_on(system, "", entry.get("share", ""))
+        if using:
+            raise Stop(f"Environments here run on {name}: {', '.join(using)}. It stays in Servers while they are there.")
         del found[name]
         write_json(system.path(SERVERS), found)
         system.path(f"{SECRETS}/{name}.json").unlink(missing_ok=True)
         system.say(f"{name} is removed here, with its password. Nothing on it was changed.")
         return
-    if uninstall or revoke_key:
-        if not remote(system, entry, "true", check=False).ok:
-            raise Stop(f"{name} does not answer, so Harbor cannot be uninstalled or its key taken out there. Remove it without them.")
+    # An environment here runs on it: it stays in Servers (and its key there) while it does, so what runs where is known
+    using = environments_on(system, entry["host"])
+    if using:
+        raise Stop(f"Environments here run on {name}: {', '.join(using)}. It stays in Servers while they are there.")
+    answers = remote(system, entry, "true", check=False).ok
+    if uninstall and not answers:
+        raise Stop(f"{name} does not answer, so Harbor cannot be uninstalled there. Remove it without that.")
+    revoke_key = answers
+    if uninstall:
+        result = remote(system, entry, "python3 -", input=STATUS, check=False)
+        try:
+            there = json.loads(result.stdout.strip().splitlines()[-1]) if result.ok else {}
+        except (ValueError, IndexError):
+            there = {}
+        reasons = uninstall_blockers(system, name, entry, there)
+        if reasons:
+            raise Stop(f"Harbor stays on {name}: {'; '.join(reasons)}.")
     system.plan([*([f"Uninstall Harbor on {name}"] if uninstall else []), *([f"Take Harbor's key off {name}"] if revoke_key else [])])
     if uninstall:
         system.step(f"Uninstall Harbor on {name}")
@@ -364,7 +522,7 @@ def remove(system, name, uninstall=False, revoke_key=False):
     # Its host key goes too, unless another server here is at the same address
     if not any(other.get("host") == entry["host"] and int(other.get("port", 0)) == int(entry["port"]) for other in found.values()):
         forget_host_key(system, entry["host"], entry["port"])
-    left = [] if revoke_key else [f"Harbor's key stays in ~/.ssh/authorized_keys on {entry['host']}"]
+    left = [] if revoke_key else [f"Harbor's key stays on {entry['host']}, as it does not answer"]
     if not uninstall:
         left.append("Harbor stays installed there")
     system.say(f"{name} is removed here." + (" " + "; ".join(left) + "." if left else ""))
@@ -416,7 +574,9 @@ def status(system, name):
     except (ValueError, IndexError):
         found = {}
     remember_public(system, name, found.get("public", ""), found.get("fqdn"), found.get("admin_names"))
-    return {"name": name, **{key: entry[key] for key in ("host", "user", "port")}, "reachable": True, **judged(found)}
+    # Why Harbor must stay there, for Remove: sites of its own, or SQL connections here that reach it
+    return {"name": name, **{key: entry[key] for key in ("host", "user", "port")}, "reachable": True, **judged(found),
+            "keep_harbor": uninstall_blockers(system, name, entry, found)}
 
 
 def remember_public(system, name, public, fqdn=None, admin_names=None):

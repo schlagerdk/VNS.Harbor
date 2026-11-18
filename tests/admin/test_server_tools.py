@@ -52,8 +52,9 @@ class ServerToolCommandTests(unittest.TestCase):
         self.assertEqual(argv[2:], ["servers", "add", "linux-02", "172.23.3.16", "--user", "root", "--port", "22"])
         self.assertEqual(env, {"HARBOR_SSH_PASSWORD": "pw 1"})
         self.assertEqual(self.ns["servers_command"]({"action": "install", "name": "linux-02"})[1][2:], ["servers", "install", "linux-02"])
+        # Harbor's key always goes (not while an environment runs there): no option for it
         self.assertEqual(self.ns["servers_command"]({"action": "remove", "name": "linux-02", "uninstall": True, "revoke_key": True})[1][2:],
-                         ["servers", "remove", "linux-02", "--uninstall", "--revoke-key"])
+                         ["servers", "remove", "linux-02", "--uninstall"])
         self.assertEqual(self.ns["servers_command"]({"action": "remove", "name": "linux-02", "uninstall": "yes"})[1][2:], ["servers", "remove", "linux-02"])
         for data in ({"action": "add", "name": "Linux 02", "host": "x"}, {"action": "add", "name": "a", "host": "x;id"},
                      {"action": "add", "name": "a", "host": "x", "port": "22; id"}, {"action": "reboot", "name": "a"}):

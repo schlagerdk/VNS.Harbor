@@ -5,7 +5,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/schlagerdk/VNS.Harbor/main/install.sh | sudo bash
 #
 # The base setup (time zone, updates, the few packages Harbor itself needs), the newest release of Harbor in
-# /opt/harbor, then the server made ready for sites (harbor server init: Apache, acme.sh, .NET, keep-alive) and,
+# /opt/harbor, then the server made ready for sites (harbor server init: Apache, acme.sh, keep-alive) and,
 # if wanted, the admin site (harbor admin install). HARBOR_REF=v1.2.3 installs that release instead, and
 # HARBOR_REF=main the newest code on main (to try it before a release).
 # Run again, it only brings what is missing; a server that has Harbor is updated from the admin, or harbor self update.
@@ -51,7 +51,6 @@ git -C "${source}/harbor" rev-parse HEAD >"${source}/harbor/.vns-version"
 python3 "${source}/harbor/bin/harbor" self install "${source}/harbor"
 
 echo "== The server, ready for sites"
-# It asks for root's Samba password
 harbor server init <"${tty}"
 
 if [[ -n $(python3 -c 'import sys; sys.path.insert(0, "/opt/harbor/current"); from harbor.install.admin import admin_sites; from harbor.core.system import System; print(" ".join(admin_sites(System())))') ]]; then

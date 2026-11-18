@@ -217,14 +217,15 @@ const run = action => {job = action().catch(error => toast(error.message, "error
         panel = source[start:source.index("\n\t}\n\tdecorate(head)", start)]
         harness = r"""
 const assert = require("node:assert/strict");
-const el = (tag, properties, ...children) => Object.assign({tag, children, append(...items) {this.children.push(...items);}}, properties);
+const el = (tag, properties, ...children) => Object.assign({tag, children, setAttribute() {}, append(...items) {this.children.push(...items);}}, properties);
 const svgIcon = name => ({icon: name});
 const run = () => {}, openPackageDialog = () => {}, openTask = () => {}, updatePackages = () => {};
+const unfoldedPackages = new Set();
 const flatten = node => [node, ...(node.children || []).flatMap(flatten)];
 const site = {name: "example", packages: [{name:"One",version:"1.0"},{name:"Two",version:"2.0"}],
     package_updates: [{name:"One",current:"1.0",latest:"3.0"},{name:"Two",current:"2.0",latest:"4.0"}], updates:"available"};
 function render(site) {
-    const packagesPanel = el("section", {});
+    const packagesPanel = el("section", {classList: {toggle() {}, contains() {return false;}}});
     PANEL
     return flatten(packagesPanel);
 }

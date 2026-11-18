@@ -106,7 +106,7 @@ const assert = require("node:assert/strict");
 const nodes = {};
 const document = {querySelector: () => null, activeElement: null};
 function el(tag, props = {}, ...children) {
-    return Object.assign({children, dataset: {}, classList: {add() {}, remove() {}}, get childElementCount() {return this.children.length;}, append(...items) {this.children.push(...items);},
+    return Object.assign({children, dataset: {}, classList: {add() {}, remove() {}, toggle() {}, contains() {return false;}}, setAttribute() {}, get childElementCount() {return this.children.length;}, append(...items) {this.children.push(...items);},
         replaceChildren() {this.children = [];}}, props);
 }
 const $ = selector => nodes[selector] ||= el("div");
@@ -126,7 +126,11 @@ const kindBadges = () => el("span");
 const decorate = () => {};
 const updateSiteActivity = () => {};
 const envPanel = () => el("div");
-let envLayout = "grid";
+let envLayout = "grid", envLayoutChoice = "grid";
+const layoutOf = choice => choice;
+const phoneWidth = {matches: false};
+const svgIcon = () => el("svg");
+const unfoldedPackages = new Set();
 const pruneButtons = () => {};
 const canAnywhere = () => true;
 const envKeyOf = env => env.key === "main" ? "main" : env.target || "prod";

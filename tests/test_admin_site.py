@@ -66,6 +66,38 @@ class AdminUpdateTests(unittest.TestCase):
         self.assertIn("not an admin site", system.said[-1])
 
 
+class AdminAccessTests(AdminUpdateTests):
+    CONF = ("<VirtualHost *:443>\n  ServerName admin.example.test\n\n  <Location />\n    Require all granted\n  </Location>\n\n"
+            "  ProxyPass / http://127.0.0.1:4007/\n</VirtualHost>\n")
+
+    def write_conf(self, text=None):
+        conf = self.root / "etc/apache2/sites-available/admin.example.test.conf"
+        conf.parent.mkdir(parents=True, exist_ok=True)
+        conf.write_text(text or self.CONF)
+        return conf
+
+    def test_who_may_reach_it_is_read_and_set(self):
+        conf = self.write_conf()
+        system = RecordingSystem(root=self.root)
+        self.assertEqual(admin.allowed_addresses(system), [])
+        admin.set_allowed_addresses(system, "", ["192.0.2.10", "10.0.0.0/8,2001:db8::/32"])
+        self.assertIn("  <Location />\n    Require ip 192.0.2.10 10.0.0.0/8 2001:db8::/32\n  </Location>\n", conf.read_text())
+        self.assertEqual(admin.allowed_addresses(system), ["192.0.2.10", "10.0.0.0/8", "2001:db8::/32"])
+        self.assertIn("systemctl reload apache2", system.commands)
+        admin.set_allowed_addresses(system, "", [])
+        self.assertEqual(conf.read_text(), self.CONF)
+
+    def test_a_change_apache_refuses_and_a_bad_address_are_refused(self):
+        from harbor.core.system import Result
+        conf = self.write_conf()
+        system = RecordingSystem(root=self.root, answers={"apache2ctl configtest": Result(1, "", "Syntax error")})
+        with self.assertRaises(Exception):
+            admin.set_allowed_addresses(system, "", ["192.0.2.10"])
+        self.assertEqual(conf.read_text(), self.CONF)
+        with self.assertRaises(Exception):
+            admin.set_allowed_addresses(RecordingSystem(root=self.root), "", ["192.0.2.10; rm -rf /"])
+
+
 class AdminAppTests(unittest.TestCase):
     """The admin's code finds its data and the release's apache folder"""
 

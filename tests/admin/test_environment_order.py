@@ -75,10 +75,10 @@ console.log(JSON.stringify(sortedEnvironments(input).map((env) => env.binding)))
 
     def test_site_actions_are_beside_the_environments_and_delete_is_at_the_bottom(self):
         source = (APP / "static/app.js").read_text()
-        self.assertIn('targetsActions.append(el("button", { textContent: "Publish environments"', source)
+        self.assertIn('const publishEnvironments = el("button", { textContent: "Publish environments"', source)
         # Sync settings… on the main site has Select all, so there is no separate Sync settings to all
         self.assertNotIn('"Sync settings to all"', source)
-        self.assertIn('targetsActions.append(el("button", { textContent: "Sync settings…", className: "desktop-only", title: "Sync settings from the main site", onclick: () => run(() => openSyncDialog(site, mainEnv)) }));', source)
+        self.assertIn('targetsActions.append(el("button", { textContent: "Sync settings…", title: "Sync settings from the main site", onclick: () => run(() => openSyncDialog(site, mainEnv)) }));', source)
         self.assertIn('danger.append(el("button", { textContent: "Delete everything"', source)
         # An environment on its own card; the main site only when it has none (they are built from its project)
         self.assertIn('else if (hasProd(site) && !site.admin && isTarget(env)) addManage("Delete site", () => deleteSite(site, "prod", env), "danger");', source)
@@ -92,7 +92,11 @@ console.log(JSON.stringify(sortedEnvironments(input).map((env) => env.binding)))
         self.assertIn('const meta = el("dl", { className: "meta" }, el("dt", { textContent: "Binding" }), el("dd", {}, binding,', source)
         self.assertIn(".env-head .publish-status { flex-basis: auto; }", (APP / "static/style.css").read_text())
         row = source[source.index("function compactEnvironmentRow"):source.index("function siteCard(")]
-        self.assertIn("openLink(bindingLabel(env) || address.hostname, address.url", row)
+        self.assertIn('openLink("Frontend", address.url', row)
+        # A site with more environments of the same kind (subsites) tells them apart by a label with the folder
+        self.assertIn("const folder = envFolderLabel(site, env);", row)
+        label = source[source.index("function envFolderLabel"):source.index("function publishBadge")]
+        self.assertIn("if (new Set(kinds).size === kinds.length) return null;", label)
         # The Backend button logs straight in when the site has the VNS.Harbor package and a chosen user
         self.assertIn('backendButton(site, env, address.url + "umbraco"', row)
 
@@ -300,6 +304,15 @@ console.log(JSON.stringify([same, other, server]));
         for text in (page, (APP / "static/app.js").read_text()):
             self.assertNotIn("Create production site", text)
         self.assertIn("Add environment", page)
+
+
+    def test_nothing_disabled_has_a_hover_effect(self):
+        css = re.sub(r"/\*.*?\*/", "", (APP / "static/style.css").read_text(), flags=re.S)
+        for rule in re.findall(r"[^{}]+(?=\{)", css):
+            # Each :hover is followed by the guard, except in the disabled look itself and on a scrollbar
+            if "::" in rule or ":disabled:hover" in rule:
+                continue
+            self.assertEqual(re.findall(r":hover(?!:not\((?::where\(:disabled, \.disabled, \.off|:disabled\)))", rule), [], rule.strip())
 
 
 if __name__ == "__main__":

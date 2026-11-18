@@ -16,6 +16,15 @@ from tests.admin.app_targets import add_target_helpers
 
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
+def kept_from_dialog(data, kind):
+    """Servers, as the tests have it: the server chosen holds what the dialog used to send"""
+    if not data.get("windows_server" if kind == "windows" else "remote_server"):
+        return None
+    if kind == "windows":
+        return {"share": data.get("smb_share", ""), "user": data.get("smb_user", ""), "password": data.get("smb_password", ""), "domain": data.get("smb_domain", "")}
+    return {"host": data.get("host", ""), "user": data.get("user", ""), "port": str(data.get("ssh_port", "22"))}
+
+
 class ProductionEnvironmentTests(unittest.TestCase):
     def test_modal_environment_for_local_and_remote_targets(self):
         source = (ROOT_DIR / "admin/app.py").read_text()
@@ -32,9 +41,13 @@ class ProductionEnvironmentTests(unittest.TestCase):
                   "_normalize_site_name": normalize_site_name, "service_name": service_name}
             exec(compile(ast.Module(body=nodes, type_ignores=[]), "production env", "exec"), ns)
             add_target_helpers(ns)
+            ns["kept_server"] = kept_from_dialog
+            # Another server is one in Servers: one typed in the dialog is refused
+            with self.assertRaises(BadRequest):
+                ns["production_setup_env"](dict(target="remote", folder="prod.test", binding="prod.test", host="server.test", user="root", ssh_port="22"), "example.test")
             for target in ("local", "remote"):
                 data = dict(target=target, folder="prod.test", binding="prod.test",
-                            local_path=str(scripts.parent / "_prod"),
+                            local_path=str(scripts.parent / "_prod"), remote_server="server",
                             host="server.test", user="root", ssh_port="22")
                 for environment in ("Development", "Test", "Staging", "Production"):
                     result = ns["production_setup_env"](data | {"environment": environment}, "example.test")

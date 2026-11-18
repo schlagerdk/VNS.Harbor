@@ -58,13 +58,55 @@ class StatusTests(Server):
         system.programs.add("node")
         found = tools.status(system, sql)
         self.assertEqual(found["os"]["name"], "Ubuntu 24.04.1 LTS")
-        self.assertEqual(found["sql_server"], {"installed": True, "version": "16.0.4185.3-1", "running": True, "packages_for": ""})
-        self.assertEqual(found["sql_tools"], {"installed": True, "version": "18.4.1.1-1"})
+        self.assertEqual(found["sql_server"], {"installed": True, "version": "16.0.4185.3-1", "newer": "", "running": True, "packages_for": ""})
+        self.assertEqual(found["sql_tools"], {"installed": True, "version": "18.4.1.1-1", "newer": ""})
         self.assertEqual(found["sa_password"], {"scripts": 2, "set": True})
         self.assertEqual(found["cron"], {"jobs": {"shrink_logs": False, "backup_everything": True}, "others": [CUSTOM]})
-        self.assertEqual(found["dotnet"], [{"channel": "10.0", "sdk": "10.0.103", "runtime": "10.0.3"},
-                                           {"channel": "8.0", "sdk": "8.0.404", "runtime": "8.0.11"}])
-        self.assertEqual(found["node"], {"version": "22.11.0", "npm": "10.9.0"})
+        self.assertEqual(found["dotnet"], [{"channel": "10.0", "sdk": "10.0.103", "runtime": "10.0.3", "update": None, "sites": []},
+                                           {"channel": "8.0", "sdk": "8.0.404", "runtime": "8.0.11", "update": None, "sites": []}])
+        self.assertEqual(found["node"], {"version": "22.11.0", "npm": "10.9.0", "newer": "", "sites": []})
+
+    def test_whether_an_update_is_there(self):
+        policy = "mssql-server:\n  Installed: 17.0.5035.5-3\n  Candidate: 17.0.5065.9-3\n"
+        system = self.system(**{"apt-cache policy mssql-server": policy, "dpkg --compare-versions": Result(0)})
+        self.assertEqual(tools.newer_package(system, "mssql-server"), "17.0.5065.9-3")
+        system = self.system(**{"apt-cache policy mssql-server": "mssql-server:\n  Installed: 1.0\n  Candidate: 1.0\n"})
+        self.assertEqual(tools.newer_package(system, "mssql-server"), "")
+        releases = {"8.0": '{"latest-sdk": "8.0.428", "latest-runtime": "8.0.34"}', "10.0": "not json"}
+        system = self.system(curl=lambda argv: releases["8.0" if "/8.0/" in argv[-1] else "10.0"])
+        items = [{"channel": "8.0", "sdk": "8.0.427", "runtime": "8.0.33"}, {"channel": "10.0", "sdk": "10.0.404", "runtime": "10.0.15"}]
+        found = tools.dotnet_updates(system, items)
+        self.assertEqual(found[0], {"channel": "8.0", "sdk": "8.0.427", "runtime": "8.0.33", "update": True, "latest_sdk": "8.0.428", "latest_runtime": "8.0.34"})
+        # A channel the list cannot tell keeps its Update button as it was
+        self.assertIsNone(found[1]["update"])
+        # Kept for six hours: asked again, it is not fetched again
+        cached = self.system(curl=lambda argv: self.fail("fetched again"))
+        self.assertTrue(tools.dotnet_updates(cached, items[:1])[0]["update"])
+
+    def test_what_uses_dotnet_and_node(self):
+        web = self.root / "var/www"
+        (web / "shop.dk/Shop").mkdir(parents=True)
+        (web / "shop.dk/Shop.csproj").write_text("<Project><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>")
+        (web / "shop.dk/Shop/package.json").write_text('{"name": "shop", "engines": {"node": ">=20 <23"}}')
+        (web / "shop.dk/node_modules/left-pad").mkdir(parents=True)
+        (web / "shop.dk/node_modules/left-pad/package.json").write_text('{"engines": {"node": ">=0.10"}}')
+        (web / "old.dk").mkdir()
+        (web / "old.dk/Old.runtimeconfig.json").write_text('{"runtimeOptions": {"tfm": "net8.0"}}')
+        (web / "multi.dk").mkdir()
+        (web / "multi.dk/Multi.csproj").write_text("<Project><PropertyGroup><TargetFrameworks>net8.0;net10.0</TargetFrameworks></PropertyGroup></Project>")
+        (web / "multi.dk/Multi.runtimeconfig.json").write_text('{"runtimeOptions": {"tfm": "net8.0"}}')
+        units = self.root / "etc/systemd/system"
+        units.mkdir(parents=True)
+        (units / "chat.dk.service").write_text("[Service]\nExecStart=/usr/bin/node /var/www/chat.dk/server.js\n")
+        (units / "shop.dk.service").write_text("[Service]\nExecStart=/usr/lib/dotnet/dotnet Shop.dll\n")
+        system = self.system()
+        self.assertEqual(tools.dotnet_usage(system), {
+            "10": [{"site": "multi.dk", "how": "project"}, {"site": "shop.dk", "how": "project"}],
+            "8": [{"site": "multi.dk", "how": "project"}, {"site": "old.dk", "how": "published"}]})
+        self.assertEqual(tools.sites_using(system, "8.0"), ["multi.dk", "old.dk"])
+        self.assertEqual(tools.node_usage(system), [
+            {"site": "chat.dk", "how": "service", "path": "chat.dk.service", "engines": ""},
+            {"site": "shop.dk", "how": "package.json", "path": "Shop/package.json", "engines": ">=20 <23"}])
 
     def test_a_bare_server(self):
         sql = self.root / "sql"
@@ -157,8 +199,18 @@ class NodeTests(Server):
         system = self.system(**{"node --version": "v22.11.0", "npm --version": "10.9.0"})
         self.assertEqual(main(["server", "node", "install", "22"], system), 0, system.said)
         self.assertTrue(any(command.startswith("curl -fsSL https://deb.nodesource.com/setup_22.x -o ") for command in system.commands))
-        self.assertIn("apt-get install -y nodejs", system.commands)
+        self.assertIn("apt-get install -y --allow-downgrades nodejs", system.commands)
         self.assertEqual(system.said[-1], "Node.js 22.11.0 with npm 10.9.0")
+
+    def test_a_newer_version_is_replaced_by_an_older(self):
+        versions = iter(["v24.2.0", "v22.11.0"])
+        madison = (" nodejs | 22.11.0-1nodesource1 | https://deb.nodesource.com/node_22.x nodistro/main amd64 Packages\n"
+                   " nodejs | 18.19.1+dfsg-6ubuntu5 | http://archive.ubuntu.com/ubuntu noble/universe amd64 Packages\n")
+        system = self.system(**{"node --version": lambda argv: next(versions), "npm --version": "10.9.0", "apt-cache madison nodejs": madison})
+        system.programs.add("node")
+        self.assertEqual(main(["server", "node", "install", "22"], system), 0, system.said)
+        self.assertIn("apt-get install -y --allow-downgrades nodejs=22.11.0-1nodesource1", system.commands)
+        self.assertEqual(system.said[-1], "Node.js 22.11.0 with npm 10.9.0, in place of 24.2.0")
         system = self.system(**{"node --version": "v20.1.0"})
         self.assertEqual(main(["server", "node", "install", "24"], system), 1)
         for major in ("16", "", "22; id"):
@@ -286,6 +338,28 @@ class CrontabTests(Server):
                 self.assertEqual(self.crontab, "1 1 * * * kept\n", "nothing is written")
 
 
+class DotnetRemoveNewestTests(Server):
+    def test_the_newest_goes_when_unused_and_its_host_stays(self):
+        dotnet = self.root / "usr/lib/dotnet"
+        for folder in ("sdk/8.0.404", "sdk/10.0.103", "shared/Microsoft.AspNetCore.App/8.0.11", "shared/Microsoft.AspNetCore.App/10.0.3",
+                       "host/fxr/8.0.11", "host/fxr/10.0.3"):
+            (dotnet / folder).mkdir(parents=True, exist_ok=True)
+        (dotnet / "dotnet").write_text("")
+        system = self.system(**{"/usr/lib/dotnet/dotnet --list-sdks": SDKS, "/usr/lib/dotnet/dotnet --list-runtimes": RUNTIMES})
+        self.assertEqual(main(["server", "dotnet", "remove", "10.0"], system), 0, system.said)
+        self.assertFalse((dotnet / "sdk/10.0.103").exists() or (dotnet / "shared/Microsoft.AspNetCore.App/10.0.3").exists())
+        self.assertTrue((dotnet / "host/fxr/10.0.3").is_dir() and (dotnet / "host/fxr/8.0.11").is_dir())
+        self.assertIn("Its host 10.0.3 stays", system.said[-1])
+
+    def test_not_the_only_one(self):
+        (self.root / "usr/lib/dotnet").mkdir(parents=True)
+        (self.root / "usr/lib/dotnet/dotnet").write_text("")
+        system = self.system(**{"/usr/lib/dotnet/dotnet --list-sdks": "8.0.404 [x]\n",
+                                "/usr/lib/dotnet/dotnet --list-runtimes": "Microsoft.AspNetCore.App 8.0.11 [x]\n"})
+        self.assertEqual(main(["server", "dotnet", "remove", "8.0"], system), 1)
+        self.assertIn("the only version here", system.said[-1])
+
+
 class DotnetRemoveTests(Server):
     def make(self):
         dotnet = self.root / "usr/lib/dotnet"
@@ -306,8 +380,10 @@ class DotnetRemoveTests(Server):
 
     def test_not_the_newest_nor_one_a_site_uses(self):
         system = self.make()
+        (self.root / "var/www/shop.dk/Shop.csproj").write_text("<Project><PropertyGroup><TargetFramework>net10.0</TargetFramework></PropertyGroup></Project>")
         self.assertEqual(main(["server", "dotnet", "remove", "10.0"], system), 1)
-        self.assertIn("is the newest here", system.said[-1])
+        self.assertIn("used by shop.dk", system.said[-1])
+        (self.root / "var/www/shop.dk/Shop.csproj").unlink()
         for name, text in (("Shop.csproj", "<Project><PropertyGroup><TargetFramework>net8.0</TargetFramework></PropertyGroup></Project>"),
                            ("global.json", '{"sdk":{"version":"8.0.100"}}')):
             with self.subTest(name=name):
@@ -318,6 +394,28 @@ class DotnetRemoveTests(Server):
                 self.assertEqual(main(["server", "dotnet", "remove", "8.0"], system), 1)
                 self.assertIn("used by shop.dk", system.said[-1])
                 self.assertTrue((self.root / "usr/lib/dotnet/sdk/8.0.404").is_dir())
+
+
+class CrontabLogTests(Server):
+    def test_runs_and_the_end_of_the_output(self):
+        command = "/root/scripts/clean.sh >> /var/log/clean.log 2>&1"
+        journal = ("2026-11-17T03:00:01+01:00 HOST CRON[11]: (root) CMD (/root/scripts/clean.sh >> /var/log/clean.log 2>&1)\n"
+                   "2026-11-17T03:00:01+01:00 HOST CRON[12]: (root) CMD (/root/scripts/clean.sh >> /var/log/clean.log 2>&1 && echo more)\n"
+                   "2026-11-18T03:00:01+01:00 HOST CRON[13]: (root) CMD (/root/scripts/clean.sh >> /var/log/clean.log 2>&1)\n")
+        (self.root / "var/log").mkdir(parents=True)
+        (self.root / "var/log/clean.log").write_text("cleaned 4 files\nrm: cannot remove '/tmp/x': Permission denied\ndone\n")
+        found = tools.crontab_log(self.system(journalctl=journal), command)
+        # Only this job's runs, the newest first
+        self.assertEqual(found["runs"], ["2026-11-18T03:00:01+01:00", "2026-11-17T03:00:01+01:00"])
+        self.assertEqual(found["output"]["where"], "/var/log/clean.log")
+        self.assertEqual(found["output"]["lines"][-1], "done")
+        self.assertEqual(found["errors"], ["rm: cannot remove '/tmp/x': Permission denied"])
+
+    def test_where_the_output_goes(self):
+        self.assertEqual(tools.job_output("x.py 2>&1 | /usr/bin/logger -t vns-keep-alive"), ("tag", "vns-keep-alive"))
+        self.assertEqual(tools.job_output('x >> "/var/log/my.log"'), ("file", "/var/log/my.log"))
+        for command in ("x > /dev/null 2>&1", "x 2>/tmp/err", "x"):
+            self.assertIsNone(tools.job_output(command), command)
 
 
 class OlderUbuntuTests(Server):
@@ -360,49 +458,166 @@ class DefaultPageTests(Server):
 
 
 class SambaTests(Server):
-    def test_the_server_is_shared_by_its_short_name_and_root_gets_a_password(self):
-        from harbor.server.init import share_over_samba
+    def answers(self, **more):
+        return {"hostname -f": "linux-03.vns.dk", "dpkg -s samba": Result(0), "pdbedit -u root": Result(1, "", ""), **more}
+
+    def test_the_server_is_shared_by_its_short_name_and_root_gets_the_password_given(self):
+        from harbor.server import samba
         conf = self.root / "etc/samba/smb.conf"
         conf.parent.mkdir(parents=True)
         conf.write_text("[global]\n   workgroup = WORKGROUP\n")
-        system = RecordingSystem(root=self.root, answers={"hostname -f": "linux-03.vns.dk", "pdbedit -u root": Result(1, "", "")},
-                                 replies=["secret", "secret"])
-        share_over_samba(system)
+        system = RecordingSystem(root=self.root, answers=self.answers(**{"dpkg -s samba": Result(1)}))
+        with mock.patch.dict(os.environ, {"HARBOR_SAMBA_PASSWORD": "secret"}):
+            samba.share_over_samba(system)
         text = conf.read_text()
         self.assertTrue(text.startswith("[global]\n   workgroup = WORKGROUP\n"))
         self.assertIn("\n[linux-03]\n   path = /\n", text)
         self.assertIn("force user = root", text)
-        self.assertIn("smbpasswd -a -s root", system.commands)
+        self.assertIn("apt-get install -y samba", system.commands)
         self.assertEqual(system.inputs[system.commands.index("smbpasswd -a -s root")], "secret\nsecret\n")
         self.assertIn("systemctl enable --now smbd nmbd", system.commands)
         self.assertIn("systemctl reload smbd", system.commands)
 
-    def test_again_it_changes_nothing_and_without_a_terminal_it_only_says_how(self):
-        from harbor.server.init import share_over_samba
+    def test_in_a_terminal_root_is_asked_for_a_password(self):
+        from harbor.server import samba
+        system = RecordingSystem(root=self.root, answers=self.answers(), replies=["secret", "secret"])
+        samba.share_over_samba(system)
+        self.assertEqual(system.inputs[system.commands.index("smbpasswd -a -s root")], "secret\nsecret\n")
+
+    def test_again_it_changes_nothing_and_without_a_password_it_only_says_how(self):
+        from harbor.server import samba
         conf = self.root / "etc/samba/smb.conf"
         conf.parent.mkdir(parents=True)
         conf.write_text("[linux-03]\n   path = /srv\n")
-        system = RecordingSystem(root=self.root, answers={"hostname -f": "linux-03.vns.dk", "pdbedit -u root": Result(1, "", "")})
-        share_over_samba(system)
+        system = RecordingSystem(root=self.root, answers=self.answers())
+        samba.share_over_samba(system)
         self.assertEqual(conf.read_text(), "[linux-03]\n   path = /srv\n")
         self.assertFalse(any(line.startswith("smbpasswd") for line in system.commands))
         self.assertIn("Root has no Samba password yet: set it with smbpasswd -a root", system.said)
         self.assertNotIn("systemctl reload smbd", system.commands)
 
-    def test_it_is_asked_and_only_made_when_wanted(self):
-        from harbor.server.init import wants_samba
-        answers = {"hostname -f": "linux-03.vns.dk"}
-        for reply, expected in (("", True), ("y", True), ("n", False)):
-            system = RecordingSystem(root=self.root, answers=answers, replies=[reply] if reply else [""])
-            self.assertEqual(wants_samba(system), expected, reply)
-            self.assertEqual(system.asked, ["Share the whole server over Samba, as root? [Y/n]: "])
-        # Nobody to ask: not made
-        system = RecordingSystem(root=self.root, answers=answers)
-        self.assertFalse(wants_samba(system))
-        self.assertEqual(system.asked, [])
-        # A share there already is kept up without a question
+    def test_stop_sharing_takes_out_the_share_only(self):
+        from harbor.server import samba
         conf = self.root / "etc/samba/smb.conf"
         conf.parent.mkdir(parents=True)
-        conf.write_text("[linux-03]\n   path = /\n")
-        system = RecordingSystem(root=self.root, answers=answers)
-        self.assertTrue(wants_samba(system))
+        conf.write_text("[global]\n   workgroup = WORKGROUP\n\n[linux-03]\n   path = /\n   force user = root\n\n[other]\n   path = /srv\n")
+        system = RecordingSystem(root=self.root, answers=self.answers())
+        samba.stop_sharing(system)
+        self.assertEqual(conf.read_text(), "[global]\n   workgroup = WORKGROUP\n\n[other]\n   path = /srv\n")
+        self.assertIn("systemctl disable --now smbd nmbd", system.commands)
+        self.assertFalse(samba.has_share(system))
+
+    def test_an_older_share_of_the_whole_server_counts_by_its_path(self):
+        from harbor.server import samba
+        conf = self.root / "etc/samba/smb.conf"
+        conf.parent.mkdir(parents=True)
+        conf.write_text("[global]\n   workgroup = WORKGROUP\n\n[printers]\n   path = /var/tmp\n\n[kikayo/]\n   path = /\n   force user = root\n")
+        system = RecordingSystem(root=self.root, answers=self.answers())
+        self.assertEqual(samba.root_share(system), "kikayo/")
+        samba.share_over_samba(system)
+        self.assertNotIn("[linux-03]", conf.read_text())
+        samba.stop_sharing(system)
+        self.assertEqual(conf.read_text(), "[global]\n   workgroup = WORKGROUP\n\n[printers]\n   path = /var/tmp\n")
+
+    def test_shares_are_listed_added_changed_and_deleted(self):
+        from harbor.server import samba
+        conf = self.root / "etc/samba/smb.conf"
+        conf.parent.mkdir(parents=True)
+        (self.root / "var/www").mkdir(parents=True)
+        (self.root / "srv/files").mkdir(parents=True)
+        conf.write_text("[global]\n   workgroup = WORKGROUP\n\n[printers]\n   path = /var/tmp\n\n[kikayo/]\n   path = /\n   force user = root\n   create mask = 0644\n")
+        system = RecordingSystem(root=self.root, answers=self.answers(**{"testparm -s": Result(0)}))
+        self.assertEqual(samba.shares(system), [{"name": "kikayo/", "path": "/", "read_only": True, "browseable": True, "guest_ok": False,
+                                                 "force_user": "root", "valid_users": "", "comment": ""}])
+        samba.save_share(system, {"name": "www", "path": "/var/www", "force_user": "www-data"})
+        self.assertEqual([share["name"] for share in samba.shares(system)], ["kikayo/", "www"])
+        self.assertIn("systemctl reload smbd", system.commands)
+        # Changed: renamed, read and write; a line Server tools does not show stays
+        samba.save_share(system, {"name": "root", "path": "/", "force_user": "root", "read_only": False}, "kikayo/")
+        text = conf.read_text()
+        self.assertNotIn("[kikayo/]", text)
+        self.assertIn("[root]\n   path = /\n   force user = root\n   create mask = 0644\n   read only = no\n", text)
+        self.assertIn("[www]\n   path = /var/www\n", text)
+        samba.delete_share(system, "www")
+        self.assertEqual([share["name"] for share in samba.shares(system)], ["root"])
+        self.assertTrue(text.startswith("[global]\n   workgroup = WORKGROUP\n\n[printers]\n"))
+        # Refused: no folder, a name there already, a section that is not a share
+        for share, old in (({"name": "x", "path": "/nowhere"}, ""), ({"name": "ROOT", "path": "/srv/files"}, ""), ({"name": "global", "path": "/srv/files"}, "")):
+            with self.assertRaises(Exception):
+                samba.save_share(system, share, old)
+        with self.assertRaises(Exception):
+            samba.delete_share(system, "printers")
+
+    def test_a_config_samba_refuses_is_taken_back(self):
+        from harbor.server import samba
+        conf = self.root / "etc/samba/smb.conf"
+        conf.parent.mkdir(parents=True)
+        conf.write_text("[global]\n")
+        (self.root / "srv").mkdir()
+        system = RecordingSystem(root=self.root, answers=self.answers(**{"testparm -s": Result(1, "", "Unknown parameter")}))
+        with self.assertRaises(Exception):
+            samba.save_share(system, {"name": "files", "path": "/srv"})
+        self.assertEqual(conf.read_text(), "[global]\n")
+
+    def test_a_user_is_added_for_samba_alone_and_reaches_nothing_until_named(self):
+        from harbor.server import samba
+        conf = self.root / "etc/samba/smb.conf"
+        conf.parent.mkdir(parents=True)
+        conf.write_text("[global]\n   workgroup = WORKGROUP\n\n[kikayo/]\n   path = /\n   force user = root\n\n[www]\n   path = /var/www\n   valid users = root web\n")
+        logins = {"value": "root:0:\n"}
+        system = RecordingSystem(root=self.root, answers=self.answers(**{
+            "testparm -s": Result(0), "id -u web": Result(1, "", "no such user"),
+            "pdbedit -L": lambda argv: logins["value"],
+            "smbpasswd -a -s web": lambda argv: logins.update(value="root:0:\nweb:998:\n") or ""}))
+        system.programs.add("pdbedit")
+        with mock.patch.dict(os.environ, {"HARBOR_SAMBA_PASSWORD": "webpass12"}):
+            samba.add_user(system, "web")
+        self.assertIn("useradd --system --no-create-home --shell /usr/sbin/nologin web", system.commands)
+        self.assertEqual(system.inputs[system.commands.index("smbpasswd -a -s web")], "webpass12\nwebpass12\n")
+        # The share any login could reach is root's alone now; the one that names its users stays
+        self.assertIn("[kikayo/]\n   path = /\n   force user = root\n   valid users = root\n", conf.read_text())
+        self.assertIn("[www]\n   path = /var/www\n   valid users = root web\n", conf.read_text())
+        self.assertEqual(samba.users(system), [{"name": "root", "samba_only": False}, {"name": "web", "samba_only": True}])
+        # Deleted: its login and the Linux user Harbor made
+        samba.delete_user(system, "web")
+        self.assertIn("smbpasswd -x web", system.commands)
+        self.assertIn("userdel web", system.commands)
+        for name in ("root", "Bad Name"):
+            with self.assertRaises(Exception), mock.patch.dict(os.environ, {"HARBOR_SAMBA_PASSWORD": "webpass12"}):
+                samba.add_user(system, name)
+        with self.assertRaises(Exception):
+            samba.delete_user(system, "root")
+
+    def test_init_asks_nothing_of_samba(self):
+        from harbor.server import init
+        self.assertFalse(hasattr(init, "wants_samba") or hasattr(init, "share_over_samba"))
+
+
+
+class SshRootLoginTests(Server):
+    def test_root_login_is_set_in_harbors_own_file(self):
+        from harbor.server import ssh
+        modes = iter(["permitrootlogin prohibit-password\npasswordauthentication yes"])
+        system = RecordingSystem(root=self.root, answers={"sshd -t": Result(0), "sshd -T": lambda argv: next(modes)})
+        ssh.set_root_login(system, "prohibit-password")
+        self.assertEqual((self.root / "etc/ssh/sshd_config.d/01-harbor-root-login.conf").read_text().splitlines()[-1], "PermitRootLogin prohibit-password")
+        self.assertIn("systemctl try-reload-or-restart ssh", system.commands)
+        self.assertEqual(system.said[-1], "Root may log in over SSH with a key only.")
+
+    def test_a_change_sshd_refuses_is_taken_back(self):
+        from harbor.server import ssh
+        dropin = self.root / "etc/ssh/sshd_config.d/01-harbor-root-login.conf"
+        dropin.parent.mkdir(parents=True)
+        dropin.write_text("PermitRootLogin yes\n")
+        system = RecordingSystem(root=self.root, answers={"sshd -t": Result(1, "", "bad option")})
+        self.assertEqual(main(["server", "ssh-root", "no"], system), 1)
+        self.assertEqual(dropin.read_text(), "PermitRootLogin yes\n")
+        self.assertNotIn("systemctl try-reload-or-restart ssh", system.commands)
+
+    def test_how_root_may_log_in_now(self):
+        from harbor.server import ssh
+        for said, expected in (("permitrootlogin yes", "yes"), ("permitrootlogin without-password", "prohibit-password"), ("", "")):
+            system = RecordingSystem(root=self.root, answers={"sshd -T": said})
+            self.assertEqual(ssh.root_login(system), expected)
+        with self.assertRaises(Exception):
+            ssh.set_root_login(RecordingSystem(root=self.root), "maybe")

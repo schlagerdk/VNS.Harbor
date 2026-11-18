@@ -144,6 +144,9 @@ def after_update(system):
     worked.append(attempt(system, "Not every site was migrated: sudo harbor migrate --dry-run tells why.", "python3", harbor, "migrate"))
     worked.append(attempt(system, "The sa password was not kept in Harbor.", "python3", harbor, "sql", "import-sa-password"))
     worked.append(attempt(system, "The backup jobs were not changed to harbor commands.", "python3", harbor, "server", "cron", "upgrade"))
+    # Every server an environment runs on is in Servers: one made before that was needed is added (its own step, as
+    # it must not hold the rest of the update)
+    attempt(system, "The servers the environments run on were not all put in Servers: sudo harbor servers adopt tells why.", "python3", harbor, "servers", "adopt")
     move_sql_ready(system)
     # VNS 1.x stays in /vns (its custom scripts are there), but its harbor is the one in use: anything that still calls
     # /vns/bin/harbor runs this release

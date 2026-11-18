@@ -195,11 +195,18 @@ class ServerTests(unittest.TestCase):
         self.add(self.system(ssh=lambda argv: ""))
         system = self.system(ssh=lambda argv: "")
         self.assertEqual(main(["servers", "remove", "two"], system), 0, system.said)
-        self.assertFalse(any(command.startswith("ssh") for command in system.commands), "only forgotten here")
-        self.assertIn("Harbor stays installed there", system.said[-1])
+        # Its key goes always: this server cannot log in there unseen afterwards
+        self.assertTrue(any("grep -vxF" in command for command in system.commands))
+        self.assertEqual(system.said[-1], "two is removed here. Harbor stays installed there.")
+        # Not answering: forgotten all the same, its key left there, and said
+        self.add(self.system(ssh=lambda argv: ""))
+        system = self.system(ssh=Result(255))
+        self.assertEqual(main(["servers", "remove", "two"], system), 0, system.said)
+        self.assertIn("Harbor's key stays", system.said[-1])
+        self.assertIn("it does not answer", system.said[-1])
         self.add(self.system(ssh=lambda argv: ""))
         system = self.system(ssh=lambda argv: "")
-        self.assertEqual(main(["servers", "remove", "two", "--uninstall", "--revoke-key"], system), 0, system.said)
+        self.assertEqual(main(["servers", "remove", "two", "--uninstall"], system), 0, system.said)
         uninstall = next(index for index, command in enumerate(system.commands) if command.endswith("sh -s"))
         self.assertIn("rm -rf /opt/harbor", system.inputs[uninstall])
         self.assertNotIn("/vns", system.inputs[uninstall])
@@ -212,6 +219,74 @@ class ServerTests(unittest.TestCase):
         system = self.system(ssh=Result(255))
         self.assertEqual(main(["servers", "remove", "two", "--uninstall"], system), 1)
         self.assertIn("two", json.loads((self.root / "var/lib/harbor/servers.json").read_text()))
+
+    def test_the_key_stays_while_an_environment_here_runs_there(self):
+        self.add(self.system(ssh=lambda argv: ""))
+        host = json.loads((self.root / "var/lib/harbor/servers.json").read_text())["two"]["host"]
+        environments = self.root / "var/lib/harbor/sites/shop.dk/environments"
+        environments.mkdir(parents=True)
+        (environments / "production.json").write_text(json.dumps({"IP": host, "USER": "root"}))
+        system = self.system(ssh=lambda argv: "")
+        self.assertEqual(main(["servers", "remove", "two"], system), 1)
+        self.assertIn("shop.dk (production)", system.said[-1])
+        self.assertFalse(any("grep -vxF" in command for command in system.commands))
+        self.assertIn("two", json.loads((self.root / "var/lib/harbor/servers.json").read_text()))
+
+    def test_a_windows_server_stays_while_an_environment_runs_on_it(self):
+        with mock.patch("harbor.sites.windows_import.share"), mock.patch.dict(os.environ, {"VNS_SMB_PASSWORD": "pw"}):
+            self.assertEqual(main(["servers", "add-windows", "windows-01", "//10.0.0.7/d$/sites/", "--user", "Administrator"], self.system()), 0)
+        environments = self.root / "var/lib/harbor/sites/shop.dk/environments"
+        environments.mkdir(parents=True)
+        (environments / "production.json").write_text(json.dumps({"TARGET": "windows", "WINDOWS_SHARE": "\\\\10.0.0.7\\D$\\sites\\shop"}))
+        system = self.system()
+        self.assertEqual(main(["servers", "remove", "windows-01"], system), 1)
+        self.assertIn("shop.dk (production)", system.said[-1])
+        (environments / "production.json").unlink()
+        self.assertEqual(main(["servers", "remove", "windows-01"], self.system()), 0)
+
+    def test_the_servers_environments_run_on_are_put_in_servers(self):
+        environments = self.root / "var/lib/harbor/sites/shop.dk/environments"
+        environments.mkdir(parents=True)
+        (environments / "production.json").write_text(json.dumps({"IP": "10.0.0.20", "USER": "root", "SSH_PORT": "22"}))
+        (environments / "test.json").write_text(json.dumps({"IP": "", "LOCAL_PATH": "/var/www/test.shop.dk"}))
+        (environments / "staging.json").write_text(json.dumps({"TARGET": "windows", "WINDOWS_SHARE": "//10.0.0.7/d$/sites/shop", "SMB_USER": "Administrator"}))
+        secrets = self.root / "etc/harbor/secrets/sites/shop.dk"
+        secrets.mkdir(parents=True)
+        (secrets / "staging.json").write_text(json.dumps({"SMB_PASSWORD": "pw"}))
+        system = self.system(ssh=lambda argv: "prod-01\n")
+        self.assertEqual(main(["servers", "adopt"], system), 0, system.said)
+        kept = json.loads((self.root / "var/lib/harbor/servers.json").read_text())
+        self.assertEqual(kept["prod-01"]["host"], "10.0.0.20")
+        self.assertEqual(kept["windows-10-0-0-7"]["share"], "//10.0.0.7/d$/sites")
+        self.assertEqual(json.loads((self.root / "etc/harbor/secrets/servers/windows-10-0-0-7.json").read_text()), {"password": "pw"})
+        self.assertEqual(len(kept), 2, "the local one is not a server")
+        # Again: nothing more, and an unreachable one is named by its address
+        system = self.system(ssh=Result(255))
+        main(["servers", "adopt"], system)
+        self.assertEqual(len(json.loads((self.root / "var/lib/harbor/servers.json").read_text())), 2)
+        (environments / "dev.json").write_text(json.dumps({"IP": "10.0.0.30"}))
+        main(["servers", "adopt"], self.system(ssh=Result(255)))
+        self.assertIn("server-10-0-0-30", json.loads((self.root / "var/lib/harbor/servers.json").read_text()))
+
+    def test_harbor_stays_where_it_is_used(self):
+        self.add(self.system(ssh=lambda argv: ""))
+        host = json.loads((self.root / "var/lib/harbor/servers.json").read_text())["two"]["host"]
+        # Sites of its own there
+        system = self.system(ssh=lambda argv: json.dumps({"own_sites": ["shop.dk"]}))
+        self.assertEqual(main(["servers", "remove", "two", "--uninstall"], system), 1)
+        self.assertIn("it has sites of its own: shop.dk", system.said[-1])
+        self.assertFalse(any(command.endswith("sh -s") for command in system.commands), "nothing uninstalled")
+        # Only environments managed from elsewhere there, but an SQL connection here reaches it
+        connections = self.root / "var/www/admin.test/app/sql-connections.json"
+        connections.parent.mkdir(parents=True)
+        connections.write_text(json.dumps([{"id": "1", "name": "Shop SQL", "host": f"{host},1433"}]))
+        system = self.system(ssh=lambda argv: json.dumps({"own_sites": []}))
+        self.assertEqual(main(["servers", "remove", "two", "--uninstall"], system), 1)
+        self.assertIn("SQL connections here use it: Shop SQL", system.said[-1])
+        # Neither: it goes
+        connections.write_text("[]")
+        system = self.system(ssh=lambda argv: json.dumps({"own_sites": []}) if "python3" in " ".join(argv) else "")
+        self.assertEqual(main(["servers", "remove", "two", "--uninstall"], system), 0, system.said)
 
     def test_a_servers_host_key_is_forgotten_with_it_and_for_a_new_address(self):
         """A server set up again has a new host key: Harbor refused to log in to linux-02 after it was reinstalled"""

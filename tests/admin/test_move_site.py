@@ -144,8 +144,9 @@ class HttpsChoiceTests(unittest.TestCase):
 
     def test_new_site_and_set_up_site_have_the_https_option_card(self):
         self.assertNotIn('<select name="certificate">', self.html)
-        self.assertEqual(self.html.count('<input name="https_choice" type="checkbox" checked>'), 2)
-        self.assertEqual(self.html.count('<input type="hidden" name="certificate" value="y">'), 2)
+        # Off at first: HTTPS is chosen, not taken for granted
+        self.assertEqual(self.html.count('<input name="https_choice" type="checkbox">'), 2)
+        self.assertEqual(self.html.count('<input type="hidden" name="certificate" value="n">'), 2)
         self.assertIn('dnsCard(siteForm.binding, { onState: siteHttps.state })', self.source)
         self.assertIn('dnsCard($("#form-setup-site").binding, { onState: setupHttps.state })', self.source)
         self.assertIn('const allowed = value === "here" || value === "empty";', self.source)

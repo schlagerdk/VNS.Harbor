@@ -263,7 +263,9 @@ def _servers(args, system):
     if args.command == "add":
         servers.add(system, args.name, args.host, args.user, args.port, os.environ.get("HARBOR_SSH_PASSWORD", ""))
     elif args.command == "remove":
-        servers.remove(system, args.name, uninstall=args.uninstall, revoke_key=args.revoke_key)
+        servers.remove(system, args.name, uninstall=args.uninstall)
+    elif args.command == "adopt":
+        servers.adopt_environment_servers(system)
     elif args.command == "list":
         print(json.dumps(servers.servers(system), indent=2))
     elif args.command == "add-windows":
@@ -321,15 +323,51 @@ def _server_dotnet(args, system):
 
 def _server_crontab(args, system):
     import json
-    from harbor.server.tools import crontab_entries, crontab_save
+    from harbor.server.tools import crontab_entries, crontab_log, crontab_save
     if args.action == "list":
         print(json.dumps(crontab_entries(system), indent=2))
+    elif args.action == "log":
+        try:
+            command = json.loads(sys.stdin.read()).get("command", "")
+        except (ValueError, AttributeError):
+            raise Stop("The job's command comes as JSON on stdin.") from None
+        print(json.dumps(crontab_log(system, command), indent=2))
     else:
         try:
             entries = json.loads(sys.stdin.read())
         except ValueError:
             raise Stop("The crontab comes as JSON on stdin.") from None
         crontab_save(system, entries if isinstance(entries, list) else [])
+
+
+def _server_ssh_root(args, system):
+    from harbor.server.ssh import set_root_login
+    set_root_login(system, args.mode)
+
+
+def _server_samba(args, system):
+    import json
+    from harbor.server import samba
+    if args.action == "shares":
+        print(json.dumps(samba.shares(system), indent=2))
+    elif args.action == "save-share":
+        samba.save_share(system, {"name": args.name, "path": args.path, "read_only": args.read_only, "browseable": not args.hidden,
+                                  "guest_ok": args.guest_ok, "force_user": args.force_user, "valid_users": args.valid_users,
+                                  "comment": args.comment}, args.old_name)
+    elif args.action == "delete-share":
+        samba.delete_share(system, args.name)
+    elif args.action in ("start", "stop"):
+        samba.turn(system, args.action == "start")
+    elif args.action == "users":
+        print(json.dumps(samba.users(system), indent=2))
+    elif args.action == "add-user":
+        samba.add_user(system, args.name)
+    elif args.action == "user-password":
+        samba.user_password(system, args.name)
+    elif args.action == "delete-user":
+        samba.delete_user(system, args.name)
+    else:
+        {"on": samba.share_over_samba, "password": samba.change_password, "off": samba.stop_sharing}[args.action](system)
 
 
 def _server_node(args, system):
@@ -411,6 +449,12 @@ def _admin(args, system):
         admin.set_password(system, args.site)
     elif args.command == "uninstall":
         admin.uninstall(system, args.site, args.delete_certificate)
+    elif args.command == "access":
+        if args.everyone or args.allow:
+            admin.set_allowed_addresses(system, args.site, [] if args.everyone else args.allow)
+        else:
+            import json
+            print(json.dumps({"addresses": admin.allowed_addresses(system, args.site)}))
 
 
 def _self(args, system):
@@ -473,7 +517,7 @@ def parser():
     command = server.add_parser("install-tls-policy", help="the shared TLS policy (was install_tls_policy.sh)")
     command.add_argument("--start-if-stopped", action="store_true")
     command.set_defaults(handler=_tls_policy)
-    command = server.add_parser("init", help="make a new server ready for sites: Apache, acme.sh, .NET, templates, keep-alive (was apache/init.sh)")
+    command = server.add_parser("init", help="make a new server ready for sites: Apache, acme.sh, keep-alive (was apache/init.sh). .NET comes with the first site that needs it")
     command.set_defaults(handler=_server_init)
     command = server.add_parser("status", help="SQL Server, sqlcmd, the sa password, cron jobs, .NET and Node.js here, as JSON")
     command.set_defaults(handler=_server_status)
@@ -484,9 +528,27 @@ def parser():
     command.add_argument("action", choices=("install", "update", "remove"))
     command.add_argument("channel", help="such as 10.0")
     command.set_defaults(handler=_server_dotnet)
-    command = server.add_parser("crontab", help="root's crontab: its lines as JSON (list), or saved from JSON on stdin (save)")
-    command.add_argument("action", choices=("list", "save"))
+    command = server.add_parser("crontab", help="root's crontab: its lines as JSON (list), saved from JSON on stdin (save), or a job's runs and output (log)")
+    command.add_argument("action", choices=("list", "save", "log"))
     command.set_defaults(handler=_server_crontab)
+    command = server.add_parser("ssh-root", help="how root may log in over SSH: yes (a password or a key), prohibit-password (a key only) or no")
+    command.add_argument("mode", choices=("yes", "prohibit-password", "no"))
+    command.set_defaults(handler=_server_ssh_root)
+    command = server.add_parser("samba", help="share the whole server over Samba as root (on), give root a new Samba password (password), "
+                                              "or stop sharing it (off); the password from HARBOR_SAMBA_PASSWORD, else asked")
+    command.add_argument("action", choices=("on", "password", "off", "shares", "save-share", "delete-share", "start", "stop",
+                                            "users", "add-user", "user-password", "delete-user"),
+                         help="on/off: the whole server shared or not; shares: as JSON; save-share: from JSON on stdin; start/stop: Samba itself")
+    command.add_argument("name", nargs="?", default="", help="the share (save-share, delete-share) or the user (add-user, user-password, delete-user)")
+    command.add_argument("--path", default="", help="save-share: the folder it shares")
+    command.add_argument("--old-name", default="", help="save-share: the share it was, when it is changed")
+    command.add_argument("--read-only", action="store_true", help="save-share: nothing can be changed through it")
+    command.add_argument("--hidden", action="store_true", help="save-share: not listed when the server is browsed")
+    command.add_argument("--guest-ok", action="store_true", help="save-share: reached without a login")
+    command.add_argument("--force-user", default="", help="save-share: the user its files are read and written as, such as root or www-data")
+    command.add_argument("--valid-users", default="", help="save-share: who may log in to it, such as root")
+    command.add_argument("--comment", default="", help="save-share: what it is")
+    command.set_defaults(handler=_server_samba)
     command = server.add_parser("node", help="install Node.js of a major version (NodeSource), or remove it")
     command.add_argument("action", choices=("install", "remove"))
     command.add_argument("major", nargs="?", default="", help="such as 22")
@@ -697,10 +759,11 @@ def parser():
     command.add_argument("--user", default="root")
     command.add_argument("--port", default="22")
     command.set_defaults(handler=_servers)
-    command = other.add_parser("remove", help="forget a server here; Harbor stays there unless --uninstall, its key unless --revoke-key")
+    command = other.add_parser("adopt", help="put the servers the environments here run on in Servers, where they are not (run by the update)")
+    command.set_defaults(handler=_servers)
+    command = other.add_parser("remove", help="forget a server here and take Harbor's key off it (not while environments here run there); Harbor stays there unless --uninstall")
     command.add_argument("name")
     command.add_argument("--uninstall", action="store_true", help="also uninstall Harbor there (/opt/harbor and its command only)")
-    command.add_argument("--revoke-key", action="store_true", help="also take Harbor's key out of authorized_keys there")
     command.set_defaults(handler=_servers)
     command = other.add_parser("install", help="install this server's Harbor release there and use it (an agent); again updates it")
     command.add_argument("name")
@@ -761,6 +824,11 @@ def parser():
     command.set_defaults(handler=_admin)
     command = admin.add_parser("set-password", help="a new password for the admin site's first login; signs everyone out")
     command.add_argument("site", nargs="?", default="")
+    command.set_defaults(handler=_admin)
+    command = admin.add_parser("access", help="who may reach the admin site: as JSON, or set (--allow ADDRESS ..., or --everyone)")
+    command.add_argument("site", nargs="?", default="")
+    command.add_argument("--allow", nargs="+", default=[], help="IP addresses or CIDR ranges")
+    command.add_argument("--everyone", action="store_true", help="no restriction")
     command.set_defaults(handler=_admin)
     command = admin.add_parser("uninstall", help="remove the admin site: files, login, service and Apache config")
     command.add_argument("site", nargs="?", default="")
