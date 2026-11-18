@@ -70,7 +70,7 @@ console.log(JSON.stringify(sortedEnvironments(input).map((env) => env.binding)))
 
     def test_move_under_main_site_is_in_the_title(self):
         source = (APP / "static/app.js").read_text()
-        self.assertIn('className: "detail-title-action"', source)
+        self.assertIn('textContent: "Move under main site", className: "small env-head-action"', source)
         self.assertNotIn('add("Move under main site"', source)
 
     def test_site_actions_are_beside_the_environments_and_delete_is_at_the_bottom(self):

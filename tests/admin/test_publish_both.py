@@ -106,7 +106,7 @@ const assert = require("node:assert/strict");
 const nodes = {};
 const document = {querySelector: () => null, activeElement: null};
 function el(tag, props = {}, ...children) {
-    return Object.assign({children, dataset: {}, classList: {add() {}, remove() {}, toggle() {}, contains() {return false;}}, setAttribute() {}, get childElementCount() {return this.children.length;}, append(...items) {this.children.push(...items);},
+    return Object.assign({children, dataset: {}, classList: {add() {}, remove() {}, toggle() {}, contains() {return false;}}, setAttribute() {}, querySelector() {return null;}, get childElementCount() {return this.children.length;}, append(...items) {this.children.push(...items);},
         replaceChildren() {this.children = [];}}, props);
 }
 const $ = selector => nodes[selector] ||= el("div");

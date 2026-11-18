@@ -95,10 +95,44 @@ def clear_logs(system, name):
     system.run("systemctl", "status", site.service_name, "--no-pager", check=False)
 
 
+def pinned_to_latest(text, latest):
+    """requirements.txt with each package pinned with == moved to its latest version (latest: name to version); other
+    lines (ranges, comments, options) as they are, as pip --upgrade follows those itself"""
+    def norm(value):
+        return re.sub(r"[-_.]+", "-", value).lower()
+    found = {norm(name): version for name, version in latest.items()}
+    changed = []
+
+    def line(match):
+        name, extras, version, rest = match.group(1), match.group(2) or "", match.group(3), match.group(4)
+        new = found.get(norm(name))
+        if not new or new == version:
+            return match.group(0)
+        changed.append(f"{name} {version} → {new}")
+        return f"{name}{extras}=={new}{rest}"
+    text = re.sub(r"(?m)^([A-Za-z0-9][A-Za-z0-9._-]*)(\[[^\]]*\])?\s*==\s*([^\s;#]+)(.*)$", line, text)
+    return text, changed
+
+
 def update_packages(system, name):
-    """A Python site's packages, upgraded as the site's own user"""
+    """A Python site's packages, upgraded as the site's own user. A package pinned with == in requirements.txt is moved
+    to its latest version there first: else pip --upgrade keeps it where it is, and the update did nothing."""
+    import json
     site = site_named(system, name)
-    system.run("sudo", "-u", "www-data", "./venv/bin/pip", "install", "--upgrade", "-r", "app/requirements.txt", check=False, cwd=site.site_root)
+    pip = ["sudo", "-u", "www-data", "./venv/bin/pip"]
+    requirements = system.path(f"{site.site_root}/app/requirements.txt")
+    listed = system.run(*pip, "list", "--outdated", "--format=json", "--disable-pip-version-check", "--no-cache-dir",
+                        check=False, capture=True, cwd=site.site_root)
+    try:
+        latest = {item["name"]: item["latest_version"] for item in json.loads(listed.stdout or "[]") if isinstance(item, dict)} if listed.ok else {}
+    except (ValueError, KeyError, TypeError):
+        latest = {}
+    if requirements.is_file() and latest:
+        text, changed = pinned_to_latest(requirements.read_text(), latest)
+        if changed:
+            requirements.write_text(text)
+            system.say("requirements.txt moved to the latest versions: " + ", ".join(changed))
+    system.run(*pip, "install", "--upgrade", "--no-cache-dir", "-r", "app/requirements.txt", check=False, cwd=site.site_root)
     system.run("systemctl", "restart", site.service_name, check=False)
     system.run("systemctl", "status", site.service_name, "--no-pager", check=False)
 

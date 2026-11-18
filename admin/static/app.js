@@ -939,6 +939,7 @@ const iconPaths = {
 	back: "M19 12H5M12 19l-7-7 7-7",
 	upload: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12",
 	chevron: "M9 6l6 6-6 6",
+	corner: "M4 4v7a4 4 0 0 0 4 4h12M15 10l5 5-5 5",
 	"eye-off": "M9.88 9.88a3 3 0 1 0 4.24 4.24M10.73 5.08A10.4 10.4 0 0 1 12 5c7 0 10 7 10 7a13.2 13.2 0 0 1-1.67 2.68M6.61 6.61A13.5 13.5 0 0 0 2 12s3 7 10 7a9.7 9.7 0 0 0 5.39-1.61M2 2l20 20",
 	check: "M20 6 9 17l-5-5",
 	windows: "M3 5.6 10 4.6V11H3ZM12 4.3 21 3v8h-9ZM3 13h7v6.4l-7-1ZM12 13h9v8l-9-1.3Z",
@@ -1563,7 +1564,7 @@ function renderSite(name) {
 		// A phone says Publish: it stands beside the syncs there. Its words are the same, so it keeps its icon.
 		publishEnvironments.replaceChildren("Publish", el("span", { className: "desktop-only", textContent: " environments" }));
 		targetsActions.append(publishEnvironments);
-		publishAll = el("button", { textContent: "Publish all", className: "detail-title-action", title: "Publish the main site, then every environment", onclick: () => run(async () => {
+		publishAll = el("button", { type: "button", textContent: "Publish all", className: "small env-head-action", title: "Publish the main site, then every environment", onclick: () => run(async () => {
 			if (await ask({ title: "Publish all?", message: `Publish the main site, then every environment, one at a time. The services are restarted. If one fails, the rest are not published.${skipped}`, input: false, ok: "Publish all" })) {
 				await openTask({ kind: "publish_both", site: site.name });
 			}
@@ -1575,10 +1576,13 @@ function renderSite(name) {
 	// Update Python packages: beside the title, as Publish all, and only when pip says some are outdated
 	let pythonUpdates = null;
 	if (site.kind === "python" && site.scripts.includes("update_packages.sh")) {
-		pythonUpdates = el("button", { textContent: "Update Python packages", className: "detail-title-action", hidden: true,
+		pythonUpdates = el("button", { type: "button", textContent: "Update Python packages", className: "small env-head-action", hidden: true,
 			onclick: () => run(async () => {
+				// A pinned version (==) in requirements.txt moves too: said, as a new major version may change the app
+				if (!(await ask({ title: "Update Python packages?", message: `${pythonUpdates.title}\n\nA version pinned with == in requirements.txt is moved to the new one there. A new major version may change how the app runs: test it after. The service restarts.`, input: false, ok: "Update" }))) return;
 				const t = await openTask({ kind: "script", site: site.name, script: "update_packages.sh" });
-				if (t) t.afterTask = () => renderSite(site.name);
+				// Asked again (not the list kept an hour), so the button goes once all is up to date
+				if (t) t.afterTask = () => api(`/api/sites/${encodeURIComponent(site.name)}/python-outdated?refresh=1`).catch(() => {}).then(() => renderSite(site.name));
 			}) });
 		api(`/api/sites/${encodeURIComponent(site.name)}/python-outdated`).then(({ outdated }) => {
 			if (!outdated?.length || !pythonUpdates.isConnected) return;
@@ -1602,19 +1606,25 @@ function renderSite(name) {
 	danger.hidden = site.admin || !hasProd(site);
 	if (!danger.hidden) danger.append(el("button", { textContent: "Delete everything", className: "danger desktop-only", onclick: () => run(() => deleteSite(site, "all")) }));
 	const title = el("div", { className: "detail-title" }, el("h2", { textContent: siteTitle(site) }), kindBadges(site));
+	// Set up site… and Move under main site: at the right of the site's card head, as Publish all
+	const headActions = [];
 	if (site.not_set_up && site.setup_kind !== "python") {
-		title.append(el("button", { textContent: "Set up site…", className: "detail-title-action", onclick: () => run(() => openSetupSiteDialog(site)) }));
+		headActions.push(el("button", { type: "button", textContent: "Set up site…", className: "small env-head-action", onclick: () => run(() => openSetupSiteDialog(site)) }));
 	}
 	if ((site.adopt_into || []).length) {
-		title.append(el("button", { textContent: "Move under main site", className: "detail-title-action", onclick: () => run(() => openAdoptDialog(site)) }));
+		headActions.push(el("button", { type: "button", textContent: "Move under main site", className: "small env-head-action", onclick: () => run(() => openAdoptDialog(site)) }));
 	}
-	if (publishAll) title.append(publishAll);
-	if (pythonUpdates) title.append(pythonUpdates);
+
 	head.append(title);
 	if (actions.childElementCount) head.append(actions);
 	for (const env of site.environments) {
 		if (!isTarget(env)) envs.append(envPanel(site, env));
 	}
+	// Publish all and Update Python packages: at the right of the main site's card head, as Who can reach it… on the
+	// admin site's
+	// No buttons beside the site's name: those for the site stand at the right of the main site's card head
+	const mainHead = envs.querySelector(".env-head");
+	for (const button of [...headActions, publishAll, pythonUpdates]) if (button) (mainHead || title).append(button);
 	for (const env of sortedEnvironments(site.environments)) {
 		if (!isTarget(env)) continue;
 		const panel = envPanel(site, env);
@@ -1982,11 +1992,11 @@ function envPanel(site, env) {
 	if (actions.children.length) panel.append(actions);
 	if (manage.children.length) panel.append(manage);
 	// Tools that are rarely the point of the row stand to the right: clearing logs, editing files, the syncs, custom scripts,
-	// and logs, shell and files. Always, also with nothing to their left (an HTML site has no service to start or check),
-	// so every kind of site has them in the same place.
+	// and logs, shell and files beside Stop and Restart. Only with something to their left, so a row of edit
+	// buttons alone (on Windows) stays at the left.
 	for (const row of [quick, sync, extraTools, actions]) {
 		const first = row && [...row.children].find((node) => node.classList.contains("script-menu") || /^(Clear logs|Sync settings…|Sync data…|Edit .*|Logs|Shell|Files)$/.test(node.textContent));
-		if (first) first.classList.add("push-right");
+		if (first && first !== row.firstElementChild) first.classList.add("push-right");
 	}
 	// A phone keeps what is used on the go: publish, the syncs, start or stop, restart, logs, clearing them, checking the
 	// service, a certificate, the environment's kind and Remove environment. A site is not deleted from a phone. The rest
@@ -3848,13 +3858,36 @@ setupSiteForm.onsubmit = (event) => {
 
 const adoptDialog = $("#dlg-adopt");
 const adoptForm = $("#form-adopt");
+// Move under main site: the site and where it goes, the main sites as cards (one chosen), and what it means in three points
 function openAdoptDialog(site) {
 	adoptForm.dataset.site = site.name;
-	$("#adopt-site").textContent = siteLabel(site);
-	$("#adopt-main").replaceChildren(...site.adopt_into.map((name) => el("option", { value: name, textContent: name })));
+	const select = $("#adopt-main");
+	select.replaceChildren(...site.adopt_into.map((name) => el("option", { value: name, textContent: name })));
+	select.value = site.adopt_into[0] || "";
+	const env = (site.environments || []).find((item) => !isTarget(item));
+	const emblem = (kind) => el("span", { className: "server-card-icon" }, svgIcon(kind === "python" ? "hexagon" : kind === "html" ? "globe" : "dotnet"));
+	const draw = () => {
+		$("#adopt-from").replaceChildren(
+			el("div", { className: "adopt-site" }, emblem(site.kind), el("span", { className: "server-card-text" },
+				el("strong", { textContent: siteLabel(site) }), el("small", { textContent: env ? bindingLabel(env) || "This site" : "This site" }))),
+			el("span", { className: "adopt-arrow" }, svgIcon("corner")),
+			el("div", { className: "adopt-site to" }, emblem((allSites.find((item) => item.name === select.value) || {}).kind), el("span", { className: "server-card-text" },
+				el("strong", { textContent: select.value || "—" }), el("small", { textContent: "Its main site" }))));
+		$("#adopt-mains").replaceChildren(...site.adopt_into.map((name) => {
+			const main = allSites.find((item) => item.name === name) || { name, environments: [] };
+			const count = (main.environments || []).filter(isTarget).length;
+			return el("button", { type: "button", className: "server-card" + (name === select.value ? " chosen" : ""), role: "radio", ariaChecked: String(name === select.value),
+				onclick: () => { select.value = name; draw(); } },
+				emblem(main.kind), el("span", { className: "server-card-text" }, el("strong", { textContent: siteLabel(main) }),
+					el("small", { textContent: count ? `${count} environment${count === 1 ? "" : "s"} already` : "No environments yet" })),
+				el("span", { className: "server-card-check" }, svgIcon("check")));
+		}));
+	};
+	draw();
 	adoptDialog.showModal();
 }
 $("#adopt-cancel").onclick = () => adoptDialog.close();
+for (const [index, icon] of ["play", "upload", "undo"].entries()) $("#dlg-adopt").querySelectorAll(".adopt-point-icon")[index]?.append(svgIcon(icon));
 adoptForm.onsubmit = (event) => {
 	event.preventDefault();
 	const data = { kind: "adopt_site", site: adoptForm.dataset.site, main: adoptForm.elements.main.value };

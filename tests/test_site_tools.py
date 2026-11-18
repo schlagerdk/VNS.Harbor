@@ -159,3 +159,13 @@ class NoPagerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PinnedRequirementsTests(unittest.TestCase):
+    def test_pinned_versions_move_to_the_latest(self):
+        from harbor.sites.tools import pinned_to_latest
+        text = "# app\nFlask==2.3.3\nrequests[socks] == 2.31.0 ; python_version >= '3.8'\nJinja2>=3.1\ngunicorn==23.0.0\n"
+        new, changed = pinned_to_latest(text, {"flask": "3.1.2", "Requests": "2.32.5", "Jinja2": "3.1.6", "gunicorn": "23.0.0"})
+        self.assertEqual(new, "# app\nFlask==3.1.2\nrequests[socks]==2.32.5 ; python_version >= '3.8'\nJinja2>=3.1\ngunicorn==23.0.0\n")
+        self.assertEqual(changed, ["Flask 2.3.3 → 3.1.2", "requests 2.31.0 → 2.32.5"])
+

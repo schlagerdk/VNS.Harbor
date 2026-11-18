@@ -675,11 +675,18 @@
 <dialog id="dlg-adopt" class="newsite" aria-labelledby="adopt-title">
   <form method="dialog" id="form-adopt">
     <header class="ns-head">
-      <span class="ns-icon" aria-hidden="true">↳</span>
-      <div><h2 id="adopt-title">Move under main site</h2><p id="adopt-site"></p></div>
+      <span class="ns-icon" data-header-icon="corner" aria-hidden="true"></span>
+      <div><h2 id="adopt-title">Move under main site</h2><p>It becomes an environment of another site, which publishes to it from then on.</p></div>
     </header>
-    <label>Main site <select name="main" id="adopt-main"></select></label>
-    <p class="hint">The site becomes an environment of the main site, which publishes to it from now on. Its files, service and Apache config stay where they are and it keeps running. Nothing is published now. Only main sites that build the dll this site runs are listed. You can move it out again.</p>
+    <div class="adopt-from" id="adopt-from"></div>
+    <div class="ns-section">Main site</div>
+    <select name="main" id="adopt-main" hidden tabindex="-1"></select>
+    <div id="adopt-mains" class="server-cards" role="radiogroup" aria-label="Main site"></div>
+    <ul class="adopt-points">
+      <li><span class="adopt-point-icon" data-tone="green"></span><span><strong>It keeps running</strong><small>Its files, service and Apache config stay where they are. Nothing is published now.</small></span></li>
+      <li><span class="adopt-point-icon" data-tone="blue"></span><span><strong>Published from the main site</strong><small>Only main sites that build the dll it runs are offered.</small></span></li>
+      <li><span class="adopt-point-icon" data-tone="purple"></span><span><strong>It can move out again</strong><small>Move out… on its card makes it a site of its own.</small></span></li>
+    </ul>
     <menu><button type="button" id="adopt-cancel" class="cancel-link">Cancel</button><button type="submit" class="primary">Move</button></menu>
   </form>
 </dialog>
@@ -741,7 +748,7 @@
       <div><h2 id="setup-site-title">Set up site</h2><p id="setup-site-found"></p></div>
     </header>
     <div class="ns-grid">
-      <label>Binding (domain) <input name="binding" autocomplete="off" spellcheck="false" placeholder="Empty: answers any name"></label>
+      <label class="wide">Binding (domain) <input name="binding" autocomplete="off" spellcheck="false" placeholder="Empty: answers any name"></label>
       <div class="choice-field wide" id="setup-site-environment-row"><span class="choice-label">Environment</span><div class="env-choices" role="radiogroup" aria-label="Environment"><label class="env-choice env-development"><input type="radio" name="environment" value="Development"><span>Development</span></label><label class="env-choice env-test"><input type="radio" name="environment" value="Test" checked><span>Test</span></label><label class="env-choice env-staging"><input type="radio" name="environment" value="Staging"><span>Staging</span></label><label class="env-choice env-production"><input type="radio" name="environment" value="Production"><span>Production</span></label></div></div>
     </div>
     <input type="hidden" name="certificate" value="n">

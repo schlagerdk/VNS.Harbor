@@ -711,6 +711,24 @@ a.btn-link .ico { width: 13px; height: 13px; flex: none; }
 /* The rows of an environment card, each named by its group at the left; wrapped buttons line up under the first */
 .env .actions[data-group] { position: relative; padding-left: 72px; }
 .env-head .env-head-action { margin-left: auto; }
+.env-head .env-head-action ~ .env-head-action { margin-left: 0; }
+/* Move under main site: the site and its main site side by side, the main sites as cards, what it means as three points */
+.adopt-from { display: flex; align-items: center; gap: 12px; margin: 4px 0 6px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: linear-gradient(110deg, rgba(163, 113, 247, .08), transparent 70%), var(--panel2); }
+.adopt-site { display: flex; flex: 1; align-items: center; gap: 10px; min-width: 0; }
+.adopt-site.to .server-card-icon { background: rgba(163, 113, 247, .16); color: var(--purple); }
+.adopt-arrow { display: grid; flex: none; place-items: center; color: var(--muted); }
+.adopt-arrow .ico { width: 18px; height: 18px; margin: 0; }
+.adopt-points { display: grid; gap: 10px; margin: 16px 0 0; padding: 0; list-style: none; }
+.adopt-points li { display: flex; align-items: flex-start; gap: 12px; }
+.adopt-points li > span:last-child { display: grid; gap: 1px; }
+.adopt-points strong { font-size: 13.5px; }
+.adopt-points small { color: var(--muted); font-size: 12.5px; }
+.adopt-point-icon { display: grid; flex: none; place-items: center; width: 28px; height: 28px; border-radius: 8px; }
+.adopt-point-icon .ico { width: 14px; height: 14px; margin: 0; }
+.adopt-point-icon[data-tone="green"] { background: rgba(63, 185, 80, .14); color: var(--green); }
+.adopt-point-icon[data-tone="blue"] { background: rgba(88, 166, 255, .14); color: var(--blue); }
+.adopt-point-icon[data-tone="purple"] { background: rgba(163, 113, 247, .16); color: var(--purple); }
+@media (max-width: 560px) { .adopt-from { flex-wrap: wrap; } .adopt-arrow { transform: rotate(90deg); } }
 /* Servers: Linux and Windows apart, each under a heading that spans the grid */
 .servers-group { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; margin: 10px 0 -2px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
 .servers-group:first-child { margin-top: 0; }
@@ -846,7 +864,9 @@ dialog.newsite .sync-select-all { margin-left: auto; padding: 0; border: 0; back
 dialog.newsite .sync-select-all:hover:not(:where(:disabled, .disabled, .off)) { background: transparent; text-decoration: underline; }
 .sync-choice:has(input:checked)::after { content: "\2713"; position: absolute; top: 10px; right: 12px; color: var(--env-tone); font-weight: 700; }
 #files.files-windows th:nth-child(4), #files.files-windows td:nth-child(4), #files.files-windows th:nth-child(5), #files.files-windows td:nth-child(5) { display: none; }
-.meta .badge.any-name { margin-left: 8px; background: rgba(63, 185, 80, .15); color: var(--green); vertical-align: middle; }
+/* The binding and its badge centred on one line: vertical-align middle set the badge by the x-height, a little low */
+.meta dd:has(> .badge.any-name) { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.meta .badge.any-name { margin: 0; background: rgba(63, 185, 80, .15); color: var(--green); line-height: 1.4; }
 .data-sync-settings { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 #dlg-data-sync .data-sync-settings .copy-connection-toggle { margin-top: 0; }
 #dlg-data-sync .data-sync-settings .copy-connection-toggle[hidden] { display: none; }
