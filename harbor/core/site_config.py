@@ -109,6 +109,8 @@ def install_service(system, site, template):
         # Only lets the site wait for a local SQL Server at boot: if it fails, the site is still set up
         if not system.run("python3", f"{site.harbor_dir}/lib/sql_startup.py", site.service_name, check=False).ok:
             system.warn(f"Could not make {site.service_name} wait for SQL Server at boot; it starts without waiting.")
+        # No Server header from Kestrel, and Umbraco 18+'s image signing key (harden_service.py)
+        system.run("python3", f"{site.harbor_dir}/lib/harden_service.py", site.service_name, check=False)
     system.run("systemctl", "enable", site.service_name)
     system.run("systemctl", "restart", site.service_name)
     system.run("systemctl", "status", site.service_name, "--no-pager", check=False)

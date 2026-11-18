@@ -334,6 +334,8 @@ def restart(system, site, kind, folder, requirements_before, failed=""):
         system.step("Install the packages in requirements.txt")
         system.run("sudo", "-u", "www-data", "./venv/bin/pip", "install", "--upgrade", "-r", "app/requirements.txt", cwd=site.site_root)
     system.step(f"Restart {site.name}")
+    if kind in ("csharp", "umbraco"):
+        system.run("python3", f"{site.harbor_dir}/lib/harden_service.py", site.service_name, check=False)
     system.run("systemctl", "restart", site.service_name, check=False)
     check_running(system, site, failed=failed)
 

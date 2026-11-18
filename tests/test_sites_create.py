@@ -63,7 +63,9 @@ class CreateSiteTests(unittest.TestCase):
         # VNS.Harbor is added to an Umbraco 17+ site by harbor, which the script did not (test_umbraco_gets_vns_harbor)
         commands = [line for line in without_temporary(harbor_commands(system))
                     if not line.startswith("bash TEMP ") and not line.startswith("dotnet add package VNS.Harbor")
-                    and not line.startswith("/usr/lib/dotnet/dotnet --list-")]
+                    and not line.startswith("/usr/lib/dotnet/dotnet --list-")
+                    # harbor sets up the service's security settings (lib/harden_service.py), which the script did not
+                    and "harden_service.py" not in line]
         self.assertEqual(commands, without_temporary(self.old.commands()))
         if code == 0:
             self.assertPlanned(system)

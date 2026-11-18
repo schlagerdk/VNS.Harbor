@@ -286,6 +286,7 @@ for file in "${dir}"/appsettings*.json; do
 done
 chown -R www-data:www-data "${dir}"
 python3 "${_apacheDir}/lib/sql_startup.py" "${SITE}"
+python3 "${_apacheDir}/lib/harden_service.py" "$(python3 "${_apacheDir}/lib/domain_names.py" "${SITE}" unit)" || true
 systemctl start "$(python3 "${_apacheDir}/lib/domain_names.py" "${SITE}" unit)"
 sleep 2
 systemctl status "$(python3 "${_apacheDir}/lib/domain_names.py" "${SITE}" unit)" --no-pager

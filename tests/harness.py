@@ -160,8 +160,9 @@ TEMPORARY = re.compile(r"/tmp/tmp[.\w]+")
 
 
 def harbor_commands(system):
-    """harbor's commands as the script's are compared: the apache folder as APACHE"""
-    return [line.replace(str(APACHE), "APACHE").replace(str(system.root), "") for line in system.commands]
+    """harbor's commands as the script's are compared: the apache folder as APACHE. Without the service's security
+    settings (lib/harden_service.py), a step harbor has that the scripts never did."""
+    return [line.replace(str(APACHE), "APACHE").replace(str(system.root), "") for line in system.commands if "harden_service.py" not in line]
 
 
 def without_temporary(commands):
@@ -182,6 +183,8 @@ def as_frozen(script):
     whose commands are compared as they ran (the start of a publish also sources common.sh now, for _apacheDir)"""
     today = "source /opt/harbor/current/lib/common.sh 2>/dev/null || source /vns/apache/lib/common.sh"
     script = script.replace(today + "\ndir=${ROOT}\n", "dir=${ROOT}\n").replace(today, "source /vns/apache/lib/common.sh").replace("Run harbor server init there first.", "Run apache/init.sh there first.")
+    # The service's security settings (lib/harden_service.py) are a step harbor has that the script never did
+    script = re.sub(r'(?m)^python3 "\$\{_apacheDir\}/lib/harden_service\.py" .*\n', "", script)
     return re.sub(r'python3 "\$\{_apacheDir\}/lib/([\w.]+)"', r"python3 /vns/apache/lib/\1", script)
 
 
