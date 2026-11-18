@@ -114,6 +114,13 @@ class BulkTests(unittest.TestCase):
         ns["target_ids"] = lambda root: []
         self.assertEqual(task("one", umbraco, "sync_data"), {"skip": "No environments"})
 
+    def test_multi_sync_names_who_started_it_as_a_sync_on_a_card(self):
+        """The sync history names the user of a multi sync from the overview, as of one from an environment's card"""
+        app = (APP / "app.py").read_text()
+        start = app.index('if payload.get("kind") in ("sync_env", "data_sync")')
+        block = app[start:app.index('"HARBOR_SYNC_WHO_ID"', start)]
+        self.assertIn('payload.get("kind") == "bulk" and str(payload.get("action") or "").startswith("sync_")', block)
+
     def test_package_commands_reuse_validation(self):
         for action in ("add", "remove"):
             _, argv, _ = self.command(action=action, package="Example.Package", version="1.2.3")

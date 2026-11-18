@@ -4677,8 +4677,10 @@ def api_term():
         sites = windows_sites(payload)
         extra_env = {**(extra_env or {}), "VNS_WINDOWS_SITES": json.dumps(sites),
                      **({} if payload.get("server") else {"VNS_SMB_PASSWORD": str(payload.get("password") or "")})}
-    if payload.get("kind") in ("sync_env", "data_sync"):
-        # Who started it, for the sync history the dashboard in Umbraco shows
+    if payload.get("kind") in ("sync_env", "data_sync") or (
+            payload.get("kind") == "bulk" and str(payload.get("action") or "").startswith("sync_")):
+        # Who started it, for the sync history the dashboard in Umbraco shows. A multi sync from the overview too:
+        # its syncs inherit it from bulk_tasks
         # By id too: the history shows the user's name as it is now, also after they change it in Profile
         user = me() or {}
         who = user.get("name") or user.get("username", "")

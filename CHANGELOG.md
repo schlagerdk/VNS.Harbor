@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.44] - 2026-11-18
+
+### Fixes
+
+- A multi sync from the overview names who started it in the sync history (and the dashboard in Umbraco), as a sync from an environment's card does: it had no name
+
 ## [1.0.43] - 2026-11-18
 
 ### Fixes
