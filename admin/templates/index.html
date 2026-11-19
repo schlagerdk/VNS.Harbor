@@ -822,7 +822,7 @@
     <fieldset class="server-editions">
       <legend>Reached from</legend>
       <label class="type-card"><input type="radio" name="access_mode" value="all"><span class="tc-title">Everywhere</span><span class="tc-sub">Anyone can reach the login</span></label>
-      <label class="type-card"><input type="radio" name="access_mode" value="some"><span class="tc-title">These addresses only</span><span class="tc-sub">Others get 403 from Apache</span></label>
+      <label class="type-card"><input type="radio" name="access_mode" value="some"><span class="tc-title">These addresses only</span><span class="tc-sub">Others are turned away</span></label>
     </fieldset>
     <div id="admin-access-list-row">
       <label>IP addresses and ranges, one a line
@@ -832,6 +832,16 @@
         <span class="your-address-text"><small>Your address now</small><strong id="admin-access-yours"></strong></span>
         <span id="admin-access-mine-in" class="your-address-in" hidden><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>In the list</span>
         <button type="button" id="admin-access-add-mine" class="small primary">+ Add it</button>
+      </div>
+      <div class="ns-grid admin-access-others">
+        <label>Others get
+          <select id="admin-access-response">
+            <option value="forbidden">403 Forbidden</option>
+            <option value="notfound">404 Not found, as if nothing were there</option>
+            <option value="redirect">A redirect to another address</option>
+          </select></label>
+        <label id="admin-access-target-row">Redirect to
+          <input id="admin-access-target" type="url" placeholder="https://www.google.dk/" autocomplete="off" spellcheck="false"></label>
       </div>
     </div>
     <label class="admin-access-lockout" id="admin-access-lockout-row" hidden><input type="checkbox" id="admin-access-lockout">

@@ -272,21 +272,49 @@ def access_conf(system, name):
     return system.path(f"/etc/apache2/sites-available/{name}.conf")
 
 
-def allowed_addresses(system, name=""):
-    """The addresses and ranges allowed to reach the admin site (its Apache config, <Location />), or [] for everyone"""
+# What others get when the admin site is kept to some addresses: Apache's 403, a 404 as if nothing were there, or a
+# redirect to another address. 403 and the redirect keep Require ip (the redirect is the 403's ErrorDocument, which
+# Apache answers with a 302); 404 is an <If> that answers anyone else with Redirect 404, before the service is asked.
+RESPONSES = ("forbidden", "notfound", "redirect")
+REDIRECT_TARGET = re.compile(r"https?://[^\s\"'<>\\]+")
+
+
+def access_settings(system, name=""):
+    """Who may reach the admin site (its Apache config, <Location />): the addresses and ranges ([] for everyone), and
+    what others get"""
     name = choose(system, name)
     path = access_conf(system, name)
     text = path.read_text() if path.is_file() else ""
-    addresses = []
+    addresses, response, target = [], "forbidden", ""
     for match in LOCATION.finditer(text):
         for line in match.group(2).splitlines():
             words = line.split()
-            if words[:2] == ["Require", "ip"]:
-                addresses += [word for word in words[2:] if word not in addresses]
-    return addresses
+            found = words[2:] if words[:2] == ["Require", "ip"] else re.findall(r"-R '([^']+)'", line) if words[:1] == ["<If"] else []
+            addresses += [word for word in found if word not in addresses]
+            if words[:2] == ["ErrorDocument", "403"] and len(words) == 3 and REDIRECT_TARGET.fullmatch(words[2]):
+                response, target = "redirect", words[2]
+            if words[:2] == ["Redirect", "404"]:
+                response = "notfound"
+    return {"addresses": addresses, "response": response, "target": target}
 
 
-def set_allowed_addresses(system, name, addresses):
+def allowed_addresses(system, name=""):
+    """The addresses and ranges allowed to reach the admin site, or [] for everyone"""
+    return access_settings(system, name)["addresses"]
+
+
+def access_rules(addresses, response="forbidden", target=""):
+    """The lines in <Location /> for these addresses and what others get"""
+    if not addresses:
+        return ["Require all granted"]
+    if response == "notfound":
+        listed = " || ".join(f"-R '{address}'" for address in addresses)
+        return ["Require all granted", f'<If "!({listed})">', "  Redirect 404", "</If>"]
+    rules = ["Require ip " + " ".join(addresses)]
+    return rules + [f"ErrorDocument 403 {target}"] if response == "redirect" else rules
+
+
+def set_allowed_addresses(system, name, addresses, response="forbidden", target=""):
     """Who may reach the admin site: these addresses and ranges, or everyone when there are none. Apache checks the
     change before it is used, and one it refuses is taken back."""
     name = choose(system, name)
@@ -294,16 +322,28 @@ def set_allowed_addresses(system, name, addresses):
     for address in addresses:
         if not ADDRESS.fullmatch(address):
             raise Stop(f"Invalid IP address or range: {address}")
+    if response not in RESPONSES:
+        raise Stop(f"Others get forbidden, notfound or redirect, not {response}.")
+    target = target.strip() if response == "redirect" else ""
+    if response == "redirect" and not REDIRECT_TARGET.fullmatch(target):
+        raise Stop("Redirect to a whole address, like https://www.google.dk/.")
     path = access_conf(system, name)
     if not path.is_file():
         raise Stop(f"{path} is not there.")
     before = path.read_text()
-    rule = "Require ip " + " ".join(addresses) if addresses else "Require all granted"
+    rules = access_rules(addresses, response, target)
 
     def replace(match):
         indent = re.match(r"[ \t]*", match.group(1)).group(0) + "  "
-        kept = [line for line in match.group(2).splitlines() if not line.strip().startswith("Require")]
-        return match.group(1) + "".join(line + "\n" for line in [indent + rule, *kept]) + match.group(3)
+        # Lines of its own kept; the rules written here before (Require, the 403's redirect, the 404's <If>) replaced
+        kept, inside = [], False
+        for line in match.group(2).splitlines():
+            stripped = line.strip()
+            inside = inside or stripped.startswith("<If ")
+            if not inside and not stripped.startswith(("Require", "ErrorDocument 403")):
+                kept.append(line)
+            inside = inside and stripped != "</If>"
+        return match.group(1) + "".join(line + "\n" for line in [*(indent + rule for rule in rules), *kept]) + match.group(3)
     text, count = LOCATION.subn(replace, before)
     if not count:
         raise Stop(f"{path} has no <Location /> to set who may reach it.")
@@ -314,7 +354,8 @@ def set_allowed_addresses(system, name, addresses):
         path.write_text(before)
         raise Stop("Apache refused the change, so it is taken back.")
     system.run("systemctl", "reload", "apache2")
-    system.say(f"The admin site can be reached from {' '.join(addresses)} only." if addresses else "The admin site can be reached from everywhere.")
+    others = {"forbidden": "others get 403", "notfound": "others get 404", "redirect": f"others are sent to {target}"}[response]
+    system.say(f"The admin site can be reached from {' '.join(addresses)} only: {others}." if addresses else "The admin site can be reached from everywhere.")
 
 
 def uninstall(system, name="", delete_certificate=""):

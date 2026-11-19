@@ -451,10 +451,10 @@ def _admin(args, system):
         admin.uninstall(system, args.site, args.delete_certificate)
     elif args.command == "access":
         if args.everyone or args.allow:
-            admin.set_allowed_addresses(system, args.site, [] if args.everyone else args.allow)
+            admin.set_allowed_addresses(system, args.site, [] if args.everyone else args.allow, args.others, args.redirect_to)
         else:
             import json
-            print(json.dumps({"addresses": admin.allowed_addresses(system, args.site)}))
+            print(json.dumps(admin.access_settings(system, args.site)))
 
 
 def _self(args, system):
@@ -829,6 +829,9 @@ def parser():
     command.add_argument("site", nargs="?", default="")
     command.add_argument("--allow", nargs="+", default=[], help="IP addresses or CIDR ranges")
     command.add_argument("--everyone", action="store_true", help="no restriction")
+    command.add_argument("--others", choices=("forbidden", "notfound", "redirect"), default="forbidden",
+                         help="what other addresses get: 403 (default), 404, or a redirect (--redirect-to)")
+    command.add_argument("--redirect-to", default="", metavar="URL", help="where --others redirect sends them")
     command.set_defaults(handler=_admin)
     command = admin.add_parser("uninstall", help="remove the admin site: files, login, service and Apache config")
     command.add_argument("site", nargs="?", default="")

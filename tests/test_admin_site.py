@@ -87,6 +87,23 @@ class AdminAccessTests(AdminUpdateTests):
         admin.set_allowed_addresses(system, "", [])
         self.assertEqual(conf.read_text(), self.CONF)
 
+    def test_others_get_a_404_or_a_redirect_and_it_is_read_back(self):
+        conf = self.write_conf()
+        system = RecordingSystem(root=self.root)
+        admin.set_allowed_addresses(system, "", ["192.0.2.10"], "redirect", "https://www.google.dk/")
+        self.assertIn("    Require ip 192.0.2.10\n    ErrorDocument 403 https://www.google.dk/\n  </Location>", conf.read_text())
+        self.assertEqual(admin.access_settings(system), {"addresses": ["192.0.2.10"], "response": "redirect", "target": "https://www.google.dk/"})
+        admin.set_allowed_addresses(system, "", ["192.0.2.10", "10.0.0.0/8"], "notfound")
+        self.assertIn("    Require all granted\n    <If \"!(-R '192.0.2.10' || -R '10.0.0.0/8')\">\n      Redirect 404\n    </If>\n  </Location>",
+                      conf.read_text())
+        self.assertEqual(admin.access_settings(system), {"addresses": ["192.0.2.10", "10.0.0.0/8"], "response": "notfound", "target": ""})
+        admin.set_allowed_addresses(system, "", ["192.0.2.10"])
+        self.assertEqual(admin.access_settings(system), {"addresses": ["192.0.2.10"], "response": "forbidden", "target": ""})
+        admin.set_allowed_addresses(system, "", [])
+        self.assertEqual(conf.read_text(), self.CONF)
+        with self.assertRaises(Exception):
+            admin.set_allowed_addresses(system, "", ["192.0.2.10"], "redirect", "/login")
+
     def test_a_change_apache_refuses_and_a_bad_address_are_refused(self):
         from harbor.core.system import Result
         conf = self.write_conf()

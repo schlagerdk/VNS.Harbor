@@ -2364,7 +2364,9 @@ def api_admin_access():
     if request.method == "GET":
         try:
             result = subprocess.run(["/usr/bin/python3", HARBOR_COMMAND, "admin", "access", ADMIN_SITE], capture_output=True, text=True, timeout=30)
-            return jsonify(addresses=json.loads(result.stdout)["addresses"], yours=mine)
+            settings = json.loads(result.stdout)
+            return jsonify(addresses=settings["addresses"], response=settings.get("response", "forbidden"),
+                           target=settings.get("target", ""), yours=mine)
         except (OSError, subprocess.SubprocessError, ValueError, KeyError) as exc:
             app.logger.error("harbor admin access: %s", exc)
             return error("Who may reach the admin site could not be read.", 502)
@@ -2383,11 +2385,18 @@ def api_admin_access():
         locked_out = bool(networks) and not any(yours in network for network in networks)
     except ValueError:
         locked_out = bool(networks)
+    response = data.get("response") or "forbidden"
+    target = str(data.get("target") or "").strip()
+    if response not in ("forbidden", "notfound", "redirect"):
+        return error("Choose what others get.")
+    if response == "redirect" and not re.fullmatch(r"https?://[^\s\"'<>\\]+", target):
+        return error("Redirect to a whole address, like https://www.google.dk/.")
     if locked_out and data.get("confirm_lockout") is not True:
         return error(f"Your address now, {mine}, is not among them: you would be locked out at once.", 409)
     try:
         result = subprocess.run(["/usr/bin/python3", HARBOR_COMMAND, "admin", "access", ADMIN_SITE,
-                                 *(["--allow", *[str(network) if network.num_addresses > 1 else str(network.network_address) for network in networks]] if networks else ["--everyone"])],
+                                 *(["--allow", *[str(network) if network.num_addresses > 1 else str(network.network_address) for network in networks],
+                                    "--others", response, *(["--redirect-to", target] if response == "redirect" else [])] if networks else ["--everyone"])],
                                 capture_output=True, text=True, timeout=60)
     except (OSError, subprocess.SubprocessError) as exc:
         app.logger.error("harbor admin access: %s", exc)
@@ -2395,7 +2404,8 @@ def api_admin_access():
     if result.returncode:
         lines = (result.stderr or result.stdout).strip().splitlines()
         return error(lines[-1] if lines else "Who may reach the admin site could not be saved.")
-    audit("Admin site reachable from " + (" ".join(addresses) if addresses else "everywhere"))
+    audit("Admin site reachable from " + (" ".join(addresses) + {"forbidden": "", "notfound": ", others get 404", "redirect": ", others sent to " + target}[response]
+                                          if addresses else "everywhere"))
     return jsonify(ok=True)
 
 

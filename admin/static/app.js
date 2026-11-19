@@ -6752,7 +6752,7 @@ function addressIn(address, item) {
 // Leaving out your own address locks you out at once, so that is said and must be ticked.
 const openAdminAccess = () => run(async () => {
 	const dialog = $("#dlg-admin-access");
-	const { addresses, yours } = await api("/api/admin-access");
+	const { addresses, yours, response = "forbidden", target = "" } = await api("/api/admin-access");
 	const list = $("#admin-access-list");
 	const mode = (value) => { for (const radio of dialog.querySelectorAll("[name=access_mode]")) radio.checked = radio.value === value; };
 	const lines = () => list.value.split(/[\s,]+/).map((item) => item.trim()).filter(Boolean);
@@ -6760,10 +6760,17 @@ const openAdminAccess = () => run(async () => {
 		const some = dialog.querySelector("[name=access_mode]:checked")?.value === "some";
 		$("#admin-access-list-row").hidden = !some;
 		list.required = some;
+		// The address to send others to, only when they are sent somewhere
+		const redirect = $("#admin-access-response").value === "redirect";
+		$("#admin-access-target-row").hidden = !redirect;
+		$("#admin-access-target").required = some && redirect;
 		$("#admin-access-lockout-row").hidden = true;
 		$("#admin-access-lockout").checked = false;
 	};
 	list.value = addresses.join("\n");
+	$("#admin-access-response").value = response;
+	$("#admin-access-target").value = target;
+	$("#admin-access-response").onchange = update;
 	mode(addresses.length ? "some" : "all");
 	$("#admin-access-yours").textContent = yours;
 	// Whether your address is in the list, also within a range: Add it, or In the list
@@ -6781,7 +6788,9 @@ const openAdminAccess = () => run(async () => {
 	$("#form-admin-access").onsubmit = (event) => {
 		event.preventDefault();
 		const some = dialog.querySelector("[name=access_mode]:checked")?.value === "some";
-		const payload = { addresses: some ? lines() : [], confirm_lockout: $("#admin-access-lockout").checked };
+		const answer = $("#admin-access-response").value;
+		const payload = { addresses: some ? lines() : [], response: answer, target: answer === "redirect" ? $("#admin-access-target").value.trim() : "",
+			confirm_lockout: $("#admin-access-lockout").checked };
 		run(async () => {
 			try {
 				await api("/api/admin-access", { json: payload });
@@ -6791,7 +6800,8 @@ const openAdminAccess = () => run(async () => {
 				throw error;
 			}
 			dialog.close();
-			toast(some ? `The admin site can be reached from ${payload.addresses.length} address${payload.addresses.length === 1 ? "" : "es"} only.` : "The admin site can be reached from everywhere.", "ok");
+			const others = { forbidden: "others get 403", notfound: "others get 404", redirect: `others are sent to ${payload.target}` }[answer];
+			toast(some ? `The admin site can be reached from ${payload.addresses.length} address${payload.addresses.length === 1 ? "" : "es"} only: ${others}.` : "The admin site can be reached from everywhere.", "ok");
 		});
 	};
 	dialog.showModal();
