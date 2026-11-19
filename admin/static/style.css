@@ -817,9 +817,10 @@ dialog .admin-access-lockout input { flex: none; width: 16px; height: 16px; min-
 .admin-access-lockout small { color: var(--muted); }
 #dlg-admin-access textarea { resize: none; width: 100%; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
 #admin-access-list-row[hidden] { display: none; }
-.admin-access-others { margin-top: 14px; }
+dialog fieldset.admin-access-others { display: grid; gap: 10px; margin: 16px 0 0; padding: 0; border: 0; min-width: 0; }
+.admin-access-others legend { margin-bottom: 8px; padding: 0; color: var(--muted); font-size: 12.5px; }
+dialog .admin-access-others #admin-access-target-row { margin: 0; }
 #admin-access-target-row[hidden] { display: none; }
-@media (max-width: 800px) { .admin-access-others { grid-template-columns: 1fr; } }
 /* Your address under the list: what it is, and Add it, or In the list once it is */
 .your-address { display: flex; align-items: center; gap: 12px; margin-top: 10px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; background: linear-gradient(110deg, rgba(88, 166, 255, .07), transparent 70%), var(--panel2); }
 .your-address-icon { display: grid; flex: none; place-items: center; width: 34px; height: 34px; border-radius: 10px; background: rgba(88, 166, 255, .14); color: var(--blue); }

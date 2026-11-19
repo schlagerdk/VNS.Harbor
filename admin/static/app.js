@@ -6761,16 +6761,21 @@ const openAdminAccess = () => run(async () => {
 		$("#admin-access-list-row").hidden = !some;
 		list.required = some;
 		// The address to send others to, only when they are sent somewhere
-		const redirect = $("#admin-access-response").value === "redirect";
+		const redirect = responseChoice() === "redirect";
 		$("#admin-access-target-row").hidden = !redirect;
 		$("#admin-access-target").required = some && redirect;
 		$("#admin-access-lockout-row").hidden = true;
 		$("#admin-access-lockout").checked = false;
 	};
 	list.value = addresses.join("\n");
-	$("#admin-access-response").value = response;
+	// What others get: three segments, the redirect's address under them when it is chosen
+	const responses = [...dialog.querySelectorAll("[name=admin_access_response]")];
+	const responseChoice = () => responses.find((radio) => radio.checked)?.value || "forbidden";
+	for (const radio of responses) {
+		radio.checked = radio.value === response;
+		radio.onchange = () => { update(); if (radio.value === "redirect") $("#admin-access-target").focus(); };
+	}
 	$("#admin-access-target").value = target;
-	$("#admin-access-response").onchange = update;
 	mode(addresses.length ? "some" : "all");
 	$("#admin-access-yours").textContent = yours;
 	// Whether your address is in the list, also within a range: Add it, or In the list
@@ -6788,7 +6793,7 @@ const openAdminAccess = () => run(async () => {
 	$("#form-admin-access").onsubmit = (event) => {
 		event.preventDefault();
 		const some = dialog.querySelector("[name=access_mode]:checked")?.value === "some";
-		const answer = $("#admin-access-response").value;
+		const answer = responseChoice();
 		const payload = { addresses: some ? lines() : [], response: answer, target: answer === "redirect" ? $("#admin-access-target").value.trim() : "",
 			confirm_lockout: $("#admin-access-lockout").checked };
 		run(async () => {
