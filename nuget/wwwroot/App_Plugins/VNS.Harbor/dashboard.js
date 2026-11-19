@@ -156,7 +156,7 @@ export default class VnsHarborDashboard extends UmbElementMixin(LitElement) {
 			return html`<li class=${state[0]}>
 				<span class="kind">${this.#kind(kind)}</span>
 				<span class="when" title=${last ? (last.who ? this.#t("syncedBy", this.#time(last.time), last.who) : this.#time(last.time)) : ""}>${last ? this.#ago(last.time) : ""}</span>
-				${state[1] ? html`<span class="pill" title=${state[0] === "changed" ? this.#t("changedSince", sender) : ""}>${state[1]}</span>` : nothing}</li>`;
+				${state[1] ? html`<span class="pill" title=${state[0] === "changed" ? this.#t("changedSince", sender) : state[1]}>${state[1]}</span>` : html`<span></span>`}</li>`;
 		})}</ul>`;
 	}
 
@@ -408,11 +408,15 @@ export default class VnsHarborDashboard extends UmbElementMixin(LitElement) {
 		.section { margin: var(--uui-size-space-3) 0 calc(var(--uui-size-space-4) * -1); font-size: 0.75rem; font-weight: 700;
 			letter-spacing: 0.06em; text-transform: uppercase; color: var(--uui-color-text-alt); }
 		.name { display: flex; align-items: center; gap: 12px; font-weight: 700; font-size: 1.1rem; }
-		.status { list-style: none; margin: var(--uui-size-space-3) 0; padding: 0; display: grid; gap: 6px; font-size: 0.85rem; }
-		.status li { display: flex; align-items: center; gap: 8px; }
-		.status .kind { font-weight: 700; min-width: 64px; }
-		.status .when { color: var(--uui-color-text-alt); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-		.status .pill { margin-left: auto; padding: 1px 8px; border-radius: 999px; font-size: 0.72rem; font-weight: 700; white-space: nowrap; flex: none; }
+		/* Three columns shared by every line: the kinds as wide as the widest (Indstillinger), the time, the state at the
+		   right. The state is never wider than the card: a long one is cut, and says itself in full on hover. */
+		.status { list-style: none; margin: var(--uui-size-space-3) 0; padding: 0; display: grid;
+			grid-template-columns: max-content minmax(0, 1fr) auto; align-items: center; gap: 6px 10px; font-size: 0.85rem; }
+		.status li { display: contents; }
+		.status .kind { font-weight: 700; }
+		.status .when { min-width: 0; color: var(--uui-color-text-alt); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+		.status .pill { justify-self: end; max-width: 100%; box-sizing: border-box; padding: 1px 8px; border-radius: 999px; font-size: 0.72rem;
+			font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 		.status li.current .pill { background: #e3f4e8; color: #1f7a3d; }
 		.status li.changed .pill { background: #fff4dc; color: #7a4f00; }
 		.status li.failed .pill { background: #fde7e5; color: #a3261c; }

@@ -32,7 +32,7 @@ export default {
 		neverReceived: "Aldrig modtaget",
 		neverSynced: "Aldrig synkroniseret",
 		lastSyncFailed: "Seneste fejlede",
-		changesNotSynced: "Ændringer ikke synkroniseret",
+		changesNotSynced: "Ikke ajour",
 		upToDate: "Ajour",
 		syncedBy: (time, who) => `${time} af ${who}`,
 		changedSince: (sender) => `${sender} er ændret siden sidste synkronisering`,
