@@ -22,7 +22,7 @@
 			"label": "Pack Nuget",
 			"type": "process",
 			"command": "dotnet",
-			"args": ["pack", "${workspaceFolder}/nuget/VNS.Harbor.csproj", "-c", "Release"],
+			"args": ["pack", "${workspaceFolder}/nuget/VNS.Harbor.csproj", "-c", "Release", "-o", "${workspaceFolder}/nuget/artifacts"],
 			"problemMatcher": "$msCompile",
 			"group": "build"
 		}
