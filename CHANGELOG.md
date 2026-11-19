@@ -2,6 +2,13 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.51] - 2026-11-20
+
+### Fixes
+
+- A site's publish deletes what its build no longer has, so a removed package's DLL and App_Plugins no longer stop the site
+- The VNS.Harbor dashboard manifest carries version 18.3.2.3 too, as the package does
+
 ## [1.0.50] - 2026-11-20
 
 ### Features
