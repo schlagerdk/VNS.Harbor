@@ -105,13 +105,17 @@ class SiteConfigTests(unittest.TestCase):
 
     def test_https_config_from_an_http_one_and_kept_when_apache_refuses_it(self):
         http = ("<VirtualHost *:80>\n  ServerName shop.dk\n  ProxyRequests Off\n  RequestHeader set X-Forwarded-Proto \"http\"\n"
-                "  ProxyPass / http://127.0.0.1:4010/\n</VirtualHost>\n")
+                "  ProxyPass / http://127.0.0.1:4010/\n  ErrorLog /var/log/apache2/shop.dk-80-error.log\n</VirtualHost>\n")
         for server in (self.old, self.new):
             (server.root / "etc/apache2/sites-available/shop.dk.conf").write_text(http)
         result = self.old.bash(self.site_vars() + "enable_https_config")
         site_config.enable_https_config(self.system, self.site, "shop.dk")
         self.same(result)
-        self.assertIn("<VirtualHost *:443>", (self.new.root / "etc/apache2/sites-available/shop.dk.conf").read_text())
+        https = (self.new.root / "etc/apache2/sites-available/shop.dk.conf").read_text()
+        self.assertIn("<VirtualHost *:443>", https)
+        # The HTTPS site logs as a new one does, not to the log of port 80
+        self.assertIn("ErrorLog /var/log/apache2/shop.dk-443-error.log", https)
+        self.assertNotIn("-80-error.log", https)
         # Twice changes nothing more
         self.system.commands.clear()
         site_config.enable_https_config(self.system, self.site, "shop.dk")

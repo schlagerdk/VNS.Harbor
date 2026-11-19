@@ -551,6 +551,7 @@ enable_https_config() {
 			{
 				gsub("<VirtualHost \\*:80>", "<VirtualHost *:443>")
 				gsub("X-Forwarded-Proto \"http\"", "X-Forwarded-Proto \"https\"")
+				gsub("-80-error\\.log", "-443-error.log")
 				if (/<\/VirtualHost>/) {
 					print "  SSLEngine On"
 					print "  SSLCertificateFile " cert

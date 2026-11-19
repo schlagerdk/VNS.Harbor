@@ -89,7 +89,9 @@ def enable_https_config(system, site, binding):
                 "  RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [R=301,L]\n</VirtualHost>\n\n")
     lines = []
     for line in text.splitlines():
+        # Its log too: an HTTP config logs to -80-error.log, the HTTPS site to -443-error.log as a new one does
         line = line.replace("<VirtualHost *:80>", "<VirtualHost *:443>").replace('X-Forwarded-Proto "http"', 'X-Forwarded-Proto "https"')
+        line = re.sub(r"-80-error\.log", "-443-error.log", line)
         if "</VirtualHost>" in line:
             lines += ["  SSLEngine On", f"  SSLCertificateFile {site.certificate_file}", f"  SSLCertificateKeyFile {site.key_file}"]
         lines.append(line)
