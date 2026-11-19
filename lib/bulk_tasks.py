@@ -9,6 +9,9 @@ import subprocess
 import sys
 import threading
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from output_problem import output_problem  # noqa: E402  (beside this file, also when it is imported)
+
 
 # A step a harbor command reports to the admin's window (harbor/core/system.py PROGRESS), and the same with its site
 EVENT = re.compile(r"\x1b\]7777;harbor;(\{.*?\})\x07")
@@ -30,6 +33,16 @@ def with_site(line, site):
     return EVENT.sub(named, line)
 
 
+# A line's escapes (colours and the window's events), to tell what it says
+ESCAPES = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*(?:\x07|\x1b\\)|\r")
+
+
+def problem_event(line, site):
+    """A warning or error in a site's output: the window marks the step of that site it came in, and tells it there"""
+    text = ESCAPES.sub("", line).strip()
+    return event({"type": "problem", "site": site, "text": text[:300]}) if text and output_problem(line) else ""
+
+
 def run_task(task, lock):
     site = task["site"]
     if task.get("skip"):
@@ -49,7 +62,7 @@ def run_command(task, site, lock):
                               text=True, errors="replace", bufsize=1) as process:
             for line in process.stdout:
                 with lock:
-                    print(f"[{site}] {with_site(line, site)}", end="", flush=True)
+                    print(f"[{site}] {with_site(line, site)}{problem_event(line, site)}", end="", flush=True)
             code = process.wait()
         status = "OK" if code == 0 else f"FAILED: exit {code}"
     except OSError as exc:

@@ -85,6 +85,9 @@ _data_sync_spec = importlib.util.spec_from_file_location("vns_data_sync", os.pat
 _data_sync_module = importlib.util.module_from_spec(_data_sync_spec)
 _data_sync_spec.loader.exec_module(_data_sync_module)
 ADMIN_SITE = cfg.get("admin_site", "")
+_output_problem_spec = importlib.util.spec_from_file_location("vns_output_problem", os.path.join(LIB_DIR, "output_problem.py"))
+_output_problem = importlib.util.module_from_spec(_output_problem_spec)
+_output_problem_spec.loader.exec_module(_output_problem)
 _tokens_spec = importlib.util.spec_from_file_location("vns_publish_tokens", os.path.join(LIB_DIR, "publish_tokens.py"))
 _publish_tokens = importlib.util.module_from_spec(_tokens_spec)
 _tokens_spec.loader.exec_module(_publish_tokens)
@@ -3520,18 +3523,7 @@ def terminal_auto_close(payload):
 
 
 def terminal_output_problem(text):
-    text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*(?:\x07|\x1b\\)", "", text)
-    text = re.sub(
-        r"^(?:\[[^\]\r\n]+\] )?(?:"
-        r"Checking if there is an error in the Apache config file before starting\."
-        r"|In case an error causes it to not be restored automatically, you can restore it yourself\."
-        # dotnet's own notes, not problems: a package added without its restore (Harbor restores next), and a build that
-        # runs without the MSBuild server ("the server may have failed to start")
-        r"|(?:warn|info) : --no-restore\|-n flag was used\..*"
-        r"|MSBuild server unavailable: .*Falling back to an in-process build\."
-        r")\r?$", "", text, flags=re.M)
-    text = re.sub(r"\b(?:0|no)\s+(?:errors?|warnings?|failures?)(?:\(s\))?\b", "", text, flags=re.I)
-    return bool(re.search(r"\b(?:errors?|failed|failure|fatal|\w*exception|traceback|warnings?)\b(?![/_-]|\.[A-Za-z0-9])", text, re.I))
+    return _output_problem.output_problem(text)
 
 
 class TermSession:

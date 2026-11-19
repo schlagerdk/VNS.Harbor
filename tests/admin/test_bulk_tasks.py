@@ -262,6 +262,18 @@ class BulkTests(unittest.TestCase):
                                 timeout=30, env={key: value for key, value in os.environ.items() if key != "HARBOR_PROGRESS"})
         self.assertNotIn('"type": "site"', result.stdout, "no events where they are not wanted")
 
+    def test_a_sites_warning_is_told_with_its_site(self):
+        """The window marks the step of the site a warning came in, not the tick"""
+        script = ('import sys; sys.stdout.write("\\x1b]7777;harbor;{\\"type\\": \\"step\\", \\"text\\": \\"Publish\\"}\\x07Publish\\n"); '
+                  'print("Build succeeded. 0 Warning(s)"); print("\\x1b[33mWarning: Rewrite x is not carried\\x1b[0m", file=sys.stderr)')
+        tasks = [{"site": "one", "argv": [sys.executable, "-c", script], "cwd": str(self.root)}]
+        result = subprocess.run([sys.executable, str(ROOT_DIR / "lib/bulk_tasks.py"), json.dumps(tasks)], capture_output=True, text=True,
+                                timeout=30, env={**os.environ, "HARBOR_PROGRESS": "1"})
+        events = [json.loads(match) for match in re.findall(r"\x1b\]7777;harbor;(\{.*?\})\x07", result.stdout)]
+        self.assertEqual([event for event in events if event["type"] == "problem"],
+                         [{"type": "problem", "site": "one", "text": "Warning: Rewrite x is not carried"}])
+        self.assertEqual(result.returncode, 0, "a warning is no failure")
+
     def test_invalid_selection_and_non_csharp_are_rejected(self):
         for sites in ([], ["one", "one"], ["one"] * 101, [1]):
             with self.assertRaises(BadRequest):

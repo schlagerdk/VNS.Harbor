@@ -5694,6 +5694,15 @@ function taskStateIcon(state) {
 // step it reports is the next of them. A step that is not in the plan comes before those still to come.
 function reachedStep(step) { return !step.pending && !step.skipped; }
 function lastReachedStep(t) { return t.steps.filter(reachedStep).pop(); }
+// Multi action: a warning or error in a site's output (lib/bulk_tasks.py) marks the step of that site it came in, and is
+// told under it, so the sites with warnings are seen without the output. One the step already tells (a warning step) is not
+// told again.
+function addTaskProblem(t, event) {
+	const site = String(event.site), text = String(event.text || "");
+	const step = t.steps.filter((item) => item.site === site && reachedStep(item)).pop();
+	if (!step || !text || step.text === text || step.problems?.includes(text)) return;
+	(step.problems ||= []).push(text);
+}
 function addTaskStep(t, event) {
 	const site = event.site ? String(event.site) : "";
 	const firstPending = t.steps.findIndex((step) => step.pending && step.site === site);
@@ -5764,7 +5773,12 @@ function renderTask(t) {
 			: last && state === "running" ? "active" : last && state === "failed" ? "failed" : "done";
 		// The site in front, unless the step names it already
 		const text = step.site && !step.text.includes(step.site) ? `${step.site}: ${step.text}` : step.text;
-		return el("li", { className: `task-step ${kind}` }, el("span", { className: "task-step-mark", "aria-hidden": "true" }), el("span", { textContent: text }));
+		// A step that went on with a warning: a warning mark, not the tick, and what it said under it
+		const problems = step.problems || [];
+		const shown = problems.length && (kind === "done" || kind === "active") ? `${kind} warning` : kind;
+		return el("li", { className: `task-step ${shown}` }, el("span", { className: "task-step-mark", "aria-hidden": "true" }),
+			el("span", { className: "task-step-text" }, el("span", { textContent: text }),
+				...problems.map((problem) => el("span", { className: "task-step-problem", textContent: problem }))));
 	}));
 	$("#task-steps").hidden = !t.steps.length;
 	if (follow) followTaskStep();
@@ -5951,6 +5965,7 @@ function openTerminal(id, title, autoClose, sites = [], running = true, scope = 
 		try {
 			const event = JSON.parse(data.slice("harbor;".length));
 			if (["step", "warning", "plan", "skip"].includes(event.type)) addTaskStep(t, event);
+			if (event.type === "problem" && event.site) addTaskProblem(t, event);
 			// Multi action: a site has started or ended (several run at once)
 			if (event.type === "site" && event.site) (t.siteStates ||= {})[event.site] = String(event.state || "");
 			renderTask(t);

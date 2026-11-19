@@ -1,5 +1,6 @@
 import ast
 import codecs
+import importlib.util
 from pathlib import Path
 import re
 import subprocess
@@ -20,7 +21,10 @@ class TerminalCompletionTests(unittest.TestCase):
         nodes = [node for node in ast.parse((APP / "app.py").read_text()).body
                  if isinstance(node, (ast.FunctionDef, ast.ClassDef)) and node.name in names]
         # keep_harbor_state and linux_users_changed: Harbor keeps its state and the Linux users after a task; not here
-        self.ns = {"re": re, "codecs": codecs, "BUFFER_MAX": 1024, "REMOTE_STATUS": {}, "keep_harbor_state": lambda: None, "linux_users_changed": lambda: None,
+        spec = importlib.util.spec_from_file_location("vns_output_problem", ROOT_DIR / "lib/output_problem.py")
+        output_problem = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(output_problem)
+        self.ns = {"re": re, "codecs": codecs, "_output_problem": output_problem, "BUFFER_MAX": 1024, "REMOTE_STATUS": {}, "keep_harbor_state": lambda: None, "linux_users_changed": lambda: None,
                    "os": SimpleNamespace(read=Mock())}
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "terminal completion", "exec"), self.ns)
         add_target_helpers(self.ns)
