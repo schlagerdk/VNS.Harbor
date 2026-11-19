@@ -4609,9 +4609,10 @@ const snippetFields = {
 		{ name: "paths", label: "Paths to leave alone", value: "umbraco/api, umbraco/surface, umbraco/backoffice", hint: "Separate them with spaces or commas." }] },
 	ips: { description: "Only these addresses reach the site, or the paths chosen. This server itself always does.", fields: [
 		{ name: "addresses", label: "Allowed IP addresses", placeholder: "192.0.2.10, 198.51.100.7", hint: "Separate them with spaces or commas.", yourAddress: true },
-		{ name: "scope", label: "Protect", options: [["paths", "Chosen paths"], ["site", "The whole site (certificate renewal still gets through)"]] },
+		// Choices as segments: [value, title, line under it, only for this kind of config]
+		{ name: "scope", label: "Protect", options: [["paths", "Chosen paths"], ["site", "The whole site", "Certificate renewal still gets through"]] },
 		{ name: "paths", label: "Paths to protect", value: "umbraco, app_plugins, config", showIf: ["scope", "paths"] },
-		{ name: "response", label: "Others get", options: [["forbidden", "403 Forbidden"], ["notfound", "404 Not found, as if the path was not there"], ["redirect", "A redirect to another address"], ["abort", "The connection closed, without an answer", "iis"]] },
+		{ name: "response", label: "Others get", options: [["forbidden", "403", "Forbidden"], ["notfound", "404", "As if it was not there"], ["redirect", "Redirect", "Sent somewhere else"], ["abort", "Closed", "No answer at all", "iis"]] },
 		{ name: "target", label: "Redirect to", value: "/", showIf: ["response", "redirect"], hint: "A path on the site, like /, or a whole address." }] },
 	domain: { description: "Every other name the site answers on is sent to this one.", fields: [
 		{ name: "domain", label: "Domain", placeholder: "example.dk" }] },
@@ -4903,10 +4904,19 @@ function askSnippet(key, snippet, config) {
 	$("#snippet-description").textContent = spec.description || "Inserted as it is. Check it in the file before you save.";
 	const kind = snippetKind();
 	const rows = spec.fields.map((field) => {
-		const input = field.options
-			? el("select", { name: field.name }, ...field.options.filter((option) => !option[2] || option[2] === kind)
-				.map(([value, text]) => el("option", { value, textContent: text })))
-			: el("input", { name: field.name, value: field.value || "", placeholder: field.placeholder || "", autocomplete: "off", spellcheck: false });
+		if (field.options) {
+			// A choice is segments side by side, the first chosen; a choice for one kind of config only is left out elsewhere
+			const options = field.options.filter((option) => !option[3] || option[3] === kind);
+			const segments = el("div", { className: "samba-segments", role: "radiogroup", ariaLabel: field.label },
+				...options.map(([value, title, line], index) => el("label", { className: "samba-segment" },
+					el("input", { type: "radio", name: field.name, value, checked: index === 0 }),
+					el("strong", { textContent: title }), ...(line ? [el("small", { textContent: line })] : []))));
+			segments.style.gridTemplateColumns = `repeat(${options.length}, minmax(0, 1fr))`;
+			const row = el("fieldset", { className: "snippet-choice" }, el("legend", { textContent: field.label }), segments);
+			row.dataset.field = field.name;
+			return [field, row];
+		}
+		const input = el("input", { name: field.name, value: field.value || "", placeholder: field.placeholder || "", autocomplete: "off", spellcheck: false });
 		const row = el("label", {}, field.label, input, ...(field.hint ? [el("small", { className: "hint", textContent: field.hint })] : []));
 		row.dataset.field = field.name;
 		return [field, row];
@@ -4918,7 +4928,7 @@ function askSnippet(key, snippet, config) {
 			if (!field.showIf) continue;
 			const chosen = form.elements[field.showIf[0]]?.value === field.showIf[1];
 			row.hidden = !chosen;
-			row.querySelector("input, select").disabled = !chosen;
+			for (const input of row.querySelectorAll("input, select")) input.disabled = !chosen;
 		}
 	};
 	form.onchange = showFields;

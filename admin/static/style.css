@@ -1166,6 +1166,10 @@ dialog.editor .editor-toolbar > button, dialog.editor .editor-toolbar > select {
 .snippet-fields { display: grid; gap: 12px; }
 .snippet-fields label { display: grid; gap: 6px; }
 .snippet-fields .hint { margin: 0; }
+/* A choice in a snippet: segments, as in the admin site's access */
+dialog fieldset.snippet-choice { min-width: 0; margin: 0 0 12px; padding: 0; border: 0; }
+.snippet-choice legend { margin-bottom: 8px; padding: 0; color: var(--muted); font-size: 12.5px; }
+@media (max-width: 560px) { .snippet-choice .samba-segments { grid-template-columns: 1fr !important; } }
 /* A field with your own address under it: the card close to the field it adds to */
 .snippet-field-group { display: grid; gap: 10px; }
 .snippet-field-group > label { margin: 0; }
