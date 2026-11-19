@@ -2,6 +2,18 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.49] - 2026-11-19
+
+### Features
+
+- Multi action marks the step a site's warning came in, with the warning under it, not a green tick
+- The VNS Harbor Sync dashboard follows the backoffice language, Danish or English (VNS.Harbor 18.3.2.1)
+
+### Fixes
+
+- Multi action Publish all publishes the main site of a site without environments, instead of skipping it
+- The dashboard's sync lines stay inside the card: Ikke ajour in Danish, the kinds in one column (VNS.Harbor 18.3.2.2)
+
 ## [1.0.48] - 2026-11-19
 
 ### Features
