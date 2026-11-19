@@ -4648,11 +4648,12 @@ const iisSnippets = {
     <add input="{REMOTE_ADDR}" matchType="Pattern" pattern="^(?:::1|127\\.0\\.0\\.1|${listed})$" ignoreCase="true" negate="true" />
     <add input="{HTTP_X_FORWARDED_FOR}" matchType="Pattern" pattern="(?:^|,\\s*)(?:${listed})$" ignoreCase="true" negate="true" />
   </conditions>
-  ${{
-		forbidden: '<action type="CustomResponse" statusCode="403" statusReason="Forbidden" statusDescription="Access denied" />',
-		notfound: '<action type="CustomResponse" statusCode="404" statusReason="Not Found" statusDescription="Not found" />',
-		redirect: `<action type="Redirect" url="${xmlEscape(redirectTargetOf(v.target, wholeSite(v)))}" redirectType="Found" />`,
-	}[v.response] || '<action type="AbortRequest" />'}
+  ${({
+		// Only the answer chosen is made: the redirect's address is checked only when it is the one
+		forbidden: () => '<action type="CustomResponse" statusCode="403" statusReason="Forbidden" statusDescription="Access denied" />',
+		notfound: () => '<action type="CustomResponse" statusCode="404" statusReason="Not Found" statusDescription="Not found" />',
+		redirect: () => `<action type="Redirect" url="${xmlEscape(redirectTargetOf(v.target, wholeSite(v)))}" redirectType="Found" />`,
+	}[v.response] || (() => '<action type="AbortRequest" />'))()}
 </rule>`;
 	} },
 	slash: { label: "AddTrailingSlash", build: () => `<rule name="AddTrailingSlash" stopProcessing="true" enabled="true">
@@ -4819,10 +4820,11 @@ RewriteRule ^/(?:${pathPattern(pathsOf(v.paths))})/ - [L]` },
 		// under one !: in Apache's expressions ! covers everything after it, so "! a && ! b" does not mean "neither".
 		return `# ${v.name || "Allowed IPs"}${wholeSite(v) ? "\n" + ACME_APACHE : ""}
 RewriteCond expr "!(${["127.0.0.0/8", "::1", ...addresses].map((address) => `-R '${address}'`).join(" || ")})"
-RewriteRule ${wholeSite(v) ? "^/" : `^/(?:${pathPattern(pathsOf(v.paths))})(?:/|$)`} ${{
-		notfound: "- [R=404,NC,L]",
-		redirect: `${redirectTargetOf(v.target, wholeSite(v))} [R=302,NC,L]`,
-	}[v.response] || "- [F,NC,L]"}`;
+RewriteRule ${wholeSite(v) ? "^/" : `^/(?:${pathPattern(pathsOf(v.paths))})(?:/|$)`} ${({
+		// Only the answer chosen is made: the redirect's address is checked only when it is the one
+		notfound: () => "- [R=404,NC,L]",
+		redirect: () => `${redirectTargetOf(v.target, wholeSite(v))} [R=302,NC,L]`,
+	}[v.response] || (() => "- [F,NC,L]"))()}`;
 	} },
 	slash: { label: "AddTrailingSlash", build: () => `# AddTrailingSlash
 RewriteCond %{REQUEST_METHOD} ^(GET|HEAD)$
