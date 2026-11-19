@@ -4614,7 +4614,9 @@ const snippetFields = {
 		{ name: "paths", label: "Paths to protect", umbraco: "umbraco", placeholder: "admin, private", showIf: ["scope", "paths"],
 			umbracoHint: "Add app_plugins only if no package serves visitors files from it: Umbraco Forms does, and its forms would stop working." },
 		{ name: "response", label: "Others get", options: [["forbidden", "403", "Forbidden"], ["notfound", "404", "As if it was not there"], ["redirect", "Redirect", "Sent somewhere else"], ["abort", "Closed", "No answer at all", "iis"]] },
-		{ name: "target", label: "Redirect to", value: "/", showIf: ["response", "redirect"], hint: "A path on the site, like /, or a whole address." }] },
+		{ name: "target", label: "Redirect to", value: "/", showIf: ["response", "redirect"], hint: "A path on the site, like /, or a whole address.",
+			// The whole site closed: a path on it is closed too, and would send the visitor round and round
+			wholeSite: { placeholder: "https://www.google.dk/", hint: "An address on another site: every path on this one is closed." } }] },
 	domain: { description: "Every other name the site answers on is sent to this one.", fields: [
 		{ name: "domain", label: "Domain", placeholder: "example.dk" }] },
 	rewrite: { description: "Visitors ask for the first path and get what the site has at the second. The address they see does not change.", fields: [
@@ -4928,7 +4930,17 @@ function askSnippet(key, snippet, config) {
 	$("#snippet-fields").replaceChildren(...rows.flatMap(([field, row]) => field.yourAddress ? [el("div", { className: "snippet-field-group" }, row, yourAddressCard(row.querySelector("input")))] : [row]));
 	// A field that belongs to one choice, like the address of a redirect, is only there when it is chosen
 	const showFields = () => {
+		const whole = form.elements.scope?.value === "site";
 		for (const [field, row] of rows) {
+			if (field.wholeSite) {
+				// Its suggestion follows what is protected: / for chosen paths, an address elsewhere for the whole site
+				const input = row.querySelector("input");
+				const hint = row.querySelector(".hint");
+				if (whole && input.value.trim() === field.value) input.value = "";
+				if (!whole && !input.value.trim()) input.value = field.value;
+				input.placeholder = whole ? field.wholeSite.placeholder : field.placeholder || "";
+				if (hint) hint.textContent = whole ? field.wholeSite.hint : field.hint;
+			}
 			if (!field.showIf) continue;
 			const chosen = form.elements[field.showIf[0]]?.value === field.showIf[1];
 			row.hidden = !chosen;
