@@ -4153,12 +4153,15 @@ function syncMultiAction() {
 	const selected = listedSites().filter((site) => multiSites.has(site.name));
 	const clearing = action.startsWith("clear_logs");
 	const syncing = action.startsWith("sync_");
-	const skipped = action === "prod" || action === "both"
+	// Publish all on a site with only its main site publishes the main site
+	const mainOnly = action === "both" ? selected.filter((site) => !site.scripts.includes("publish_prod.sh")) : [];
+	const skipped = action === "prod"
 		? selected.filter((site) => !site.scripts.includes("publish_prod.sh"))
 		: action === "clear_logs_prod" || syncing ? selected.filter((site) => site.kind !== "umbraco" || !site.environments.some(isTarget))
 		: clearing ? selected.filter((site) => site.kind !== "umbraco") : [];
 	$("#multi-skipped").textContent = skipped.length
-		? `Will be skipped (${clearing || syncing ? (action === "clear_logs" || action === "clear_logs_all" ? "not Umbraco" : "not Umbraco, or no environments") : "no environments"}): ` + skipped.map(siteLabel).join(", ") : "";
+		? `Will be skipped (${clearing || syncing ? (action === "clear_logs" || action === "clear_logs_all" ? "not Umbraco" : "not Umbraco, or no environments") : "no environments"}): ` + skipped.map(siteLabel).join(", ")
+		: mainOnly.length ? "Only the main site is published (no environments): " + mainOnly.map(siteLabel).join(", ") : "";
 	$("#multi-submit").disabled = !action || submittingMulti || !selected.length || skipped.length === selected.length;
 }
 $("#btn-multi-all").onclick = () => {

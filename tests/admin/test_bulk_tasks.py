@@ -55,13 +55,15 @@ class BulkTests(unittest.TestCase):
             _, argv, cwd = self.command(action=action)
             tasks = json.loads(argv[-1])
             self.assertEqual(len(tasks), 2)
-            self.assertEqual(bool(tasks[1].get("skip")), action != "local")
+            # Publish all on a site with only its main site publishes that; publish to production skips it
+            self.assertEqual(bool(tasks[1].get("skip")), action == "prod")
             result = subprocess.run(argv, cwd=cwd, capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("Multi action summary", result.stdout)
             self.assertIn("one: OK", result.stdout)
-            if action != "local":
-                self.assertIn("two: SKIPPED", result.stdout)
+            self.assertIn("two: SKIPPED" if action == "prod" else "two: OK", result.stdout)
+            if action == "both":
+                self.assertTrue(tasks[1]["argv"][-1].endswith("publish.sh"), tasks[1])
 
     def test_clear_logs_of_main_sites_environments_or_all(self):
         # one is an Umbraco site with an environment, two is not Umbraco

@@ -4073,9 +4073,14 @@ def build_command(data):
                 abort(400, "Multi actions require a C# project file in the site root")
             scripts = info["scripts"]
             targets = target_ids(os.path.join(WEB_ROOT, site))
-            if action in ("prod", "both") and not targets:
+            if action == "prod" and not targets:
                 tasks.append({"site": site, "skip": "No production publish script"})
                 continue
+            # Publish all on a site with only its main site publishes the main site
+            if action == "both" and not targets:
+                action_here = "local"
+            else:
+                action_here = action
             if action.startswith("clear_logs"):
                 # Umbraco's logs: of the main site, of every environment, or all of them, each with its own script.
                 # Every environment is a task of its own, named after it in the output.
@@ -4116,7 +4121,7 @@ def build_command(data):
                 tasks.append({"site": site, "argv": argv,
                               "cwd": os.path.dirname(projects[0])})
                 continue
-            elif action == "both":
+            elif action_here == "both":
                 payload = {"kind": "publish_both", "site": site}
             elif action == "prod" and targets != ["prod"]:
                 # One environment at a time: they build in the same project folder
@@ -4135,7 +4140,7 @@ def build_command(data):
                 if action == "prod" and not allowed_targets(site, ["prod"], "publish"):
                     tasks.append({"site": site, "skip": "You have no access to its environment"})
                     continue
-                script = "publish_prod.sh" if action == "prod" else next(
+                script = "publish_prod.sh" if action_here == "prod" else next(
                     (name for name in ("publish_local.sh", "publish.sh") if name in scripts), "")
                 payload = {"kind": "script", "site": site, "script": script}
             _, argv, cwd = build_command(payload)
