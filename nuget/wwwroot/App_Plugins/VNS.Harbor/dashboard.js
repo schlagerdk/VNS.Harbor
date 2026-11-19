@@ -42,22 +42,49 @@ export default class VnsHarborDashboard extends UmbElementMixin(LitElement) {
 		this._state = ok ? body : { allowed: false, failed: true };
 	}
 
+	// A text in the user's backoffice language (lang/en.js, lang/da.js), as Umbraco picks it
+	#t(key, ...args) {
+		return this.localize.term("vnsHarbor_" + key, ...args);
+	}
+
+	#lang() {
+		try {
+			return Intl.getCanonicalLocales(this.localize.lang?.() || document.documentElement.lang || "en")[0];
+		} catch {
+			return "en";
+		}
+	}
+
+	// A kind by name (Settings, Content, Media, Data); one Harbor knows that the texts do not keeps its own name
+	#kind(kind) {
+		const name = this.#t("kind_" + kind);
+		return name === "vnsHarbor_kind_" + kind ? kind.charAt(0).toUpperCase() + kind.slice(1) : name;
+	}
+
+	// "a, b and c" in the user's language
+	#list(items) {
+		return new Intl.ListFormat(this.#lang(), { type: "conjunction" }).format(items);
+	}
+
+	#time(time) {
+		return new Date(time).toLocaleString(this.#lang());
+	}
+
 	// One sync as a task, or settings and then data (Sync everything): Harbor only merges data into a site whose
 	// settings are in sync, so the data waits until the settings are there, and a failed settings sync stops it
 	async #sync(destination, what, title = "") {
 		const kinds = Array.isArray(what) ? what : [what];
-		const names = { settings: "Settings", data: "Data" };
 		this.#stopClosing();
 		this._busy = true;
 		// From where to where, shown above the steps; with more than one kind, each has its own heading
-		this._task = { title: title || `Sync ${kinds[0]}`, from: this.#from(), to: destination.environment, steps: [], running: true };
+		this._task = { title: title || (kinds[0] === "settings" ? this.#t("syncSettings") : this.#t("syncKinds", this.#kind(kinds[0]).toLowerCase())), from: this.#from(), to: destination.environment, steps: [], running: true };
 		let done = [];
 		for (const kind of kinds) {
-			if (kinds.length > 1) done = [...done, { type: "heading", text: names[kind] }];
+			if (kinds.length > 1) done = [...done, { type: "heading", text: this.#kind(kind) }];
 			this._task = { ...this._task, steps: done };
 			const started = await this.#call("sync", { method: "POST", body: JSON.stringify({ destination: destination.id, what: kind }) });
 			if (!started.ok) {
-				this._task = { ...this._task, running: false, failed: true, message: started.body?.error || "Harbor did not start the sync." };
+				this._task = { ...this._task, running: false, failed: true, message: started.body?.error || this.#t("notStarted") };
 				break;
 			}
 			let body = null;
@@ -65,7 +92,7 @@ export default class VnsHarborDashboard extends UmbElementMixin(LitElement) {
 				await new Promise((resolve) => setTimeout(resolve, 1500));
 				const answer = await this.#call("task/" + started.body.task);
 				if (!answer.ok) {
-					this._task = { ...this._task, running: false, failed: true, message: "Harbor did not answer." };
+					this._task = { ...this._task, running: false, failed: true, message: this.#t("noAnswer") };
 					break;
 				}
 				body = answer.body;
@@ -106,31 +133,30 @@ export default class VnsHarborDashboard extends UmbElementMixin(LitElement) {
 		this._task = null;
 	}
 
-	// When, in words: "5 minutes ago", "yesterday", or the date
+	// When, in words and in the user's language: "5 minutes ago", "yesterday", or the date
 	#ago(time) {
 		const seconds = Math.max(0, (Date.now() - new Date(time).getTime()) / 1000);
-		if (seconds < 60) return "just now";
-		if (seconds < 3600) return `${Math.round(seconds / 60)} minute${Math.round(seconds / 60) === 1 ? "" : "s"} ago`;
-		if (seconds < 86400) return `${Math.round(seconds / 3600)} hour${Math.round(seconds / 3600) === 1 ? "" : "s"} ago`;
-		if (seconds < 172800) return "yesterday";
-		if (seconds < 30 * 86400) return `${Math.round(seconds / 86400)} days ago`;
-		return new Date(time).toLocaleDateString();
+		const words = new Intl.RelativeTimeFormat(this.#lang(), { numeric: "auto" });
+		if (seconds < 60) return words.format(0, "second");
+		if (seconds < 3600) return words.format(-Math.round(seconds / 60), "minute");
+		if (seconds < 86400) return words.format(-Math.round(seconds / 3600), "hour");
+		if (seconds < 30 * 86400) return words.format(-Math.max(1, Math.round(seconds / 86400)), "day");
+		return new Date(time).toLocaleDateString(this.#lang());
 	}
 
 	// One line for each kind between two sites: when it was last synced, and whether the sending site has changed since
 	#status(history, sender, receiving) {
 		if (!history) return nothing;
-		const names = { settings: "Settings", content: "Content", media: "Media" };
 		return html`<ul class="status">${Object.entries(history).map(([kind, found]) => {
 			const last = found.last;
-			const state = !last ? ["never", receiving ? "Never received" : "Never synced"]
-				: !last.ok ? ["failed", "Last sync failed"]
-				: found.changed === true ? ["changed", "Changes not synced"]
-				: found.changed === false ? ["current", "Up to date"] : ["unknown", ""];
+			const state = !last ? ["never", this.#t(receiving ? "neverReceived" : "neverSynced")]
+				: !last.ok ? ["failed", this.#t("lastSyncFailed")]
+				: found.changed === true ? ["changed", this.#t("changesNotSynced")]
+				: found.changed === false ? ["current", this.#t("upToDate")] : ["unknown", ""];
 			return html`<li class=${state[0]}>
-				<span class="kind">${names[kind] || kind}</span>
-				<span class="when" title=${last ? `${new Date(last.time).toLocaleString()}${last.who ? " by " + last.who : ""}` : ""}>${last ? this.#ago(last.time) : ""}</span>
-				${state[1] ? html`<span class="pill" title=${state[0] === "changed" ? `${sender} has changed since it was last synced` : ""}>${state[1]}</span>` : nothing}</li>`;
+				<span class="kind">${this.#kind(kind)}</span>
+				<span class="when" title=${last ? (last.who ? this.#t("syncedBy", this.#time(last.time), last.who) : this.#time(last.time)) : ""}>${last ? this.#ago(last.time) : ""}</span>
+				${state[1] ? html`<span class="pill" title=${state[0] === "changed" ? this.#t("changedSince", sender) : ""}>${state[1]}</span>` : nothing}</li>`;
 		})}</ul>`;
 	}
 
@@ -151,14 +177,14 @@ export default class VnsHarborDashboard extends UmbElementMixin(LitElement) {
 	// The newest syncs from or to this site
 	#recent(recent) {
 		if (!recent || !recent.length) return nothing;
-		const names = (kinds) => kinds.map((kind) => kind.charAt(0).toUpperCase() + kind.slice(1)).join(", ");
-		return html`<h3 class="section">Recent syncs</h3>
+		const names = (kinds) => kinds.map((kind) => this.#kind(kind)).join(", ");
+		return html`<h3 class="section">${this.#t("recentSyncs")}</h3>
 			<div class="recent"><table>${recent.map((entry) => html`<tr class=${entry.ok ? "" : "failed"}>
-				<td class="when" title=${new Date(entry.time).toLocaleString()}>${this.#ago(entry.time)}</td>
+				<td class="when" title=${this.#time(entry.time)}>${this.#ago(entry.time)}</td>
 				<td><span style="--tone:${this.#tone(entry.from)}" class="tone">${entry.from}</span> → <span style="--tone:${this.#tone(entry.to)}" class="tone">${entry.to}</span></td>
 				<td>${names(entry.kinds || [])}</td>
 				<td class="who">${entry.who || ""}</td>
-				<td class="result">${entry.ok ? html`<uui-icon name="icon-check"></uui-icon>` : html`<uui-icon name="icon-alert"></uui-icon> Failed`}</td>
+				<td class="result">${entry.ok ? html`<uui-icon name="icon-check"></uui-icon>` : html`<uui-icon name="icon-alert"></uui-icon> ${this.#t("failed")}`}</td>
 			</tr>`)}</table></div>`;
 	}
 
@@ -170,18 +196,18 @@ export default class VnsHarborDashboard extends UmbElementMixin(LitElement) {
 	#destination(destination) {
 		const name = (destination.environment || destination.id).toLowerCase();
 		const tone = COLORS[name] || COLORS.production;
-		const kinds = (destination.data || []).join(" and ");
+		const kinds = this.#list((destination.data || []).map((kind) => this.#kind(kind).toLowerCase()));
 		const link = (label, url, text) => html`<div class="link"><span class="label">${label}</span>
 			<a href=${url} target="_blank" rel="noopener" title=${text}><span class="address">${text}</span><uui-icon name="icon-out"></uui-icon></a></div>`;
 		return html`<div class="destination" style="--tone:${tone}">
-			<div class="route route-top" title=${`From this site (${this.#from()}) to ${destination.environment}`}>
+			<div class="route route-top" title=${this.#t("routeTitle", this.#from(), destination.environment)}>
 				<span class="from" style="--tone:${this.#tone(this.#from())}">${this.#from()}</span>
 				<span class="arrow" aria-hidden="true">→</span>
 				<span class="to">${destination.environment}</span>
 			</div>
 			<div class="name"><span class="badge"><uui-icon name=${ICONS[name] || "icon-server"}></uui-icon></span>${destination.environment}</div>
 			<div class="links">${destination.url
-				? html`${link("Frontend", destination.url, destination.binding)}${link("Backend", destination.url + "umbraco", destination.binding + "/umbraco")}`
+				? html`${link(this.#t("frontend"), destination.url, destination.binding)}${link(this.#t("backend"), destination.url + "umbraco", destination.binding + "/umbraco")}`
 				: html`<span class="label">${destination.binding || destination.id}</span>`}</div>
 			${this.#status(destination.history, this.#from(), false)}
 			<div class="actions">${this.#buttons(destination, kinds)}</div>
@@ -205,42 +231,42 @@ export default class VnsHarborDashboard extends UmbElementMixin(LitElement) {
 		const settings = destination.settings && (forced("settings") || !settingsCurrent);
 		const data = kinds && (forced("data") || !dataCurrent);
 		const anyway = (text, what) => html`<button type="button" class="anyway" ?disabled=${this._busy}
-			title="Harbor knows this site has not changed since. Sync anyway when something was changed there."
+			title=${this.#t("anywayTitle")}
 			@click=${force(what)}>${text}</button>`;
 		if (!settings && !data) {
-			const what = destination.settings && kinds ? "everything" : destination.settings ? "settings" : kinds;
-			return html`<div class="nothing-to-sync"><span><uui-icon name="icon-check"></uui-icon>Nothing to sync</span>${anyway(`Sync ${what} anyway`, "all")}</div>`;
+			const what = destination.settings && kinds ? this.#t("everything") : destination.settings ? this.#kind("settings").toLowerCase() : kinds;
+			return html`<div class="nothing-to-sync"><span><uui-icon name="icon-check"></uui-icon>${this.#t("nothingToSync")}</span>${anyway(this.#t("syncWhatAnyway", what), "all")}</div>`;
 		}
 		// Data only goes to a site whose settings are in sync with the main site's: Harbor tells why when they are not
 		const behind = destination.settings_behind || "";
 		// Sync everything: the settings where they are not up to date (or behind), then the data
 		const everything = [...(settings || behind ? ["settings"] : []), ...(data ? ["data"] : [])];
 		return html`
-			${destination.settings ? (settings ? html`<uui-button look="primary" label="Sync settings" ?disabled=${this._busy}
-				title="Document types, templates, views, css and scripts"
-				@click=${() => this.#sync(destination, "settings")}>Sync settings</uui-button>`
-				: this.#upToDate("Settings up to date", anyway("Sync anyway", "settings"))) : nothing}
-			${kinds ? (data ? html`<uui-button look="primary" color="positive" label=${`Sync ${kinds}`} ?disabled=${this._busy || behind}
-				title=${behind ? `${behind}. Sync settings first.` : `Merges ${kinds}: nothing is deleted there`}
-				@click=${() => this.#sync(destination, "data")}>Sync ${kinds}</uui-button>`
-				: this.#upToDate(`${capitalKinds} up to date`, anyway("Sync anyway", "data"))) : nothing}
-			${kinds && data && behind ? html`<p class="settings-first"><uui-icon name="icon-alert"></uui-icon><span>Sync settings first: ${behind}.</span></p>` : nothing}
+			${destination.settings ? (settings ? html`<uui-button look="primary" label=${this.#t("syncSettings")} ?disabled=${this._busy}
+				title=${this.#t("settingsTitle")}
+				@click=${() => this.#sync(destination, "settings")}>${this.#t("syncSettings")}</uui-button>`
+				: this.#upToDate(this.#t("kindUpToDate", this.#kind("settings")), anyway(this.#t("syncAnyway"), "settings"))) : nothing}
+			${kinds ? (data ? html`<uui-button look="primary" color="positive" label=${this.#t("syncKinds", kinds)} ?disabled=${this._busy || behind}
+				title=${behind ? this.#t("behindTitle", behind) : this.#t("mergesTitle", kinds)}
+				@click=${() => this.#sync(destination, "data")}>${this.#t("syncKinds", kinds)}</uui-button>`
+				: this.#upToDate(this.#t("kindUpToDate", capitalKinds), anyway(this.#t("syncAnyway"), "data"))) : nothing}
+			${kinds && data && behind ? html`<p class="settings-first"><uui-icon name="icon-alert"></uui-icon><span>${this.#t("settingsFirst", behind)}</span></p>` : nothing}
 			${destination.settings && kinds ? html`<hr class="divider">
-				<uui-button look="primary" class="everything" label="Sync everything" ?disabled=${this._busy || !everything.length}
-					title=${everything.length === 2 ? `Settings, then ${kinds}` : everything[0] === "settings" ? `Only the settings: the ${kinds} are up to date` : `Only the ${kinds}: the settings are up to date`}
-					@click=${() => this.#sync(destination, everything, "Sync everything")}>Sync everything</uui-button>` : nothing}`;
+				<uui-button look="primary" class="everything" label=${this.#t("syncEverything")} ?disabled=${this._busy || !everything.length}
+					title=${everything.length === 2 ? this.#t("everythingBoth", kinds) : everything[0] === "settings" ? this.#t("everythingSettings", kinds) : this.#t("everythingData", kinds)}
+					@click=${() => this.#sync(destination, everything, this.#t("syncEverything"))}>${this.#t("syncEverything")}</uui-button>` : nothing}`;
 	}
 
 	// What is up to date has no button: a line that says so, and a link to sync it anyway
 	#upToDate(text, anyway) {
-		return html`<div class="up-to-date" title="Nothing has changed here since it was synced there">
+		return html`<div class="up-to-date" title=${this.#t("upToDateTitle")}>
 			<uui-icon name="icon-check"></uui-icon><span>${text}</span><span class="dot" aria-hidden="true">·</span>${anyway}</div>`;
 	}
 
 	// The environment this site is, by name: Harbor tells it (an older Harbor only its id)
 	#from() {
 		const site = this._state.site;
-		return site.environment_name || (site.environment === "main" ? "This site" : site.environment.charAt(0).toUpperCase() + site.environment.slice(1));
+		return site.environment_name || (site.environment === "main" ? this.#t("thisSite") : site.environment.charAt(0).toUpperCase() + site.environment.slice(1));
 	}
 
 	// This site itself: what Sync setup lets it send and receive. Receiving is marked: others may overwrite it there.
@@ -248,19 +274,18 @@ export default class VnsHarborDashboard extends UmbElementMixin(LitElement) {
 		const site = this._state.site;
 		const setup = site.setup;
 		const name = this.#from();
-		const capital = (word) => word.charAt(0).toUpperCase() + word.slice(1);
-		const list = (part) => [...(part.settings ? ["settings"] : []), ...(part.data || [])].map(capital);
+		const list = (part) => [...(part.settings ? ["settings"] : []), ...(part.data || [])].map((kind) => this.#kind(kind));
 		const sends = setup ? list(setup.sends) : [];
 		const receives = setup ? list(setup.receives) : [];
 		const key = name.toLowerCase();
 		return html`<div class="this-site" style="--tone:${this.#tone(name)}">
 			<span class="badge"><uui-icon name=${ICONS[key] || "icon-server"}></uui-icon></span>
-			<div class="who"><span class="label">This site</span><strong>${name}</strong></div>
-			${setup ? html`<div class="flow"><span class="label">Sends</span><span>${sends.length ? sends.join(" · ") : "Nothing"}</span></div>
-				<div class="flow ${receives.length ? "receives" : "none"}"><span class="label">Receives</span>
-					<span>${receives.length ? receives.join(" · ") : "Nothing"}</span></div>
-				${receives.length ? html`<p class="overwrite"><uui-icon name="icon-alert"></uui-icon>Other environments may overwrite this site's ${
-					(receives.length > 1 ? receives.slice(0, -1).join(", ") + " and " + receives.at(-1) : receives[0]).toLowerCase()}.</p>` : nothing}` : nothing}
+			<div class="who"><span class="label">${this.#t("thisSite")}</span><strong>${name}</strong></div>
+			${setup ? html`<div class="flow"><span class="label">${this.#t("sends")}</span><span>${sends.length ? sends.join(" · ") : this.#t("nothing")}</span></div>
+				<div class="flow ${receives.length ? "receives" : "none"}"><span class="label">${this.#t("receives")}</span>
+					<span>${receives.length ? receives.join(" · ") : this.#t("nothing")}</span></div>
+				${receives.length ? html`<p class="overwrite"><uui-icon name="icon-alert"></uui-icon>${
+					this.#t("overwrite", this.#list(receives.map((kind) => kind.toLowerCase())))}</p>` : nothing}` : nothing}
 		</div>`;
 	}
 
@@ -275,13 +300,13 @@ export default class VnsHarborDashboard extends UmbElementMixin(LitElement) {
 		const data = destinations.filter((destination) => (destination.data || []).length && !destination.settings_behind
 			&& !destination.data.every((kind) => this.#current(destination, kind)));
 		if (settings.length < 2 && data.length < 2) return nothing;
-		const all = { id: "all", environment: "All environments" };
+		const all = { id: "all", environment: this.#t("allEnvironments") };
 		return html`<div class="everywhere">
-			<div><strong>All environments</strong><span>${settings.length > 1 ? `Settings to ${settings.map((item) => item.environment).join(", ")}` : ""}${
-				settings.length > 1 && data.length > 1 ? " · " : ""}${data.length > 1 ? `data to ${data.map((item) => item.environment).join(", ")}` : ""}</span></div>
+			<div><strong>${this.#t("allEnvironments")}</strong><span>${settings.length > 1 ? this.#t("settingsTo", settings.map((item) => item.environment).join(", ")) : ""}${
+				settings.length > 1 && data.length > 1 ? " · " : ""}${data.length > 1 ? this.#t("dataTo", data.map((item) => item.environment).join(", ")) : ""}</span></div>
 			<div class="actions">
-				${data.length > 1 ? html`<uui-button look="primary" color="positive" label="Sync data to all" ?disabled=${this._busy} @click=${() => this.#sync(all, "data")}>Sync data to all</uui-button>` : nothing}
-				${settings.length > 1 ? html`<uui-button look="primary" label="Sync settings to all" ?disabled=${this._busy} @click=${() => this.#sync(all, "settings")}>Sync settings to all</uui-button>` : nothing}
+				${data.length > 1 ? html`<uui-button look="primary" color="positive" label=${this.#t("syncDataToAll")} ?disabled=${this._busy} @click=${() => this.#sync(all, "data")}>${this.#t("syncDataToAll")}</uui-button>` : nothing}
+				${settings.length > 1 ? html`<uui-button look="primary" label=${this.#t("syncSettingsToAll")} ?disabled=${this._busy} @click=${() => this.#sync(all, "settings")}>${this.#t("syncSettingsToAll")}</uui-button>` : nothing}
 			</div>
 		</div>`;
 	}
@@ -289,7 +314,7 @@ export default class VnsHarborDashboard extends UmbElementMixin(LitElement) {
 	#taskView() {
 		const task = this._task;
 		if (!task) return nothing;
-		const status = task.running ? "Running" : task.failed ? "Failed" : "Done";
+		const status = this.#t(task.running ? "running" : task.failed ? "failed" : "done");
 		const last = task.steps.length - 1;
 		return html`<uui-box headline=${task.title} class="task">
 			<uui-tag slot="header-actions" color=${task.running ? "default" : task.failed ? "danger" : "positive"} look="primary">${status}</uui-tag>
@@ -305,11 +330,11 @@ export default class VnsHarborDashboard extends UmbElementMixin(LitElement) {
 				${index === last && task.running ? html`<uui-loader-circle></uui-loader-circle>` : html`<uui-icon name=${step.type === "warn" ? "icon-alert" : "icon-check"}></uui-icon>`}
 				<span>${step.text}</span></li>`)}</ol>
 			${task.message ? html`<p class="message">${task.message}</p>` : nothing}
-			${!task.running && !task.failed ? html`<p class="message">uSync on the destination imports what it received as it starts.</p>` : nothing}
+			${!task.running && !task.failed ? html`<p class="message">${this.#t("importsOnStart")}</p>` : nothing}
 			${!task.running ? html`<div class="task-end">
-				${this._closing ? html`<div class="closing"><span>Closes by itself</span><span class="bar"><span style="animation-duration:${CLOSE_AFTER}ms"></span></span>
-					<button type="button" class="anyway" @click=${() => this.#stopClosing()}>Cancel</button></div>` : html`<span></span>`}
-				<uui-button look="secondary" label="Close" @click=${() => this.#close()}>Close</uui-button>
+				${this._closing ? html`<div class="closing"><span>${this.#t("closesByItself")}</span><span class="bar"><span style="animation-duration:${CLOSE_AFTER}ms"></span></span>
+					<button type="button" class="anyway" @click=${() => this.#stopClosing()}>${this.#t("cancel")}</button></div>` : html`<span></span>`}
+				<uui-button look="secondary" label=${this.#t("close")} @click=${() => this.#close()}>${this.#t("close")}</uui-button>
 			</div>` : nothing}
 		</uui-box>`;
 	}
@@ -318,23 +343,23 @@ export default class VnsHarborDashboard extends UmbElementMixin(LitElement) {
 		const state = this._state;
 		if (!state) return html`<uui-loader-bar></uui-loader-bar>`;
 		let body;
-		if (state.failed) body = this.#notice("icon-alert", "VNS Harbor could not be asked", "The site could not read its own connection to Harbor.");
-		else if (!state.allowed) body = this.#notice("icon-lock", "No access to VNS Harbor Sync", "An administrator can give you access by adding you to the VNS Harbor Sync user group (alias vnsHarbor). Administrators have access.");
-		else if (!state.connected) body = this.#notice("icon-plug", "Not connected to Harbor", "This site is not connected to the Harbor that manages it yet. It is connected when Harbor publishes it.");
-		else if (!state.reachable) body = this.#notice("icon-wifi", "Harbor cannot be reached", html`To sync from here, this site needs access to Harbor at <code>${state.harbor}</code> over HTTPS. The sync buttons are off until it has.`);
-		else if (!state.site.destinations.length && !(state.site.sources || []).length) body = this.#notice("icon-settings", "Not part of any sync", "Sync setup in Harbor lets this site neither send nor receive settings or data.");
+		if (state.failed) body = this.#notice("icon-alert", this.#t("failedTitle"), this.#t("failedText"));
+		else if (!state.allowed) body = this.#notice("icon-lock", this.#t("noAccessTitle"), this.#t("noAccessText"));
+		else if (!state.connected) body = this.#notice("icon-plug", this.#t("notConnectedTitle"), this.#t("notConnectedText"));
+		else if (!state.reachable) body = this.#notice("icon-wifi", this.#t("unreachableTitle"), html`${this.#t("unreachableBefore")} <code>${state.harbor}</code> ${this.#t("unreachableAfter")}`);
+		else if (!state.site.destinations.length && !(state.site.sources || []).length) body = this.#notice("icon-settings", this.#t("noSyncTitle"), this.#t("noSyncText"));
 		else {
 			const site = state.site;
 			body = html`${this.#thisSite()}
-				${site.destinations.length ? html`<h3 class="section">Sync to</h3>${this.#everywhere(site.destinations)}
+				${site.destinations.length ? html`<h3 class="section">${this.#t("syncTo")}</h3>${this.#everywhere(site.destinations)}
 					<div class="destinations">${site.destinations.map((destination) => this.#destination(destination))}</div>` : nothing}
 				${this.#taskView()}
-				${(site.sources || []).length ? html`<h3 class="section">Receives from</h3>
+				${(site.sources || []).length ? html`<h3 class="section">${this.#t("receivesFrom")}</h3>
 					<div class="destinations">${site.sources.map((source) => this.#source(source))}</div>` : nothing}
 				${this.#recent(site.recent)}`;
 		}
 		return html`<div class="page">
-			<header><h2>VNS Harbor Sync</h2><p>Sync this site's settings or data to its environments, and see when it was synced. Data is merged: nothing is deleted there.</p></header>
+			<header><h2>VNS Harbor Sync</h2><p>${this.#t("intro")}</p></header>
 			${body}
 		</div>`;
 	}
