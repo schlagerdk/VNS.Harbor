@@ -2,6 +2,16 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.50] - 2026-11-20
+
+### Features
+
+- The VNS.Harbor package links to its GitHub repository, and Pack Nuget puts it in nuget/artifacts (VNS.Harbor 18.3.2.3)
+
+### Fixes
+
+- Remove package scrolls only the list, so its top is no longer cut off under the filter
+
 ## [1.0.49] - 2026-11-19
 
 ### Features
