@@ -4295,6 +4295,8 @@ filesDialog.addEventListener("cancel", (event) => {
 	filesDialog.close();
 });
 let openFile = null;
+// The site the open file belongs to, when known: Umbraco's settings are only offered for an Umbraco site's file
+let openFileSite = null;
 let configurationEditor = null;
 let savingFile = false;
 let dirty = false;
@@ -5066,10 +5068,21 @@ function focusEditor(offset = null) {
 	}, 0);
 }
 
+// The site a file in the editor belongs to: by the site it was opened for (site or site@target), or by the folder it is in
+function siteOfFile(path, remoteSite) {
+	const ref = remoteSite ?? remoteFilesSite;
+	if (ref) return allSites.find((site) => site.name === ref.split("@")[0]) || null;
+	// Folders under /var/www are compared as the API gives them, relative to it
+	const relative = (folder) => folder.replace(/^\/var\/www\//, "").replace(/^\/+|\/+$/g, "");
+	const full = relative(remoteSite === null && !serverFiles ? join(localFilesRoot, path) : path);
+	const inside = (folder) => !!folder && (full + "/").startsWith(relative(folder) + "/");
+	return allSites.find((site) => site.environments.some((env) => inside(env.path) || inside(env.publish_path))) || null;
+}
+
 function snippetKind() {
 	const name = (openFile || "").split("/").pop().toLowerCase();
 	if (name === "web.config") return "iis";
-	if (/^appsettings(\.[\w-]+)?\.json$/.test(name)) return "appsettings";
+	if (/^appsettings(\.[\w-]+)?\.json$/.test(name)) return openFileSite?.kind === "umbraco" ? "appsettings" : "";
 	if (configurationEditor?.kind === "conf" || (/\.conf$/.test(name) && /sites-(available|enabled)/.test(openFile || ""))) return "apache";
 	return "";
 }
@@ -5217,6 +5230,7 @@ async function editFile(path, remoteSite = null) {
 	const base = remoteSite === null ? fsUrl("") : remoteSite ? "/api/remote-fs/" + encodeURIComponent(remoteSite) + "/" : "/api/fs/";
 	const saveUrl = base + "save";
 	const data = await api(base + "read?path=" + encodeURIComponent(path));
+	openFileSite = siteOfFile(path, remoteSite);
 	openFile = path;
 	configurationEditor = null;
 	openFileSaveUrl = saveUrl;
@@ -5234,6 +5248,7 @@ async function editApacheConfig() {
 	const url = "/api/server/apache-config";
 	const data = await api(url);
 	configurationEditor = { url, kind: "conf", encoding: "utf-8" };
+	openFileSite = null;
 	openFile = data.path;
 	if (!editorDialog.open) editorDialog.showModal();
 	$("#editor-path").textContent = data.path;
@@ -5259,6 +5274,7 @@ async function editConfiguration(site, env, kind) {
 		data = await api(url + "&encoding=" + encodeURIComponent(encoding));
 	}
 	configurationEditor = { url, kind, encoding: data.encoding || "utf-8" };
+	openFileSite = site;
 	openFile = data.path;
 	if (!editorDialog.open) editorDialog.showModal();
 	$("#editor-path").textContent = data.path + (env.mode === "remote" ? " · " + env.host : "");
