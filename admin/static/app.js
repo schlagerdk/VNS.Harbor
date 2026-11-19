@@ -4295,7 +4295,7 @@ filesDialog.addEventListener("cancel", (event) => {
 	filesDialog.close();
 });
 let openFile = null;
-// The site the open file belongs to, when known: Umbraco's settings are only offered for an Umbraco site's file
+// The site the open file belongs to, when known: Umbraco's settings are only offered for an Umbraco site's file, other sites get the general ones
 let openFileSite = null;
 let configurationEditor = null;
 let savingFile = false;
@@ -4751,7 +4751,22 @@ const appsettingsSnippets = {
 		values: () => ({ Umbraco: { CMS: { DeliveryApi: { Enabled: true, PublicAccess: true } } } }) },
 	logging: { label: "Less logging", icon: "file", line: "Only warnings and errors in the log",
 		values: () => ({ Serilog: { MinimumLevel: { Default: "Warning" } } }) },
+	// For any ASP.NET Core site: what the framework itself reads, not Umbraco
+	dotnetLogging: { label: "Less logging", icon: "file", line: "Only warnings and errors in the log", sites: "dotnet",
+		values: () => ({ Logging: { LogLevel: { Default: "Warning", "Microsoft.AspNetCore": "Warning" } } }) },
+	allowedHosts: { label: "Allowed hosts", icon: "globe", line: "Only answer requests for the site's own names", sites: "any",
+		note: "The names are examples: set the site's own domains, separated by ;, before you save. A name left out gets 400.",
+		values: () => ({ AllowedHosts: "example.dk;www.example.dk" }) },
+	dotnetUploads: { label: "Larger requests", icon: "upload", line: "Requests up to 200 MB (Kestrel's own limit is about 28 MB)", sites: "dotnet",
+		note: "MaxRequestBodySize is in bytes: 209715200 is 200 MB. A form upload has a limit of its own in the code (FormOptions, 128 MB), which this does not change.",
+		values: () => ({ Kestrel: { Limits: { MaxRequestBodySize: 209715200 } } }) },
 };
+// The snippets for the open file's site: Umbraco's for an Umbraco site, only the general ones for any other
+function appsettingsChoices() {
+	const umbraco = openFileSite?.kind === "umbraco";
+	return Object.fromEntries(Object.entries(appsettingsSnippets).filter(([, snippet]) =>
+		snippet.sites === "any" || (umbraco ? !snippet.sites : snippet.sites === "dotnet")));
+}
 // The paths and values a snippet sets, as lines: Umbraco:CMS:Imaging:Memory:Enabled = true
 function settingLines(values, prefix = "") {
 	return Object.entries(values).flatMap(([key, value]) => value && typeof value === "object" && !Array.isArray(value)
@@ -4768,7 +4783,8 @@ function mergeSettings(target, values) {
 	return target;
 }
 async function insertAppsetting(key) {
-	const snippet = appsettingsSnippets[key];
+	const snippet = appsettingsChoices()[key];
+	if (!snippet) return;
 	const text = editorValue();
 	let data;
 	try {
@@ -5082,7 +5098,7 @@ function siteOfFile(path, remoteSite) {
 function snippetKind() {
 	const name = (openFile || "").split("/").pop().toLowerCase();
 	if (name === "web.config") return "iis";
-	if (/^appsettings(\.[\w-]+)?\.json$/.test(name)) return openFileSite?.kind === "umbraco" ? "appsettings" : "";
+	if (/^appsettings(\.[\w-]+)?\.json$/.test(name)) return "appsettings";
 	if (configurationEditor?.kind === "conf" || (/\.conf$/.test(name) && /sites-(available|enabled)/.test(openFile || ""))) return "apache";
 	return "";
 }
@@ -5110,9 +5126,9 @@ function refreshSnippetMenu() {
 	menu.hidden = !kind;
 	closeSnippetMenu();
 	if (!kind) return;
-	const snippets = kind === "iis" ? iisSnippets : kind === "appsettings" ? appsettingsSnippets : apacheSnippets;
+	const snippets = kind === "iis" ? iisSnippets : kind === "appsettings" ? appsettingsChoices() : apacheSnippets;
 	$("#editor-snippets-panel").replaceChildren(
-		el("div", { className: "snippet-panel-head" }, el("span", { textContent: kind === "iis" ? "IIS · WEB.CONFIG" : kind === "appsettings" ? "UMBRACO · APPSETTINGS.JSON" : "APACHE · SITE CONFIG" }),
+		el("div", { className: "snippet-panel-head" }, el("span", { textContent: kind === "iis" ? "IIS · WEB.CONFIG" : kind === "appsettings" ? (openFileSite?.kind === "umbraco" ? "UMBRACO" : ".NET") + " · APPSETTINGS.JSON" : "APACHE · SITE CONFIG" }),
 			el("strong", { textContent: kind === "appsettings" ? "Insert a setting" : "Insert a rule" })),
 		...Object.entries(snippets).map(([key, snippet]) => {
 			const [icon, line] = kind === "appsettings" ? [snippet.icon, snippet.line] : snippetLooks[key] || ["file", ""];
