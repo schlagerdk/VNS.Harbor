@@ -755,6 +755,8 @@ let allSites = [];
 const isListed = (s) => !s.admin;
 const listedSites = () => allSites.filter(isListed);
 let filter = "all";
+// Under the Umbraco filter: one major version (e.g. 17), so a selection does not mix sites on different versions
+let umbracoMajor = null;
 let query = "";
 
 const kindLabel = { umbraco: "Umbraco", csharp: "C# / .NET", python: "Python", html: "HTML" };
@@ -878,16 +880,41 @@ function renderStats() {
 		.map(([key, [label, test, title]]) => [key, label, count(test), title])
 		.filter(([, , n]) => n > 0);
 	if (![...usefulChips, ...pending].some(([key]) => key === filter)) filter = "all";
+	// The Umbraco filter splits into its major versions when the sites are on more than one
+	const majors = filter === "umbraco" ? umbracoMajors(searched) : [];
+	if (!majors.some(([major]) => major === umbracoMajor)) umbracoMajor = null;
 	const box = $("#stats");
 	box.hidden = listedSites().length <= 1 || (usefulChips.length <= 1 && !pending.length);
 	box.replaceChildren();
-	const chip = ([key, label, n, title], className = "") => el("div", { className: "chip" + className + (filter === key ? " active" : ""), title: title || "", onclick: () => { filter = key; renderSites(); } },
+	const chip = ([key, label, n, title], className = "") => el("div", { className: "chip" + className + (filter === key ? " active" : ""), title: title || "", onclick: () => { filter = key; umbracoMajor = null; renderSites(); } },
 		el("b", { textContent: n }), el("span", { textContent: label }));
-	for (const item of usefulChips) box.append(chip(item));
+	for (const item of usefulChips) {
+		box.append(chip(item));
+		if (item[0] !== "umbraco") continue;
+		for (const [major, n] of majors) {
+			const dot = el("i", { className: "version-dot" });
+			dot.dataset.major = String(major % versionColors);
+			box.append(el("div", {
+				className: "chip version-chip" + (umbracoMajor === major ? " active" : ""), title: `Only Umbraco ${major} sites (click again for every version)`,
+				onclick: () => { umbracoMajor = umbracoMajor === major ? null : major; renderSites(); },
+			}, dot, el("b", { textContent: n }), el("span", { textContent: "v" + major })));
+		}
+	}
 	if (pending.length) {
 		box.append(el("span", { className: "chip-divider", ariaHidden: "true" }));
 		for (const item of pending) box.append(chip(item, " attention"));
 	}
+}
+
+const umbracoMajorOf = (site) => Number.parseInt(site.umbraco_version, 10);
+// [major, number of sites] for the Umbraco sites given, newest first; none when they are all on one version
+function umbracoMajors(sites) {
+	const counts = new Map();
+	for (const site of sites) {
+		const major = umbracoMajorOf(site);
+		if (site.kind === "umbraco" && Number.isFinite(major)) counts.set(major, (counts.get(major) || 0) + 1);
+	}
+	return counts.size > 1 ? [...counts].sort((a, b) => b[0] - a[0]) : [];
 }
 
 // Filters for sites that need something done
@@ -917,6 +944,7 @@ function matches(site) {
 	if (filter === "managed" && !site.managed_by) return false;
 	if (filter === "own" && site.managed_by) return false;
 	if (kindLabel[filter] && site.kind !== filter) return false;
+	if (filter === "umbraco" && umbracoMajor !== null && umbracoMajorOf(site) !== umbracoMajor) return false;
 	if (attentionFilters[filter] && !attentionFilters[filter][1](site)) return false;
 	return matchesQuery(site);
 }

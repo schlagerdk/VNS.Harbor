@@ -1105,6 +1105,19 @@ dialog.logs-dialog[open] { display: flex; flex-direction: column; }
 /* Sites with something waiting: after the other filters, in amber */
 .chip-divider { align-self: stretch; width: 1px; margin: 4px 4px; background: var(--line); }
 .chip.attention b { color: #d29922; }
+/* A major version under the Umbraco filter: smaller, with the colour its version badge has */
+.chip.version-chip { padding: 4px 10px; border-style: dashed; }
+.chip.version-chip.active { border-style: solid; }
+.chip.version-chip b { font-size: 14px; }
+.version-dot { width: 8px; height: 8px; border-radius: 50%; background: #57606a; flex: none; }
+.version-dot[data-major="0"] { background: #8250df; }
+.version-dot[data-major="1"] { background: #0969da; }
+.version-dot[data-major="2"] { background: #1a7f37; }
+.version-dot[data-major="3"] { background: #bf8700; }
+.version-dot[data-major="4"] { background: #cf222e; }
+.version-dot[data-major="5"] { background: #bf3989; }
+.version-dot[data-major="6"] { background: #0a7f8f; }
+.version-dot[data-major="7"] { background: #953800; }
 .chip.attention:hover:not(:where(:disabled, .disabled, .off)), .chip.attention.active { border-color: #d29922; }
 .chip.attention.active { background: rgba(210, 153, 34, .14); box-shadow: 0 0 14px rgba(210, 153, 34, .2); }
 /* A link to an environment never shrinks away beside a status badge */
@@ -1456,6 +1469,9 @@ button.primary.danger-primary:disabled { opacity: .5; }
 	#view-sites > .toolbar .stats { flex: 1 1 100%; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
 	#view-sites > .toolbar .stats::-webkit-scrollbar { display: none; }
 	.chip { flex: none; padding: 5px 10px; }
+	/* What needs attention first on a phone, so something stuck, missing or stopped shows without scrolling */
+	#stats .chip.attention { order: -2; }
+	#stats .chip-divider { order: -1; }
 	#site-layout-toggle, #btn-multi, #btn-multi-all, #btn-multi-action, #btn-multi-cancel, .site-targets-head .layout-toggle { display: none !important; }
 	/* Cards are as tall as their content, not as the tallest in the grid */
 	.cards { grid-auto-rows: auto; gap: 12px; }
