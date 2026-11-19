@@ -2,6 +2,35 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.48] - 2026-11-19
+
+### Features
+
+- Rewrite to domain can be permanent or temporary, and says it always goes to https
+- Admin access can answer others with 404 or a redirect, not only 403
+- Allowed IPs can close the whole site, and less space around your address
+- Your own address added with a click in the Allowed IPs snippet
+- General appsettings snippets for sites that are not Umbraco
+- Umbraco filter splits into major versions, and what needs attention comes first on a phone
+
+### Fixes
+
+- A site that gets HTTPS later logs to -443-error.log, not to port 80's log
+- The Rewrite snippet writes a ProxyPass, as the site's own robots.txt and sitemap.xml are
+- Redirect to suggests no / when the whole site is closed
+- Allowed IPs suggests only umbraco for an Umbraco site; app_plugins can break Umbraco Forms
+- Snippets suggest Umbraco's paths for Umbraco sites only
+- Allowed IPs for the whole site with 403 or 404 no longer asks for a redirect address
+- Umbraco setting snippets only for an Umbraco site's appsettings.json
+
+### Other
+
+- Style: a snippet without fields has no empty space, and says what it does
+- Style: even space between the fields of a snippet
+- Style: every snippet choice has a line under it, centred
+- Style: snippet choices as segments, not dropdowns
+- Style: what others get in admin access as segments, not a half-width select
+
 ## [1.0.47] - 2026-11-18
 
 ### Fixes
