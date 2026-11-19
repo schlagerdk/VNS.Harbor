@@ -4608,7 +4608,7 @@ const snippetFields = {
 	ignore: { description: "The rules after this one leave these paths alone.", fields: [
 		{ name: "paths", label: "Paths to leave alone", value: "umbraco/api, umbraco/surface, umbraco/backoffice", hint: "Separate them with spaces or commas." }] },
 	ips: { description: "Only these addresses reach the protected paths. This server itself always does.", fields: [
-		{ name: "addresses", label: "Allowed IP addresses", placeholder: "192.0.2.10, 198.51.100.7", hint: "Separate them with spaces or commas." },
+		{ name: "addresses", label: "Allowed IP addresses", placeholder: "192.0.2.10, 198.51.100.7", hint: "Separate them with spaces or commas.", yourAddress: true },
 		{ name: "paths", label: "Paths to protect", value: "umbraco, app_plugins, config" },
 		{ name: "response", label: "Others get", options: [["forbidden", "403 Forbidden"], ["notfound", "404 Not found, as if the path was not there"], ["redirect", "A redirect to another address"], ["abort", "The connection closed, without an answer", "iis"]] },
 		{ name: "target", label: "Redirect to", value: "/", showIf: ["response", "redirect"], hint: "A path on the site, like /, or a whole address." }] },
@@ -4851,6 +4851,39 @@ RewriteRule ^/${regexEscape(rewrite.from)}$ http://127.0.0.1:${port[1]}/${rewrit
 Header always edit Set-Cookie "(?i)^((?!.*;\\s*secure).*)$" "$1; Secure"` },
 };
 
+// Your own address under a list of addresses, as in Who can reach the admin site: Add it, or In the list
+let yourAddress = null;
+function yourAddressCard(input) {
+	const value = el("strong", { textContent: "…" });
+	const listed = el("span", { className: "your-address-in", hidden: true }, svgIcon("check"), "In the list");
+	const add = el("button", { type: "button", className: "small primary", textContent: "+ Add it", hidden: true });
+	const card = el("div", { className: "your-address" },
+		el("span", { className: "your-address-icon", ariaHidden: "true" }, svgIcon("globe")),
+		el("span", { className: "your-address-text" }, el("small", { textContent: "Your address now" }), value), listed, add);
+	const items = () => input.value.split(/[\s,]+/).filter(Boolean);
+	const show = () => {
+		if (!yourAddress) return;
+		const inList = items().some((item) => addressIn(yourAddress, item));
+		listed.hidden = !inList;
+		add.hidden = inList;
+	};
+	add.onclick = () => {
+		if (!items().includes(yourAddress)) input.value = [...items(), yourAddress].join(", ");
+		show();
+		input.focus();
+	};
+	input.addEventListener("input", show);
+	(yourAddress ? Promise.resolve({ address: yourAddress }) : api("/api/your-address"))
+		.then(({ address }) => {
+			if (!address) throw new Error();
+			yourAddress = address;
+			value.textContent = address;
+			show();
+		})
+		.catch(() => card.remove());
+	return card;
+}
+
 // The window a snippet opens: all its fields at once. It answers with the snippet's text, or null when cancelled.
 function askSnippet(key, snippet, config) {
 	const spec = snippetFields[key] || { description: "", fields: [] };
@@ -4869,7 +4902,7 @@ function askSnippet(key, snippet, config) {
 		row.dataset.field = field.name;
 		return [field, row];
 	});
-	$("#snippet-fields").replaceChildren(...rows.map(([, row]) => row));
+	$("#snippet-fields").replaceChildren(...rows.flatMap(([field, row]) => field.yourAddress ? [row, yourAddressCard(row.querySelector("input"))] : [row]));
 	// A field that belongs to one choice, like the address of a redirect, is only there when it is chosen
 	const showFields = () => {
 		for (const [field, row] of rows) {

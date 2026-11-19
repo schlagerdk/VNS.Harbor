@@ -2349,6 +2349,12 @@ def api_server_crontab_log():
         return error("The job's log could not be read.", 502)
 
 
+@app.route("/api/your-address")
+def api_your_address():
+    """The address this request comes from, as Apache sees it: for Allowed IPs, so one's own is added with a click."""
+    return jsonify(address=client_ip())
+
+
 @app.route("/api/admin-access", methods=["GET", "POST"])
 def api_admin_access():
     """Who may reach this admin site (harbor admin access): read, or set. A list that leaves out the address this
