@@ -4620,6 +4620,12 @@ const snippetFields = {
 	domain: { description: "Every other name the site answers on is sent to this one.", fields: [
 		{ name: "domain", label: "Domain", placeholder: "example.dk", hint: "Always to https://. A whole address, like https://example.dk, works too." },
 		{ name: "status", label: "Redirect", options: [["permanent", "Permanent", "301: browsers and search engines remember it"], ["temporary", "Temporary", "302: nothing is remembered"]] }] },
+	// Without fields: the header says what it does, and Insert puts it in
+	slash: { description: "Addresses without a / at the end are sent to the same address with one. Files, /umbraco and /media are left alone.", fields: [] },
+	www: { description: "Visitors on www.domain are sent to the domain without www, on https.", fields: [] },
+	https: { description: "Visitors on http:// are sent to the same address on https://.", fields: [] },
+	compression: { description: "Text, CSS, JavaScript, JSON and SVG are sent compressed, so pages load faster.", fields: [] },
+	cookies: { description: "Every cookie the site sets is marked Secure: browsers only send it back over https.", fields: [] },
 	rewrite: { description: "Visitors ask for the first path and get what the site has at the second. The address they see does not change.", fields: [
 		{ name: "from", label: "From", placeholder: "old/page" },
 		{ name: "to", label: "To", placeholder: "new/page" }] },

@@ -1168,6 +1168,8 @@ dialog.editor .editor-toolbar > button, dialog.editor .editor-toolbar > select {
 .snippet-fields label { display: grid; gap: 6px; }
 dialog .snippet-fields > label, dialog .snippet-field-group > label { margin: 0; }
 #form-snippet > .hint { margin: 14px 0 0; }
+/* A snippet without fields says it all in its header: no empty space, and its "check it, then save" is not said twice */
+#snippet-fields:empty, #snippet-fields:empty + .hint { display: none; }
 #snippet-error:empty { display: none; }
 .snippet-fields .hint { margin: 0; }
 /* A choice in a snippet: segments, as in the admin site's access */
