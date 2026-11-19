@@ -4610,7 +4610,7 @@ const snippetFields = {
 	ips: { description: "Only these addresses reach the site, or the paths chosen. This server itself always does.", fields: [
 		{ name: "addresses", label: "Allowed IP addresses", placeholder: "192.0.2.10, 198.51.100.7", hint: "Separate them with spaces or commas.", yourAddress: true },
 		// Choices as segments: [value, title, line under it, only for this kind of config]
-		{ name: "scope", label: "Protect", options: [["paths", "Chosen paths"], ["site", "The whole site", "Certificate renewal still gets through"]] },
+		{ name: "scope", label: "Protect", options: [["paths", "Chosen paths", "Only the paths below"], ["site", "The whole site", "Certificate renewal still gets through"]] },
 		{ name: "paths", label: "Paths to protect", value: "umbraco, app_plugins, config", showIf: ["scope", "paths"] },
 		{ name: "response", label: "Others get", options: [["forbidden", "403", "Forbidden"], ["notfound", "404", "As if it was not there"], ["redirect", "Redirect", "Sent somewhere else"], ["abort", "Closed", "No answer at all", "iis"]] },
 		{ name: "target", label: "Redirect to", value: "/", showIf: ["response", "redirect"], hint: "A path on the site, like /, or a whole address." }] },
