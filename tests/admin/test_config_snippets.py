@@ -68,6 +68,14 @@ class ConfigSnippetTests(unittest.TestCase):
         self.assertIn("RewriteRule ^/mine$ /yours [R=302,L]", carried)
         self.assertEqual(config_snippets.apply_apache(carried, []), own)
 
+    def test_allowed_ips_for_the_whole_site_leaves_certificate_renewal_open(self):
+        snippet = {"key": "ips", "name": "Allowed IPs", "values": {"addresses": "192.0.2.10", "scope": "site"}}
+        rules = config_snippets.apache_rules(snippet, "5555")
+        self.assertEqual(rules[0], "RewriteCond %{REQUEST_URI} !^/\\.well-known/acme-challenge/")
+        self.assertEqual(rules[-1], "RewriteRule ^/ - [F,NC,L]")
+        rule = config_snippets.iis_rule({**snippet, "values": {**snippet["values"], "response": "forbidden"}})
+        self.assertEqual(rule.find("match").get("url"), "^(?!\\.well-known/acme-challenge/)")
+
     def test_web_config_gets_vns_rules_after_https_and_keeps_its_own(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "web.config"

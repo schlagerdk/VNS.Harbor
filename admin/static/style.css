@@ -1162,6 +1162,10 @@ dialog.editor .editor-toolbar > button, dialog.editor .editor-toolbar > select {
 .snippet-fields { display: grid; gap: 12px; }
 .snippet-fields label { display: grid; gap: 6px; }
 .snippet-fields .hint { margin: 0; }
+/* A field with your own address under it: the card close to the field it adds to */
+.snippet-field-group { display: grid; gap: 10px; }
+.snippet-field-group > label { margin: 0; }
+.snippet-field-group > .your-address { margin: 0; }
 /* The snippet menu, like the custom scripts menu: a panel of rules with an icon and a line about each */
 .snippet-menu { position: relative; flex: none; }
 .snippet-trigger { display: inline-flex; align-items: center; gap: 7px; height: 34px; border-color: rgba(88, 166, 255, .4); color: var(--blue); background: linear-gradient(135deg, rgba(88, 166, 255, .13), rgba(163, 113, 247, .1)); }

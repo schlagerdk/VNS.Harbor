@@ -29,6 +29,11 @@ PATH_RE = re.compile(r"^[A-Za-z0-9._~\-/]+$")
 WARNINGS = []
 
 
+# Allowed IPs for the whole site leaves this open: Let's Encrypt's challenge, which renews the certificate
+ACME_APACHE = "RewriteCond %{REQUEST_URI} !^/\\.well-known/acme-challenge/"
+ACME_IIS = "^(?!\\.well-known/acme-challenge/)"
+
+
 def warn(message):
     """A snippet that cannot be carried is told about and left out; the publish goes on"""
     WARNINGS.append(message)
@@ -96,8 +101,11 @@ def apache_rules(snippet, port):
         response = values.get("response")
         answer = ("- [R=404,NC,L]" if response == "notfound"
                   else "%s [R=302,NC,L]" % target_of(values.get("target")) if response == "redirect" else "- [F,NC,L]")
-        return ['RewriteCond expr "!(%s)"' % " || ".join("-R '%s'" % address for address in addresses),
-                "RewriteRule ^/(?:%s)(?:/|$) %s" % (alternation(paths_of(values.get("paths"))), answer)]
+        condition = 'RewriteCond expr "!(%s)"' % " || ".join("-R '%s'" % address for address in addresses)
+        if values.get("scope") == "site":
+            # The whole site, but Let's Encrypt's challenge, or its certificate could not be renewed
+            return [ACME_APACHE, condition, "RewriteRule ^/ %s" % answer]
+        return [condition, "RewriteRule ^/(?:%s)(?:/|$) %s" % (alternation(paths_of(values.get("paths"))), answer)]
     if key == "slash":
         return ["RewriteCond %{REQUEST_METHOD} ^(GET|HEAD)$", "RewriteCond %{REQUEST_URI} !\\.[a-zA-Z0-9]{2,10}$",
                 "RewriteCond %{REQUEST_URI} !^/umbraco [NC]", "RewriteCond %{REQUEST_URI} !^/media [NC]",
@@ -186,7 +194,8 @@ def iis_rule(snippet):
             warn("%s: IIS cannot match ranges, so %s are not allowed on Windows" % (snippet["name"], ", ".join(item for item in listed if "/" in item)))
         if not addresses:
             raise ValueError("only ranges are allowed, which IIS cannot match")
-        ET.SubElement(rule, "match", url="^(?:%s)(?:/|$)" % alternation(paths_of(values.get("paths"))))
+        ET.SubElement(rule, "match", url=ACME_IIS if values.get("scope") == "site"
+                      else "^(?:%s)(?:/|$)" % alternation(paths_of(values.get("paths"))))
         conditions = ET.SubElement(rule, "conditions")
         ET.SubElement(conditions, "add", input="{REMOTE_ADDR}", matchType="Pattern",
                       pattern="^(?:::1|127\\.0\\.0\\.1|%s)$" % alternation(addresses), ignoreCase="true", negate="true")

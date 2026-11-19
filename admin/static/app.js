@@ -4607,9 +4607,10 @@ const pathPattern = (paths) => paths.map(regexEscape).join("|");
 const snippetFields = {
 	ignore: { description: "The rules after this one leave these paths alone.", fields: [
 		{ name: "paths", label: "Paths to leave alone", value: "umbraco/api, umbraco/surface, umbraco/backoffice", hint: "Separate them with spaces or commas." }] },
-	ips: { description: "Only these addresses reach the protected paths. This server itself always does.", fields: [
+	ips: { description: "Only these addresses reach the site, or the paths chosen. This server itself always does.", fields: [
 		{ name: "addresses", label: "Allowed IP addresses", placeholder: "192.0.2.10, 198.51.100.7", hint: "Separate them with spaces or commas.", yourAddress: true },
-		{ name: "paths", label: "Paths to protect", value: "umbraco, app_plugins, config" },
+		{ name: "scope", label: "Protect", options: [["paths", "Chosen paths"], ["site", "The whole site (certificate renewal still gets through)"]] },
+		{ name: "paths", label: "Paths to protect", value: "umbraco, app_plugins, config", showIf: ["scope", "paths"] },
 		{ name: "response", label: "Others get", options: [["forbidden", "403 Forbidden"], ["notfound", "404 Not found, as if the path was not there"], ["redirect", "A redirect to another address"], ["abort", "The connection closed, without an answer", "iis"]] },
 		{ name: "target", label: "Redirect to", value: "/", showIf: ["response", "redirect"], hint: "A path on the site, like /, or a whole address." }] },
 	domain: { description: "Every other name the site answers on is sent to this one.", fields: [
@@ -4619,12 +4620,18 @@ const snippetFields = {
 		{ name: "to", label: "To", placeholder: "new/page" }] },
 };
 
-// Where a redirect for Allowed IPs may go: a path on the site, or an http(s) address
-function redirectTargetOf(value) {
+// Where a redirect for Allowed IPs may go: a path on the site, or an http(s) address. For the whole site only an
+// address elsewhere: a path on it would be closed too, and send the visitor round and round.
+function redirectTargetOf(value, wholeSite = false) {
 	const target = String(value || "").trim() || "/";
+	if (wholeSite && !/^https?:\/\/[^\s"'<>]+$/.test(target)) throw new Error("The whole site is closed: redirect to an address elsewhere, like https://example.dk/.");
 	if (!/^(\/[^\s"'<>]*|https?:\/\/[^\s"'<>]+)$/.test(target)) throw new Error("Redirect to a path like / or an address like https://example.dk/.");
 	return target;
 }
+// Allowed IPs for the whole site leaves Let's Encrypt's challenge open, or the site's certificate could not be renewed
+const wholeSite = (v) => v.scope === "site";
+const ACME_IIS = "^(?!\\.well-known/acme-challenge/)";
+const ACME_APACHE = "RewriteCond %{REQUEST_URI} !^/\\.well-known/acme-challenge/";
 
 // IIS: each rule as web.config writes it
 const iisSnippets = {
@@ -4636,7 +4643,7 @@ const iisSnippets = {
 		const addresses = addressesOf(v.addresses, false);
 		const listed = xmlEscape(addresses.map(regexEscape).join("|"));
 		return `<rule name="${xmlEscape(v.name || "Allowed IPs")}" stopProcessing="true" enabled="true">
-  <match url="^(?:${xmlEscape(pathPattern(pathsOf(v.paths)))})(?:/|$)" />
+  <match url="${wholeSite(v) ? ACME_IIS : `^(?:${xmlEscape(pathPattern(pathsOf(v.paths)))})(?:/|$)`}" />
   <conditions>
     <add input="{REMOTE_ADDR}" matchType="Pattern" pattern="^(?:::1|127\\.0\\.0\\.1|${listed})$" ignoreCase="true" negate="true" />
     <add input="{HTTP_X_FORWARDED_FOR}" matchType="Pattern" pattern="(?:^|,\\s*)(?:${listed})$" ignoreCase="true" negate="true" />
@@ -4644,7 +4651,7 @@ const iisSnippets = {
   ${{
 		forbidden: '<action type="CustomResponse" statusCode="403" statusReason="Forbidden" statusDescription="Access denied" />',
 		notfound: '<action type="CustomResponse" statusCode="404" statusReason="Not Found" statusDescription="Not found" />',
-		redirect: `<action type="Redirect" url="${xmlEscape(redirectTargetOf(v.target))}" redirectType="Found" />`,
+		redirect: `<action type="Redirect" url="${xmlEscape(redirectTargetOf(v.target, wholeSite(v)))}" redirectType="Found" />`,
 	}[v.response] || '<action type="AbortRequest" />'}
 </rule>`;
 	} },
@@ -4810,11 +4817,11 @@ RewriteRule ^/(?:${pathPattern(pathsOf(v.paths))})/ - [L]` },
 		const addresses = addressesOf(v.addresses, true);
 		// An expression, as mod_rewrite cannot match ranges; anyone else gets 403. The addresses are joined with ||
 		// under one !: in Apache's expressions ! covers everything after it, so "! a && ! b" does not mean "neither".
-		return `# ${v.name || "Allowed IPs"}
+		return `# ${v.name || "Allowed IPs"}${wholeSite(v) ? "\n" + ACME_APACHE : ""}
 RewriteCond expr "!(${["127.0.0.0/8", "::1", ...addresses].map((address) => `-R '${address}'`).join(" || ")})"
-RewriteRule ^/(?:${pathPattern(pathsOf(v.paths))})(?:/|$) ${{
+RewriteRule ${wholeSite(v) ? "^/" : `^/(?:${pathPattern(pathsOf(v.paths))})(?:/|$)`} ${{
 		notfound: "- [R=404,NC,L]",
-		redirect: `${redirectTargetOf(v.target)} [R=302,NC,L]`,
+		redirect: `${redirectTargetOf(v.target, wholeSite(v))} [R=302,NC,L]`,
 	}[v.response] || "- [F,NC,L]"}`;
 	} },
 	slash: { label: "AddTrailingSlash", build: () => `# AddTrailingSlash
@@ -4902,7 +4909,7 @@ function askSnippet(key, snippet, config) {
 		row.dataset.field = field.name;
 		return [field, row];
 	});
-	$("#snippet-fields").replaceChildren(...rows.flatMap(([field, row]) => field.yourAddress ? [row, yourAddressCard(row.querySelector("input"))] : [row]));
+	$("#snippet-fields").replaceChildren(...rows.flatMap(([field, row]) => field.yourAddress ? [el("div", { className: "snippet-field-group" }, row, yourAddressCard(row.querySelector("input")))] : [row]));
 	// A field that belongs to one choice, like the address of a redirect, is only there when it is chosen
 	const showFields = () => {
 		for (const [field, row] of rows) {
@@ -5138,7 +5145,7 @@ function snippetKind() {
 
 const snippetLooks = {
 	ignore: ["eraser", "Leave chosen paths alone"],
-	ips: ["shield", "Only listed addresses reach chosen paths"],
+	ips: ["shield", "Only listed addresses reach the site or chosen paths"],
 	slash: ["chevron", "Add / to addresses without one"],
 	www: ["globe", "Send www.domain to domain"],
 	domain: ["external", "Send every other name to one domain"],
@@ -5180,18 +5187,20 @@ function allowedIpRules(kind, text) {
 	if (kind === "iis") {
 		for (const match of text.matchAll(/<rule\s+name="(Allowed IPs[^"]*)"[\s\S]*?<\/rule>/g)) {
 			const paths = /<match\s+url="\^\(\?:([^)]*)\)/.exec(match[0]);
+			const site = match[0].includes(`<match url="${ACME_IIS}"`);
 			const addresses = /input="\{REMOTE_ADDR\}"[^>]*pattern="\^\(\?:([^)]*)\)\$"/.exec(match[0]);
-			if (!paths || !addresses) continue;
+			if ((!paths && !site) || !addresses) continue;
 			found.push({ name: match[1], start: match.index, end: match.index + match[0].length,
-				paths: lowerSet(paths[1].split("|").map(unescapeRegex)),
+				paths: site ? lowerSet(["/"]) : lowerSet(paths[1].split("|").map(unescapeRegex)),
 				addresses: lowerSet(addresses[1].split("|").map(unescapeRegex).filter((item) => item !== "::1" && item !== "127.0.0.1")) });
 		}
 	} else {
 		for (const match of text.matchAll(/^[ \t]*# (Allowed IPs[^\n]*)\n((?:[ \t]*\S[^\n]*\n?)*)/gm)) {
 			const paths = /RewriteRule \^\/\(\?:([^)]*)\)/.exec(match[2]);
-			if (!paths) continue;
+			const site = /RewriteRule \^\/ /.test(match[2]);
+			if (!paths && !site) continue;
 			found.push({ name: match[1].trim(), start: match.index, end: match.index + match[0].replace(/\n$/, "").length,
-				paths: lowerSet(paths[1].split("|").map(unescapeRegex)),
+				paths: site ? lowerSet(["/"]) : lowerSet(paths[1].split("|").map(unescapeRegex)),
 				addresses: lowerSet([...match[2].matchAll(/-R '([^']+)'/g)].map((item) => item[1]).filter((item) => item !== "127.0.0.0/8" && item !== "::1")) });
 		}
 	}
@@ -5201,7 +5210,8 @@ function allowedIpRules(kind, text) {
 // Allowed IPs for paths that already have a rule changes that rule's addresses; other paths get a rule of their own
 function placeAllowedIps(kind, text, snippet, values) {
 	const rules = allowedIpRules(kind, text);
-	const paths = lowerSet(pathsOf(values.paths));
+	// The whole site is its own rule, apart from rules for paths
+	const paths = wholeSite(values) ? lowerSet(["/"]) : lowerSet(pathsOf(values.paths));
 	const addresses = lowerSet(addressesOf(values.addresses, kind === "apache"));
 	const same = rules.find((rule) => sameSet(rule.paths, paths));
 	if (same) {
