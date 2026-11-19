@@ -4853,14 +4853,16 @@ RewriteRule ^ https://%1%{REQUEST_URI} [R=301,L]` },
 RewriteCond %{HTTP_HOST} !^${regexEscape(domain)}$ [NC]
 RewriteRule ^ https://${domain}%{REQUEST_URI} [R=${v.status === "temporary" ? 302 : 301},L]`;
 	} },
-	// Sent straight to the site's service with P: ProxyPass ... nocanon passes on the address as the visitor wrote it,
-	// so a rewrite that only changes the path inside Apache (PT) never reaches the service
+	// Sent straight to the site's service, written as the site's own robots.txt and sitemap.xml are in its config: a
+	// ProxyPass, before ProxyPass / (a rewrite that only changed the path inside Apache, PT, never reaches the service)
 	rewrite: { label: "Rewrite from → to", build: (v, config) => {
 		const port = /^[ \t]*ProxyPass\s+\/\s+http:\/\/127\.0\.0\.1:(\d+)\//m.exec(config);
 		if (!port) throw new Error("This config has no ProxyPass / to the site's service, so a rewrite cannot be sent there.");
 		const rewrite = rewriteOf(v);
+		const target = `http://127.0.0.1:${port[1]}/${rewrite.to}`;
 		return `# Rewrite ${rewrite.from}
-RewriteRule ^/${regexEscape(rewrite.from)}$ http://127.0.0.1:${port[1]}/${rewrite.to} [P,L]`;
+ProxyPass /${rewrite.from} ${target}
+ProxyPassReverse /${rewrite.from} ${target}`;
 	} },
 	// Ubuntu's Apache compresses HTML, CSS and JavaScript already; this adds JSON, SVG and the rest of text for the site
 	compression: { label: "Compression", place: "end", build: () => `# Compression

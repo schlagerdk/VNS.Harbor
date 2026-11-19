@@ -116,7 +116,9 @@ def apache_rules(snippet, port):
         if not port:
             raise ValueError("the config has no ProxyPass / to the site's service")
         rewrite = rewrite_of(values)
-        return ["RewriteRule ^/%s$ http://127.0.0.1:%s/%s [P,L]" % (alternation([rewrite["from"]]), port, rewrite["to"])]
+        # As the site's own robots.txt and sitemap.xml: a ProxyPass to its service, placed before ProxyPass /
+        target = "http://127.0.0.1:%s/%s" % (port, rewrite["to"])
+        return ["ProxyPass /%s %s" % (rewrite["from"], target), "ProxyPassReverse /%s %s" % (rewrite["from"], target)]
     if key == "compression":
         return ["<IfModule mod_deflate.c>",
                 "  AddOutputFilterByType DEFLATE text/html text/plain text/css text/xml text/javascript application/javascript application/json application/xml image/svg+xml",

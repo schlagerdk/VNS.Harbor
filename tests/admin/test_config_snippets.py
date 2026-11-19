@@ -52,7 +52,9 @@ class ConfigSnippetTests(unittest.TestCase):
         template = (ROOT_DIR / "templates/sites/csharp/umbraco/apache.conf.tpl").read_text().replace("@PORT_HTTP@", "5555")
         snippets = config_snippets.read(MAIN)
         carried = config_snippets.apply_apache(template, snippets)
-        self.assertIn("http://127.0.0.1:5555/new/page [P,L]", carried)
+        self.assertIn("ProxyPass /old/page http://127.0.0.1:5555/new/page\n  ProxyPassReverse /old/page http://127.0.0.1:5555/new/page", carried)
+        # Before the proxy of the whole site, or it would never be reached
+        self.assertLess(carried.index("ProxyPass /old/page"), carried.index("ProxyPass / "))
         self.assertNotIn("4019", carried)
         self.assertNotIn("test.example.dk%{REQUEST_URI}", carried)
         self.assertEqual(config_snippets.apply_apache(carried, snippets), carried)
