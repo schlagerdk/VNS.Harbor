@@ -1163,13 +1163,17 @@ dialog.editor .editor-toolbar { flex-wrap: nowrap; align-items: center; gap: 10p
 dialog.editor .editor-toolbar > button, dialog.editor .editor-toolbar > select { flex: none; }
 @media (max-width: 700px) { dialog.editor .editor-toolbar { flex-wrap: wrap; } .editor-file { flex-basis: 100%; } }
 #dlg-snippet { width: min(520px, 92vw); }
-.snippet-fields { display: grid; gap: 12px; }
+/* One even space between the fields, whatever they are: the dialog's own margin under labels is not added to it */
+.snippet-fields { display: grid; gap: 16px; }
 .snippet-fields label { display: grid; gap: 6px; }
+dialog .snippet-fields > label, dialog .snippet-field-group > label { margin: 0; }
+#form-snippet > .hint { margin: 14px 0 0; }
+#snippet-error:empty { display: none; }
 .snippet-fields .hint { margin: 0; }
 /* A choice in a snippet: segments, as in the admin site's access */
-dialog fieldset.snippet-choice { min-width: 0; margin: 0 0 12px; padding: 0; border: 0; }
+dialog fieldset.snippet-choice { min-width: 0; margin: 0; padding: 0; border: 0; }
 .snippet-choice .samba-segment { align-content: center; }
-.snippet-choice legend { margin-bottom: 8px; padding: 0; color: var(--muted); font-size: 12.5px; }
+.snippet-choice legend { margin-bottom: 6px; padding: 0; color: var(--muted); font-size: 12.5px; }
 @media (max-width: 560px) { .snippet-choice .samba-segments { grid-template-columns: 1fr !important; } }
 /* A field with your own address under it: the card close to the field it adds to */
 .snippet-field-group { display: grid; gap: 10px; }
