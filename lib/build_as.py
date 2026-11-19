@@ -111,9 +111,71 @@ def prepare(project, account, keep):
             os.chmod(path, info.st_mode | stat.S_IRGRP | (stat.S_IXGRP if stat.S_ISDIR(info.st_mode) else 0))
 
 
-def copy_out(staging, target):
-    """The published files to the publish folder, as root: plain files and folders only"""
+# What the last publish put in the publish folder, kept there: the next publish deletes what its build no longer has
+PUBLISHED = ".harbor-published"
+# A publish folder with no record yet (its first publish since Harbor kept one): only these, when the build has not got
+# them. A package's DLL left in the publish folder stops the site (Umbraco loads every DLL there and cannot load one
+# its .deps.json does not name), and a package's App_Plugins left there keeps its backoffice in Umbraco.
+UNRECORDED = ("*.dll", "wwwroot/App_Plugins/**/*")
+
+
+def published_files(staging):
+    """The build's files, as paths relative to the publish folder"""
+    found = set()
+    for directory, folders, files in os.walk(staging, followlinks=False):
+        here = Path(directory)
+        folders[:] = [name for name in folders if not (here / name).is_symlink()]
+        found.update((here / name).relative_to(staging).as_posix() for name in files if stat.S_ISREG((here / name).lstat().st_mode))
+    return found
+
+
+def remove_stale(target, build, project):
+    """Delete from the publish folder what an earlier publish put there and this build has not: a removed package's
+    DLL and its wwwroot/App_Plugins. Only the build's own files: the site's data (media, uSync, logs, its appsettings)
+    were never in a build. Returns the deleted paths."""
+    # The project's own folder as the publish folder: its wwwroot is the project's source, never deleted from
+    if project.resolve().is_relative_to(target.resolve()):
+        return []
+    record = target / PUBLISHED
+    if record.is_file() and not record.is_symlink():
+        earlier = {line.strip() for line in record.read_text(errors="replace").splitlines() if line.strip()}
+    else:
+        earlier = set()
+        for pattern in UNRECORDED:
+            earlier.update(path.relative_to(target).as_posix() for path in target.glob(pattern) if path.is_file() and not path.is_symlink())
+    removed = []
+    for relative in sorted(earlier - build):
+        path = target / relative
+        # Nothing outside the publish folder, nothing through a symbolic link
+        if ".." in Path(relative).parts or Path(relative).is_absolute() or any(
+                parent.is_symlink() for parent in path.parents if parent.is_relative_to(target) and parent != target):
+            continue
+        if path.is_file() and not path.is_symlink():
+            path.unlink()
+            removed.append(relative)
+            # The folders it leaves empty go too (a removed package's wwwroot/App_Plugins/<Name>)
+            for parent in path.parents:
+                if parent == target or not parent.is_relative_to(target) or any(parent.iterdir()):
+                    break
+                parent.rmdir()
+    return removed
+
+
+def record_published(target, build):
+    record = target / PUBLISHED
+    if record.is_symlink() or record.is_dir():
+        return
+    record.write_text("".join(path + "\n" for path in sorted(build)))
+    os.chmod(record, 0o600)
+
+
+def copy_out(staging, target, project=None):
+    """The published files to the publish folder, as root: plain files and folders only. What an earlier publish put
+    there and this build has not got is deleted (a removed package's DLL would stop the site)."""
     target.mkdir(parents=True, exist_ok=True)
+    build = published_files(staging)
+    for relative in remove_stale(target, build, (project or staging).resolve()):
+        print(f"  Delete {relative} (no longer in the build)")
     for directory, folders, files in os.walk(staging, followlinks=False):
         here = Path(directory)
         out = target / here.relative_to(staging)
@@ -131,6 +193,7 @@ def copy_out(staging, target):
             if destination.is_symlink() or destination.is_dir():
                 shutil.rmtree(destination) if destination.is_dir() and not destination.is_symlink() else destination.unlink()
             shutil.copy2(source, destination, follow_symlinks=False)
+    record_published(target, build)
 
 
 # NuGet keeps the package lists it has read for 30 minutes: a version uploaded since is not found (NU1102)
@@ -209,7 +272,7 @@ def run(command, cwd=".", capture=False, timeout=None):
         result = subprocess.run(["runuser", "-u", USER, "--", *command], cwd=project, env=environment(),
                                 capture_output=capture, text=capture, timeout=timeout)
         if result.returncode == 0 and staging is not None:
-            copy_out(staging, target)
+            copy_out(staging, target, project)
         return result
     finally:
         if staging is not None:
