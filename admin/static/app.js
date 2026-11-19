@@ -4618,7 +4618,8 @@ const snippetFields = {
 			// The whole site closed: a path on it is closed too, and would send the visitor round and round
 			wholeSite: { placeholder: "https://www.google.dk/", hint: "An address on another site: every path on this one is closed." } }] },
 	domain: { description: "Every other name the site answers on is sent to this one.", fields: [
-		{ name: "domain", label: "Domain", placeholder: "example.dk" }] },
+		{ name: "domain", label: "Domain", placeholder: "example.dk", hint: "Always to https://. A whole address, like https://example.dk, works too." },
+		{ name: "status", label: "Redirect", options: [["permanent", "Permanent", "301: browsers and search engines remember it"], ["temporary", "Temporary", "302: nothing is remembered"]] }] },
 	rewrite: { description: "Visitors ask for the first path and get what the site has at the second. The address they see does not change.", fields: [
 		{ name: "from", label: "From", placeholder: "old/page" },
 		{ name: "to", label: "To", placeholder: "new/page" }] },
@@ -4686,7 +4687,7 @@ const iisSnippets = {
   <conditions>
     <add input="{HTTP_HOST}" pattern="^${xmlEscape(regexEscape(domain))}$" negate="true" />
   </conditions>
-  <action type="Redirect" url="https://${domain}/{R:0}" appendQueryString="true" redirectType="Permanent" />
+  <action type="Redirect" url="https://${domain}/{R:0}" appendQueryString="true" redirectType="${v.status === "temporary" ? "Found" : "Permanent"}" />
 </rule>`;
 	} },
 	https: { label: "Rewrite HTTP to HTTPS", build: () => `<rule name="Rewrite HTTP to HTTPS" stopProcessing="true" enabled="true">
@@ -4844,7 +4845,7 @@ RewriteRule ^ https://%1%{REQUEST_URI} [R=301,L]` },
 		const domain = domainOf(v.domain);
 		return `# Rewrite to domain
 RewriteCond %{HTTP_HOST} !^${regexEscape(domain)}$ [NC]
-RewriteRule ^ https://${domain}%{REQUEST_URI} [R=301,L]`;
+RewriteRule ^ https://${domain}%{REQUEST_URI} [R=${v.status === "temporary" ? 302 : 301},L]`;
 	} },
 	// Sent straight to the site's service with P: ProxyPass ... nocanon passes on the address as the visitor wrote it,
 	// so a rewrite that only changes the path inside Apache (PT) never reaches the service
