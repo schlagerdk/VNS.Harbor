@@ -4606,12 +4606,12 @@ const pathPattern = (paths) => paths.map(regexEscape).join("|");
 // The fields a snippet asks for, the same for IIS and Apache
 const snippetFields = {
 	ignore: { description: "The rules after this one leave these paths alone.", fields: [
-		{ name: "paths", label: "Paths to leave alone", value: "umbraco/api, umbraco/surface, umbraco/backoffice", hint: "Separate them with spaces or commas." }] },
+		{ name: "paths", label: "Paths to leave alone", umbraco: "umbraco/api, umbraco/surface, umbraco/backoffice", placeholder: "api, webhooks", hint: "Separate them with spaces or commas." }] },
 	ips: { description: "Only these addresses reach the site, or the paths chosen. This server itself always does.", fields: [
 		{ name: "addresses", label: "Allowed IP addresses", placeholder: "192.0.2.10, 198.51.100.7", hint: "Separate them with spaces or commas.", yourAddress: true },
 		// Choices as segments: [value, title, line under it, only for this kind of config]
 		{ name: "scope", label: "Protect", options: [["paths", "Chosen paths", "Only the paths below"], ["site", "The whole site", "Certificate renewal still gets through"]] },
-		{ name: "paths", label: "Paths to protect", value: "umbraco, app_plugins, config", showIf: ["scope", "paths"] },
+		{ name: "paths", label: "Paths to protect", umbraco: "umbraco, app_plugins, config", placeholder: "admin, private", showIf: ["scope", "paths"] },
 		{ name: "response", label: "Others get", options: [["forbidden", "403", "Forbidden"], ["notfound", "404", "As if it was not there"], ["redirect", "Redirect", "Sent somewhere else"], ["abort", "Closed", "No answer at all", "iis"]] },
 		{ name: "target", label: "Redirect to", value: "/", showIf: ["response", "redirect"], hint: "A path on the site, like /, or a whole address." }] },
 	domain: { description: "Every other name the site answers on is sent to this one.", fields: [
@@ -4916,7 +4916,9 @@ function askSnippet(key, snippet, config) {
 			row.dataset.field = field.name;
 			return [field, row];
 		}
-		const input = el("input", { name: field.name, value: field.value || "", placeholder: field.placeholder || "", autocomplete: "off", spellcheck: false });
+		// Umbraco's own paths are filled in for an Umbraco site only; any other site gets an example to replace
+		const value = field.umbraco && openFileSite?.kind === "umbraco" ? field.umbraco : field.value || "";
+		const input = el("input", { name: field.name, value, placeholder: field.placeholder || "", autocomplete: "off", spellcheck: false });
 		const row = el("label", {}, field.label, input, ...(field.hint ? [el("small", { className: "hint", textContent: field.hint })] : []));
 		row.dataset.field = field.name;
 		return [field, row];
