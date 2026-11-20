@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.60] - 2026-11-20
+
+### Features
+
+- Sync settings to several environments syncs up to 4 at once, each in a lane of its own in the window, in the order the site's page lists them (environment, then binding). Inside Multi action, and within a data sync, still one at a time
+
 ## [1.0.59] - 2026-11-20
 
 ### Fixes
