@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.52] - 2026-11-20
+
+### Fixes
+
+- The packages card's Check stands at the right of its head, as Publish all on the main site's card, and Add is at the left with Remove at the right
+
 ## [1.0.51] - 2026-11-20
 
 ### Fixes
