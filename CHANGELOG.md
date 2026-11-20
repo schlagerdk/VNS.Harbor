@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.55] - 2026-11-20
+
+### Fixes
+
+- The admin lets a share's name have a slash too, by Samba's own rule, so Add share no longer stops at 'Give the share a name and a full folder path'
+
 ## [1.0.54] - 2026-11-20
 
 ### Fixes
