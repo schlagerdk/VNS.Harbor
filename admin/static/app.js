@@ -3811,6 +3811,9 @@ function updateDataSyncForm() {
 	for (const name of ["send", "receive", "content", "media"]) dataSyncForm.elements[name].disabled = !on;
 	// A site that receives data imports all as it starts: the data it gets is imported that way
 	const receivesData = on && dataSyncForm.elements.receive.checked;
+	// Import at startup is only a choice for a site that receives something: settings, or data
+	const receivesSettings = !$("#data-sync-settings-receive").hidden && dataSyncForm.elements.settings_receive.checked;
+	$("#data-sync-settings-import").hidden = !receivesSettings && !receivesData;
 	const importStart = dataSyncForm.elements.settings_import;
 	if (receivesData) importStart.checked = true;
 	else if (importStart.disabled) importStart.checked = dataSyncForm.dataset.import === "1";
@@ -3845,14 +3848,16 @@ dataSyncForm.elements.enabled.onchange = () => {
 	updateDataSyncForm();
 };
 dataSyncForm.elements.receive.onchange = updateDataSyncForm;
+dataSyncForm.elements.settings_receive.onchange = updateDataSyncForm;
 dataSyncForm.elements.settings_import.onchange = () => { dataSyncForm.dataset.import = dataSyncForm.elements.settings_import.checked ? "1" : ""; };
 $("#data-sync-cancel").onclick = () => dataSyncDialog.close();
 dataSyncForm.onsubmit = (event) => {
 	event.preventDefault();
 	const elements = dataSyncForm.elements;
 	const settings = Object.fromEntries(["enabled", "send", "receive", "content", "media", "settings_send", "settings_receive"].map((name) => [name, elements[name].checked]));
-	// What was chosen for Import at startup, also while receiving data turns it on
-	settings.settings_import = dataSyncForm.dataset.import === "1";
+	// What was chosen for Import at startup, also while receiving data turns it on. A site that receives nothing has
+	// no such choice: unset, its appsettings.json keeps what it has
+	if (!$("#data-sync-settings-import").hidden) settings.settings_import = dataSyncForm.dataset.import === "1";
 	if (settings.enabled && !settings.content && !settings.media) {
 		toast("Choose content, media or both.", "error");
 		return;

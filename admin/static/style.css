@@ -895,6 +895,8 @@ button[data-tone="pink"] { --tone: #db61a2; }
 .sync-option.main { --option-tone: #db61a2; margin-bottom: 12px; }
 .sync-option.start { --option-tone: #d29922; }
 .sync-option.wide { grid-column: 1 / -1; }
+/* A row whose only card is hidden (Import at startup on a site that receives nothing) takes no room */
+.sync-options-row:has(> .sync-option[hidden]:only-child) { display: none; }
 .sync-option[hidden] { display: none; }
 .sync-option input { position: absolute; opacity: 0; pointer-events: none; }
 .sync-option:hover:not(:where(:disabled, .disabled, .off, :has(input:disabled), .data-sync-options.off *)) { border-color: color-mix(in srgb, var(--option-tone) 60%, var(--line)); }
