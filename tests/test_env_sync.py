@@ -82,7 +82,9 @@ class SyncTests(Base):
         recorded = [command[len("sshpass -e "):] if command.startswith("sshpass -e ") else command for command in system.commands
                     if command.startswith(("rsync ", "ssh ", "sshpass "))]
         # The fake programs wrote their arguments with printf %q
-        self.assertEqual(self.commands(recorded), self.commands(" ".join(shlex.split(line)) for line in legacy_calls))
+        # The same commands; harbor takes the environments in the order the site's page lists them (by binding), the
+        # script took them by id
+        self.assertEqual(sorted(self.commands(recorded)), sorted(self.commands(" ".join(shlex.split(line)) for line in legacy_calls)))
         if result.returncode:
             self.assertEqual(system.said[-1], result.stderr.strip().splitlines()[-1])
         return result, system
