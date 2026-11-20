@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.54] - 2026-11-20
+
+### Fixes
+
+- A Samba share's name may have a slash, as the root share an older server made ([test-01/]), so it can be saved again
+
 ## [1.0.53] - 2026-11-20
 
 ### Fixes
