@@ -3978,7 +3978,8 @@ function openSyncDialog(site, source, data = false) {
 	const cards = destinations.map((env) => card(isTarget(env) ? env.target : "main", bindingLabel(env) || env.host || env.target,
 		environmentLabel(site, env), environmentLabel(site, env).toLowerCase(), data ? dataSyncKinds(source, env) : []));
 	$("#sync-destination").replaceChildren(...cards);
-	cards[0].querySelector("input").checked = true;
+	// Only a single destination is chosen for you: of several, you choose
+	if (cards.length === 1) cards[0].querySelector("input").checked = true;
 	$("#sync-select-all").hidden = cards.length < 2;
 	syncStatus = null;
 	syncForced = false;
@@ -4045,8 +4046,8 @@ function applySyncStatus(choose = false) {
 		input.disabled = Boolean(blocked);
 		if (blocked) input.checked = false;
 	}
-	// The first that has something to sync is chosen, when the dialog opens
-	if (choose && !syncChoices().some((input) => input.checked)) {
+	// A single destination is chosen when it has something to sync; of several, you choose
+	if (choose && syncChoices().length === 1 && !syncChoices().some((input) => input.checked)) {
 		const open = syncChoices().find((input) => !input.disabled);
 		if (open) open.checked = true;
 	}

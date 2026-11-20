@@ -191,8 +191,7 @@ def delete_site(system, name="", delete_certificates="", scope="all", target="")
     # The main site goes last: its environments are built from its project, so without it they could not be published
     if scope == "test" and all_targets:
         from harbor.environments.sync import display_name
-        named = ", ".join(display_name(system, site, target_id) + (f" ({values(target_id).get('BINDING')})" if values(target_id).get("BINDING") else "")
-                          for target_id in all_targets)
+        named = ", ".join(display_name(system, site, target_id) for target_id in all_targets)
         raise Stop(f"{name} has environments: {named}. Delete each of them first (Delete site on its card), then the site.")
     # Folders of this site's local environments, kept when only the site itself is deleted
     keep = []

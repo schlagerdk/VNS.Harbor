@@ -181,15 +181,18 @@ def in_environment_order(system, site, ids):
 
 
 def display_name(system, site, site_id):
-    """A site by the environment it is, as the admin and the dashboard name it: Production, not production. The main
-    site by the environment its service runs as, or "the main site"."""
+    """A site by its address and the environment it is, as the admin's cards name it: help.kikayo.dk (Production), so
+    several Production sites tell apart. The main site by its name and the environment its service runs as."""
     if site_id == "main":
         from harbor.sites.tools import service_environment
-        return service_environment(system, site) or "the main site"
+        environment = service_environment(system, site)
+        return f"{site.name} ({environment})" if environment else site.name
     try:
-        return settings.load(system, site.site_root, site_id).other.get("ENVIRONMENT") or site_id
+        found = settings.load(system, site.site_root, site_id)
     except settings.SettingsError:
         return site_id
+    environment = found.other.get("ENVIRONMENT") or site_id
+    return f"{found.BINDING} ({environment})" if found.BINDING else environment
 
 
 def sync_environments(system, name, source_id, to, data="", dry_run=False):
