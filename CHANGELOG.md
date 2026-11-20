@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.53] - 2026-11-20
+
+### Fixes
+
+- An environment that proxies to localhost gets the main site's Rewrite snippets, no longer the warning that it has no ProxyPass /
+
 ## [1.0.52] - 2026-11-20
 
 ### Fixes
