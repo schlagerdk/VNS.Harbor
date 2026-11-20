@@ -2488,8 +2488,9 @@ def server_tool_command(data):
         return "Set root's SSH login", harbor + ["server", "ssh-root", mode], env
     if tool == "samba_save":
         share = data.get("share") if isinstance(data.get("share"), dict) else {}
+        from harbor.server.samba import SHARE_NAME
         name, path = str(share.get("name", "")).strip(), str(share.get("path", "")).strip()
-        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._ $-]{0,79}", name) or not path.startswith("/"):
+        if not SHARE_NAME.fullmatch(name) or not path.startswith("/"):
             abort(400, "Give the share a name and a full folder path")
         texts = {key: str(share.get(key, "")).strip() for key in ("force_user", "valid_users", "comment")}
         if any("\n" in value or len(value) > 200 for value in texts.values()):
