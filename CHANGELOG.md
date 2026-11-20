@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.59] - 2026-11-20
+
+### Fixes
+
+- Sync setup offers Import at startup only to a site that receives settings or data; for one that receives nothing it is not shown, and its appsettings.json is left as it is
+
 ## [1.0.58] - 2026-11-20
 
 ### Features
