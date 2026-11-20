@@ -52,7 +52,8 @@ SYSTEM_SECTIONS = ("global", "printers", "print$")
 # The settings a share has in Server tools; others in its section stay as they are
 SETTINGS = {"path": "path", "read only": "read_only", "browseable": "browseable", "guest ok": "guest_ok", "force user": "force_user",
             "valid users": "valid_users", "comment": "comment"}
-SHARE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._ $-]{0,79}")
+# A slash is allowed: older servers named their root share as [kikayo/]
+SHARE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._ $/-]{0,79}")
 
 
 def is_yes(value):
@@ -199,7 +200,7 @@ def save_share(system, share, old_name=""):
     name = str(share.get("name", "")).strip()
     path = str(share.get("path", "")).strip()
     if not SHARE_NAME.fullmatch(name) or name.lower() in SYSTEM_SECTIONS or "]" in name:
-        raise Stop(f"Not a share name: {name} (letters, digits, dots, hyphens and spaces)")
+        raise Stop(f"Not a share name: {name} (letters, digits, dots, hyphens, slashes and spaces)")
     if not path.startswith("/") or "\n" in path or ".." in path.split("/"):
         raise Stop(f"Not a folder: {path} (a full path, such as /var/www)")
     if not system.path(path).is_dir():
