@@ -63,6 +63,15 @@ class ConfigSnippetTests(unittest.TestCase):
         self.assertLess(carried.index("# Rewrite old/page"), carried.index("ProxyPreserveHost"))
         self.assertEqual(config_snippets.apply_apache(carried, []), template)
 
+    def test_an_environment_that_proxies_to_localhost_gets_the_rewrite(self):
+        # As harbor/environments/publish.py writes an environment's config: ProxyPass / http://localhost:PORT/
+        template = (ROOT_DIR / "templates/sites/csharp/umbraco/apache.conf.tpl").read_text().replace("@PORT_HTTP@", "5555")
+        local = template.replace("http://127.0.0.1:5555/", "http://localhost:5555/")
+        self.assertIn("ProxyPass / http://localhost:5555/", local)
+        carried = config_snippets.apply_apache(local, config_snippets.read(MAIN))
+        self.assertIn("ProxyPass /old/page http://127.0.0.1:5555/new/page", carried)
+        self.assertEqual(config_snippets.WARNINGS, [])
+
     def test_rules_written_by_hand_are_kept(self):
         template = (ROOT_DIR / "templates/sites/csharp/apache.conf.tpl").read_text().replace("@PORT_HTTP@", "5555")
         own = template.replace("RewriteEngine On\n", "RewriteEngine On\n  RewriteRule ^/mine$ /yours [R=302,L]\n", 1)

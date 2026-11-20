@@ -155,7 +155,9 @@ def apply_apache(conf_text, snippets):
     start, end = host.end(), text.index("</VirtualHost>", host.end())
     body = text[start:end]
     indent = (re.search(r"\n([ \t]+)\S", body) or re.match("()", "")).group(1) or "  "
-    port = re.search(r"^[ \t]*ProxyPass\s+/\s+http://127\.0\.0\.1:(\d+)/", body, re.M)
+    # The site's own config proxies to 127.0.0.1, an environment's (harbor/environments/publish.py) to localhost: the
+    # service listens on both
+    port = re.search(r"^[ \t]*ProxyPass\s+/\s+http://(?:127\.0\.0\.1|localhost):(\d+)/", body, re.M)
     port = port.group(1) if port else ""
     first = [item for item in snippets if item["key"] in FIRST]
     middle = [item for item in snippets if item["key"] not in FIRST + LAST]
