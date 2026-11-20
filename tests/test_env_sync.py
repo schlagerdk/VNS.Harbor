@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -121,6 +122,28 @@ class SyncTests(Base):
         result, system = self.compare("main", "all")
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("s.shop.dk (staging): skipped", "\n".join(system.said))
+
+    def test_only_a_site_set_to_import_at_startup_is_restarted(self):
+        (self.web / "shop.dk/scripts/data_sync.json").write_text(json.dumps({"staging": {"settings_import": True},
+                                                                              "production": {"settings_import": False}}))
+        def rsync(argv):
+            if any("@10.0.0.5:" in arg for arg in argv):
+                return Result(0)
+            run = subprocess.run(["/usr/bin/rsync", *argv[1:]], capture_output=True, text=True)
+            return Result(run.returncode, run.stdout, run.stderr)
+
+        def python3(argv):
+            run = subprocess.run(["python3", *argv[1:]], capture_output=True, text=True)
+            return Result(run.returncode, run.stdout, run.stderr)
+        restarted = []
+        with mock.patch("harbor.environments.data.DataSync.apply_settings", lambda self, site_id, force=False: restarted.append((site_id, force))):
+            code, system, _ = self.harbor(["env", "sync", "shop.dk", "main", "all"], answers={"rsync": rsync, "python3": python3})
+            self.assertEqual(code, 0, system.said)
+            self.assertEqual(restarted, [("staging", True)])
+            # A dry run restarts nothing
+            restarted.clear()
+            code, system, _ = self.harbor(["env", "sync", "shop.dk", "main", "all", "--dry-run"], answers={"rsync": rsync, "python3": python3})
+            self.assertEqual((code, restarted), (0, []))
 
     def test_what_is_refused(self):
         for args in (("main", "main"), ("nowhere", "all"), ("main", "nowhere"), ("main", "main,staging"), ("main", "all", "--data", "content"),

@@ -195,7 +195,7 @@ def display_name(system, site, site_id):
     return f"{found.BINDING} ({environment})" if found.BINDING else environment
 
 
-def sync_environments(system, name, source_id, to, data="", dry_run=False):
+def sync_environments(system, name, source_id, to, data="", dry_run=False, restart=True):
     if dry_run:
         system.say("DRY RUN: nothing is changed on the destinations.")
     if data and not re.fullmatch(r"(content|media)(,(content|media))?", data):
@@ -287,6 +287,18 @@ def sync_environments(system, name, source_id, to, data="", dry_run=False):
         prints = history.fingerprints(source, kinds) if not dry_run else {}
         sent_files = dependencies.manifest(source, kinds) if not dry_run else {}
         failed = 0
+        # Only a site set to Import at startup in Sync setup is restarted after it got the settings, so it imports
+        # them; any other is left running. A data sync restarts its destination itself, after the data (restart=False).
+        importer = None
+        if not data and restart and not dry_run:
+            from harbor.environments.data import DataSync
+            importer = DataSync(system, site)
+            try:
+                setup = importer.rules.load(str(system.path(site.site_root)))
+            except ValueError as error:
+                system.warn(str(error))
+                setup = {}
+            imports = lambda target: importer.rules.clean(setup.get(target), target)["settings_import"] is True
         for target in destinations:
             if sync.missing(target):
                 system.say(f"{display_name(system, site, target)}: SKIPPED (the site no longer exists on the server)")
@@ -305,10 +317,18 @@ def sync_environments(system, name, source_id, to, data="", dry_run=False):
                 history.record(system, site.name, source_id, target, kinds, True, prints)
                 # Each file as it was sent: what changes after it is compared with this (dependencies.py)
                 dependencies.keep(system, site.name, source_id, target, kinds, sent_files)
+            if importer and imports(target):
+                from harbor.environments.data import Failed as RestartFailed
+                try:
+                    importer.apply_settings(target, force=True)
+                except (RestartFailed, CommandFailed, Stop):
+                    system.warn(f"{display_name(system, site, target)}: the settings are there, but it could not be restarted to import them")
+                    failed += 1
     finally:
         if work:
             shutil.rmtree(work, ignore_errors=True)
     if failed:
         raise Stop(f"Sync finished with errors in {failed} environment(s).")
     if not data:
-        system.say("Sync completed. uSync imports the settings when it is set to import at startup, or from the backoffice.")
+        system.say("Sync completed. A site set to import at startup in Sync setup is restarted and imports the settings; "
+                   "any other imports them from the backoffice.")
