@@ -57,7 +57,8 @@ def run_task(task, lock):
 
 def run_command(task, site, lock):
     try:
-        with subprocess.Popen(task["argv"], cwd=task["cwd"], stdin=subprocess.DEVNULL,
+        # HARBOR_MULTI: the command runs beside other sites, so it does its own environments one at a time
+        with subprocess.Popen(task["argv"], cwd=task["cwd"], stdin=subprocess.DEVNULL, env={**os.environ, "HARBOR_MULTI": "1"},
                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                               text=True, errors="replace", bufsize=1) as process:
             for line in process.stdout:

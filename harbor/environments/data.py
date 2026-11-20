@@ -174,7 +174,7 @@ class DataSync:
         system.step(steps[0])
         def sync(*args, **options):
             try:
-                sync_environments(system, self.site.name, *args, dry_run=dry_run, restart=False, **options)
+                sync_environments(system, self.site.name, *args, dry_run=dry_run, restart=False, lanes=False, **options)
             except Stop as error:
                 if str(error):
                     system.warn(str(error))

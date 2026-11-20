@@ -18,6 +18,7 @@ import shlex
 import shutil
 import tempfile
 
+from harbor.core.names import display_dns_name
 from harbor.core.system import CommandFailed, Stop
 from harbor.environments import settings
 from harbor.environments.windows import Share
@@ -167,16 +168,31 @@ class Sync:
 ORDER = ("main", "development", "test", "staging", "production")
 
 
+def shown_name(value):
+    """A binding as people read it: tømrerentreprisen.dk, not its xn-- form"""
+    try:
+        return display_dns_name(value)
+    except UnicodeError:
+        return value
+
+
+def danish(text):
+    """A name sorted as the admin sorts it (Danish): æ, ø and å after z, aa as å"""
+    return text.lower().replace("aa", "å").translate(str.maketrans({"æ": "{", "ø": "|", "å": "}"}))
+
+
 def in_environment_order(system, site, ids):
-    """Environments in the order they follow: the main site, Development, Test, Staging, Production, then the rest"""
+    """Environments in the order the site's page lists them: the main site, Development, Test, Staging, Production,
+    then the rest; within each by the binding, alphabetically"""
     def rank(target_id):
         if target_id == "main":
-            return 0, target_id
+            return 0, "", target_id
         try:
-            environment = (settings.load(system, site.site_root, target_id).other.get("ENVIRONMENT") or "").lower()
+            found = settings.load(system, site.site_root, target_id)
         except settings.SettingsError:
-            environment = ""
-        return (ORDER.index(environment) if environment in ORDER else len(ORDER)), target_id
+            return len(ORDER), "", target_id
+        environment = (found.other.get("ENVIRONMENT") or "").lower()
+        return (ORDER.index(environment) if environment in ORDER else len(ORDER)), danish(shown_name(found.BINDING or found.FOLDER)), target_id
     return sorted(ids, key=rank)
 
 
@@ -192,10 +208,12 @@ def display_name(system, site, site_id):
     except settings.SettingsError:
         return site_id
     environment = found.other.get("ENVIRONMENT") or site_id
-    return f"{found.BINDING} ({environment})" if found.BINDING else environment
+    return f"{shown_name(found.BINDING)} ({environment})" if found.BINDING else environment
 
 
-def sync_environments(system, name, source_id, to, data="", dry_run=False, restart=True):
+def sync_environments(system, name, source_id, to, data="", dry_run=False, restart=True, lanes=True):
+    """lanes: the destinations at once, each in a lane of its own. A data sync, which sends the settings within its own
+    steps, has them in its steps instead (lanes=False)."""
     if dry_run:
         system.say("DRY RUN: nothing is changed on the destinations.")
     if data and not re.fullmatch(r"(content|media)(,(content|media))?", data):
@@ -248,7 +266,13 @@ def sync_environments(system, name, source_id, to, data="", dry_run=False, resta
     sync = Sync(system, site, data, dry_run)
     work = None
     copy = f"Copy {sync.what} from {display_name(system, site, source_id)}"
-    system.plan([*([] if source_id == "main" else [copy]), *(f"Sync {sync.what} to {display_name(system, site, target)}" for target in destinations)])
+    # Each destination is a lane of its own: several are synced at once, each with its steps under it
+    names = {target: display_name(system, site, target) for target in destinations}
+    steps = {names[target]: [f"Sync {sync.what} to {names[target]}"] for target in destinations}
+    if lanes:
+        system.plan_lanes({**({"": [copy]} if source_id != "main" else {}), **steps})
+    else:
+        system.plan([*([] if source_id == "main" else [copy]), *(step for found in steps.values() for step in found)])
     try:
         if source_id == "main":
             source = sync.local(sync.main_folder())
@@ -299,31 +323,53 @@ def sync_environments(system, name, source_id, to, data="", dry_run=False, resta
                 system.warn(str(error))
                 setup = {}
             imports = lambda target: importer.rules.clean(setup.get(target), target)["settings_import"] is True
-        for target in destinations:
+        if importer:
+            from harbor.environments.data import Failed as RestartFailed
+
+        pushed = set()
+
+        def one(name, target):
+            """One destination: its settings or data, then its restart when it imports at startup. True when all went
+            well, False when not, "missing" when the site is gone; pushed has it when what was sent got there."""
             if sync.missing(target):
-                system.say(f"{display_name(system, site, target)}: SKIPPED (the site no longer exists on the server)")
-                system.skip(f"Sync {sync.what} to {display_name(system, site, target)}")
-                continue
-            system.step(f"Sync {sync.what} to {display_name(system, site, target)}")
+                system.say(f"{name}: SKIPPED (the site no longer exists on the server)")
+                system.skip(f"Sync {sync.what} to {name}")
+                return "missing"
+            system.step(f"Sync {sync.what} to {name}")
             try:
                 sync.push(target, source, mirror, files)
             except (Failed, Stop):
-                system.warn(f"{display_name(system, site, target)}: FAILED")
-                failed += 1
-                if not dry_run:
-                    history.record(system, site.name, source_id, target, kinds, False, prints)
-                continue
-            if not dry_run:
-                history.record(system, site.name, source_id, target, kinds, True, prints)
-                # Each file as it was sent: what changes after it is compared with this (dependencies.py)
-                dependencies.keep(system, site.name, source_id, target, kinds, sent_files)
+                system.warn(f"{name}: FAILED")
+                return False
+            pushed.add(target)
             if importer and imports(target):
-                from harbor.environments.data import Failed as RestartFailed
                 try:
                     importer.apply_settings(target, force=True)
                 except (RestartFailed, CommandFailed, Stop):
-                    system.warn(f"{display_name(system, site, target)}: the settings are there, but it could not be restarted to import them")
-                    failed += 1
+                    system.warn(f"{name}: the settings are there, but it could not be restarted to import them")
+                    return False
+            return True
+
+        def plain(name, target):
+            try:
+                return one(name, target)
+            except Exception as error:  # noqa: BLE001  (told below, as from a lane)
+                return error
+        outcomes = (system.lanes(one, [(names[target], target) for target in destinations]) if lanes
+                    else [plain(names[target], target) for target in destinations])
+        # What was sent is kept here, one after the other: the lanes are done
+        for target, outcome in zip(destinations, outcomes):
+            if isinstance(outcome, BaseException):
+                system.warn(f"{names[target]}: FAILED: {outcome}")
+                outcome = False
+            if outcome == "missing":
+                continue
+            failed += outcome is not True
+            if not dry_run:
+                history.record(system, site.name, source_id, target, kinds, target in pushed, prints)
+                if target in pushed:
+                    # Each file as it was sent: what changes after it is compared with this (dependencies.py)
+                    dependencies.keep(system, site.name, source_id, target, kinds, sent_files)
     finally:
         if work:
             shutil.rmtree(work, ignore_errors=True)

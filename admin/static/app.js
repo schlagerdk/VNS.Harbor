@@ -5740,7 +5740,9 @@ function addTaskStep(t, event) {
 	const firstPending = t.steps.findIndex((step) => step.pending && step.site === site);
 	if (event.type === "plan") {
 		const planned = (Array.isArray(event.steps) ? event.steps : []).map((text) => ({ type: "step", text: String(text), site, pending: true }));
-		t.steps.splice(firstPending < 0 ? t.steps.length : firstPending, 0, ...planned);
+		// A site's later plan (a restart after its sync) goes under its own steps, not below the other sites'
+		const lastOfSite = site ? t.steps.findLastIndex((step) => step.site === site) : -1;
+		t.steps.splice(firstPending >= 0 ? firstPending : lastOfSite >= 0 ? lastOfSite + 1 : t.steps.length, 0, ...planned);
 		return;
 	}
 	const text = String(event.text || "");

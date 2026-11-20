@@ -4,6 +4,8 @@ Every command reaches the server through a System, never through open() on an ab
 directly. A test gives one with a temporary folder as the root and a recorder for the programs, so a command is
 tested with the files it writes and the programs it runs, and the server it runs on is never touched.
 """
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 import json
 import inspect
@@ -12,7 +14,28 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import threading
 import time
+
+# The lane a thread works in (System.lanes): its steps are named with it, as Multi action names a site's
+_LANE = threading.local()
+_PRINT = threading.Lock()
+# How many lanes run at once. Each is an SSH login or more: sshd lets 10 wait (MaxStartups), as Multi action found
+LANES = 4
+
+
+def lane():
+    return getattr(_LANE, "name", "")
+
+
+@contextmanager
+def in_lane(name):
+    before = lane()
+    _LANE.name = name
+    try:
+        yield
+    finally:
+        _LANE.name = before
 
 
 @dataclass
@@ -109,17 +132,48 @@ class System:
         """Whether someone is at the terminal to answer a question"""
         return sys.stdin.isatty()
 
-    def event(self, kind, text):
+    def progress(self, data):
+        """An event for the admin's window, named with the lane it came in"""
         if progress_wanted():
-            sys.stdout.write(PROGRESS.format(json.dumps({"type": kind, "text": text})))
-            sys.stdout.flush()
+            with _PRINT:
+                sys.stdout.write(PROGRESS.format(json.dumps({**data, **({"site": lane()} if lane() else {})})))
+                sys.stdout.flush()
+
+    def event(self, kind, text):
+        self.progress({"type": kind, "text": text})
 
     def plan(self, steps):
         """The steps the command will take, before it takes the first: the admin's window shows those still to come.
         Each step() then is the next of them; a step that is not in the plan is shown where it comes."""
-        if progress_wanted():
-            sys.stdout.write(PROGRESS.format(json.dumps({"type": "plan", "steps": list(steps)})))
-            sys.stdout.flush()
+        self.progress({"type": "plan", "steps": list(steps)})
+
+    def plan_lanes(self, lanes):
+        """The steps of each lane ({name: steps}), before any of them starts. Those of "" are in no lane."""
+        for name, steps in lanes.items():
+            with in_lane(name):
+                self.plan(steps)
+
+    def lanes(self, work, items, parallel=True):
+        """work(name, item) for each (name, item), several at once (LANES), each in a lane of its own: the admin's
+        window shows its steps under it, running, done or failed. Inside Multi action, which runs sites at once already,
+        one at a time. What each returned, or the exception it raised, in the order given."""
+        def one(entry):
+            name, item = entry
+            with in_lane(name):
+                self.progress({"type": "site", "state": "running"})
+                try:
+                    result = work(name, item)
+                except Exception as error:  # noqa: BLE001  (told by the caller, which knows what it means)
+                    self.progress({"type": "site", "state": "failed"})
+                    return error
+                self.progress({"type": "site", "state": "failed" if result is False else "done"})
+                return result
+        items = list(items)
+        at_once = 1 if not parallel or os.environ.get("HARBOR_MULTI") == "1" else min(LANES, len(items))
+        if at_once <= 1:
+            return [one(entry) for entry in items]
+        with ThreadPoolExecutor(max_workers=at_once) as executor:
+            return list(executor.map(one, items))
 
     def step(self, text):
         """A step of the command: a line of output, and a step in the admin's window"""
@@ -134,11 +188,13 @@ class System:
         """The command has ended well"""
 
     def say(self, text):
-        print(text, flush=True)
+        with _PRINT:
+            print(f"[{lane()}] {text}" if lane() else text, flush=True)
 
     def warn(self, text):
         self.event("warning", text)
-        print(text, file=sys.stderr, flush=True)
+        with _PRINT:
+            print(f"[{lane()}] {text}" if lane() else text, file=sys.stderr, flush=True)
 
 
 class PlanMismatch(AssertionError):
@@ -196,6 +252,18 @@ class RecordingSystem(System):
         self.events.append(("plan", list(steps)))
         self.planned = True
         self.pending[:0] = list(steps)
+
+    def progress(self, data):
+        if data.get("type") == "site":
+            self.events.append(("site", f"{lane()}: {data['state']}"))
+
+    def plan_lanes(self, lanes):
+        """As the admin's window: each lane's steps, in the order the lanes come"""
+        self.plan([step for steps in lanes.values() for step in steps])
+
+    def lanes(self, work, items, parallel=True):
+        """One at a time, so a test sees the same order each time"""
+        return super().lanes(work, items, parallel=False)
 
     def step(self, text):
         """Once a command has a plan, each step is the next of it"""
