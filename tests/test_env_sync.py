@@ -120,7 +120,7 @@ class SyncTests(Base):
         self.assertEqual(result.returncode, 1)
         result, system = self.compare("main", "all")
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("staging: skipped", "\n".join(system.said))
+        self.assertIn("s.shop.dk (staging): skipped", "\n".join(system.said))
 
     def test_what_is_refused(self):
         for args in (("main", "main"), ("nowhere", "all"), ("main", "nowhere"), ("main", "main,staging"), ("main", "all", "--data", "content"),
