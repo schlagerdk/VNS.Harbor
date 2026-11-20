@@ -51,7 +51,8 @@ class ServerToolCommandTests(unittest.TestCase):
         # As the root share an older server made, [test-01/]
         argv = self.command(tool="samba_save", share={"name": "test-01/var/www", "path": "/var/www"})[1]
         self.assertEqual(argv[2:6], ["server", "samba", "save-share", "test-01/var/www"])
-        for name in ("", "/www", "a]b", "a;b"):
+        self.assertEqual(self.command(tool="samba_save", share={"name": "/", "path": "/"})[1][5], "/")
+        for name in ("", ".www", "a]b", "a;b"):
             with self.assertRaises(BadRequest):
                 self.command(tool="samba_save", share={"name": name, "path": "/var/www"})
 

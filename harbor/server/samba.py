@@ -52,8 +52,8 @@ SYSTEM_SECTIONS = ("global", "printers", "print$")
 # The settings a share has in Server tools; others in its section stay as they are
 SETTINGS = {"path": "path", "read only": "read_only", "browseable": "browseable", "guest ok": "guest_ok", "force user": "force_user",
             "valid users": "valid_users", "comment": "comment"}
-# A slash is allowed: older servers named their root share as [kikayo/]
-SHARE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._ $/-]{0,79}")
+# A slash is allowed, also first and alone: older servers named their root share as [kikayo/], and [/] works too
+SHARE_NAME = re.compile(r"[A-Za-z0-9/][A-Za-z0-9._ $/-]{0,79}")
 
 
 def is_yes(value):
