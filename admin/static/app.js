@@ -7744,6 +7744,38 @@ function cronCommandFor(path, item) {
 	return `${interpreter}${shellPath(path).replace(/%/g, "\\%")} >> /var/log/${log} 2>&1`;
 }
 
+// The file a command runs, read as the shell reads its words ("/etc/acmesh"/acme.sh is /etc/acmesh/acme.sh): its first
+// word, or the script after an interpreter (/bin/bash /root/x.sh). Empty when it is not a full path
+function cronProgramPath(text) {
+	const words = [];
+	let word = null, quote = "";
+	for (let i = 0; i < text.length; i++) {
+		const char = text[i];
+		if (quote) {
+			if (char === quote) quote = "";
+			else if (char === "\\" && quote === '"' && i + 1 < text.length) word += text[++i];
+			else word += char;
+		} else if (/\s/.test(char)) {
+			if (word !== null) words.push(word);
+			word = null;
+		} else if (/[;&|<>]/.test(char)) {
+			break;
+		} else if (char === "'" || char === '"') {
+			quote = char; word = word ?? "";
+		} else if (char === "\\" && i + 1 < text.length) {
+			word = (word ?? "") + text[++i];
+		} else {
+			word = (word ?? "") + char;
+		}
+		if (words.length > 1) break;
+	}
+	if (word !== null && words.length < 2) words.push(word);
+	const [first = "", second = ""] = words;
+	const interpreter = /^(?:.*\/)?(?:bash|sh|python3?|node|php|perl)$/.test(first);
+	const path = interpreter && second.startsWith("/") ? second : first;
+	return path.startsWith("/") ? path : "";
+}
+
 // Browse… beside the command: the server's folders, unfolded under it, to choose the file the job runs
 function cronBrowser(command) {
 	const list = el("ul", { className: "crontab-browse-list" });
@@ -7780,7 +7812,7 @@ function cronBrowser(command) {
 	const button = el("button", { type: "button", textContent: "Browse…", onclick: () => run(async () => {
 		if (!panel.hidden) { panel.hidden = true; return; }
 		// From the folder of the file the job runs now, or /root/scripts
-		const current = (command.value.trim().match(/(?:^|\s)(\/[^\s'"]+)/) || [])[1];
+		const current = cronProgramPath(command.value);
 		await open(current ? current.slice(1).split("/").slice(0, -1).join("/") : "root/scripts");
 		panel.hidden = false;
 	}) });
