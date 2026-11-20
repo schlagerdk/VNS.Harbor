@@ -2,6 +2,13 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.58] - 2026-11-20
+
+### Features
+
+- Sync settings restarts an environment set to Import at startup, so uSync imports the settings it got; others are left running. A data sync still restarts its destination once, after the data
+- Sync setup has Import at startup: saving sets uSync's ImportAtStartup in the site's appsettings.json (Settings, or None when off). A site that receives data imports all, as before
+
 ## [1.0.57] - 2026-11-20
 
 ### Fixes
