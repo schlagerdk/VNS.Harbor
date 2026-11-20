@@ -893,6 +893,8 @@ button[data-tone="pink"] { --tone: #db61a2; }
 .sync-option.out { --option-tone: var(--green); }
 .sync-option.in { --option-tone: #39c5cf; }
 .sync-option.main { --option-tone: #db61a2; margin-bottom: 12px; }
+.sync-option.start { --option-tone: #d29922; }
+.sync-option.wide { grid-column: 1 / -1; }
 .sync-option[hidden] { display: none; }
 .sync-option input { position: absolute; opacity: 0; pointer-events: none; }
 .sync-option:hover:not(:where(:disabled, .disabled, .off, :has(input:disabled), .data-sync-options.off *)) { border-color: color-mix(in srgb, var(--option-tone) 60%, var(--line)); }

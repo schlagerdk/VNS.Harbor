@@ -48,8 +48,8 @@ class DataSyncTests(unittest.TestCase):
             data_sync.save(folder, "prod", ON)
             saved = data_sync.load(folder)
             self.assertEqual(saved["main"], {"enabled": True, "send": False, "receive": False, "content": True, "media": False,
-                                             "settings_send": True, "settings_receive": True})
-            self.assertEqual(saved["prod"], ON | {"settings_send": False, "settings_receive": True})
+                                             "settings_send": True, "settings_receive": True, "settings_import": None})
+            self.assertEqual(saved["prod"], ON | {"settings_send": False, "settings_receive": True, "settings_import": None})
             with self.assertRaises(ValueError):
                 data_sync.save(folder, "../x", ON)
 
@@ -71,6 +71,19 @@ class DataSyncTests(unittest.TestCase):
         self.assertEqual(off["uSync"]["Settings"]["ImportAtStartup"], "Settings")
         self.assertEqual(off["uSync"]["Settings"]["ExportOnSave"], "All")
         self.assertEqual(off["uSync"]["Settings"]["UiEnabledGroups"], "Settings")
+
+    def test_import_at_startup_is_set_by_sync_setup(self):
+        template = json.loads((ROOT / "templates/sites/csharp/umbraco/project/appsettings.json").read_text())
+        copy = lambda: json.loads(json.dumps(template))
+        startup = lambda data: data["uSync"]["Settings"].get("ImportAtStartup")
+        # Settings only: on imports the settings, off imports nothing, unset leaves the file as it is
+        self.assertEqual(startup(data_sync.apply_appsettings(copy(), {"settings_import": True})), "Settings")
+        self.assertEqual(startup(data_sync.apply_appsettings(copy(), {"settings_import": False})), "None")
+        self.assertEqual(startup(data_sync.apply_appsettings(copy(), {})), startup(template))
+        # A site that receives data imports all, whatever is chosen; a sender follows the choice
+        self.assertEqual(startup(data_sync.apply_appsettings(copy(), dict(ON, settings_import=False))), "All")
+        self.assertEqual(startup(data_sync.apply_appsettings(copy(), dict(ON, receive=False, settings_import=False))), "None")
+        self.assertIs(data_sync.clean({"settings_import": "yes"})["settings_import"], None)
 
     def test_a_sender_writes_everything_at_startup(self):
         """Export on save only writes what is saved after: content made before has to be written once, at startup"""

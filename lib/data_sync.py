@@ -11,6 +11,8 @@ Each site, the main site ("main") and every environment (its id), has its own se
   settings_send     the site may send its settings (uSync settings, Views, css, scripts). By default only the
                     main site may: settings come from the main site, and environments do not pass them around.
   settings_receive  the site may receive settings: on unless turned off. The main site never receives them.
+  settings_import   uSync imports the site's settings when it starts (ImportAtStartup Settings, or None when off).
+                    Unset, it is left as the appsettings.json has it. A site that receives data always imports all.
 
 Data can be synced from A to B when both have data sync on, A may send and B may receive. Only what both
 take part with is synced. A sync always merges: content is added and updated, never deleted.
@@ -28,7 +30,7 @@ from pathlib import Path
 
 KINDS = ("content", "media")
 FLAGS = ("enabled", "send", "receive") + KINDS
-SETTINGS_FLAGS = ("settings_send", "settings_receive")
+SETTINGS_FLAGS = ("settings_send", "settings_receive", "settings_import")
 HANDLERS = {"content": "ContentHandler", "media": "MediaHandler"}
 ID_RE = re.compile(r"main|[a-z0-9][a-z0-9-]{0,62}")
 
@@ -78,6 +80,8 @@ def clean(settings, site_id=""):
     result = {flag: settings.get(flag) is True for flag in FLAGS}
     result["settings_send"] = settings.get("settings_send", site_id == "main") is True
     result["settings_receive"] = settings.get("settings_receive", True) is True
+    # Unset (None) leaves ImportAtStartup as it is
+    result["settings_import"] = settings["settings_import"] if isinstance(settings.get("settings_import"), bool) else None
     return result
 
 
@@ -145,7 +149,7 @@ def settings_allowed(config, source, destination):
 
 def apply_appsettings(data, settings):
     """Set uSync for one site: the content and media handlers by what it takes part with, export on save
-    and at startup for a sender, and import at startup for a receiver. A sender exports everything when it starts,
+    and at startup for a sender, and import at startup for a receiver, or by Import at startup (settings_import). A sender exports everything when it starts,
     so content made before it could send is there to sync too: export on save only writes what is saved after. A site with data sync off gets the handlers off,
     and the values set here are reverted. Returns the changed object."""
     settings = clean(settings)
@@ -166,10 +170,13 @@ def apply_appsettings(data, settings):
             general["ExportAtStartup"] = "All"
         elif general.get("ExportAtStartup") == "All":
             general["ExportAtStartup"] = "None"
-        general["ImportAtStartup"] = "All" if settings["receive"] else "Settings"
+        # A receiver imports all, as the data it gets is imported as it starts; otherwise by Import at startup
+        general["ImportAtStartup"] = "All" if settings["receive"] else "None" if settings["settings_import"] is False else "Settings"
         general["UiEnabledGroups"] = "Settings,Content"
     else:
-        if general.get("ImportAtStartup") == "All":
+        if settings["settings_import"] is not None:
+            general["ImportAtStartup"] = "Settings" if settings["settings_import"] else "None"
+        elif general.get("ImportAtStartup") == "All":
             general["ImportAtStartup"] = "Settings"
         if general.get("ExportOnSave") == "Settings":
             general["ExportOnSave"] = "All"

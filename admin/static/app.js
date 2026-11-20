@@ -3795,7 +3795,8 @@ function dataSyncDestinations(site, source) {
 function dataSyncSummary(env) {
 	const settings = env.data_sync || {};
 	const settingsText = [settings.settings_send !== false && "sends", isTarget(env) && settings.settings_receive !== false && "receives"].filter(Boolean).join(" and ");
-	const prefix = `Settings: ${settingsText || "off"}. `;
+	const importText = settings.settings_import === true ? ", imports at startup" : settings.settings_import === false ? ", no import at startup" : "";
+	const prefix = `Settings: ${settingsText || "off"}${importText}. `;
 	if (!settings.enabled) return prefix + "Data sync is off";
 	const direction = [settings.send && "sends", settings.receive && "receives"].filter(Boolean).join(" and ") || "neither sends nor receives";
 	const kinds = ["content", "media"].filter((kind) => settings[kind]).join(" and ") || "nothing";
@@ -3808,6 +3809,14 @@ function updateDataSyncForm() {
 	const on = dataSyncForm.elements.enabled.checked;
 	$("#data-sync-options").classList.toggle("off", !on);
 	for (const name of ["send", "receive", "content", "media"]) dataSyncForm.elements[name].disabled = !on;
+	// A site that receives data imports all as it starts: the data it gets is imported that way
+	const receivesData = on && dataSyncForm.elements.receive.checked;
+	const importStart = dataSyncForm.elements.settings_import;
+	if (receivesData) importStart.checked = true;
+	else if (importStart.disabled) importStart.checked = dataSyncForm.dataset.import === "1";
+	importStart.disabled = receivesData;
+	$("#data-sync-settings-import-sub").textContent = receivesData ? "On, as it receives data: uSync imports all, settings and data, as it starts"
+		: "uSync imports the settings it has each time the site starts";
 }
 function openDataSyncDialog(site, env) {
 	const settings = env.data_sync || {};
@@ -3817,6 +3826,11 @@ function openDataSyncDialog(site, env) {
 	for (const name of ["enabled", "send", "receive", "content", "media"]) dataSyncForm.elements[name].checked = !!settings[name];
 	// Settings sync is on unless it was turned off. The main site is where settings come from: it never receives them.
 	for (const name of ["settings_send", "settings_receive"]) dataSyncForm.elements[name].checked = settings[name] !== false;
+	// Import at startup: unset, on for an environment (it imports what it receives) and off for the main site
+	const importStart = typeof settings.settings_import === "boolean" ? settings.settings_import : isTarget(env);
+	dataSyncForm.dataset.import = importStart ? "1" : "";
+	dataSyncForm.elements.settings_import.disabled = false;
+	dataSyncForm.elements.settings_import.checked = importStart;
 	$("#data-sync-settings-receive").hidden = !isTarget(env);
 	updateDataSyncForm();
 	dataSyncDialog.showModal();
@@ -3830,11 +3844,15 @@ dataSyncForm.elements.enabled.onchange = () => {
 	}
 	updateDataSyncForm();
 };
+dataSyncForm.elements.receive.onchange = updateDataSyncForm;
+dataSyncForm.elements.settings_import.onchange = () => { dataSyncForm.dataset.import = dataSyncForm.elements.settings_import.checked ? "1" : ""; };
 $("#data-sync-cancel").onclick = () => dataSyncDialog.close();
 dataSyncForm.onsubmit = (event) => {
 	event.preventDefault();
 	const elements = dataSyncForm.elements;
 	const settings = Object.fromEntries(["enabled", "send", "receive", "content", "media", "settings_send", "settings_receive"].map((name) => [name, elements[name].checked]));
+	// What was chosen for Import at startup, also while receiving data turns it on
+	settings.settings_import = dataSyncForm.dataset.import === "1";
 	if (settings.enabled && !settings.content && !settings.media) {
 		toast("Choose content, media or both.", "error");
 		return;
