@@ -85,6 +85,18 @@ class DataSyncTests(unittest.TestCase):
         self.assertEqual(startup(data_sync.apply_appsettings(copy(), dict(ON, receive=False, settings_import=False))), "None")
         self.assertIs(data_sync.clean({"settings_import": "yes"})["settings_import"], None)
 
+    def test_a_trailing_comma_is_read_as_dotnet_reads_it_and_a_comment_is_refused(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "appsettings.json"
+            path.write_text('{\n  "Name": "a, b }",\n  "uSync": {"Settings": {"ImportAtStartup": "None",},},\n}\n')
+            self.assertTrue(data_sync.apply_file(path, {"settings_import": True}))
+            saved = json.loads(path.read_text())
+            self.assertEqual((saved["Name"], saved["uSync"]["Settings"]["ImportAtStartup"]), ("a, b }", "Settings"))
+            path.write_text('{\n  "Url": "https://x.dk", // the site\n  "uSync": {}\n}\n')
+            with self.assertRaisesRegex(ValueError, r"appsettings.json on prod has a comment \(line 2\)"):
+                data_sync.apply_file(path, {}, "appsettings.json on prod")
+            self.assertIn("// the site", path.read_text())
+
     def test_a_sender_writes_everything_at_startup(self):
         """Export on save only writes what is saved after: content made before has to be written once, at startup"""
         template = json.loads((ROOT / "templates/sites/csharp/umbraco/project/appsettings.json").read_text())

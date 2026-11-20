@@ -187,14 +187,32 @@ def apply_appsettings(data, settings):
     return data
 
 
-def apply_file(path, settings):
-    text = Path(path).read_text(encoding="utf-8-sig")
+# A string, a comment, or a comma before } or ]: what .NET's configuration reads beside plain JSON
+STRING = r'"(?:\\.|[^"\\])*"'
+COMMENT = re.compile(STRING + r'|//[^\r\n]*|/\*[\s\S]*?\*/')
+TRAILING_COMMA = re.compile(STRING + r'|,(?=\s*[}\]])')
+
+
+def configuration_json(text, shown):
+    """An appsettings.json as .NET reads it: a comma after the last item is allowed, as it is there, and is left out
+    when the file is written. A comment would be lost, so a file with one is refused with where it is."""
+    for match in COMMENT.finditer(text):
+        if not match[0].startswith('"'):
+            line = text.count("\n", 0, match.start()) + 1
+            raise ValueError(f"{shown} has a comment (line {line}), which would be lost, so it is not changed. "
+                             "Remove the comment and save again.")
     try:
-        data = json.loads(text)
+        return json.loads(TRAILING_COMMA.sub(lambda match: match[0] if match[0].startswith('"') else "", text))
     except ValueError as exc:
-        raise ValueError(f"{path} is not plain JSON, so it is not changed: {exc}") from exc
+        raise ValueError(f"{shown} is not valid JSON, so it is not changed: {exc}") from exc
+
+
+def apply_file(path, settings, shown=None):
+    shown = shown or str(path)
+    text = Path(path).read_text(encoding="utf-8-sig")
+    data = configuration_json(text, shown)
     if not isinstance(data, dict):
-        raise ValueError(f"{path} is not a settings object")
+        raise ValueError(f"{shown} is not a settings object")
     updated = json.dumps(apply_appsettings(data, settings), indent=2, ensure_ascii=False) + "\n"
     if updated == text:
         return False

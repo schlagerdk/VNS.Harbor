@@ -64,11 +64,11 @@ class DataSync:
             self.system.warn(str(error))
             raise Failed() from None
 
-    def appsettings(self, site_id, paths):
+    def appsettings(self, site_id, paths, shown=None):
         """Set uSync in the files, as data_sync.py appsettings: a line for each, Updated or Unchanged"""
         try:
             settings_of = self.config().get(site_id)
-            lines = [("Updated " if self.rules.apply_file(path, settings_of) else "Unchanged ") + os.path.basename(path) for path in paths]
+            lines = [("Updated " if self.rules.apply_file(path, settings_of, shown) else "Unchanged ") + os.path.basename(path) for path in paths]
         except (OSError, ValueError) as error:
             self.system.warn(str(error))
             raise Failed() from None
@@ -109,7 +109,7 @@ class DataSync:
                     system.warn(str(error))
                     raise Failed() from None
                 Path(file).write_text(share.rclone("cat", f"{share.target}/appsettings.json", capture=True).stdout)
-                result = self.appsettings(site_id, [file])
+                result = self.appsettings(site_id, [file], f"appsettings.json on {display_name(system, site, site_id)}")
                 if not force and "Updated" not in result:
                     system.say("Nothing changed, so the IIS app is not restarted.")
                     return
@@ -121,7 +121,7 @@ class DataSync:
                 return
             path = shlex.quote(f"{environment.root}/appsettings.json")
             Path(file).write_text(settings.remote_exec(system, environment, f"cat {path}", capture=True).stdout)
-            result = self.appsettings(site_id, [file])
+            result = self.appsettings(site_id, [file], f"appsettings.json on {display_name(system, site, site_id)}")
             if not force and "Updated" not in result:
                 system.say("Nothing changed, so the site is not restarted.")
                 return
