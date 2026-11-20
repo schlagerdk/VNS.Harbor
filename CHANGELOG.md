@@ -2,6 +2,14 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.56] - 2026-11-20
+
+### Fixes
+
+- Browse… in Scheduled jobs opens the folder of the file the job runs, also when it is quoted ("/etc/acmesh"/acme.sh), instead of failing on a later path such as /dev/null
+- A share's name may start with a slash, so [/] can be made and saved
+- A share's Name says why it was refused (it starts with a letter or digit) instead of the browser's 'Use the requested format'
+
 ## [1.0.55] - 2026-11-20
 
 ### Fixes
