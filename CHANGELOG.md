@@ -2,6 +2,16 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.57] - 2026-11-20
+
+### Fixes
+
+- Sync settings… chooses no destination when there are several, and its steps name each site: Sync settings to help.kikayo.dk (Production)
+
+### Other
+
+- Test: a skipped environment is named by its address and environment, as the sync's steps name it
+
 ## [1.0.56] - 2026-11-20
 
 ### Fixes
