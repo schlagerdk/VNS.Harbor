@@ -7884,7 +7884,7 @@ function askServerTool(tool, options = {}) {
 				el("p", { className: "hint", textContent: "With none chosen, every Samba user may log in." }))] : [];
 			return [
 				el("div", { className: "ns-grid" },
-					input("share_name", "Name", share.name, { required: true, maxLength: 80, pattern: "[A-Za-z0-9][A-Za-z0-9._ $\\/\\-]*", placeholder: "www" }),
+					input("share_name", "Name", share.name, { required: true, maxLength: 80, pattern: "[A-Za-z0-9][A-Za-z0-9._ $\\/\\-]*", title: "Starts with a letter or digit, as test-01/ or www: a name of / alone cannot be reached from Windows or a Mac", placeholder: "www" }),
 					input("share_path", "Folder", share.path, { required: true, placeholder: "/var/www", className: "mono" })),
 				writtenAs,
 				el("div", { className: "samba-options" },
