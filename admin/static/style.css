@@ -222,7 +222,8 @@ a.link:hover:not(:where(:disabled, .disabled, .off)) { text-decoration: underlin
 .package-head h3 { margin: 0; font-size: 15px; }
 .package-count { padding: 2px 8px; border-radius: 12px; background: rgba(163, 113, 247, .15); color: var(--purple); font-size: 12px; font-weight: 600; }
 .package-actions { margin-top: auto; padding: 12px 20px 18px; }
-.package-actions .package-add { margin-left: auto; }
+.package-actions .package-remove { margin-left: auto; }
+.package-head .package-check { margin-left: auto; }
 .package-list { display: flex; flex-direction: column; gap: 8px; padding: 12px 20px; }
 .package-list > p { margin: 12px 0; }
 .package-row { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px 20px; width: 100%; min-width: 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: transparent; text-align: left; white-space: normal; }
@@ -1148,6 +1149,7 @@ dialog.logs-dialog[open] { display: flex; flex-direction: column; }
 .package-toggle { display: none; }
 @media (max-width: 800px) {
 	.package-toggle { display: grid; margin-left: auto; }
+	.package-check ~ .package-toggle { margin-left: 0; }
 	.package-head { flex-wrap: nowrap; cursor: pointer; }
 	.package-panel:not(.unfolded) > :not(.package-head) { display: none; }
 	.package-panel:not(.unfolded) > .package-head { border-bottom: 0; }

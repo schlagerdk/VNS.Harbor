@@ -1689,12 +1689,13 @@ function renderSite(name) {
 		const updates = new Map((site.package_updates || []).map((item) => [item.name.toLowerCase(), item]));
 		const packages = (site.packages || []).filter((item) => item.name.toLowerCase() !== "microsoft.icu.icu4c.runtime" || updates.has(item.name.toLowerCase()));
 		const packageActions = el("div", { className: "actions package-actions" });
-		packageActions.append(el("button", { textContent: "Check", className: "small", title: "Check outdated packages", onclick: () => run(() => openTask({ kind: "bulk", sites: [site.name], action: "check" })) }));
+		// Check stands at the right of the head, as Publish all on the main site's card
+		const packageCheck = el("button", { type: "button", textContent: "Check", className: "small package-check", title: "Check outdated packages", onclick: () => run(() => openTask({ kind: "bulk", sites: [site.name], action: "check" })) });
 		if (updates.size > 1) {
 			packageActions.append(el("button", { textContent: "Update all", className: "small primary", onclick: () => run(() => updatePackages(site)) }));
 		}
-		packageActions.append(el("button", { textContent: "Add", className: "small package-add", title: "Add package", onclick: () => run(() => openPackageDialog(site, "add")) }),
-			el("button", { textContent: "Remove", className: "small", title: "Remove package", onclick: () => run(() => openPackageDialog(site, "remove")) }));
+		packageActions.append(el("button", { textContent: "Add", className: "small", title: "Add package", onclick: () => run(() => openPackageDialog(site, "add")) }),
+			el("button", { textContent: "Remove", className: "small package-remove", title: "Remove package", onclick: () => run(() => openPackageDialog(site, "remove")) }));
 		const packageList = el("div", { className: "package-list" });
 		for (const item of packages) {
 			const update = updates.get(item.name.toLowerCase());
@@ -1730,9 +1731,13 @@ function renderSite(name) {
 		};
 		foldPackages(unfoldedPackages.has(site.name));
 		packagesPanel.append(
-			el("div", { className: "package-head", onclick: () => foldPackages(!packagesPanel.classList.contains("unfolded")) },
+			el("div", { className: "package-head", onclick: (event) => {
+				// Check in the head does not fold the packages
+				if (event.target.closest("button:not(.package-toggle)")) return;
+				foldPackages(!packagesPanel.classList.contains("unfolded"));
+			} },
 				el("div", { className: "package-heading" }, el("h3", { textContent: "NuGet packages" }), el("span", { className: "package-count", textContent: String(packages.length), title: "Visible package references" })),
-				packagesToggle),
+				packageCheck, packagesToggle),
 			...(site.package_errors || []).map((message) => el("p", { className: "package-error", textContent: `Could not read package references: ${message}` })),
 			...(site.updates === "error" ? [el("p", { className: "package-error", textContent: "Package update check failed. Run Check to retry." })] : []),
 			...(site.updates === "available" && !updates.size ? [el("p", { className: "muted", textContent: "Run Check to load available package versions." })] : []),
