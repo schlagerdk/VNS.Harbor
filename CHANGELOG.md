@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.61] - 2026-11-23
+
+### Features
+
+- Logs show a request the web server turned away before any site saw it (Apache's AH10244 and AH00126, gunicorn's 'Invalid request'), as bots trying `../../etc/passwd` or `/.env` make, as Blocked and not as an error or a warning, with a filter of its own
+
 ## [1.0.60] - 2026-11-20
 
 ### Features

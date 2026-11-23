@@ -2145,7 +2145,11 @@ async function showLogs(site, env) {
 // Apache's error log, the journal (site and admin services) and anything else, line by line.
 let logEntries = [];
 let logLevel = "all";
-const logLevelOf = (text) => /\b(crit|alert|emerg|fatal|fail(ed|ure)?|error|err|exception|panic|denied)\b/i.test(text) ? "error"
+// A request the web server turned away before any site saw it (a bot trying ../ or a broken request line):
+// Apache logs it as an error and gunicorn as a warning, but nothing failed, so it is shown apart
+const blockedRequest = /\bAH10244\b|\bAH00126\b|\bInvalid request from ip=/;
+const logLevelOf = (text) => blockedRequest.test(text) ? "blocked"
+	: /\b(crit|alert|emerg|fatal|fail(ed|ure)?|error|err|exception|panic|denied)\b/i.test(text) ? "error"
 	: /\bwarn(ing)?\b/i.test(text) ? "warn" : "info";
 function parseLog(text) {
 	const entries = [];
@@ -2165,7 +2169,7 @@ function parseLog(text) {
 		let match = line.match(/^\[([^\]]+)\]\s+\[(?:([^\]:]+):)?([a-z0-9]+)\]\s+(?:\[pid [^\]]*\]\s+)?(?:\[client [^\]]*\]\s+)?(.*)$/i);
 		if (match) {
 			const time = match[1].replace(/^\w{3}\s+/, "").replace(/\.\d+/, "").replace(/\s+\d{4}$/, "");
-			const level = /^(error|crit|alert|emerg)$/i.test(match[3]) ? "error" : /^warn/i.test(match[3]) ? "warn" : "info";
+			const level = blockedRequest.test(match[4]) ? "blocked" : /^(error|crit|alert|emerg)$/i.test(match[3]) ? "error" : /^warn/i.test(match[3]) ? "warn" : "info";
 			entries.push({ time, source: match[2] || "", level, message: match[4] });
 			continue;
 		}
@@ -2188,7 +2192,7 @@ function parseLog(text) {
 }
 function renderLogs() {
 	const words = $("#logs-search").value.trim().toLowerCase();
-	const counts = { all: logEntries.filter((entry) => !entry.file).length, error: 0, warn: 0 };
+	const counts = { all: logEntries.filter((entry) => !entry.file).length, error: 0, warn: 0, blocked: 0 };
 	for (const entry of logEntries) if (entry.level in counts) counts[entry.level] += 1;
 	// Only the levels the log has: a level that is gone shows every line again
 	if (logLevel !== "all" && !counts[logLevel]) logLevel = "all";
@@ -2207,7 +2211,7 @@ function renderLogs() {
 		el("button", { type: "button", className: "log-file-clear", textContent: "Clear", title: "Empty this log file", onclick: () => run(() => clearLogFile(entry.file)) }))
 		: el("div", { className: "log-row level-" + entry.level },
 		el("span", { className: "log-time", textContent: entry.time }),
-		el("span", { className: "log-level", textContent: { error: "Error", warn: "Warning", info: "Info" }[entry.level] }),
+		el("span", { className: "log-level", textContent: { error: "Error", warn: "Warning", blocked: "Blocked", info: "Info" }[entry.level] }),
 		el("span", { className: "log-source", textContent: entry.source, title: entry.source }),
 		el("span", { className: "log-message", textContent: entry.message }))));
 	if (!shown.length) list.append(el("p", { className: "muted logs-empty", textContent: logEntries.length ? "No lines match." : "No log lines." }));
