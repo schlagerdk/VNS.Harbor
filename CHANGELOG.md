@@ -2,6 +2,20 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.65] - Unreleased
+
+### Features
+
+- Scheduled jobs: the command and where its output goes are one box, with Browse… and two buttons under it: Keep in a log (`>> /var/log/<program>.log 2>&1`, or the log it has already) and Discard (`> /dev/null 2>&1`), and a line saying where the output goes
+- Scheduled jobs: a job's log says when cron runs it next, and when it was last run with Run and how it ended
+
+### Fixes
+
+- Scheduled jobs: a job cron has not run says why: not yet since its command was saved (cron's journal knows a changed command only from its next run), or that it should have run at a time that came and went, in place of "Not run in the last 14 days" for a job that runs every day
+- Server tools: Backups shows the backup and log shrink jobs by their label and schedule as root's crontab has them, not always every 4 hours
+- Scheduled jobs: while a job is edited, the form fills the window with its own Cancel and Save, without Refresh and Close under it
+- Scheduled jobs: the job form has room at its top, a long command wraps instead of hiding its end, Browse… no longer looks chosen, and the common schedules have short names that fit on one line
+
 ## [1.0.64] - 2026-11-23
 
 ### Features

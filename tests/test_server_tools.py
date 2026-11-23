@@ -61,7 +61,13 @@ class StatusTests(Server):
         self.assertEqual(found["sql_server"], {"installed": True, "version": "16.0.4185.3-1", "newer": "", "running": True, "packages_for": ""})
         self.assertEqual(found["sql_tools"], {"installed": True, "version": "18.4.1.1-1", "newer": ""})
         self.assertEqual(found["sa_password"], {"scripts": 2, "set": True})
-        self.assertEqual(found["cron"], {"jobs": {"shrink_logs": False, "backup_everything": True}, "others": [CUSTOM]})
+        self.assertEqual(found["cron"], {"jobs": {"shrink_logs": False, "backup_everything": True}, "others": [CUSTOM],
+                                         "schedules": {"shrink_logs": "0 */4 * * *", "backup_everything": "15 */4 * * *"},
+                                         "labels": {"shrink_logs": "", "backup_everything": ""}})
+        # Changed in Scheduled jobs: its schedule and label as root's crontab has them now
+        self.crontab = "# Harbor label: Shrink Logs\n" + tools.JOBS["shrink_logs"].replace("0 */4", "0 */2", 1) + "\n"
+        found = tools.status(system, sql)
+        self.assertEqual((found["cron"]["schedules"]["shrink_logs"], found["cron"]["labels"]["shrink_logs"]), ("0 */2 * * *", "Shrink Logs"))
         self.assertEqual(found["dotnet"], [{"channel": "10.0", "sdk": "10.0.103", "runtime": "10.0.3", "update": None, "sites": []},
                                            {"channel": "8.0", "sdk": "8.0.404", "runtime": "8.0.11", "update": None, "sites": []}])
         self.assertEqual(found["node"], {"version": "22.11.0", "npm": "10.9.0", "newer": "", "sites": []})
@@ -356,6 +362,24 @@ class CronRunTests(Server):
         system = self.system()
         self.assertEqual(main(["server", "crontab", "run", "--command", "rm -rf /tmp/x"], system), 1)
         self.assertFalse(any(command.startswith("/usr/bin/env") for command in system.commands))
+
+    def test_the_log_knows_when_a_command_was_saved_and_run_by_hand(self):
+        # cron's journal knows only the commands it ran: a changed one has no runs there, Harbor tells since when
+        self.crontab = CUSTOM + "\n"
+        command = CUSTOM.split(None, 5)[5]
+        changed = "/root/x.sh >> /var/log/x.log 2>&1"
+        with mock.patch.object(tools.time, "time", return_value=1000):
+            tools.crontab_save(self.system(), [{"kind": "job", "schedule": "0 2 * * *", "command": command},
+                                               {"kind": "job", "schedule": "0 3 * * *", "command": changed}])
+        with mock.patch.object(tools.time, "time", return_value=2000):
+            main(["server", "crontab", "run", "--command", changed], self.system(**{"/usr/bin/env": Result(2, "", "")}))
+        system = self.system(**{"journalctl": Result(1, "", "")})
+        self.assertEqual((tools.crontab_log(system, command)["saved"], tools.crontab_log(system, command)["by_hand"]), (None, []))
+        found = tools.crontab_log(system, changed)
+        self.assertEqual((found["saved"], found["by_hand"]), (1000, [{"at": 2000, "code": 2}]))
+        # A job that goes takes what Harbor knew of it along
+        tools.crontab_save(self.system(), [{"kind": "job", "schedule": "0 2 * * *", "command": command}])
+        self.assertEqual(json.loads((self.root / "var/lib/harbor/cron.json").read_text()), {"by_hand": {}, "saved": {}})
 
     def test_percent_signs_as_cron_reads_them(self):
         self.assertEqual(tools.cron_command("date +\\%d"), ("date +%d", None))

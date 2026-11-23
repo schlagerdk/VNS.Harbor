@@ -6,11 +6,12 @@ import json
 import re
 import shutil
 import tempfile
+import time
 
 from harbor.core.dotnet import DOTNET_DIR, ensure_channel
 from harbor.server import samba, ssh
 from harbor.core.system import Stop
-from harbor.state.store import read_json
+from harbor.state.store import read_json, write_json
 from harbor.sql.databases import PLACEHOLDER, SA_SECRET, SQL_DIR, SQLCMD
 from harbor.sql.server import FALLBACK_UBUNTU, SUPPORTED_UBUNTU, installed, os_release, sa_scripts
 
@@ -140,6 +141,7 @@ def status(system, sql_folder=SQL_DIR):
         release = {}
     scripts = sa_scripts(system, sql_folder) if sql_folder.is_dir() else []
     table = crontab(system)
+    found = [entry for entry in crontab_entries(system, table) if entry["kind"] == "job"]
     mine = {line for name in JOBS for line in job_lines(table, name)}
     others = [line for line in table.splitlines() if line.strip() and not line.lstrip().startswith("#") and line not in mine]
     node = system.output("node", "--version", check=False) if system.which("node") else ""
@@ -156,7 +158,12 @@ def status(system, sql_folder=SQL_DIR):
         "sa_password": {"scripts": len(scripts),
                         "set": bool((read_json(system.path(SA_SECRET)) or {}).get("sa_password"))
                         or (bool(scripts) and not any(f"'{PLACEHOLDER}'" in path.read_text(errors="replace") for path in scripts))},
-        "cron": {"jobs": {name: bool(job_lines(table, name)) for name in JOBS}, "others": others},
+        "cron": {"jobs": {name: bool(job_lines(table, name)) for name in JOBS}, "others": others,
+                 # Each job's schedule and label as they are in root's crontab (edited there or in Scheduled jobs), or
+                 # the schedule Harbor gives it when it is turned on
+                 "schedules": {name: next((entry["schedule"] for entry in found if entry.get("harbor") == name), " ".join(JOBS[name].split()[:5]))
+                               for name in JOBS},
+                 "labels": {name: next((entry["label"] for entry in found if entry.get("harbor") == name and entry["label"]), "") for name in JOBS}},
         "dotnet": [{**item, "sites": usage.get(item["channel"].split(".")[0], [])} for item in dotnet_updates(system, dotnet(system))],
         "node": {"version": node.lstrip("v"), "npm": system.output("npm", "--version", check=False) if node else "",
                  "newer": newer_package(system, "nodejs") if node else "",
@@ -366,6 +373,24 @@ def job_parts(line):
     return None
 
 
+# What cron's journal cannot tell of a job: when its command was saved here (cron has not run a new or changed command
+# before then), and when it was run with Run, which does not go through cron
+CRON_STATE = "/var/lib/harbor/cron.json"
+
+
+def cron_state(system):
+    state = read_json(system.path(CRON_STATE))
+    state = state if isinstance(state, dict) else {}
+    return {"saved": state.get("saved") if isinstance(state.get("saved"), dict) else {},
+            "by_hand": state.get("by_hand") if isinstance(state.get("by_hand"), dict) else {}}
+
+
+def save_cron_state(system, state, commands):
+    """Kept only for the commands root's crontab has"""
+    write_json(system.path(CRON_STATE), {key: {command: value for command, value in state[key].items() if command in commands}
+                                        for key in ("saved", "by_hand")})
+
+
 # What the admin calls Harbor's own jobs until they are given a label
 HARBOR_LABELS = {"backup_everything": "Backup", "shrink_logs": "Log shrink"}
 # A job's label: a comment line of its own just above it, so it stays in root's crontab with the job
@@ -376,12 +401,12 @@ def clean_label(text):
     return " ".join(str(text or "").split())[:80]
 
 
-def crontab_entries(system):
-    """Root's crontab as its lines: each job with its schedule, command, label (and which of Harbor's jobs it is), and
-    the other lines (variables, comments) as they are"""
+def crontab_entries(system, text=None):
+    """Root's crontab as its lines (or the crontab given): each job with its schedule, command, label (and which of
+    Harbor's jobs it is), and the other lines (variables, comments) as they are"""
     entries = []
     label = None
-    for line in crontab(system).splitlines():
+    for line in (crontab(system) if text is None else text).splitlines():
         parts = job_parts(line)
         if parts:
             harbor = next((name for name in JOBS if job_lines(line, name)), "")
@@ -426,7 +451,14 @@ def crontab_save(system, entries):
         lines.append(f"{schedule} {command}")
     system.plan(["Save root's crontab"])
     system.step("Save root's crontab")
+    before = {entry["command"] for entry in crontab_entries(system) if entry["kind"] == "job"}
     system.run("crontab", "-", input="".join(line + "\n" for line in lines))
+    state = cron_state(system)
+    now = int(time.time())
+    commands = {job_parts(line)[1] for line in lines if job_parts(line)}
+    for command in commands - before:
+        state["saved"][command] = now
+    save_cron_state(system, state, commands)
     system.say(f"Root's crontab has {sum(1 for entry in entries if entry.get('kind') != 'other')} jobs.")
 
 
@@ -474,7 +506,9 @@ def crontab_log(system, command, days=14):
         output.update(kind="tag", where=target[1], lines=(logged.stdout if logged.ok else "").splitlines()[-80:])
     # SQL Server's line after every DBCC says "error" without being one
     errors = [line for line in output["lines"] if ERROR_LINE.search(line) and not line.startswith("DBCC execution completed.")][-20:]
-    return {"command": command, "days": days, "runs": runs[-50:][::-1], "runs_count": len(runs), "output": output, "errors": errors}
+    state = cron_state(system)
+    return {"command": command, "days": days, "runs": runs[-50:][::-1], "runs_count": len(runs), "output": output, "errors": errors,
+            "saved": state["saved"].get(command), "by_hand": state["by_hand"].get(command) or []}
 
 
 def crontab_clear_log(system, command):
@@ -531,9 +565,13 @@ def crontab_run(system, command):
     system.plan([f"Run {name}"])
     system.step(f"Run {name}")
     target = job_output(command)
+    started = int(time.time())
     # env -i: only cron's variables, not the admin's (HARBOR_PROGRESS would put the window's steps in the job's log)
     result = system.run("/usr/bin/env", "-i", *(f"{key}={value}" for key, value in env.items()), "/bin/sh", "-c", text,
                         input=given or "", cwd=env["HOME"], check=False)
+    state = cron_state(system)
+    state["by_hand"][command] = ([{"at": started, "code": result.returncode}] + list(state["by_hand"].get(command) or []))[:10]
+    save_cron_state(system, state, {entry["command"] for entry in entries if entry.get("kind") == "job"})
     where = f" Its output is in {target[1]}." if target and target[0] == "file" else \
         f" Its output is in the journal (logger -t {target[1]})." if target else ""
     if not result.ok:

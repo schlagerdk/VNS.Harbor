@@ -7397,6 +7397,13 @@ function serverToolCards(status) {
 	const jobs = cron.jobs.backup_everything && cron.jobs.shrink_logs;
 	const someJobs = cron.jobs.backup_everything || cron.jobs.shrink_logs;
 	// The backups run sqlcmd against the SQL Server here: without both there is nothing for them to do
+	// The jobs' names and schedules as root's crontab has them (Scheduled jobs may have changed them)
+	const cronLabel = (name) => (cron.labels || {})[name] || HARBOR_JOBS[name];
+	const cronWhen = (name) => {
+		const schedule = (cron.schedules || {})[name] || "";
+		const words = describeCron(schedule);
+		return words ? words.charAt(0).toLowerCase() + words.slice(1) : schedule;
+	};
 	const canBackUp = sql.installed && tools.installed;
 	const turnOn = toolButton("Turn on", () => runServerTool({ tool: "cron_on" }), "primary");
 	turnOn.disabled = !canBackUp;
@@ -7407,8 +7414,8 @@ function serverToolCards(status) {
 		text: canBackUp ? "" : someJobs ? "Its jobs are in cron, but SQL Server or the SQL tools are not here: turn them off."
 			: `Needs ${sql.installed ? "" : "SQL Server"}${sql.installed || tools.installed ? "" : " and "}${tools.installed ? "" : "the SQL tools"} on this server.`,
 		rows: [
-			toolRow("Backup", "Every database, every 4 hours at :15", { on: cron.jobs.backup_everything }),
-			toolRow("Log shrink", "Every log, every 4 hours", { on: cron.jobs.shrink_logs }),
+			toolRow(cronLabel("backup_everything"), "Every database, " + cronWhen("backup_everything"), { on: cron.jobs.backup_everything }),
+			toolRow(cronLabel("shrink_logs"), "Every log, " + cronWhen("shrink_logs"), { on: cron.jobs.shrink_logs }),
 		],
 		actions: [
 			someJobs
@@ -7626,8 +7633,8 @@ function checkOption(name, title, sub, checked, icon = "activity", tone = "blue"
 // ---- Scheduled jobs: root's crontab, a job at a time
 const crontabDialog = $("#dlg-crontab");
 let crontabEntries = [];
-const CRON_PRESETS = [["Every hour", "0 * * * *"], ["Every 4 hours", "0 */4 * * *"], ["Every day at 03:00", "0 3 * * *"],
-	["Every Sunday at 03:00", "0 3 * * 0"], ["The 1st of every month", "0 3 1 * *"], ["When the server starts", "@reboot"]];
+const CRON_PRESETS = [["Hourly", "0 * * * *"], ["Every 4 hours", "0 */4 * * *"], ["Daily 03:00", "0 3 * * *"],
+	["Sundays 03:00", "0 3 * * 0"], ["Monthly", "0 3 1 * *"], ["At startup", "@reboot"]];
 const CRON_DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 const HARBOR_JOBS = { backup_everything: "Backup", shrink_logs: "Log shrink" };
 
@@ -7662,6 +7669,48 @@ function describeCron(expression) {
 	return "";
 }
 
+// The values a field of a schedule allows (numbers, *, lists, ranges and steps), or null for what is not read here
+function cronField(text, low, high) {
+	const values = new Set();
+	for (const part of text.split(",")) {
+		const found = part.match(/^(\*|\d+)(?:-(\d+))?(?:\/(\d+))?$/);
+		if (!found) return null;
+		const start = found[1] === "*" ? low : +found[1];
+		const end = found[2] !== undefined ? +found[2] : found[1] === "*" || found[3] ? high : start;
+		const step = found[3] ? +found[3] : 1;
+		if (start < low || end > high || start > end || step < 1) return null;
+		for (let value = start; value <= end; value += step) values.add(value);
+	}
+	return values;
+}
+
+// When cron next runs a schedule after a time (to the minute), or null for @reboot and what is not read here
+function cronNext(expression, after) {
+	const special = { "@hourly": "0 * * * *", "@daily": "0 0 * * *", "@midnight": "0 0 * * *", "@weekly": "0 0 * * 0",
+		"@monthly": "0 0 1 * *", "@yearly": "0 0 1 1 *", "@annually": "0 0 1 1 *" };
+	const text = String(expression || "").trim().split(/\s+/).join(" ");
+	const fields = (special[text] || text).split(" ");
+	if (fields.length !== 5) return null;
+	const [minutes, hours, days, months, weekdays] = [cronField(fields[0], 0, 59), cronField(fields[1], 0, 23), cronField(fields[2], 1, 31),
+		cronField(fields[3], 1, 12), cronField(fields[4], 0, 7)];
+	if (!minutes || !hours || !days || !months || !weekdays) return null;
+	if (weekdays.has(7)) weekdays.add(0);
+	// cron runs on either day field when both are limited
+	const dayLimited = fields[2] !== "*", weekdayLimited = fields[4] !== "*";
+	const date = new Date(after);
+	date.setSeconds(0, 0);
+	date.setMinutes(date.getMinutes() + 1);
+	for (let i = 0; i < 366 * 24 * 60; i++) {
+		const dayOk = dayLimited && weekdayLimited ? days.has(date.getDate()) || weekdays.has(date.getDay())
+			: days.has(date.getDate()) && weekdays.has(date.getDay());
+		if (!months.has(date.getMonth() + 1) || !dayOk) { date.setHours(24, 0, 0, 0); continue; }
+		if (!hours.has(date.getHours())) { date.setHours(date.getHours() + 1, 0, 0, 0); continue; }
+		if (minutes.has(date.getMinutes())) return date;
+		date.setMinutes(date.getMinutes() + 1);
+	}
+	return null;
+}
+
 async function openCrontab() {
 	if (!crontabDialog.open) crontabDialog.showModal();
 	showCrontabList();
@@ -7694,15 +7743,28 @@ async function showCronLog(row, entry, button) {
 	}
 	panel.removeAttribute("aria-busy");
 	const output = log.output || {};
+	// Without runs in cron's journal: since when cron should have run it (the window, or when the command was saved
+	// here, as cron has not run a new or changed command before), and whether a time it should have came and went
+	const now = Date.now();
+	const since = Math.max(now - log.days * 86400000, (log.saved || 0) * 1000);
+	const due = log.runs.length ? null : cronNext(entry.schedule, since);
+	const next = cronNext(entry.schedule, now);
 	const ran = log.runs.length
-		? `Ran ${log.runs_count} time${log.runs_count === 1 ? "" : "s"} in ${log.days} days · last ${formatDate(log.runs[0])}`
-		: entry.schedule === "@reboot" ? `Not run in ${log.days} days: it runs when the server starts` : `Not run in the last ${log.days} days`;
+		? ["ok", `Ran ${log.runs_count} time${log.runs_count === 1 ? "" : "s"} in ${log.days} days · last ${formatDate(log.runs[0])}`]
+		: entry.schedule === "@reboot" ? ["", `Not run in ${log.days} days: it runs when the server starts`]
+		: due && due.getTime() < now ? ["bad", `cron has not run it: it should have ${formatDate(due)}`]
+		: log.saved && log.saved * 1000 > now - log.days * 86400000 ? ["", `Not run by cron yet: saved ${formatDate(log.saved * 1000)}`]
+		: ["", "Not run by cron yet"];
+	const byHand = log.by_hand && log.by_hand[0];
 	const verdict = !output.kind
 		? ["", "Its output is not kept"]
 		: log.errors.length ? ["bad", `${log.errors.length} line${log.errors.length === 1 ? " looks" : "s look"} like errors`] : ["ok", "No errors in its output"];
 	panel.replaceChildren(
 		el("div", { className: "crontab-log-summary" },
-			el("span", { className: "tool-state " + (log.runs.length ? "ok" : "warn"), textContent: ran }),
+			el("span", { className: "tool-state " + ran[0], textContent: ran[1] }),
+			...(next ? [el("span", { className: "tool-state next", textContent: "Next " + formatDate(next) })] : []),
+			...(byHand ? [el("span", { className: "tool-state " + (byHand.code === 0 ? "ok" : "bad"),
+				textContent: `Run by hand ${formatDate(byHand.at * 1000)}` + (byHand.code === 0 ? "" : ` · exit code ${byHand.code}`) })] : []),
 			el("span", { className: "tool-state " + verdict[0], textContent: verdict[1] })),
 		...(log.runs.length > 1 ? [el("p", { className: "crontab-log-runs muted", textContent: "Before: " + log.runs.slice(1, 6).map(formatDate).join(" · ") })] : []),
 		...(log.errors.length ? [el("div", { className: "crontab-log-block" }, el("h4", { textContent: "What looks like errors" }),
@@ -7814,6 +7876,7 @@ async function runCronJob(entry) {
 }
 
 function showCrontabList() {
+	crontabDialog.classList.remove("editing");
 	$("#crontab-form").hidden = true;
 	$("#crontab-list").hidden = false;
 	$("#crontab-add").hidden = false;
@@ -7911,7 +7974,7 @@ function cronBrowser(command) {
 				const full = (path ? "/" + path : "") + "/" + item.name;
 				return item.dir
 					? row(item.name, "folder", () => run(() => open(full.slice(1))))
-					: row(item.name, "file", () => { command.value = cronCommandFor(full, item); panel.hidden = true; command.focus(); });
+					: row(item.name, "file", () => { command.value = cronCommandFor(full, item); command.dispatchEvent(new Event("input")); panel.hidden = true; command.focus(); });
 			}));
 		if (!items.length) list.append(el("li", { className: "muted crontab-browse-empty", textContent: "No scripts or programs in this folder" }));
 	};
@@ -7939,12 +8002,29 @@ function showCronForm(index = null) {
 	};
 	when.oninput = describe;
 	describe();
-	const command = el("input", { name: "command", value: entry.command, required: true, spellcheck: false, autocomplete: "off", className: "mono",
+	// A long command wraps rather than hides its end, as tall as it is; Enter saves, as in a field of one line
+	const command = el("textarea", { id: "crontab-command", name: "command", value: entry.command, required: true, spellcheck: false, autocomplete: "off", className: "mono", rows: 1,
 		placeholder: "/root/scripts/cleanup.sh >> /var/log/cleanup.log 2>&1" });
+	const grow = () => { command.style.height = "auto"; command.style.height = command.scrollHeight + "px"; };
+	// Where its output goes, as two buttons that write the end of the command, and in words under it
+	const outputSaid = el("p", { className: "crontab-field-hint" });
+	const outputButtons = {
+		log: el("button", { type: "button", className: "crontab-seg", onclick: () => setOutput("log") }, svgIcon("file"), "Keep in a log"),
+		none: el("button", { type: "button", className: "crontab-seg", onclick: () => setOutput("none") }, svgIcon("eye-off"), "Discard"),
+	};
+	const showOutput = () => {
+		const mode = cronOutputMode(command.value);
+		for (const [key, button] of Object.entries(outputButtons)) button.setAttribute("aria-pressed", String(key === mode.kind));
+		outputSaid.textContent = mode.said;
+		grow();
+	};
+	const setOutput = (kind) => { command.value = cronWithOutput(command.value, kind); showOutput(); };
+	command.addEventListener("input", () => { command.value = command.value.replace(/[\r\n]+/g, " "); showOutput(); });
+	command.addEventListener("keydown", (event) => { if (event.key === "Enter") { event.preventDefault(); form.requestSubmit(); } });
 	const label = el("input", { name: "label", value: entry.label || "", maxLength: 80, autocomplete: "off",
 		placeholder: HARBOR_JOBS[entry.harbor] || "Such as Delete old data" });
 	const browse = cronBrowser(command);
-	browse.button.dataset.tone = "blue";
+	browse.button.classList.add("crontab-browse-button");
 	browse.button.prepend(svgIcon("folder"));
 	form.replaceChildren(
 		el("div", { className: "crontab-form-head" },
@@ -7960,9 +8040,13 @@ function showCronForm(index = null) {
 			el("div", { className: "crontab-presets" }, ...CRON_PRESETS.map(([name, value]) => el("button", { type: "button", className: "chip", textContent: name,
 				onclick: () => { when.value = value; describe(); } })))),
 		el("div", { className: "crontab-field" },
-			el("label", {}, "Command", el("span", { className: "crontab-command-field" }, command, browse.button)),
+			el("label", { htmlFor: "crontab-command" }, "Command"),
+			el("div", { className: "crontab-composer" }, command,
+				el("div", { className: "crontab-composer-bar" }, browse.button,
+					el("div", { className: "crontab-output", role: "group", ariaLabel: "Its output" },
+						el("span", { className: "crontab-output-title", textContent: "Output" }), ...Object.values(outputButtons)))),
 			browse.panel,
-			el("p", { className: "crontab-field-hint", textContent: "Browse… shows the scripts and programs a job can run, and keeps the output in a log of the same name under /var/log." })),
+			outputSaid),
 		el("div", { className: "crontab-form-actions" },
 			el("button", { type: "button", className: "cancel-link", textContent: "Cancel", onclick: showCrontabList }),
 			el("button", { type: "submit", className: "primary" }, svgIcon("check"), index === null ? "Add job" : "Save")));
@@ -7976,7 +8060,37 @@ function showCronForm(index = null) {
 	$("#crontab-list").hidden = true;
 	$("#crontab-add").hidden = true;
 	form.hidden = false;
+	// The form is the window while it is open: its own Cancel and Save, not Refresh and Close
+	crontabDialog.classList.add("editing");
+	showOutput();
 	form.scrollIntoView({ block: "nearest" });
+}
+
+// The redirections at the end of a command (> file, >> file, 2>&1, &> file) and a pipe to logger
+const CRON_OUTPUT_TAIL = /(?:\s*\|\s*(?:\/usr\/bin\/)?logger\b[^|]*|\s+(?:\d?>>?\s*(?:"[^"]*"|'[^']*'|[^\s;&|]+)|\d?>&\d|&>>?\s*[^\s;&|]+))+\s*$/;
+
+// Where a command's output goes: kept in a file, thrown away, in the journal, or nowhere (cron mails it, if anything)
+function cronOutputMode(text) {
+	const tail = (String(text).match(CRON_OUTPUT_TAIL) || [""])[0];
+	const logger = tail.match(/logger\b[^|]*?\s-t\s*(['"]?)([^\s'"]+)\1/);
+	const file = tail.match(/(?:^|\s)(?:\d?>>?|&>>?)\s*(['"]?)(\/[^\s'"]+)\1/);
+	if (logger) return { kind: "journal", said: `Its output goes to the journal (logger -t ${logger[2]}), and Log shows it.` };
+	if (file && file[2] === "/dev/null") return { kind: "none", said: "Its output is thrown away: Log has nothing to show of it." };
+	if (file) return { kind: "log", said: `Its output is kept in ${file[2]}, and Log shows it.` };
+	return { kind: "", said: "Its output is not kept: Keep in a log writes it to a log of its own under /var/log, so Log shows what it did." };
+}
+
+// The command with its output kept in /var/log/<program>.log, or thrown away, in place of where it went before
+function cronWithOutput(text, kind) {
+	const bare = String(text).replace(CRON_OUTPUT_TAIL, "").trim();
+	if (!bare) return bare;
+	if (kind === "none") return `${bare} > /dev/null 2>&1`;
+	// A log it has already stays where it is
+	const kept = (String(text).match(CRON_OUTPUT_TAIL) || [""])[0].match(/(?:^|\s)(?:\d?>>?|&>>?)\s*(['"]?)(\/[^\s'"]+)\1/);
+	if (kept && kept[2] !== "/dev/null") return `${bare} >> ${kept[2]} 2>&1`;
+	const program = (cronProgramPath(bare) || bare.split(/\s+/)[0]).split("/").pop();
+	const name = program.replace(/\.[^.]+$/, "").replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[.-]+/, "") || "job";
+	return `${bare} >> /var/log/${name}.log 2>&1`;
 }
 $("#crontab-add").onclick = () => showCronForm();
 $("#crontab-refresh").onclick = () => run(openCrontab);
