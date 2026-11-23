@@ -2,6 +2,16 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.64] - Unreleased
+
+### Features
+
+- Scheduled jobs: the form to add or edit a job is laid out anew, with its schedule in words under When and the common schedules as chips of their own
+
+### Fixes
+
+- Scheduled jobs: Esc in the form to add or edit a job goes back to the jobs instead of closing the window
+
 ## [1.0.63] - 2026-11-23
 
 ### Features

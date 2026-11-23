@@ -1884,7 +1884,7 @@ dialog label.samba-chip:has(input:checked) .ico { display: block; color: var(--b
 .crontab-schedule { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
 .crontab-schedule .ico { width: 13px; height: 13px; }
 .crontab-schedule code { font-size: 12px; opacity: .8; }
-.crontab-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+.crontab-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px 20px; }
 .crontab-log-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
 .crontab-clear-log { padding: 4px 10px; font-size: 12px; }
 .crontab-clear-log .ico { width: 14px; height: 14px; }
@@ -1910,13 +1910,23 @@ dialog label.samba-chip:has(input:checked) .ico { display: block; color: var(--b
 .crontab-log .crontab-run-out pre { max-height: none; padding: 8px 12px; overflow-x: auto; border-radius: 0 0 8px 8px; background: transparent; }
 .crontab-log-button[aria-expanded="true"] { border-color: var(--blue); }
 .crontab-actions button { padding: 4px 10px; font-size: 12.5px; }
-.crontab-form { display: grid; gap: 10px; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
-.crontab-form h3 { margin: 0 0 4px; font-size: 15px; }
-.crontab-form label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; }
+.crontab-form { display: grid; gap: 20px; padding: 22px 24px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
+.crontab-form-head { display: flex; align-items: center; gap: 14px; padding-bottom: 18px; border-bottom: 1px solid var(--line); }
+.crontab-form-icon { display: grid; flex: none; place-items: center; width: 40px; height: 40px; border-radius: 11px; color: var(--purple); background: color-mix(in srgb, var(--purple) 16%, transparent); border: 1px solid color-mix(in srgb, var(--purple) 35%, transparent); }
+.crontab-form-icon .ico { width: 20px; height: 20px; }
+.crontab-form-head > div { display: grid; gap: 2px; min-width: 0; }
+.crontab-form h3 { margin: 0; font-size: 16px; }
+.crontab-form-head p { margin: 0; overflow: hidden; color: var(--muted); font-size: 12.5px; text-overflow: ellipsis; white-space: nowrap; }
+.crontab-field { display: grid; align-content: start; gap: 8px; min-width: 0; }
+.crontab-form label, .crontab-field-title { display: grid; gap: 8px; color: var(--muted); font-size: 12px; font-weight: 600; letter-spacing: .02em; }
+.crontab-field-hint { margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; opacity: .85; }
+.crontab-form input { font-weight: 400; }
 .crontab-form input.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; color: var(--text); }
-.crontab-presets { display: flex; flex-wrap: wrap; gap: 6px; }
-.crontab-presets .chip { padding: 4px 10px; font-size: 12px; }
-.crontab-said { margin: 0; color: #8ff0b4; }
+.crontab-presets { display: flex; flex-wrap: wrap; gap: 8px; }
+.crontab-presets .chip { padding: 5px 12px; border-radius: 999px; font-size: 12px; }
+.crontab-said { display: flex; align-items: center; gap: 6px; margin: 0; color: var(--muted); font-size: 12px; line-height: 1.45; }
+.crontab-said.known { color: #8ff0b4; font-weight: 600; }
+.crontab-said .ico { flex: none; width: 13px; height: 13px; }
 /* Browse… beside the command, and the folders it unfolds under it */
 .crontab-command-field { display: flex; gap: 8px; }
 .crontab-command-field input { flex: 1; min-width: 0; }
@@ -1930,10 +1940,12 @@ dialog label.samba-chip:has(input:checked) .ico { display: block; color: var(--b
 .crontab-browse-item .ico { flex: none; width: 15px; height: 15px; margin: 0; color: var(--muted); }
 .crontab-browse-item span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .crontab-browse-empty { padding: 6px 8px; font-size: 12.5px; }
-.crontab-form .hint { margin: 0; font-size: 12px; }
-.crontab-form-actions { display: flex; justify-content: flex-end; align-items: center; gap: 12px; margin-top: 4px; }
+.crontab-form-actions { display: flex; justify-content: flex-end; align-items: center; gap: 12px; padding-top: 18px; border-top: 1px solid var(--line); }
+.crontab-form-actions .primary { display: inline-flex; align-items: center; gap: 8px; }
+.crontab-form-actions .primary .ico { width: 16px; height: 16px; }
+.crontab-command-field button .ico { width: 15px; height: 15px; }
 .crontab-form-actions .cancel-link { margin-right: auto; }
-@media (max-width: 720px) { .crontab-fields { grid-template-columns: minmax(0, 1fr); } .crontab-row { flex-wrap: wrap; } .crontab-actions { width: 100%; justify-content: flex-end; } }
+@media (max-width: 720px) { .crontab-fields { grid-template-columns: minmax(0, 1fr); } .crontab-form { padding: 18px 16px; } .crontab-row { flex-wrap: wrap; } .crontab-actions { width: 100%; justify-content: flex-end; } }
 
 /* A tool that cannot be used yet (the backups without SQL Server and the SQL tools): dimmed, its buttons still there */
 .tool-card.unavailable .tool-head, .tool-card.unavailable .tool-rows { opacity: .5; }

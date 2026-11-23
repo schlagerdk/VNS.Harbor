@@ -7929,8 +7929,14 @@ function showCronForm(index = null) {
 	const entry = index === null ? { schedule: "0 3 * * *", command: "", label: "" } : crontabEntries[index];
 	const form = $("#crontab-form");
 	const when = el("input", { name: "schedule", value: entry.schedule, required: true, spellcheck: false, autocomplete: "off", className: "mono" });
-	const said = el("p", { className: "hint crontab-said" });
-	const describe = () => { said.textContent = describeCron(when.value) || "A schedule of its own: minute, hour, day of the month, month and day of the week, such as 15 */4 * * *"; };
+	const said = el("p", { className: "crontab-said" });
+	// The schedule in words under it; one of its own is explained instead
+	const describe = () => {
+		const words = describeCron(when.value);
+		said.classList.toggle("known", !!words);
+		said.replaceChildren(...(words ? [svgIcon("clock")] : []),
+			el("span", { textContent: words || "Minute, hour, day of the month, month and day of the week, such as 15 */4 * * *" }));
+	};
 	when.oninput = describe;
 	describe();
 	const command = el("input", { name: "command", value: entry.command, required: true, spellcheck: false, autocomplete: "off", className: "mono",
@@ -7938,18 +7944,28 @@ function showCronForm(index = null) {
 	const label = el("input", { name: "label", value: entry.label || "", maxLength: 80, autocomplete: "off",
 		placeholder: HARBOR_JOBS[entry.harbor] || "Such as Delete old data" });
 	const browse = cronBrowser(command);
+	browse.button.dataset.tone = "blue";
+	browse.button.prepend(svgIcon("folder"));
 	form.replaceChildren(
-		el("h3", { textContent: index === null ? "Add a job" : "Edit the job" }),
-		el("div", { className: "crontab-fields" }, el("label", {}, "Label", label), el("label", {}, "When", when)),
-		el("div", { className: "crontab-presets" }, ...CRON_PRESETS.map(([label, value]) => el("button", { type: "button", className: "chip", textContent: label,
-			onclick: () => { when.value = value; describe(); when.focus(); } }))),
-		said,
-		el("label", {}, "Command", el("span", { className: "crontab-command-field" }, command, browse.button)),
-		browse.panel,
-		el("p", { className: "hint", textContent: "Browse… shows the scripts and programs a job can run, and keeps the output in a log of the same name under /var/log." }),
+		el("div", { className: "crontab-form-head" },
+			el("span", { className: "crontab-form-icon" }, svgIcon(index === null ? "clock" : "pencil")),
+			el("div", {}, el("h3", { textContent: index === null ? "Add a job" : "Edit the job" }),
+				el("p", { textContent: index === null ? "Something for root to run on a schedule." : entry.label || HARBOR_JOBS[entry.harbor] || entry.command }))),
+		el("div", { className: "crontab-fields" },
+			el("div", { className: "crontab-field" }, el("label", {}, "Label", label),
+				el("p", { className: "crontab-field-hint", textContent: "Shown as the job's name. Empty: its schedule is." })),
+			el("div", { className: "crontab-field" }, el("label", {}, "When", when), said)),
+		el("div", { className: "crontab-field" },
+			el("span", { className: "crontab-field-title", textContent: "Common schedules" }),
+			el("div", { className: "crontab-presets" }, ...CRON_PRESETS.map(([name, value]) => el("button", { type: "button", className: "chip", textContent: name,
+				onclick: () => { when.value = value; describe(); } })))),
+		el("div", { className: "crontab-field" },
+			el("label", {}, "Command", el("span", { className: "crontab-command-field" }, command, browse.button)),
+			browse.panel,
+			el("p", { className: "crontab-field-hint", textContent: "Browse… shows the scripts and programs a job can run, and keeps the output in a log of the same name under /var/log." })),
 		el("div", { className: "crontab-form-actions" },
 			el("button", { type: "button", className: "cancel-link", textContent: "Cancel", onclick: showCrontabList }),
-			el("button", { type: "submit", className: "primary", textContent: index === null ? "Add job" : "Save" })));
+			el("button", { type: "submit", className: "primary" }, svgIcon("check"), index === null ? "Add job" : "Save")));
 	form.onsubmit = (event) => {
 		event.preventDefault();
 		const job = { kind: "job", schedule: when.value.trim(), command: command.value.trim(), label: label.value.trim() };
@@ -7960,11 +7976,17 @@ function showCronForm(index = null) {
 	$("#crontab-list").hidden = true;
 	$("#crontab-add").hidden = true;
 	form.hidden = false;
-	(index === null ? label : command).focus();
+	form.scrollIntoView({ block: "nearest" });
 }
 $("#crontab-add").onclick = () => showCronForm();
 $("#crontab-refresh").onclick = () => run(openCrontab);
 $("#crontab-close").onclick = () => crontabDialog.close();
+// Esc in the form goes back to the jobs, not out of the window
+crontabDialog.addEventListener("cancel", (event) => {
+	if ($("#crontab-form").hidden) return;
+	event.preventDefault();
+	showCrontabList();
+});
 // The backups' state may have changed: Server tools shows it again
 crontabDialog.addEventListener("close", () => { if (serverToolsDialog.open) run(openServerTools); });
 
