@@ -2,6 +2,16 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.66] - Unreleased
+
+### Features
+
+- Scheduled jobs are listed by name, A to Z (their label, or Harbor's name for its own), whatever order root's crontab has them in
+
+### Fixes
+
+- The output buttons of a scheduled job no longer change on hover when disabled, as no button in the admin does (the test for it failed in 1.0.65)
+
 ## [1.0.65] - 2026-11-23
 
 ### Features

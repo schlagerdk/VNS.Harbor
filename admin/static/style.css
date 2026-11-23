@@ -1940,7 +1940,7 @@ dialog.newsite.crontab-dialog.editing form.crontab-form { margin: 0; padding: 4p
 .crontab-seg { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding: 0 11px; border: 1px solid transparent; border-radius: 7px; background: transparent;
 	color: var(--muted); font-size: 12.5px; }
 .crontab-seg .ico { width: 14px; height: 14px; margin: 0; }
-.crontab-seg:hover { color: var(--text); background: var(--hover); }
+.crontab-seg:hover:not(:where(:disabled, .disabled, .off)) { color: var(--text); background: var(--hover); }
 .crontab-seg[aria-pressed="true"] { color: var(--text); border-color: color-mix(in srgb, var(--green) 45%, var(--line)); background: color-mix(in srgb, var(--green) 14%, var(--panel2)); }
 .crontab-seg[aria-pressed="true"] .ico { color: var(--green); }
 .crontab-output .crontab-seg:last-child[aria-pressed="true"] { border-color: color-mix(in srgb, var(--muted) 45%, var(--line)); background: var(--hover); }

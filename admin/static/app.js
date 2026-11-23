@@ -7841,8 +7841,13 @@ function cronTitle(entry) {
 		el("div", { className: "crontab-schedule" }, svgIcon("clock"), el("span", { textContent: when }), el("code", { textContent: entry.schedule }))];
 }
 
+// The name a job is shown by: its label, Harbor's name for its own, else its schedule in words
+const cronName = (entry) => entry.label || HARBOR_JOBS[entry.harbor] || describeCron(entry.schedule) || entry.schedule;
+
 function renderCrontab() {
-	const jobs = crontabEntries.map((entry, index) => [entry, index]).filter(([entry]) => entry.kind === "job");
+	// By name, A to Z, whatever order root's crontab has them in (it keeps its own)
+	const jobs = crontabEntries.map((entry, index) => [entry, index]).filter(([entry]) => entry.kind === "job")
+		.sort(([a], [b]) => cronName(a).localeCompare(cronName(b), undefined, { numeric: true, sensitivity: "base" }) || a.command.localeCompare(b.command));
 	const kept = crontabEntries.length - jobs.length;
 	$("#crontab-count").textContent = `${jobs.length} job${jobs.length === 1 ? "" : "s"}` + (kept ? ` · ${kept} other line${kept === 1 ? "" : "s"} (variables, comments) kept as they are` : "");
 	$("#crontab-list").replaceChildren(...(jobs.length ? jobs.map(([entry, index]) => { const row = el("li", { className: "crontab-row" },
