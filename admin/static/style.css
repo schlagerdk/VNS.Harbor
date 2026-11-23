@@ -1900,6 +1900,14 @@ dialog label.samba-chip:has(input:checked) .ico { display: block; color: var(--b
 .crontab-log-block h4 { margin: 0; color: var(--muted); font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
 .crontab-log pre { max-height: 260px; margin: 0; padding: 10px 12px; overflow: auto; border-radius: 8px; background: rgba(0, 0, 0, .3); font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .crontab-log-errors { color: #ff9b94; border-left: 2px solid var(--red); }
+.crontab-runs { display: grid; gap: 8px; max-height: 420px; padding: 8px; overflow: auto; border-radius: 8px; background: rgba(0, 0, 0, .3); }
+.crontab-run-out { min-width: 0; border: 1px solid var(--line); border-left: 3px solid var(--green); border-radius: 8px; background: var(--panel2); }
+.crontab-run-out.bad { border-left-color: var(--red); }
+.crontab-run-out header { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 12px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px; font-weight: 600; }
+.crontab-run-out header .ico { width: 13px; height: 13px; }
+.crontab-run-tag { padding: 1px 7px; border-radius: 999px; background: color-mix(in srgb, var(--blue) 18%, transparent); color: var(--blue); font-size: 11px; }
+.crontab-run-tag.bad { background: color-mix(in srgb, var(--red) 18%, transparent); color: #ff9b94; }
+.crontab-log .crontab-run-out pre { max-height: none; padding: 8px 12px; overflow-x: auto; border-radius: 0 0 8px 8px; background: transparent; }
 .crontab-log-button[aria-expanded="true"] { border-color: var(--blue); }
 .crontab-actions button { padding: 4px 10px; font-size: 12.5px; }
 .crontab-form { display: grid; gap: 10px; padding: 16px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }

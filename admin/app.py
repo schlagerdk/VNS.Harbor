@@ -2491,6 +2491,12 @@ def server_tool_command(data):
         return f"Install Node.js {major}", harbor + ["server", "node", "install", major], env
     if tool == "node_remove":
         return "Remove Node.js", harbor + ["server", "node", "remove"], env
+    if tool == "cron_run":
+        # Harbor runs it only when it is a job in root's crontab
+        command = str(data.get("command", "")).strip()
+        if not command or "\n" in command or "\r" in command or len(command) > 4000:
+            abort(400, "No job to run")
+        return "Run a scheduled job", harbor + ["server", "crontab", "run", "--command=" + command], env
     if tool in ("samba_on", "samba_password"):
         # Root's Samba password never on the command line. Sharing a server whose root has one already needs none.
         password = data.get("samba_password")

@@ -366,6 +366,8 @@ def job_parts(line):
     return None
 
 
+# What the admin calls Harbor's own jobs until they are given a label
+HARBOR_LABELS = {"backup_everything": "Backup", "shrink_logs": "Log shrink"}
 # A job's label: a comment line of its own just above it, so it stays in root's crontab with the job
 LABEL = re.compile(r"^#\s*Harbor label:\s*(.*?)\s*$")
 
@@ -490,6 +492,53 @@ def crontab_clear_log(system, command):
     with open(path, "r+b") as stream:
         stream.truncate(0)
     system.say(f"{target[1]} is empty now.")
+
+
+def cron_command(command):
+    """A crontab command as cron runs it: the first % that is not escaped ends the command and the rest is its
+    stdin, with each further % a new line; \\% is a plain %"""
+    text, given, index = "", None, 0
+    while index < len(command):
+        char = command[index]
+        if char == "\\" and command[index + 1:index + 2] == "%":
+            text += "%"
+            index += 2
+            continue
+        if char == "%":
+            given = command[index + 1:].replace("%", "\n") + "\n"
+            break
+        text += char
+        index += 1
+    return text, given
+
+
+def crontab_run(system, command):
+    """A job of root's crontab run now, as cron runs it: by /bin/sh as root in its home, with cron's few variables
+    and the crontab's own (PATH=, MAILTO= and the like). Its output goes where the command sends it."""
+    command = str(command).strip()
+    entries = crontab_entries(system)
+    job = next((entry for entry in entries if entry.get("kind") == "job" and entry["command"] == command), None)
+    if not job:
+        raise Stop("That job is not in root's crontab.")
+    name = job["label"] or HARBOR_LABELS.get(job["harbor"], "") or command
+    env = {"HOME": "/root", "LOGNAME": "root", "USER": "root", "SHELL": "/bin/sh", "PATH": "/usr/bin:/bin"}
+    for entry in entries:
+        found = re.match(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$", entry.get("line", "")) if entry.get("kind") == "other" else None
+        if found:
+            value = found.group(2)
+            env[found.group(1)] = value[1:-1] if len(value) > 1 and value[0] == value[-1] and value[0] in "'\"" else value
+    text, given = cron_command(command)
+    system.plan([f"Run {name}"])
+    system.step(f"Run {name}")
+    target = job_output(command)
+    # env -i: only cron's variables, not the admin's (HARBOR_PROGRESS would put the window's steps in the job's log)
+    result = system.run("/usr/bin/env", "-i", *(f"{key}={value}" for key, value in env.items()), "/bin/sh", "-c", text,
+                        input=given or "", cwd=env["HOME"], check=False)
+    where = f" Its output is in {target[1]}." if target and target[0] == "file" else \
+        f" Its output is in the journal (logger -t {target[1]})." if target else ""
+    if not result.ok:
+        raise Stop(f"The job ended with exit code {result.returncode}.{where}", result.returncode)
+    system.say(f"The job ran and ended well (exit code 0).{where}")
 
 
 # ---- Node.js

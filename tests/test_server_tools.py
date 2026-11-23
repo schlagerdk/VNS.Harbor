@@ -336,6 +336,32 @@ class CronLabelAndClearTests(Server):
         self.assertEqual((self.root / "etc/passwd").read_text(), "root\n")
 
 
+class CronRunTests(Server):
+    def test_a_job_runs_as_cron_runs_it(self):
+        self.crontab = "PATH=/usr/local/bin:/usr/bin:/bin\nMAILTO=\"\"\n# Harbor label: Old 2DM data\n" + CUSTOM + "\n"
+        system = self.system(**{"/usr/bin/env": ""})
+        with mock.patch.dict(os.environ, {"HARBOR_PROGRESS": "1"}):
+            self.assertEqual(main(["server", "crontab", "run", "--command", CUSTOM.split(None, 5)[5]], system), 0, system.said)
+        run = next(command for command in system.commands if command.startswith("/usr/bin/env"))
+        self.assertEqual(run, "/usr/bin/env -i HOME=/root LOGNAME=root USER=root SHELL=/bin/sh PATH=/usr/local/bin:/usr/bin:/bin MAILTO= "
+                              "/bin/sh -c " + CUSTOM.split(None, 5)[5])
+        self.assertIn(("step", "Run Old 2DM data"), system.events)
+        self.assertIn("Its output is in /var/log/delete_old_2dm_data.log.", system.said[-1])
+
+    def test_a_job_that_fails_fails_the_task_and_others_are_refused(self):
+        self.crontab = CUSTOM + "\n"
+        system = self.system(**{"/usr/bin/env": Result(3, "", "")})
+        self.assertEqual(main(["server", "crontab", "run", "--command", CUSTOM.split(None, 5)[5]], system), 3)
+        self.assertIn("exit code 3", system.said[-1])
+        system = self.system()
+        self.assertEqual(main(["server", "crontab", "run", "--command", "rm -rf /tmp/x"], system), 1)
+        self.assertFalse(any(command.startswith("/usr/bin/env") for command in system.commands))
+
+    def test_percent_signs_as_cron_reads_them(self):
+        self.assertEqual(tools.cron_command("date +\\%d"), ("date +%d", None))
+        self.assertEqual(tools.cron_command("mail -s hi root%line one%line two"), ("mail -s hi root", "line one\nline two\n"))
+
+
 class ReportTests(Server):
     """backup-everything and shrink-logs write a table of what they did, without SQL Server's messages of it"""
 

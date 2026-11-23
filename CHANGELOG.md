@@ -2,6 +2,13 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.63] - Unreleased
+
+### Features
+
+- Scheduled jobs: Run runs a job now, as cron runs it (as root, with cron's few variables and the crontab's own), in the task window, and then shows its log, so a job can be tried before it runs on its own
+- Scheduled jobs: a job's log shows each run as a card of its own with the time it started, red where a line looks like an error, when the job starts its output with a line such as `----- 23.11.2026 20:00 -----` (Harbor's backup and log shrink, and scripts made like them)
+
 ## [1.0.62] - 2026-11-23
 
 ### Features

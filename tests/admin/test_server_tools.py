@@ -47,6 +47,14 @@ class ServerToolCommandTests(unittest.TestCase):
             with self.assertRaises(BadRequest):
                 self.command(**data)
 
+    def test_run_a_scheduled_job(self):
+        # The command as one argument, so a job that starts with - is not taken for an option; harbor checks it is a job
+        argv = self.command(tool="cron_run", command=" /root/x.sh >> /var/log/x.log 2>&1 ")[1]
+        self.assertEqual(argv[2:], ["server", "crontab", "run", "--command=/root/x.sh >> /var/log/x.log 2>&1"])
+        for command in ("", "a\nb", "x" * 4001):
+            with self.assertRaises(BadRequest):
+                self.command(tool="cron_run", command=command)
+
     def test_a_share_name_may_have_a_slash(self):
         # As the root share an older server made, [test-01/]
         argv = self.command(tool="samba_save", share={"name": "test-01/var/www", "path": "/var/www"})[1]

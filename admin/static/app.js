@@ -1008,7 +1008,7 @@ const buttonStyles = {
 	"Move under main site": ["server", "purple"], "Set up site…": ["server", "green"],
 	"Migrate…": ["server", "purple"],
 	"Check outdated": ["download", "amber"], "Restart": ["restart", "amber"], "Restart Apache": ["restart", "amber"],
-	"Stop": ["stop", "red"], "Clear logs": ["eraser", "gray"], "Clear log": ["eraser", "amber"], "Logs": ["file", "gray"],
+	"Stop": ["stop", "red"], "Clear logs": ["eraser", "gray"], "Clear log": ["eraser", "amber"], "Run": ["play", "green"], "Logs": ["file", "gray"],
 	"SQL Server": ["server", "purple"], "Web server": ["globe", "blue"], "Preferences…": ["sliders", "purple"], "Server tools…": ["package", "purple"], "Tools…": ["package", "purple"], "Backoffice login…": ["key", "purple"], "Move out…": ["undo", "amber"], "Servers…": ["server", "blue"], "Import from Windows…": ["download", "blue"], "Copy from Windows…": ["download", "purple"], "Import sites…": ["download", "blue"], "Copy sites…": ["download", "purple"], "Edit conf": ["pencil", "amber"], "Refresh from Windows…": ["download", "blue"], "Take over…": ["shield", "green"], "Files (/)": ["folder", "blue"],
 	"Test config": ["activity", "teal"], "Error logs": ["file", "teal"],
 	"Apache error logs": ["file", "teal"], "Who can reach it…": ["shield", "purple"],
@@ -7714,12 +7714,48 @@ async function showCronLog(row, entry, button) {
 						? `The end of ${output.where}` + (output.modified ? ` · written ${formatDate(output.modified * 1000)}` : " · not there yet")
 						: `The end of its output in the journal (logger -t ${output.where})` }),
 					...(output.kind === "file" && output.lines.length ? [toolButton("Clear log", () => clearCronLog(row, entry, output.where), "ghost crontab-clear-log")] : [])),
-				el("pre", { className: "crontab-log-output", textContent: output.lines.length ? output.lines.join("\n") : "Nothing yet." }))
+				cronOutput(output.lines, log.errors))
 			: el("p", { className: "hint", textContent: "Its output is not written anywhere. End the command with >> /var/log/name.log 2>&1 to keep it, and see here what went wrong." }),
 		el("p", { className: "hint", textContent: "cron does not record how a job ended: its output is what tells whether it went well." }));
 	decorate(panel);
 	const pre = panel.querySelector(".crontab-log-output");
 	if (pre) pre.scrollTop = pre.scrollHeight;
+}
+
+// A job's output split into its runs, where it starts each with a line such as ----- 23.11.2026 20:00 -----
+// (Harbor's jobs and the scripts made like them). The first may be the end of a run the tail cut off.
+const CRON_RUN_START = /^-{5} (\d\d\.\d\d\.\d{4} \d\d:\d\d) -{5,}\s*$/;
+function cronRuns(lines) {
+	const runs = [];
+	for (const line of lines) {
+		const start = line.match(CRON_RUN_START);
+		if (start || !runs.length) runs.push({ when: start ? start[1] : "", lines: [] });
+		if (!start) runs.at(-1).lines.push(line);
+	}
+	for (const run of runs) {
+		while (run.lines.length && !run.lines[0].trim()) run.lines.shift();
+		while (run.lines.length && !run.lines.at(-1).trim()) run.lines.pop();
+	}
+	return runs.filter((run) => run.when || run.lines.length);
+}
+
+// The end of a job's output: a card per run with when it started, red where a line looks like an error; output
+// without such lines as one block
+function cronOutput(lines, errors) {
+	if (!lines.length) return el("pre", { className: "crontab-log-output", textContent: "Nothing yet." });
+	const runs = cronRuns(lines);
+	if (!runs.some((run) => run.when)) return el("pre", { className: "crontab-log-output", textContent: lines.join("\n") });
+	const bad = new Set(errors);
+	return el("div", { className: "crontab-log-output crontab-runs" }, ...runs.map((run, index) => {
+		const failed = run.lines.some((line) => bad.has(line));
+		const last = index === runs.length - 1;
+		return el("section", { className: "crontab-run-out" + (failed ? " bad" : "") + (last ? " latest" : "") },
+			el("header", {}, svgIcon("clock"),
+				el("span", { textContent: run.when || "Earlier (the start is cut off)" }),
+				...(last ? [el("span", { className: "crontab-run-tag", textContent: "Latest" })] : []),
+				...(failed ? [el("span", { className: "crontab-run-tag bad", textContent: "Errors" })] : [])),
+			el("pre", { textContent: run.lines.join("\n") || "No output." }));
+	}));
 }
 
 // Empties the file a job writes its output to, then shows the log again
@@ -7752,10 +7788,29 @@ function renderCrontab() {
 		el("div", { className: "crontab-text" }, ...cronTitle(entry),
 			el("code", { className: "crontab-command", textContent: entry.command, title: entry.command })),
 		el("div", { className: "crontab-actions" },
+			Object.assign(toolButton("Run", () => runCronJob(entry), "ghost crontab-run"), { title: "Run it now, as cron runs it, and see its log" }),
 			Object.assign(toolButton("Log", () => showCronLog(row, entry, row.querySelector(".crontab-log-button")), "ghost crontab-log-button"), { ariaExpanded: "false" }),
 			toolButton("Edit", () => showCronForm(index), "ghost"),
 			toolButton("Delete", () => deleteCronJob(index), "ghost tool-danger"))); return row; })
 		: [el("li", { className: "server-tools-loading", textContent: "No scheduled jobs yet." })]));
+	for (const button of $("#crontab-list").querySelectorAll(".crontab-run")) decorate(button.parentElement);
+}
+
+// A job run now in the task window, as cron runs it; then its log, to see what it wrote
+async function runCronJob(entry) {
+	const name = entry.label || HARBOR_JOBS[entry.harbor] || describeCron(entry.schedule) || entry.schedule;
+	if (!await ask({ title: "Run this job now?", message: `${name}: ${entry.command}\n\nIt runs as cron runs it: as root, with cron's few variables. Its output goes where the command sends it.`,
+		input: false, ok: "Run" })) return;
+	crontabDialog.close();
+	const t = await openTask({ kind: "server_tool", tool: "cron_run", command: entry.command });
+	if (!t) return;
+	t.afterTask = () => run(async () => {
+		await openCrontab();
+		const index = crontabEntries.findIndex((other) => other.kind === "job" && other.command === entry.command);
+		const row = [...$("#crontab-list").querySelectorAll(".crontab-row")]
+			.find((item) => item.querySelector(".crontab-command")?.textContent === entry.command);
+		if (index >= 0 && row) await showCronLog(row, crontabEntries[index], row.querySelector(".crontab-log-button"));
+	});
 }
 
 function showCrontabList() {
