@@ -1880,6 +1880,14 @@ dialog label.samba-chip:has(input:checked) .ico { display: block; color: var(--b
 .crontab-when { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .crontab-when strong { font-size: 14px; }
 .crontab-when code { color: var(--muted); font-size: 12px; }
+.crontab-label { overflow-wrap: anywhere; }
+.crontab-schedule { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+.crontab-schedule .ico { width: 13px; height: 13px; }
+.crontab-schedule code { font-size: 12px; opacity: .8; }
+.crontab-fields { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; }
+.crontab-log-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.crontab-clear-log { padding: 4px 10px; font-size: 12px; }
+.crontab-clear-log .ico { width: 14px; height: 14px; }
 .crontab-command { overflow: hidden; color: var(--text); font-size: 12.5px; text-overflow: ellipsis; white-space: nowrap; opacity: .85; }
 .crontab-actions { display: flex; flex: none; gap: 6px; }
 /* A job's log, unfolded under it */
@@ -1917,7 +1925,7 @@ dialog label.samba-chip:has(input:checked) .ico { display: block; color: var(--b
 .crontab-form .hint { margin: 0; font-size: 12px; }
 .crontab-form-actions { display: flex; justify-content: flex-end; align-items: center; gap: 12px; margin-top: 4px; }
 .crontab-form-actions .cancel-link { margin-right: auto; }
-@media (max-width: 720px) { .crontab-row { flex-wrap: wrap; } .crontab-actions { width: 100%; justify-content: flex-end; } }
+@media (max-width: 720px) { .crontab-fields { grid-template-columns: minmax(0, 1fr); } .crontab-row { flex-wrap: wrap; } .crontab-actions { width: 100%; justify-content: flex-end; } }
 
 /* A tool that cannot be used yet (the backups without SQL Server and the SQL tools): dimmed, its buttons still there */
 .tool-card.unavailable .tool-head, .tool-card.unavailable .tool-rows { opacity: .5; }

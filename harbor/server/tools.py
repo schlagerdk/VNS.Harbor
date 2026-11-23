@@ -186,7 +186,9 @@ def cron(system, on):
             return
         system.plan(["Take the backup and log shrink jobs out of root's crontab"])
         system.step("Take the backup and log shrink jobs out of root's crontab")
-        lines = [line for line in lines if line not in mine]
+        # A job's label (the comment line just above it) goes with it
+        lines = [line for index, line in enumerate(lines) if line not in mine
+                 and not (LABEL.match(line) and index + 1 < len(lines) and lines[index + 1] in mine)]
     system.run("crontab", "-", input="".join(line + "\n" for line in lines))
     system.say("Backups every 4 hours (at :15), logs shrunk every 4 hours." if on else "No backups or log shrinks are run by cron now.")
 
@@ -364,17 +366,37 @@ def job_parts(line):
     return None
 
 
+# A job's label: a comment line of its own just above it, so it stays in root's crontab with the job
+LABEL = re.compile(r"^#\s*Harbor label:\s*(.*?)\s*$")
+
+
+def clean_label(text):
+    return " ".join(str(text or "").split())[:80]
+
+
 def crontab_entries(system):
-    """Root's crontab as its lines: each job with its schedule and command (and which of Harbor's jobs it is), and the
-    other lines (variables, comments) as they are"""
+    """Root's crontab as its lines: each job with its schedule, command, label (and which of Harbor's jobs it is), and
+    the other lines (variables, comments) as they are"""
     entries = []
+    label = None
     for line in crontab(system).splitlines():
         parts = job_parts(line)
         if parts:
             harbor = next((name for name in JOBS if job_lines(line, name)), "")
-            entries.append({"kind": "job", "schedule": parts[0], "command": parts[1], "harbor": harbor})
+            entries.append({"kind": "job", "schedule": parts[0], "command": parts[1], "harbor": harbor, "label": label or ""})
+            label = None
+            continue
+        if label is not None:
+            # A label line not followed by a job is kept as the comment it is
+            entries.append({"kind": "other", "line": f"# Harbor label: {label}"})
+            label = None
+        found = LABEL.match(line)
+        if found:
+            label = clean_label(found.group(1))
         elif line.strip():
             entries.append({"kind": "other", "line": line})
+    if label is not None:
+        entries.append({"kind": "other", "line": f"# Harbor label: {label}"})
     return entries
 
 
@@ -396,6 +418,9 @@ def crontab_save(system, entries):
             raise Stop("A job needs a command on one line.")
         if not job_parts(f"{schedule} {command}"):
             raise Stop(f"Not a schedule: {schedule} (five fields, such as 15 */4 * * *, or @daily, @reboot)")
+        label = clean_label(entry.get("label"))
+        if label:
+            lines.append(f"# Harbor label: {label}")
         lines.append(f"{schedule} {command}")
     system.plan(["Save root's crontab"])
     system.step("Save root's crontab")
@@ -448,6 +473,23 @@ def crontab_log(system, command, days=14):
     # SQL Server's line after every DBCC says "error" without being one
     errors = [line for line in output["lines"] if ERROR_LINE.search(line) and not line.startswith("DBCC execution completed.")][-20:]
     return {"command": command, "days": days, "runs": runs[-50:][::-1], "runs_count": len(runs), "output": output, "errors": errors}
+
+
+def crontab_clear_log(system, command):
+    """Empties the file a job of root's crontab writes its output to (> or >> a file): only for a job that is there,
+    and only a plain file, not a link to another"""
+    command = str(command).strip()
+    if not any(entry.get("kind") == "job" and entry["command"] == command for entry in crontab_entries(system)):
+        raise Stop("That job is not in root's crontab.")
+    target = job_output(command)
+    if not target or target[0] != "file":
+        raise Stop("The job does not write its output to a file.")
+    path = system.path(target[1])
+    if path.is_symlink() or not path.is_file():
+        raise Stop(f"{target[1]} is not a plain file.")
+    with open(path, "r+b") as stream:
+        stream.truncate(0)
+    system.say(f"{target[1]} is empty now.")
 
 
 # ---- Node.js

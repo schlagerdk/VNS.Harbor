@@ -323,15 +323,18 @@ def _server_dotnet(args, system):
 
 def _server_crontab(args, system):
     import json
-    from harbor.server.tools import crontab_entries, crontab_log, crontab_save
+    from harbor.server.tools import crontab_clear_log, crontab_entries, crontab_log, crontab_save
     if args.action == "list":
         print(json.dumps(crontab_entries(system), indent=2))
-    elif args.action == "log":
+    elif args.action in ("log", "clear-log"):
         try:
             command = json.loads(sys.stdin.read()).get("command", "")
         except (ValueError, AttributeError):
             raise Stop("The job's command comes as JSON on stdin.") from None
-        print(json.dumps(crontab_log(system, command), indent=2))
+        if args.action == "log":
+            print(json.dumps(crontab_log(system, command), indent=2))
+        else:
+            crontab_clear_log(system, command)
     else:
         try:
             entries = json.loads(sys.stdin.read())
@@ -528,8 +531,8 @@ def parser():
     command.add_argument("action", choices=("install", "update", "remove"))
     command.add_argument("channel", help="such as 10.0")
     command.set_defaults(handler=_server_dotnet)
-    command = server.add_parser("crontab", help="root's crontab: its lines as JSON (list), saved from JSON on stdin (save), or a job's runs and output (log)")
-    command.add_argument("action", choices=("list", "save", "log"))
+    command = server.add_parser("crontab", help="root's crontab: its lines as JSON (list), saved from JSON on stdin (save), a job's runs and output (log), or its output file emptied (clear-log)")
+    command.add_argument("action", choices=("list", "save", "log", "clear-log"))
     command.set_defaults(handler=_server_crontab)
     command = server.add_parser("ssh-root", help="how root may log in over SSH: yes (a password or a key), prohibit-password (a key only) or no")
     command.add_argument("mode", choices=("yes", "prohibit-password", "no"))

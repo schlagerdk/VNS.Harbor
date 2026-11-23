@@ -2,6 +2,18 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.62] - Unreleased
+
+### Features
+
+- The backup and log shrink jobs write a table of what they did (each database with its backup's size, time and speed, or its log before and after), in place of SQL Server's lines for every file. An error is still written as SQL Server gives it, below what was done before it
+- Scheduled jobs: a job can have a label of its own, kept as a comment line above it in root's crontab, and shown as the job's title with the schedule under it. The backup and log shrink jobs are named Backup and Log shrink until given another
+- Scheduled jobs: Clear log in a job's log empties the file the job writes its output to
+
+### Fixes
+
+- The log shrink no longer says all logs were shrunk when sqlcmd could not be run
+
 ## [1.0.61] - 2026-11-23
 
 ### Features

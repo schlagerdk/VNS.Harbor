@@ -1008,7 +1008,7 @@ const buttonStyles = {
 	"Move under main site": ["server", "purple"], "Set up site…": ["server", "green"],
 	"Migrate…": ["server", "purple"],
 	"Check outdated": ["download", "amber"], "Restart": ["restart", "amber"], "Restart Apache": ["restart", "amber"],
-	"Stop": ["stop", "red"], "Clear logs": ["eraser", "gray"], "Logs": ["file", "gray"],
+	"Stop": ["stop", "red"], "Clear logs": ["eraser", "gray"], "Clear log": ["eraser", "amber"], "Logs": ["file", "gray"],
 	"SQL Server": ["server", "purple"], "Web server": ["globe", "blue"], "Preferences…": ["sliders", "purple"], "Server tools…": ["package", "purple"], "Tools…": ["package", "purple"], "Backoffice login…": ["key", "purple"], "Move out…": ["undo", "amber"], "Servers…": ["server", "blue"], "Import from Windows…": ["download", "blue"], "Copy from Windows…": ["download", "purple"], "Import sites…": ["download", "blue"], "Copy sites…": ["download", "purple"], "Edit conf": ["pencil", "amber"], "Refresh from Windows…": ["download", "blue"], "Take over…": ["shield", "green"], "Files (/)": ["folder", "blue"],
 	"Test config": ["activity", "teal"], "Error logs": ["file", "teal"],
 	"Apache error logs": ["file", "teal"], "Who can reach it…": ["shield", "purple"],
@@ -7709,14 +7709,38 @@ async function showCronLog(row, entry, button) {
 			el("pre", { className: "crontab-log-errors", textContent: log.errors.join("\n") }))] : []),
 		output.kind
 			? el("div", { className: "crontab-log-block" },
-				el("h4", { textContent: output.kind === "file"
-					? `The end of ${output.where}` + (output.modified ? ` · written ${formatDate(output.modified * 1000)}` : " · not there yet")
-					: `The end of its output in the journal (logger -t ${output.where})` }),
+				el("div", { className: "crontab-log-head" },
+					el("h4", { textContent: output.kind === "file"
+						? `The end of ${output.where}` + (output.modified ? ` · written ${formatDate(output.modified * 1000)}` : " · not there yet")
+						: `The end of its output in the journal (logger -t ${output.where})` }),
+					...(output.kind === "file" && output.lines.length ? [toolButton("Clear log", () => clearCronLog(row, entry, output.where), "ghost crontab-clear-log")] : [])),
 				el("pre", { className: "crontab-log-output", textContent: output.lines.length ? output.lines.join("\n") : "Nothing yet." }))
 			: el("p", { className: "hint", textContent: "Its output is not written anywhere. End the command with >> /var/log/name.log 2>&1 to keep it, and see here what went wrong." }),
 		el("p", { className: "hint", textContent: "cron does not record how a job ended: its output is what tells whether it went well." }));
+	decorate(panel);
 	const pre = panel.querySelector(".crontab-log-output");
 	if (pre) pre.scrollTop = pre.scrollHeight;
+}
+
+// Empties the file a job writes its output to, then shows the log again
+async function clearCronLog(row, entry, where) {
+	if (!await ask({ title: "Clear this log?", message: `${where} is emptied. What the job writes next starts a new log.`, input: false, ok: "Clear log", danger: true })) return;
+	await api("/api/server/crontab/log/clear", { json: { command: entry.command } });
+	toast("The log is cleared.");
+	const button = row.querySelector(".crontab-log-button");
+	row.querySelector(".crontab-log")?.remove();
+	await showCronLog(row, entry, button);
+}
+
+// A job's name: its label (Harbor's own jobs have one of their own), with the schedule under it; without one the
+// schedule is the title
+function cronTitle(entry) {
+	const label = entry.label || HARBOR_JOBS[entry.harbor] || "";
+	const when = describeCron(entry.schedule) || "A schedule of its own";
+	const harbor = HARBOR_JOBS[entry.harbor] ? [el("span", { className: "badge", textContent: "Harbor" })] : [];
+	if (!label) return [el("div", { className: "crontab-when" }, el("strong", { textContent: when }), el("code", { textContent: entry.schedule }), ...harbor)];
+	return [el("div", { className: "crontab-when" }, el("strong", { className: "crontab-label", textContent: label }), ...harbor),
+		el("div", { className: "crontab-schedule" }, svgIcon("clock"), el("span", { textContent: when }), el("code", { textContent: entry.schedule }))];
 }
 
 function renderCrontab() {
@@ -7725,10 +7749,7 @@ function renderCrontab() {
 	$("#crontab-count").textContent = `${jobs.length} job${jobs.length === 1 ? "" : "s"}` + (kept ? ` · ${kept} other line${kept === 1 ? "" : "s"} (variables, comments) kept as they are` : "");
 	$("#crontab-list").replaceChildren(...(jobs.length ? jobs.map(([entry, index]) => { const row = el("li", { className: "crontab-row" },
 		el("span", { className: "crontab-icon" }, svgIcon(HARBOR_JOBS[entry.harbor] ? "database" : "clock")),
-		el("div", { className: "crontab-text" },
-			el("div", { className: "crontab-when" }, el("strong", { textContent: describeCron(entry.schedule) || "A schedule of its own" }),
-				el("code", { textContent: entry.schedule }),
-				...(HARBOR_JOBS[entry.harbor] ? [el("span", { className: "badge", textContent: HARBOR_JOBS[entry.harbor] })] : [])),
+		el("div", { className: "crontab-text" }, ...cronTitle(entry),
 			el("code", { className: "crontab-command", textContent: entry.command, title: entry.command })),
 		el("div", { className: "crontab-actions" },
 			Object.assign(toolButton("Log", () => showCronLog(row, entry, row.querySelector(".crontab-log-button")), "ghost crontab-log-button"), { ariaExpanded: "false" }),
@@ -7751,7 +7772,7 @@ async function saveCrontab(entries, message) {
 
 async function deleteCronJob(index) {
 	const entry = crontabEntries[index];
-	if (!await ask({ title: "Delete this job?", message: `${describeCron(entry.schedule) || entry.schedule}: ${entry.command}`, input: false, ok: "Delete", danger: true })) return;
+	if (!await ask({ title: "Delete this job?", message: `${entry.label || describeCron(entry.schedule) || entry.schedule}: ${entry.command}`, input: false, ok: "Delete", danger: true })) return;
 	await saveCrontab(crontabEntries.filter((_, other) => other !== index), "The job is deleted.");
 }
 
@@ -7850,7 +7871,7 @@ function cronBrowser(command) {
 }
 
 function showCronForm(index = null) {
-	const entry = index === null ? { schedule: "0 3 * * *", command: "" } : crontabEntries[index];
+	const entry = index === null ? { schedule: "0 3 * * *", command: "", label: "" } : crontabEntries[index];
 	const form = $("#crontab-form");
 	const when = el("input", { name: "schedule", value: entry.schedule, required: true, spellcheck: false, autocomplete: "off", className: "mono" });
 	const said = el("p", { className: "hint crontab-said" });
@@ -7859,10 +7880,12 @@ function showCronForm(index = null) {
 	describe();
 	const command = el("input", { name: "command", value: entry.command, required: true, spellcheck: false, autocomplete: "off", className: "mono",
 		placeholder: "/root/scripts/cleanup.sh >> /var/log/cleanup.log 2>&1" });
+	const label = el("input", { name: "label", value: entry.label || "", maxLength: 80, autocomplete: "off",
+		placeholder: HARBOR_JOBS[entry.harbor] || "Such as Delete old data" });
 	const browse = cronBrowser(command);
 	form.replaceChildren(
 		el("h3", { textContent: index === null ? "Add a job" : "Edit the job" }),
-		el("label", {}, "When", when),
+		el("div", { className: "crontab-fields" }, el("label", {}, "Label", label), el("label", {}, "When", when)),
 		el("div", { className: "crontab-presets" }, ...CRON_PRESETS.map(([label, value]) => el("button", { type: "button", className: "chip", textContent: label,
 			onclick: () => { when.value = value; describe(); when.focus(); } }))),
 		said,
@@ -7874,7 +7897,7 @@ function showCronForm(index = null) {
 			el("button", { type: "submit", className: "primary", textContent: index === null ? "Add job" : "Save" })));
 	form.onsubmit = (event) => {
 		event.preventDefault();
-		const job = { kind: "job", schedule: when.value.trim(), command: command.value.trim() };
+		const job = { kind: "job", schedule: when.value.trim(), command: command.value.trim(), label: label.value.trim() };
 		const entries = [...crontabEntries];
 		if (index === null) entries.push(job); else entries[index] = job;
 		run(() => saveCrontab(entries, index === null ? "The job is added." : "The job is saved."));
@@ -7882,7 +7905,7 @@ function showCronForm(index = null) {
 	$("#crontab-list").hidden = true;
 	$("#crontab-add").hidden = true;
 	form.hidden = false;
-	(index === null ? when : command).focus();
+	(index === null ? label : command).focus();
 }
 $("#crontab-add").onclick = () => showCronForm();
 $("#crontab-refresh").onclick = () => run(openCrontab);

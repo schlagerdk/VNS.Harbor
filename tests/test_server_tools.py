@@ -301,6 +301,91 @@ class SaSecretTests(Server):
         self.assertNotIn("secret", system.commands[run])
 
 
+class CronLabelAndClearTests(Server):
+    def test_a_label_is_the_comment_line_above_its_job(self):
+        self.crontab = "# made by hand\n# Harbor label: Delete old 2DM data\n" + CUSTOM + "\n# Harbor label: nothing under it\n"
+        entries = tools.crontab_entries(self.system())
+        self.assertEqual([(entry["kind"], entry.get("label", entry.get("line"))) for entry in entries],
+                         [("other", "# made by hand"), ("job", "Delete old 2DM data"), ("other", "# Harbor label: nothing under it")])
+        entries[1]["label"] = "  Old   2DM data\n"
+        entries.append({"kind": "job", "schedule": "@daily", "command": "/usr/local/bin/x", "label": ""})
+        tools.crontab_save(self.system(), entries)
+        self.assertEqual(self.crontab.splitlines(), ["# made by hand", "# Harbor label: Old 2DM data", CUSTOM,
+                                                     "# Harbor label: nothing under it", "@daily /usr/local/bin/x"])
+
+    def test_the_label_goes_when_cron_takes_harbors_job_out(self):
+        self.crontab = "# Harbor label: Nightly backup\n" + tools.JOBS["backup_everything"] + "\n" + CUSTOM + "\n"
+        tools.cron(self.system(), False)
+        self.assertEqual(self.crontab, CUSTOM + "\n")
+
+    def test_clear_log_empties_only_a_jobs_own_file(self):
+        log = self.root / "var/log/delete_old_2dm_data.log"
+        log.parent.mkdir(parents=True)
+        log.write_text("old output\n")
+        self.crontab = CUSTOM + "\n"
+        tools.crontab_clear_log(self.system(), CUSTOM.split(None, 5)[5])
+        self.assertEqual(log.read_text(), "")
+        # Not a job there, or a link to another file: refused
+        with self.assertRaises(tools.Stop):
+            tools.crontab_clear_log(self.system(), "/bin/true >> /var/log/delete_old_2dm_data.log 2>&1")
+        (self.root / "etc/passwd").write_text("root\n")
+        log.unlink()
+        log.symlink_to(self.root / "etc/passwd")
+        with self.assertRaises(tools.Stop):
+            tools.crontab_clear_log(self.system(), CUSTOM.split(None, 5)[5])
+        self.assertEqual((self.root / "etc/passwd").read_text(), "root\n")
+
+
+class ReportTests(Server):
+    """backup-everything and shrink-logs write a table of what they did, without SQL Server's messages of it"""
+
+    def run_sql(self, command, stdout, code=0):
+        from harbor.sql import databases
+        with mock.patch.dict(os.environ, {"SQLCMDPASSWORD": "pw"}), mock.patch.object(databases, "prepare_backup_permissions"):
+            system = self.system(**{"/opt/mssql-tools18/bin/sqlcmd": Result(code, stdout, "")})
+            return main(["sql", command], system), system
+
+    def test_the_backup_as_a_table(self):
+        out = ("Processed 9864 pages for database '2dm.dk', file '2dm.dk' on file 1.\n"
+               "BACKUP DATABASE successfully processed 9865 pages in 1.329 seconds (57.986 MB/sec).\n"
+               "ROW|1|2dm.dk|78920|1.3\n\nROW|2|anden.dk|1398920|22.9\n")
+        code, system = self.run_sql("backup-everything", out)
+        self.assertEqual(code, 0, system.said)
+        self.assertIn(" -W -h -1 -s | ", next(command for command in system.commands if "sqlcmd" in command))
+        self.assertEqual(system.said[1].splitlines(), [
+            "| Nr | Database |    Size |   Time |     Speed |",
+            "|----|----------|---------|--------|-----------|",
+            "| 1  | 2dm.dk   | 77.1 MB |  1.3 s | 59.3 MB/s |",
+            "| 2  | anden.dk |  1.3 GB | 22.9 s | 59.7 MB/s |"])
+        self.assertTrue(system.said[2].startswith("Backup of everything done! ----- "))
+        self.assertFalse(any("Processed" in line for line in system.said))
+
+    def test_a_failed_backup_shows_what_was_done_and_the_error(self):
+        out = "ROW|1|2dm.dk|78920|1.3\nMsg 3201, Level 16, State 1, Server x, Line 30\nCannot open backup device '/var/opt/mssql/backup/b.bak'.\n"
+        code, system = self.run_sql("backup-everything", out, code=1)
+        self.assertEqual(code, 1)
+        text = "\n".join(system.said)
+        self.assertIn("| 1  | 2dm.dk", text)
+        self.assertIn("Cannot open backup device", text)
+        self.assertNotIn("Backup of everything done!", text)
+
+    def test_the_log_shrink_as_a_table(self):
+        out = "7|2|128|128|128|128\nROW|1|2dm.dk|524288|1024|1\nROW|2|kiibee.dk|1024|1024|0\n"
+        code, system = self.run_sql("shrink-logs", out)
+        self.assertEqual(code, 0, system.said)
+        self.assertEqual(system.said[1].splitlines(), [
+            "| Nr | Database  | Log before | Log after | Shrunk              |",
+            "|----|-----------|------------|-----------|---------------------|",
+            "| 1  | 2dm.dk    |   512.0 MB |    1.0 MB | yes                 |",
+            "| 2  | kiibee.dk |     1.0 MB |    1.0 MB | no, at its smallest |"])
+        self.assertTrue(system.said[2].startswith("All logs now shrunk! ----- "))
+
+    def test_a_log_shrink_that_could_not_run_says_so(self):
+        code, system = self.run_sql("shrink-logs", "", code=127)
+        self.assertEqual(code, 127)
+        self.assertFalse(any(line.startswith("All logs now shrunk!") for line in system.said))
+
+
 if __name__ == "__main__":
     unittest.main()
 

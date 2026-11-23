@@ -2352,6 +2352,26 @@ def api_server_crontab_log():
         return error("The job's log could not be read.", 502)
 
 
+@app.route("/api/server/crontab/log/clear", methods=["POST"])
+def api_server_crontab_log_clear():
+    """Empties the file a job of root's crontab writes its output to (harbor server crontab clear-log)"""
+    require_admin()
+    command = str((request.get_json(silent=True) or {}).get("command", "")).strip()
+    if not command or "\n" in command or len(command) > 4000:
+        return error("No job to clear the log of.")
+    try:
+        result = subprocess.run(["/usr/bin/python3", HARBOR_COMMAND, "server", "crontab", "clear-log"], input=json.dumps({"command": command}),
+                                capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.SubprocessError) as exc:
+        app.logger.error("harbor server crontab clear-log: %s", exc)
+        return error("The job's log could not be cleared.", 502)
+    said = (result.stderr or result.stdout).strip()
+    if result.returncode:
+        return error(said.splitlines()[-1] if said else "The job's log could not be cleared.")
+    audit(f"Cleared the log of a scheduled job: {command}")
+    return jsonify(ok=True)
+
+
 @app.route("/api/your-address")
 def api_your_address():
     """The address this request comes from, as Apache sees it: for Allowed IPs, so one's own is added with a click."""

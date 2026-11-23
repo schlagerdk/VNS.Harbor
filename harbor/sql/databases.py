@@ -179,22 +179,70 @@ def stamp(zone=None):
     return datetime.now(ZoneInfo(zone) if zone else None).strftime("%d.%m.%Y %H:%M")
 
 
+ROW = "ROW|"
+# What sqlcmd says of work that went well: a backup's pages, and the rows DBCC SHRINKFILE returns (numbers only)
+QUIET = ("Processed ", "BACKUP DATABASE successfully processed ", "DBCC execution completed.")
+
+
+def table(headers, rows, right=()):
+    """Rows as a Markdown table, so a log reads well as text and anywhere that shows Markdown; the columns in right
+    (by index) are aligned to the right, as numbers are"""
+    widths = [max(len(str(cell)) for cell in column) for column in zip(headers, *rows)]
+    def line(cells):
+        return "| " + " | ".join(str(cell).rjust(width) if index in right else str(cell).ljust(width)
+                                 for index, (cell, width) in enumerate(zip(cells, widths))) + " |"
+    return "\n".join([line(headers), "|" + "|".join("-" * (width + 2) for width in widths) + "|", *map(line, rows)])
+
+
+def size(kilobytes):
+    value = float(kilobytes) / 1024
+    return f"{value / 1024:.1f} GB" if value >= 1024 else f"{value:.1f} MB"
+
+
+def report(system, sql, *options, stop_on_error=True):
+    """A script whose rows start with ROW|, run without the messages of what went well: its rows, and every other line
+    sqlcmd writes (an error and what it says of it) as it is"""
+    result = sqlcmd(system, sql, "-W", "-h", "-1", "-s", "|", *options, stop_on_error=False, capture=True)
+    rows = []
+    for line in (result.stdout + result.stderr).splitlines():
+        if line.startswith(ROW):
+            rows.append(line[len(ROW):].split("|"))
+        elif line.strip() and not line.startswith(QUIET) and not set(line) <= set("0123456789|-. "):
+            system.say(line)
+    return result, rows
+
+
 def backup_everything(system):
     zone = "Europe/Copenhagen"
     try:
         prepare_backup_permissions(system)
-        system.say(f"----- {stamp(zone)} {LINE}")
-        sqlcmd(system, TEMPLATES / "backup_everything.sql")
+        system.say(f"----- {stamp(zone)} -----")
+        result, rows = report(system, TEMPLATES / "backup_everything.sql")
+        if rows:
+            system.say(table(["Nr", "Database", "Size", "Time", "Speed"],
+                             [[number, name, size(kilobytes), f"{float(seconds):.1f} s",
+                               f"{float(kilobytes) / 1024 / max(float(seconds), 0.001):.1f} MB/s"]
+                              for number, name, kilobytes, seconds in rows], right={2, 3, 4}))
+        if not result.ok:
+            raise Stop("", result.returncode)
     except Exception:
         system.warn("SQL backup failed; inspect the preceding error. No successful completion was recorded.")
         raise
-    system.say(f"Backup of everything done! ----------------------------------------------------- {stamp(zone)} -----")
+    system.say(f"Backup of everything done! ----- {stamp(zone)} -----")
+    system.say("")
 
 
 def shrink_logs(system):
-    system.say(f"----- {stamp()} {LINE}")
-    sqlcmd(system, TEMPLATES / "shrink_logs.sql", stop_on_error=False)
-    system.say(f"All logs now shrinked! -------------------------------------------------------- {stamp()} -----")
+    system.say(f"----- {stamp()} -----")
+    result, rows = report(system, TEMPLATES / "shrink_logs.sql")
+    if rows:
+        system.say(table(["Nr", "Database", "Log before", "Log after", "Shrunk"],
+                         [[number, name, size(before), size(after), "yes" if shrunk == "1" else "no, at its smallest"]
+                          for number, name, before, after, shrunk in rows], right={2, 3}))
+    if not result.ok:
+        # Without -b sqlcmd goes on past an error in the SQL: a failure is that it did not run at all
+        raise Stop("The logs were not shrunk; see the error above.", result.returncode)
+    system.say(f"All logs now shrunk! ----- {stamp()} -----")
     system.say("")
 
 

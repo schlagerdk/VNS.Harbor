@@ -186,13 +186,7 @@ class DatabaseTests(unittest.TestCase):
         result, calls, sent = self.legacy("list_dbs.sh")
         code, system, harbor_sent = self.harbor(["list-databases"])
         self.assertEqual(system.said[-1], result.stdout.rstrip("\n"))
-        for script, command in (("cron/shrink_logs.sh", "shrink-logs"), ("cron/backup_everything.sh", "backup-everything")):
-            with self.subTest(script=script):
-                result, system = self.compare(script, [command])
-                self.assertEqual(result.returncode, 0, result.stderr)
-                stamp = re.compile(r"\d\d\.\d\d\.\d{4} \d\d:\d\d")
-                self.assertEqual([stamp.sub("TIME", line) for line in system.said if line.startswith(("-----", "Backup", "All"))],
-                                 [stamp.sub("TIME", line) for line in result.stdout.splitlines() if line.startswith(("-----", "Backup", "All"))])
+        # The cron jobs report what they did as a table now, from SQL of their own: ReportTests in test_server_tools
 
     def test_without_the_password_set(self):
         system = RecordingSystem(root=self.folder / "harbor")
