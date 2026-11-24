@@ -1615,7 +1615,8 @@ function scriptSelect(site, env = null, className = "") {
 					event.stopPropagation();
 					panel.hidden = true;
 					trigger.setAttribute("aria-expanded", "false");
-					run(() => openTask(target ? { kind: "env_script", site: site.name, target, script: file } : { kind: "script", site: site.name, script: file }));
+					// A custom script: exit 10 keeps its window open with its output, as done (KEEP_OPEN_EXIT)
+					run(() => openTask({ ...(target ? { kind: "env_script", site: site.name, target } : { kind: "script", site: site.name }), script: file, keep_output: true }));
 				},
 			}, el("span", { className: "script-menu-item-label", textContent: label }),
 			el("code", { textContent: file }));
@@ -1642,14 +1643,14 @@ function scriptSelect(site, env = null, className = "") {
 		panel.append(el("div", { className: "script-menu-footer" }, el("button", { type: "button", className: "small script-menu-new", role: "menuitem",
 			onclick: (event) => { event.stopPropagation(); closeMenu(); run(() => newCustomScript(site, target)); } }, svgIcon("plus"), el("span", { textContent: "New script…" }))));
 	}
-	// Placed in the window from the button, so no card or column cuts it off: under it (over it when there is no room
-	// below), and inside the window at either side
+	// Which way it opens, chosen once as it opens and kept while it is open, so it moves with the page and never jumps:
+	// from the button's right edge when there is no room to its right, and up when there is no room below
 	panel.place = () => {
+		menu.classList.remove("open-end", "open-up");
 		const button = trigger.getBoundingClientRect();
 		const width = panel.offsetWidth, height = panel.offsetHeight;
-		panel.style.left = Math.max(8, Math.min(button.left, window.innerWidth - width - 8)) + "px";
-		const below = button.bottom + 8;
-		panel.style.top = (below + height > window.innerHeight - 8 && button.top - 8 - height >= 8 ? button.top - 8 - height : below) + "px";
+		menu.classList.toggle("open-end", button.left + width > window.innerWidth - 8 && button.right - width >= 8);
+		menu.classList.toggle("open-up", button.bottom + 8 + height > window.innerHeight - 8 && button.top - 8 - height >= 8);
 	};
 	trigger.onclick = (event) => {
 		event.stopPropagation();
@@ -1726,16 +1727,13 @@ async function newCustomScript(site, target) {
 		placeholder: "cleanup_temp_files", ok: "Create", filter: scriptNameFilter, valid: validScriptName });
 	if (!name) return;
 	name = name.trim().replace(/\.sh$/i, "") + ".sh";
-	const content = "#!/usr/bin/env bash\n# Runs as root in the site's folder\nset -euo pipefail\n\n";
+	const content = "#!/usr/bin/env bash\n# Runs as root in the site's folder. exit 0 closes its window when it is done; exit 10 keeps it open\n"
+		+ "# with what it printed\nset -euo pipefail\n\n";
 	await api(customScriptUrl(site, target), { json: { action: "save", path: name, content } });
 	await loadSites();
 	await editCustomScript(site, target, name, content);
 }
 
-// An open script menu follows its button as the page or a dialog scrolls, and as the window changes size
-for (const type of ["scroll", "resize"]) window.addEventListener(type, () => {
-	document.querySelectorAll(".script-menu-panel:not([hidden])").forEach((panel) => panel.place?.());
-}, { capture: true, passive: true });
 document.addEventListener("click", (event) => {
 	if (event.target.closest?.(".script-menu")) return;
 	document.querySelectorAll(".script-menu-panel:not([hidden])").forEach((panel) => { panel.hidden = true; });
@@ -5627,11 +5625,70 @@ function siteOfFile(path, remoteSite) {
 }
 
 function snippetKind() {
+	// A custom script in the editor (its own snippets, below)
+	if (openCustomScript) return "script";
 	const name = (openFile || "").split("/").pop().toLowerCase();
 	if (name === "web.config") return "iis";
 	if (/^appsettings(\.[\w-]+)?\.json$/.test(name)) return "appsettings";
 	if (configurationEditor?.kind === "conf" || (/\.conf$/.test(name) && /sites-(available|enabled)/.test(openFile || ""))) return "apache";
 	return "";
+}
+
+// Snippets for a custom script: inserted at the start of the line the cursor is on, except where they have their own
+// place (at the end, or under the first line). Each is plain bash, to be changed where it says so.
+const scriptSnippets = {
+	keep: { label: "Keep the window open", icon: "eye", line: "Ends with exit 10: done, and what it printed stays to read",
+		text: "# Done: the window stays open with what was printed (exit 0 closes it)\nexit 10\n" },
+	strict: { label: "Stop at the first error", icon: "shield", line: "set -euo pipefail under the first line",
+		text: "set -euo pipefail\n" },
+	folder: { label: "A folder, and stop when it is not there", icon: "folder", line: "FOLDER, checked before it is used",
+		text: "# The folder to work in: change it\nFOLDER=\"/var/www/example.com/wwwroot/uploads\"\nif [[ ! -d $FOLDER ]]; then\n\techo \"Not found: $FOLDER\" >&2\n\texit 1\nfi\n" },
+	list: { label: "List a folder", icon: "rows", line: "Its files and folders, newest first",
+		text: "echo \"In $FOLDER:\"\nls -1t \"$FOLDER\"\n" },
+	size: { label: "Size of a folder", icon: "archive", line: "How much it takes, and its biggest folders",
+		text: "du -sh \"$FOLDER\"\ndu -h --max-depth=1 \"$FOLDER\" | sort -rh | head -n 10\n" },
+	empty: { label: "Delete empty folders", icon: "eraser", line: "Every empty folder under FOLDER, listed as it goes",
+		text: "# Depth first, so a folder that held only empty folders goes too\nfind \"$FOLDER\" -mindepth 1 -type d -empty -print -delete\n" },
+	old: { label: "Delete old files", icon: "clock", line: "Files under FOLDER older than a number of days",
+		text: "# Files not changed for DAYS days: change the number\nDAYS=30\nfind \"$FOLDER\" -type f -mtime +\"$DAYS\" -print -delete\n" },
+	heading: { label: "A heading in the output", icon: "file", line: "A line that stands out where it is printed",
+		text: "printf '\\n\\033[1m%s\\033[0m\\n' \"Heading\"\n" },
+};
+// A snippet at the start of the line the cursor is on, so it never splits a line; one edit, so Ctrl+Z takes it out
+function editorInsertLines(text) {
+	if (monacoEditor && !$("#editor-box").hidden) {
+		const line = monacoEditor.getPosition()?.lineNumber || 1;
+		monacoEditor.executeEdits("snippet", [{ range: new window.monaco.Range(line, 1, line, 1), text, forceMoveMarkers: true }]);
+		monacoEditor.pushUndoStop();
+		setDirty(true);
+		monacoEditor.focus();
+		return;
+	}
+	const area = $("#editor-text");
+	const start = area.value.lastIndexOf("\n", area.selectionStart - 1) + 1;
+	area.setRangeText(text, start, start, "end");
+	setDirty(true);
+	area.focus();
+}
+function insertScriptSnippet(key) {
+	const snippet = scriptSnippets[key];
+	const text = editorValue();
+	if (key === "keep") {
+		// At the end, in place of an exit there
+		const lines = text.replace(/\s+$/, "").split("\n");
+		while (lines.length && /^\s*(#.*exit 0 closes it.*|exit(\s+\d+)?)?\s*$/.test(lines[lines.length - 1])) lines.pop();
+		editorReplaceAll((lines.length ? lines.join("\n") + "\n\n" : "") + snippet.text);
+	} else if (key === "strict") {
+		if (/^\s*set -[a-z]*e/m.test(text)) return toast("It stops at the first error already.", "ok");
+		// Under the first line when it is #!, else at the top
+		const lines = text.split("\n");
+		const at = lines[0]?.startsWith("#!") ? 1 : 0;
+		lines.splice(at, 0, snippet.text.trimEnd());
+		editorReplaceAll(lines.join("\n"));
+	} else {
+		editorInsertLines(snippet.text);
+	}
+	toast(`${snippet.label} inserted. Check it, then save.`, "ok");
 }
 
 const snippetLooks = {
@@ -5657,12 +5714,12 @@ function refreshSnippetMenu() {
 	menu.hidden = !kind;
 	closeSnippetMenu();
 	if (!kind) return;
-	const snippets = kind === "iis" ? iisSnippets : kind === "appsettings" ? appsettingsChoices() : apacheSnippets;
+	const snippets = kind === "script" ? scriptSnippets : kind === "iis" ? iisSnippets : kind === "appsettings" ? appsettingsChoices() : apacheSnippets;
 	$("#editor-snippets-panel").replaceChildren(
-		el("div", { className: "snippet-panel-head" }, el("span", { textContent: kind === "iis" ? "IIS · WEB.CONFIG" : kind === "appsettings" ? (openFileSite?.kind === "umbraco" ? "UMBRACO" : ".NET") + " · APPSETTINGS.JSON" : "APACHE · SITE CONFIG" }),
-			el("strong", { textContent: kind === "appsettings" ? "Insert a setting" : "Insert a rule" })),
+		el("div", { className: "snippet-panel-head" }, el("span", { textContent: kind === "script" ? "BASH · CUSTOM SCRIPT" : kind === "iis" ? "IIS · WEB.CONFIG" : kind === "appsettings" ? (openFileSite?.kind === "umbraco" ? "UMBRACO" : ".NET") + " · APPSETTINGS.JSON" : "APACHE · SITE CONFIG" }),
+			el("strong", { textContent: kind === "appsettings" ? "Insert a setting" : kind === "script" ? "Insert a snippet" : "Insert a rule" })),
 		...Object.entries(snippets).map(([key, snippet]) => {
-			const [icon, line] = kind === "appsettings" ? [snippet.icon, snippet.line] : snippetLooks[key] || ["file", ""];
+			const [icon, line] = kind === "appsettings" || kind === "script" ? [snippet.icon, snippet.line] : snippetLooks[key] || ["file", ""];
 			return el("button", { type: "button", className: "snippet-item", role: "menuitem", onclick: () => { closeSnippetMenu(); run(() => insertSnippet(key)); } },
 				el("span", { className: "snippet-item-icon" }, svgIcon(icon)),
 				el("span", { className: "snippet-item-text" }, el("strong", { textContent: snippet.label }), el("small", { textContent: line })));
@@ -5749,6 +5806,7 @@ async function insertSnippet(key) {
 	const kind = snippetKind();
 	if (!key || !kind) return;
 	if (kind === "appsettings") return insertAppsetting(key);
+	if (kind === "script") return insertScriptSnippet(key);
 	const snippet = (kind === "iis" ? iisSnippets : apacheSnippets)[key];
 	const answer = await askSnippet(key, snippet, editorValue());
 	if (!answer) {
@@ -6290,17 +6348,26 @@ function hideTaskWindow() {
 	$("#panes").append(t.pane);
 	updateProcesses();
 }
+// A custom script that ends with this went well and has output to read: done, and its window stays open with it.
+// Exit 0 closes by itself, as any task that went well
+const KEEP_OPEN_EXIT = 10;
 function finishTask(t, code, problem) {
+	const keepOpen = t.keepOutput && code === KEEP_OPEN_EXIT;
+	if (keepOpen) {
+		code = 0;
+		t.exitCode = 0;
+	}
 	t.taskState = code === 0 && !problem ? "done" : code === 0 ? "warning" : "failed";
 	t.ended = Date.now();
 	updateProcesses();
-	if (t.taskState !== "done") {
+	// Not done, or output a custom script asked to be read: shown, and closed by the one reading it
+	if (t.taskState !== "done" || keepOpen) {
 		if (taskShown !== t) showTaskWindow(t);
 		setTaskOutput(t, true);
 	}
 	renderTask(t);
 	// Someone reading the output decides when it closes
-	if (t.taskState === "done" && t.autoClose && !(taskShown === t && t.outputOpen)) {
+	if (t.taskState === "done" && t.autoClose && !keepOpen && !(taskShown === t && t.outputOpen)) {
 		// The tick is seen for a moment, with a line running out, then it closes by itself. Show output keeps it open.
 		t.closing = true;
 		renderTask(t);
@@ -6405,7 +6472,7 @@ function connectTerminal(t) {
 
 // Which terminals take keys, as the server says (describe in app.py)
 const terminalInput = {};
-function openTerminal(id, title, autoClose, sites = [], running = true, scope = "main", targets = []) {
+function openTerminal(id, title, autoClose, sites = [], running = true, scope = "main", targets = [], keepOutput = false) {
 	if (terminals[id]) return activate(id);
 	const pane = el("div", { className: "pane", hidden: true });
 	const titleNode = el("span", { textContent: title });
@@ -6422,7 +6489,7 @@ function openTerminal(id, title, autoClose, sites = [], running = true, scope = 
 	term.loadAddon(fit);
 	term.open(pane);
 	const t = { id, term, fit, pane, tab, title: titleNode, taskTitle: title, sites, scope, targets: targets || [], exited: !running, ws: null, autoClose: !!autoClose, remove: null,
-		steps: [], lastLine: "", taskState: running ? "running" : "done", started: Date.now(), taskWindow: false, outputOpen: false };
+		steps: [], lastLine: "", taskState: running ? "running" : "done", started: Date.now(), taskWindow: false, outputOpen: false, keepOutput: !!keepOutput };
 	// Steps a harbor command reports: not shown in the terminal itself
 	term.parser.registerOscHandler(7777, (data) => {
 		if (!data.startsWith("harbor;")) return false;
@@ -6479,7 +6546,7 @@ function openTerminal(id, title, autoClose, sites = [], running = true, scope = 
 async function openTask(payload) {
 	const data = await api("/api/term", { json: payload });
 	terminalInput[data.id] = data.input;
-	openTerminal(data.id, data.title, data.auto_close, data.sites, data.running, data.scope, data.targets);
+	openTerminal(data.id, data.title, data.auto_close, data.sites, data.running, data.scope, data.targets, data.keep_output);
 	// An action gets a window of its own; a shell, or a task that asks for input, stays a terminal
 	if (terminals[data.id] && data.process) {
 		const t = terminals[data.id];
@@ -6514,7 +6581,7 @@ async function restoreTerminals() {
 	const { sessions } = await api("/api/term");
 	for (const s of sessions) {
 		terminalInput[s.id] = s.input;
-		openTerminal(s.id, s.title, s.auto_close, s.sites, s.running, s.scope, s.targets);
+		openTerminal(s.id, s.title, s.auto_close, s.sites, s.running, s.scope, s.targets, s.keep_output);
 		const t = terminals[s.id];
 		if (!t || !s.process) continue;
 		if (!s.running) t.taskState = s.exit === 0 && !s.output_problem ? "done" : s.exit === 0 ? "warning" : "failed";

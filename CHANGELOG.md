@@ -2,6 +2,17 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.80] - Unreleased
+
+### Features
+
+- A custom script that ends with exit 10 keeps its window open with what it printed, shown as done: a script no longer has to fail to be read. exit 0 closes it by itself as before, and New script… says so at the top of a new script
+- Snippets for a custom script in the editor: Keep the window open (exit 10 at the end, in place of an exit there), Stop at the first error (under the first line, once), a folder checked before it is used, list a folder, its size, delete empty folders, delete old files, and a heading in the output
+
+### Bug fixes
+
+- Run custom script's menu no longer jumps as the page scrolls: it moves with its button, and which way it opens (to the left when there is no room to the right, up when there is none below) is chosen once as it opens. A column that cut it off lets it show
+
 ## [1.0.79] - 2026-11-24
 
 ### Features

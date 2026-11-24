@@ -5488,7 +5488,7 @@ def describe(s):
     return {"id": s.id, "title": s.title, "running": s.running, "exit": s.exit,
             "auto_close": s.auto_close, "output_problem": s.output_problem, "sites": s.sites,
             "scope": s.scope, "targets": getattr(s, "targets", []), "process": getattr(s, "process", False),
-            "input": not getattr(s, "locked", False)}
+            "input": not getattr(s, "locked", False), "keep_output": getattr(s, "keep_output", False)}
 
 
 @app.route("/api/term", methods=["GET", "POST"])
@@ -5581,6 +5581,8 @@ def api_term():
                                   # A user's tasks take no keys; their shell in a site does (it runs as their Linux user)
                                   owner=me()["id"], locked=not is_admin() and payload.get("kind") != "shell", after=after)
         session_obj.process = terminal_process(payload)
+        # A custom script: its exit 10 is done, with its output kept open to read (KEEP_OPEN_EXIT in the page)
+        session_obj.keep_output = payload.get("kind") in ("script", "env_script") and payload.get("keep_output") is True
         SESSIONS[session_obj.id] = session_obj
     audit("Started: " + title)
     return jsonify(describe(session_obj))

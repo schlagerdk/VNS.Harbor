@@ -46,5 +46,68 @@ class ScriptsSafeTests(unittest.TestCase):
 			self.assertEqual(ns["scripts_safe"](folder), os.geteuid() == 0)
 
 
+
+class CustomScriptOutputTests(unittest.TestCase):
+	def test_exit_10_keeps_a_custom_scripts_window_open_as_done(self):
+		"""A custom script ends with exit 10 to have its output read: done, and its window stays open. Exit 0 closes by
+		itself as before, any other code is a failure (1.0.80)"""
+		text = APP_JS.read_text()
+		self.assertIn("script: file, keep_output: true }", text)
+		start = text.index("const KEEP_OPEN_EXIT")
+		finish = text[start:text.index("\n}\n", start) + 2]
+		harness = """
+let shown = 0, closing = 0;
+const updateProcesses = () => {}, renderTask = () => {}, showTaskWindow = () => {}, hideTaskWindow = () => {};
+const setTaskOutput = () => { shown += 1; };
+let taskShown = null;
+const setTimeout = () => { closing += 1; };
+%s
+const result = [];
+for (const [keepOutput, code] of [[true, 10], [true, 0], [true, 1], [false, 10]]) {
+	shown = 0; closing = 0;
+	const t = { keepOutput, autoClose: true, remove: () => {} };
+	finishTask(t, code, false);
+	result.push([t.taskState, shown, closing]);
+}
+console.log(JSON.stringify(result));
+""" % finish
+		result = subprocess.run(["node", "-e", harness], capture_output=True, text=True)
+		self.assertEqual(result.returncode, 0, result.stderr)
+		self.assertEqual(json.loads(result.stdout), [["done", 1, 0], ["done", 0, 1], ["failed", 1, 0], ["failed", 1, 0]],
+						 "10: done and open; 0: done and closing; else failed; 10 of Harbor's own tasks is a failure")
+
+
+
+class ScriptSnippetTests(unittest.TestCase):
+	def test_keep_open_goes_last_and_stop_at_errors_under_the_first_line(self):
+		"""The editor's snippets for a custom script (1.0.80): Keep the window open ends it with exit 10, in place of an
+		exit there; Stop at the first error goes under #!, once"""
+		text = APP_JS.read_text()
+		start = text.index("const scriptSnippets = ")
+		code = text[start:text.index("\nconst snippetLooks = ", start)]
+		harness = """
+let value = "", toasts = [];
+const editorValue = () => value, editorReplaceAll = (text) => { value = text; }, toast = (text) => toasts.push(text);
+%s
+const result = [];
+for (const [start, key] of [["#!/usr/bin/env bash\\necho hi\\n", "keep"], ["#!/usr/bin/env bash\\necho hi\\nexit 0\\n", "keep"],
+		["#!/usr/bin/env bash\\necho hi\\n", "strict"], ["#!/usr/bin/env bash\\nset -euo pipefail\\n", "strict"]]) {
+	value = start;
+	insertScriptSnippet(key);
+	insertScriptSnippet(key);
+	result.push(value);
+}
+console.log(JSON.stringify(result));
+""" % code
+		result = subprocess.run(["node", "-e", harness], capture_output=True, text=True)
+		self.assertEqual(result.returncode, 0, result.stderr)
+		keep = "# Done: the window stays open with what was printed (exit 0 closes it)\nexit 10\n"
+		self.assertEqual(json.loads(result.stdout), [
+			"#!/usr/bin/env bash\necho hi\n\n" + keep,
+			"#!/usr/bin/env bash\necho hi\n\n" + keep,
+			"#!/usr/bin/env bash\nset -euo pipefail\necho hi\n",
+			"#!/usr/bin/env bash\nset -euo pipefail\n"], "twice is once; an exit at the end is replaced")
+
+
 if __name__ == "__main__":
 	unittest.main()
