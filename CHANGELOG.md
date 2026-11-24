@@ -7,6 +7,7 @@ All notable changes to VNS Harbor are listed here, newest first.
 ### Features
 
 - The logo leads from Settings to the start page (Web Server, or SQL Server for one who starts there); elsewhere it does as before
+- Settings has no Refresh button: each part is read as it opens, and the part open is read again when it is clicked in the menu
 
 ## [1.0.73] - 2026-11-24
 

@@ -1963,7 +1963,6 @@ dialog label.env-choice:has(input:checked) { border-color: var(--env-tone); back
 .server-page-title { display: grid; gap: 2px; min-width: 0; }
 .server-page-title h2 { margin: 0; font-size: 26px; overflow-wrap: anywhere; }
 .server-page-title p { margin: 0; color: var(--muted); font-size: 13.5px; }
-#server-page-refresh { flex: none; }
 /* A side menu of its parts, the part to its right; on a phone the menu is a row above it */
 .server-body { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 28px; align-items: start; }
 .server-nav { position: sticky; top: 16px; display: grid; gap: 2px; padding: 10px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }

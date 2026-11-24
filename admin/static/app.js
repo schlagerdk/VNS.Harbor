@@ -8940,7 +8940,12 @@ function showToolCards() {
 	$("#server-tools-list").classList.toggle("access-layout", serverTab === "access");
 	for (const card of $("#server-tools-list").children) card.hidden = card.dataset.tool !== serverTab;
 }
-for (const tab of SERVER_TABS) $("#server-tab-" + tab).onclick = () => go("#server/" + tab);
+// A part opens from the menu; the one open, clicked again, is read again (as the logo reloads the other pages)
+for (const tab of SERVER_TABS) $("#server-tab-" + tab).onclick = () => {
+	if (tab !== serverTab || location.hash !== "#server/" + tab) return go("#server/" + tab);
+	toolsDrawn = false;
+	run(() => showServerTab(tab));
+};
 // Up and down go from part to part, as in any list of tabs (left and right on a phone, where it is a row)
 $(".server-nav").addEventListener("keydown", (event) => {
 	const step = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[event.key];
@@ -8949,16 +8954,6 @@ $(".server-nav").addEventListener("keydown", (event) => {
 	const next = SERVER_TABS[(SERVER_TABS.indexOf(serverTab) + step + SERVER_TABS.length) % SERVER_TABS.length];
 	go("#server/" + next);
 	$("#server-tab-" + next).focus();
-});
-// Refresh what is shown: the part open, or the admin site's page when that is (it is no part of the menu's own)
-$("#server-page-refresh").onclick = () => run(async () => {
-	if (currentView === "site") {
-		await loadSites();
-		renderSite(decodeURIComponent(location.hash.slice(6)));
-		return;
-	}
-	toolsDrawn = false;
-	await showServerTab(serverTab);
 });
 const serverActionDialog = $("#dlg-server-action");
 const DOTNET_CHANNELS = ["11.0", "10.0", "9.0", "8.0"];
