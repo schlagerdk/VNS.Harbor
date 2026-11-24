@@ -20,7 +20,7 @@ sandbox of its own, and builds run as the unprivileged user `vns-build`.
 
 <p align="center">
   <img src="assets/screenshots/site.jpg" alt="An Umbraco site with its environments" width="49%" />
-  <img src="assets/screenshots/server-tools.jpg" alt="Server tools: SQL Server, backups, scheduled jobs, .NET and Node.js" width="49%" />
+  <img src="assets/screenshots/settings.jpg" alt="Settings: the server's address, its mail server and the sites' keep-alive, with its tools, jobs, servers and users in the menu" width="49%" />
 </p>
 
 <p align="center">

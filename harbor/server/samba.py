@@ -110,8 +110,8 @@ def users(system):
 
 def password_from(password):
     password = password or os.environ.get(PASSWORD_VARIABLE, "")
-    if len(password) < 8 or "\n" in password:
-        raise Stop("The Samba password needs at least 8 characters.")
+    if len(password) < 6 or "\n" in password:
+        raise Stop("The Samba password needs at least 6 characters.")
     return password
 
 

@@ -179,8 +179,10 @@ class KeepAliveTests(unittest.TestCase):
                     if isinstance(n, ast.FunctionDef) and n.name == "api_keep_alive")
         api_helper = Mock(load=lambda: helper.load(config),
                           save=lambda data: helper.save(data, config), validate=helper.validate)
+        api_helper.report.load_mail.return_value = {}
+        api_helper.STATE = self.root / "state"
         ns = {"app": app, "request": request, "jsonify": jsonify, "os": os, "require_admin": lambda: None,
-              "_keep_alive_module": api_helper,
+              "is_admin": lambda: True, "audit": lambda message: None, "_keep_alive_module": api_helper,
               "error": lambda message, status: (jsonify(error=message), status)}
         exec(compile(ast.Module(body=[node], type_ignores=[]), "keep alive api", "exec"), ns)
         client = app.test_client()

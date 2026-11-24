@@ -81,6 +81,9 @@ _keep_alive_spec = importlib.util.spec_from_file_location(
     "vns_keep_alive", os.path.join(LIB_DIR, "keep_alive.py"))
 _keep_alive_module = importlib.util.module_from_spec(_keep_alive_spec)
 _keep_alive_spec.loader.exec_module(_keep_alive_module)
+_usage_spec = importlib.util.spec_from_file_location("vns_usage", os.path.join(LIB_DIR, "usage.py"))
+_usage = importlib.util.module_from_spec(_usage_spec)
+_usage_spec.loader.exec_module(_usage)
 _data_sync_spec = importlib.util.spec_from_file_location("vns_data_sync", os.path.join(LIB_DIR, "data_sync.py"))
 _data_sync_module = importlib.util.module_from_spec(_data_sync_spec)
 _data_sync_spec.loader.exec_module(_data_sync_module)
@@ -98,6 +101,10 @@ SQL_HELPER = os.path.join(LIB_DIR, "sql_admin.py")
 _sql_spec = importlib.util.spec_from_file_location("vns_sql_admin", SQL_HELPER)
 _sql_module = importlib.util.module_from_spec(_sql_spec)
 _sql_spec.loader.exec_module(_sql_module)
+_design_spec = importlib.util.spec_from_file_location("vns_sql_design", os.path.join(LIB_DIR, "sql_design.py"))
+_sql_design = importlib.util.module_from_spec(_design_spec)
+_design_spec.loader.exec_module(_sql_design)
+_sql_design.use(_sql_module)
 SQL_CONNECTIONS = os.path.join(DATA, "sql-connections.json")
 SQL_LOCK = threading.Lock()
 APACHE_SITES = "/etc/apache2/sites-available"
@@ -136,9 +143,21 @@ def api_keep_alive():
         settings = _keep_alive_module.load()
         if request.method == "PUT":
             require_admin()
-            settings = _keep_alive_module.validate(request.get_json())
+            # What is sent changes what was there: the interval alone keeps the report, and the other way round
+            changes = request.get_json(silent=True)
+            if not isinstance(changes, dict):
+                return error("Expected keep-alive settings")
+            settings = _keep_alive_module.validate({**settings, **changes})
             _keep_alive_module.save(settings)
-        return jsonify(**settings, installed=os.path.isfile("/etc/cron.d/vns-keep-alive"))
+            if "report" in changes:
+                audit("Changed the keep-alive report")
+        # When it last ran: cron starts it each minute, and it runs once the interval has gone since then
+        try:
+            last_run = int(float((_keep_alive_module.STATE / "last-run").read_text()))
+        except (OSError, ValueError):
+            last_run = None
+        return jsonify(**settings, installed=os.path.isfile("/etc/cron.d/vns-keep-alive"), last_run=last_run,
+                       mail=bool(_keep_alive_module.report.load_mail().get("host")) if is_admin() else None)
     except FileNotFoundError:
         return error("Keep-alive is not installed. Run harbor server init on this server.", 503)
     except ValueError as exc:
@@ -146,6 +165,158 @@ def api_keep_alive():
     except OSError:
         app.logger.exception("Could not read or save keep-alive settings")
         return error("Could not read or save keep-alive settings. Inspect the admin app log.", 500)
+
+
+@app.route("/api/keep-alive/log")
+def api_keep_alive_log():
+    """What keep-alive finds wrong now, what started and ended lately (newest first), and the report's last mail error"""
+    require_admin()
+    site_report = _keep_alive_module.report
+    state = _keep_alive_module.STATE
+    saved = site_report.read_json(state / "report.json", {})
+    opened = saved.get("open", {}) if isinstance(saved.get("open"), dict) else {}
+    problems = [{"name": key.split("|", 1)[0], "check": key.split("|", 1)[1], **value} for key, value in sorted(opened.items())]
+    return jsonify(problems=problems, events=list(reversed(site_report.events(state)[-200:])), checked=saved.get("checked"),
+                   mail_error=saved.get("mail_error"), checks=site_report.CHECKS)
+
+
+@app.route("/api/keep-alive/test", methods=["POST"])
+def api_keep_alive_test():
+    """A test run of keep-alive: every site checked now, and a test report mailed to the report's recipients and shown"""
+    require_admin()
+    try:
+        # The report as typed (its recipients and checks), when the dialog sends it: else the one saved
+        typed = (request.get_json(silent=True) or {}).get("report")
+        result = subprocess.run(["/usr/bin/python3", os.path.join(LIB_DIR, "keep_alive.py"), "--test-report"], capture_output=True, text=True, timeout=110,
+                                input=json.dumps(typed) if isinstance(typed, dict) else "")
+        if result.returncode and "ValueError" not in result.stderr and not result.stdout.strip():
+            return error((result.stderr.strip().splitlines() or ["The test run failed."])[-1])
+        return jsonify(json.loads(result.stdout.strip().splitlines()[-1]))
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError) as exc:
+        app.logger.error("keep-alive test report: %s", exc)
+        return error("The test run could not be made.", 502)
+
+
+@app.route("/api/usage", methods=["GET", "PUT"])
+def api_usage():
+    """The usage alerts: who is mailed when a user's site or database grows past its limit (lib/usage.py checks once
+    an hour, by cron, when they are on), and what was over at the last check"""
+    require_admin()
+    settings = _usage.load_settings(DATA)
+    if request.method == "PUT":
+        try:
+            settings = _usage.validate_settings(request.get_json(silent=True))
+            _usage.write_json(os.path.join(DATA, "usage.json"), settings)
+            sync_usage_job()
+        except ValueError as exc:
+            return error(str(exc))
+        except (OSError, subprocess.SubprocessError):
+            app.logger.exception("Could not save the usage alerts")
+            return error("The usage alerts could not be saved. Inspect the admin app log.", 500)
+        audit("Changed the usage alerts")
+    state = _keep_alive_module.report.read_json(Path(DATA) / "usage-state.json", {})
+    opened = state.get("open") if isinstance(state.get("open"), dict) else {}
+    return jsonify(**settings, installed=os.path.isfile(str(_usage.CRON)), checked=state.get("checked"), over=list(opened.values()),
+                   mail_error=state.get("mail_error"), mail=bool(_keep_alive_module.report.load_mail().get("host")))
+
+
+def sync_usage_job(check_now=False):
+    """The hourly usage check, while the alerts are on or a user has a size limit (lib/usage.py --sync). check_now: a
+    check at once as well, in the background, so a limit just changed shows (and is mailed) without waiting the hour"""
+    script = os.path.join(LIB_DIR, "usage.py")
+    subprocess.run(["/usr/bin/python3", script, "--sync", DATA], check=True, capture_output=True, text=True, timeout=30)
+    if check_now and os.path.isfile(str(_usage.CRON)):
+        subprocess.Popen(["/usr/bin/python3", script, "--data", DATA], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True)
+
+
+def usage_over(user):
+    """What of the user's is over its limit at the last check: for the warning they are shown"""
+    if access.is_admin(user):
+        return []
+    state = _keep_alive_module.report.read_json(Path(DATA) / "usage-state.json", {})
+    opened = state.get("open") if isinstance(state.get("open"), dict) else {}
+    return [item for item in opened.values() if isinstance(item, dict) and item.get("user_id") == user.get("id")]
+
+
+def user_usage(user):
+    names = {item["id"]: item.get("name") for item in _sql_module.public_connections(SQL_CONNECTIONS)} if os.path.isfile(SQL_CONNECTIONS) else {}
+    measure_site = lambda site: _usage.site_mb(site, WEB_ROOT)
+    return _usage.of_user(DATA, user, names, measure_site=measure_site)
+
+
+@app.route("/api/usage/mine")
+def api_usage_mine():
+    """What the user logged in has made, and how big each is, beside their limits"""
+    user = me()
+    if not _usage.shows_usage(user):
+        abort(404, "There is no usage of yours to show.")
+    return jsonify(user_usage(user))
+
+
+@app.route("/api/users/<user_id>/usage")
+def api_user_usage(user_id):
+    """A user's usage, as an administrator sees it from Users"""
+    require_admin()
+    user = access.find(cfg, user_id)
+    if user is None:
+        abort(404, "Unknown user")
+    return jsonify(user_usage(user))
+
+
+@app.route("/api/usage/check", methods=["POST"])
+def api_usage_check():
+    """What is over its limit now, measured at once: shown, not mailed"""
+    require_admin()
+    try:
+        result = subprocess.run(["/usr/bin/python3", os.path.join(LIB_DIR, "usage.py"), "--data", DATA, "--json"],
+                                capture_output=True, text=True, timeout=900)
+        return jsonify(json.loads(result.stdout.strip().splitlines()[-1]))
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+        app.logger.exception("usage check")
+        return error("The check could not be made. Inspect the admin app log.", 502)
+
+
+@app.route("/api/mail", methods=["GET", "PUT"])
+def api_mail():
+    """The mail server all of Harbor's mail goes through (root only on disk): its password is never sent back"""
+    require_admin()
+    site_report = _keep_alive_module.report
+    current = site_report.load_mail()
+    if request.method == "PUT":
+        try:
+            current = site_report.validate_mail(request.get_json(silent=True), current)
+            site_report.save_mail(current)
+        except ValueError as exc:
+            return error(str(exc))
+        except OSError:
+            app.logger.exception("Could not save the mail server")
+            return error("The mail server could not be saved.", 500)
+        audit("Changed the mail server")
+    return jsonify(**{key: current.get(key, default) for key, default in (("host", ""), ("port", 587), ("security", "starttls"), ("user", ""), ("sender", ""))},
+                   password_set=bool(current.get("password")))
+
+
+@app.route("/api/mail/test", methods=["POST"])
+def api_mail_test():
+    """A test mail through the mail server, to an address given"""
+    require_admin()
+    data = request.get_json(silent=True) or {}
+    to = str(data.get("to", "")).strip()
+    site_report = _keep_alive_module.report
+    if not site_report.EMAIL.fullmatch(to):
+        return error("Enter the address to send the test to.")
+    # With settings, those (as typed, not saved yet; an empty password is the one saved); without, the saved ones
+    try:
+        settings = site_report.validate_mail(data["settings"], site_report.load_mail()) if isinstance(data.get("settings"), dict) else site_report.load_mail()
+    except ValueError as exc:
+        return error(str(exc))
+    try:
+        site_report.send(settings, [to], f"[{socket.gethostname()}] Test from VNS Harbor",
+                         "This is a test from VNS Harbor. Harbor's mail, such as keep-alive's reports, comes through this mail server.\n")
+    except Exception as exc:  # noqa: BLE001  (smtplib, ssl and socket each have their own; the user is told which)
+        return error(f"The test mail could not be sent: {exc}", 502)
+    return jsonify(ok=True)
 
 
 # ---------------------------------------------------------------- security
@@ -355,13 +526,64 @@ def index():
     # A user without the Web Server starts on SQL Server, and the other way round
     if not access.is_admin(user):
         start = "sql" if (start == "sql" and user.get("sql")) or not user.get("web") else "sites"
+    else:
+        # An administrator starts where the top menu leads: on SQL Server when Web Server is not in it, and the other way
+        shown = menu_shown()
+        start = "sql" if not shown["web"] else "sites" if not shown["sql"] else start
     return render_template("index.html", csrf=csrf_token(), admin_site=ADMIN_SITE, hostname=socket.gethostname(), user=user.get("name") or user["username"],
                            start_view=start, role="admin" if access.is_admin(user) else "user")
+
+
+MENU_SETTINGS = ("auto", "show", "hide")
+
+
+def has_sites():
+    """Whether this server has sites of its own: a folder in the web root that is not the admin's"""
+    try:
+        names = site_dirs()
+    except OSError:
+        return True
+    return any(name not in (ADMIN_SITE, "html") and not os.path.isfile(os.path.join(WEB_ROOT, name, "app", "config.json")) for name in names)
+
+
+def menu_shown():
+    """Web Server and SQL Server in the top menu for an administrator, {"web": bool, "sql": bool}: as set, or (auto)
+    Web Server while there are sites here, SQL Server while SQL Server is installed here or there is a SQL connection.
+    One of them is always shown: the admin has a start page."""
+    shown = {"web": menu_part_shown("web_menu", has_sites), "sql": menu_part_shown("sql_menu", sql_in_use)}
+    if not shown["web"] and not shown["sql"]:
+        shown["web" if cfg.get("web_menu", "auto") != "hide" or cfg.get("sql_menu", "auto") == "hide" else "sql"] = True
+    return shown
+
+
+def menu_part_shown(key, in_use):
+    setting = cfg.get(key, "auto")
+    return setting == "show" if setting in ("show", "hide") else in_use()
+
+
+def sql_in_use():
+    """SQL Server or the SQL tools installed here (with the tools, SQL Servers elsewhere are reached), or a SQL connection"""
+    if os.path.exists("/opt/mssql/bin/sqlservr") or _sql_module.sqlcmd_path():
+        return True
+    try:
+        return bool(_sql_module.connections(SQL_CONNECTIONS))
+    except (OSError, ValueError):
+        return True
 
 
 @app.route("/api/preferences", methods=["PUT"])
 def api_preferences():
     data = request.get_json(silent=True) or {}
+    if "sql_menu" in data or "web_menu" in data:
+        # Whether Web Server and SQL Server are in the top menu: the server's, for its administrators
+        require_admin()
+        changes = {key: data[key] for key in ("web_menu", "sql_menu") if key in data}
+        if any(value not in MENU_SETTINGS for value in changes.values()):
+            return error("In the menu is auto, show or hide.")
+        with CONFIG_LOCK:
+            cfg.update(changes)
+            save_config()
+        return jsonify(menu={"web": cfg.get("web_menu", "auto"), "sql": cfg.get("sql_menu", "auto")}, shown=menu_shown())
     if "public_address" in data:
         # The server's address as the internet sees it, for a server behind NAT: what DNS records point to
         require_admin()
@@ -1604,6 +1826,46 @@ def own_like_parent(path):
 
 # ----------------------------------------------------------------- sites API
 
+def local_sa_password(data, adding=False):
+    """sa on SQL Server here, without a password typed: the sa password Harbor keeps (it set SQL Server up)"""
+    local = str(data.get("host", "")).strip().strip("[]").lower() in ("localhost", "127.0.0.1", "::1", ".", socket.gethostname().lower())
+    if (adding or data.get("harbor_password")) and not data.get("password") and str(data.get("username", "")).strip().lower() == "sa" and local:
+        try:
+            with open("/etc/harbor/secrets/sql.json", encoding="utf-8") as stream:
+                data["password"] = json.load(stream).get("sa_password", "")
+        except (OSError, ValueError):
+            abort(400, "Harbor has no sa password for SQL Server here: type it.")
+
+
+@app.route("/api/sql/connections/test", methods=["POST"])
+def api_sql_connection_test():
+    """A connection as typed, tried without saving it: whether it logs in, and what SQL Server says when it does not"""
+    user = me()
+    if not (access.is_admin(user) or user.get("manage_connections")):
+        abort(403, "The SQL connections are locked for you.")
+    if not _sql_module.sqlcmd_path():
+        return error("Install SQL command-line tools on the admin server first.", 409)
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        abort(400, "Expected a connection object")
+    source = "Harbor's own sa" if data.get("harbor_password") else "typed" if data.get("password") else "saved"
+    local_sa_password(data, True)
+    # Editing one with the password left blank: the saved one
+    if data.get("id") and not data.get("password"):
+        try:
+            data["password"] = _sql_module.connection(SQL_CONNECTIONS, data["id"])["password"]
+        except ValueError:
+            pass
+    settings = {key: data.get(key) for key in ("name", "host", "username", "password")} | {
+        "name": data.get("name") or "Test", "port": int(data.get("port") or 1433), "trust_certificate": data.get("trust_certificate") is True}
+    try:
+        rows = _sql_module.databases(settings)
+    except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
+        return jsonify(ok=False, error=str(_sql_module.connect_error(settings, exc, source)))
+    user_databases = [row["name"] for row in rows if row.get("id", 0) > 4]
+    return jsonify(ok=True, databases=len(user_databases))
+
+
 @app.route("/api/sql/connections", methods=["GET", "POST", "PUT", "DELETE"])
 def api_sql_connections():
     try:
@@ -1626,15 +1888,19 @@ def api_sql_connections():
                 data = request.get_json(silent=True)
                 if not isinstance(data, dict):
                     abort(400, "Expected a connection object")
+                source = "Harbor's own sa" if data.get("harbor_password") else "typed" if data.get("password") else "saved"
+                local_sa_password(data, request.method == "POST")
+                # It is tried before it is saved: a connection that cannot log in is not kept
+                check = (lambda fields: _sql_module.check_login(fields, source)) if data.get("test", True) is not False else None
                 if request.method == "PUT":
                     if not isinstance(data.get("id"), str) or not data["id"]:
                         abort(400, "Select a SQL connection")
                     if not owns_connection(data["id"]):
                         abort(403, "This connection is locked for you.")
-                    identifier = _sql_module.edit_connection(SQL_CONNECTIONS, data, data["id"])
+                    identifier = _sql_module.edit_connection(SQL_CONNECTIONS, data, data["id"], check=check)
                     audit("Changed SQL connection " + str(data.get("name") or identifier))
                 else:
-                    identifier = _sql_module.add_connection(SQL_CONNECTIONS, data)
+                    identifier = _sql_module.add_connection(SQL_CONNECTIONS, data, check=check)
                     audit("Added SQL connection " + str(data.get("name") or identifier))
                     # What a user makes is theirs: every database on it, and every action
                     if not access.is_admin(user):
@@ -1665,7 +1931,8 @@ def api_sql_query(connection_id):
         with SQL_LOCK:
             settings = _sql_module.connection(SQL_CONNECTIONS, connection_id)
         started = time.time()
-        output = _sql_module.run_query(settings, data.get("database"), data.get("query"))
+        # Not an administrator: the script is kept to the database it was given for
+        output = _sql_module.run_query(settings, data.get("database"), data.get("query"), sandbox=not access.is_admin(me()))
         results, messages = _sql_module.parse_results(output)
         return jsonify(results=results, messages=messages, seconds=round(time.time() - started, 2),
                        output=output.replace(_sql_module.COLUMN_SEPARATOR, " | "))
@@ -1688,6 +1955,100 @@ def api_sql_tables(connection_id):
     except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
         app.logger.error("SQL tables failed: %s", exc)
         return error(str(exc), 502)
+
+
+def sql_settings(connection_id):
+    with SQL_LOCK:
+        return _sql_module.connection(SQL_CONNECTIONS, connection_id)
+
+
+SQL_SYSTEM_DATABASES = {"master", "model", "msdb", "tempdb"}
+
+
+def sql_failure(exc):
+    """What SQL Server said, for the dialog that sent it: it is what the person needs to put right"""
+    if isinstance(exc, ValueError):
+        return error(str(exc))
+    return jsonify(error=_sql_design.readable(exc)[-20000:]), 422
+
+
+@app.route("/api/sql/<connection_id>/table", methods=["GET", "POST"])
+def api_sql_table(connection_id):
+    """A table's columns for the designer (GET), or a change to a table (POST: create, alter, rename, drop), as its SQL
+    first (run false) and then run"""
+    data = request.get_json(silent=True) or {} if request.method == "POST" else request.args
+    database = data.get("database", "")
+    require_sql(connection_id, database, "view" if request.method == "GET" else "tables")
+    try:
+        settings = sql_settings(connection_id)
+        if request.method == "GET":
+            table = _sql_design.read_table(settings, database, data.get("schema") or "dbo", data.get("table", "")) if data.get("table") else None
+            # A new table is made in one of the database's schemas
+            schemas = [] if table else _sql_design.schemas(settings, database)
+            return jsonify(table=table, schemas=schemas, types=_sql_design.OFFERED, functions=_sql_design.FUNCTIONS,
+                           length_types=_sql_design.LENGTH_TYPES, max_types=sorted(_sql_design.MAX_TYPES),
+                           decimal_types=sorted(_sql_design.DECIMAL_TYPES), scale_types=sorted(_sql_design.SCALE_TYPES))
+        action, schema, table = data.get("action"), data.get("schema") or "dbo", data.get("table", "")
+        # SQL Server's own databases are not designed here: a table changed in them can break the server
+        if str(database).strip().lower() in SQL_SYSTEM_DATABASES:
+            return error(f"{database} is one of SQL Server's own databases: its tables are not changed here.", 403)
+        if action == "create":
+            sql = _sql_design.plan_create(schema, table, data.get("columns"))
+        elif action == "alter":
+            sql = _sql_design.plan_alter(_sql_design.read_table(settings, database, schema, table), data.get("columns"))
+        elif action == "rename":
+            sql = _sql_design.plan_rename(schema, table, data.get("new_name", ""))
+        elif action == "drop":
+            if data.get("confirmation") != table:
+                return error("Type the table's name to drop it.")
+            sql = _sql_design.plan_drop(schema, table)
+        else:
+            return error("Unknown table action")
+        if data.get("run") is True:
+            _sql_design.apply(settings, sql, database)
+            audit(f"SQL table {action}: {database}.{schema}.{table}")
+        return jsonify(sql=sql, ran=data.get("run") is True)
+    except (ValueError, OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        return sql_failure(exc)
+
+
+@app.route("/api/sql/<connection_id>/logins", methods=["GET", "POST"])
+def api_sql_logins(connection_id):
+    """The SQL logins of the server and the databases they reach (GET), or a change to one (POST), its SQL first (with
+    the password masked) and then run. An administrator's, and a user's who may change logins on the connection: they
+    see the databases they may, and change only the logins that reach no other database, never a sysadmin"""
+    require_sql(connection_id, None, "logins")
+    try:
+        settings = sql_settings(connection_id)
+        found = scoped_logins(me(), connection_id, _sql_design.logins(settings))
+        if request.method == "GET":
+            return jsonify(**found)
+        data = request.get_json(silent=True) or {}
+        current = next((item for item in found["logins"] if item["name"] == data.get("name")), None)
+        if current is not None and current.get("protected") and not access.is_admin(me()):
+            return error("This login reaches databases that are not yours, or is a sysadmin: an administrator changes it.", 403)
+        if data.get("action") in ("unsysadmin",) and not access.is_admin(me()):
+            return error("Only an administrator takes sysadmin away.", 403)
+        if not access.is_admin(me()) and any(not isinstance(item, dict) or item.get("database") not in found["databases"]
+                                             for item in data.get("databases") or []):
+            return error("You may give a login only the databases you have.", 403)
+        if data.get("action") != "create" and current is None:
+            return error("No such login")
+        if data.get("action") == "create" and current is not None:
+            return error("There is a login of that name")
+        if data.get("action") == "delete" and data.get("confirmation") != data.get("name"):
+            return error("Type the login's name to delete it.")
+        sql = _sql_design.plan_login(data.get("action"), data, settings, current)
+        if data.get("run") is True:
+            _sql_design.apply(settings, sql)
+            audit(f"SQL login {data.get('action')}: {data.get('name')}")
+            # A login a user makes is theirs to see and change, also before it has a database
+            if data.get("action") in ("create", "delete") and not access.is_admin(me()):
+                change = access.record_made if data["action"] == "create" else access.forget_made
+                grant(me()["id"], lambda target: change(target, "logins", data.get("name"), connection_id))
+        return jsonify(sql=_sql_design.masked(sql, data.get("password")), ran=data.get("run") is True)
+    except (ValueError, OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        return sql_failure(exc)
 
 
 @app.route("/api/sql/<connection_id>")
@@ -2317,7 +2678,12 @@ def api_server_crontab():
     if request.method == "GET":
         try:
             result = subprocess.run(["/usr/bin/python3", HARBOR_COMMAND, "server", "crontab", "list"], capture_output=True, text=True, timeout=30)
-            return jsonify(entries=json.loads(result.stdout))
+            entries = json.loads(result.stdout)
+            # Harbor's backups are suggested while SQL Server and the SQL tools are here
+            sql_ready = os.path.exists("/opt/mssql/bin/sqlservr") and any(os.access(path, os.X_OK) for path in ("/opt/mssql-tools18/bin/sqlcmd", "/opt/mssql-tools/bin/sqlcmd"))
+            harbor_jobs = {entry.get("harbor") for entry in entries if isinstance(entry, dict)}
+            # Each of Harbor's jobs that is not in cron: removed, it is suggested again
+            return jsonify(entries=entries, suggest=[job for job in ("backup_everything", "shrink_logs") if sql_ready and job not in harbor_jobs])
         except (OSError, subprocess.SubprocessError, ValueError) as exc:
             app.logger.error("harbor server crontab list: %s", exc)
             return error("Root's crontab could not be read.", 502)
@@ -2477,7 +2843,11 @@ def server_tool_command(data):
     if tool == "tools_uninstall":
         return "Remove SQL tools", harbor + ["sql", "uninstall-sql-tools", "--yes"], env
     if tool in ("cron_on", "cron_off"):
-        return ("Turn on" if tool == "cron_on" else "Turn off") + " SQL backups", harbor + ["server", "cron", tool[5:]], env
+        # One of Harbor's jobs (as Scheduled jobs suggests it), or both
+        job = data.get("job")
+        if job is not None and job not in ("backup_everything", "shrink_logs"):
+            abort(400, "Not one of Harbor's jobs")
+        return ("Turn on" if tool == "cron_on" else "Turn off") + " SQL backups", harbor + ["server", "cron", tool[5:], *(["--job", job] if job else [])], env
     if tool in ("dotnet_install", "dotnet_update", "dotnet_remove"):
         channel = data.get("channel")
         if not isinstance(channel, str) or not re.fullmatch(r"[0-9]{1,2}\.0", channel) or int(channel.split(".")[0]) < 8:
@@ -2501,8 +2871,8 @@ def server_tool_command(data):
         # Root's Samba password never on the command line. Sharing a server whose root has one already needs none.
         password = data.get("samba_password")
         if password or tool == "samba_password":
-            if not isinstance(password, str) or len(password) < 8 or len(password) > 128 or "\n" in password:
-                abort(400, "The Samba password needs at least 8 characters")
+            if not isinstance(password, str) or len(password) < 6 or len(password) > 128 or "\n" in password:
+                abort(400, "The Samba password needs at least 6 characters")
             env["HARBOR_SAMBA_PASSWORD"] = password
         if tool == "samba_on":
             return "Share the server over Samba", harbor + ["server", "samba", "on"], env
@@ -2533,8 +2903,8 @@ def server_tool_command(data):
             abort(400, "A user name is lower case letters, digits, - and _")
         if tool != "samba_delete_user":
             password = data.get("samba_password")
-            if not isinstance(password, str) or len(password) < 8 or len(password) > 128 or "\n" in password:
-                abort(400, "The Samba password needs at least 8 characters")
+            if not isinstance(password, str) or len(password) < 6 or len(password) > 128 or "\n" in password:
+                abort(400, "The Samba password needs at least 6 characters")
             env["HARBOR_SAMBA_PASSWORD"] = password
         action = {"samba_add_user": "add-user", "samba_user_password": "user-password", "samba_delete_user": "delete-user"}[tool]
         title = {"add-user": f"Add the Samba user {name}", "user-password": f"Give {name} a new Samba password", "delete-user": f"Delete the Samba user {name}"}[action]
@@ -3205,6 +3575,26 @@ def owns_connection(identifier):
     return access.is_admin(user) or bool(((user.get("connections") or {}).get(identifier) or {}).get("owned"))
 
 
+def scoped_logins(user, connection_id, found):
+    """The logins as a user who is not an administrator sees them: only the databases they may view, and a login that
+    reaches any other, or is a sysadmin, kept from them"""
+    if access.is_admin(user):
+        return found
+    mine = [database for database in found["databases"] if access.can_sql(user, connection_id, database, "view")]
+    made = set(((user.get("made") or {}).get("logins") or {}).get(connection_id, []))
+    logins = []
+    for login in found["logins"]:
+        reached = [item["database"] for item in login["databases"] + login.get("unlinked", [])]
+        # Theirs: it reaches only their databases, and one at least, or they made it. Others' are not shown at all:
+        # sa, a sysadmin, a login of another database, or one of no database someone else made
+        if login.get("sysadmin") or login["protected"] or not all(database in mine for database in reached):
+            continue
+        if not reached and login["name"] not in made:
+            continue
+        logins.append(dict(login, protected=False))
+    return dict(found, logins=logins, databases=mine)
+
+
 def require_sql(identifier, database, action):
     if not access.can_sql(me(), identifier, database, action):
         abort(403, "You do not have access to this database." if database else "You do not have access to this connection.")
@@ -3265,11 +3655,18 @@ def api_me():
     admin = access.is_admin(user)
     return jsonify(id=user["id"], username=user["username"], name=user.get("name", ""), admin=admin, root=user["id"] == access.ROOT,
                    web=admin or bool(user.get("web")), sql=admin or bool(user.get("sql")),
-                   create_sites=admin or bool(user.get("create_sites")), manage_connections=admin or bool(user.get("manage_connections")),
+                   # Made as many as they may: the buttons that make one more are not shown (the server refuses it too)
+                   create_sites=admin or bool(user.get("create_sites")) and not access.may_make(user, "sites", lambda made: os.path.isdir(os.path.join(WEB_ROOT, made))),
+                   manage_connections=admin or bool(user.get("manage_connections")),
+                   usage=_usage.shows_usage(user), usage_over=usage_over(user),
                    sites={} if admin else {site: {"envs": grant.get("envs", []), "new_envs": grant.get("new_envs", False),
                                                   "known": grant.get("known", []), "actions": grant.get("actions", [])}
                                            for site, grant in (user.get("sites") or {}).items()},
-                   connections={} if admin else user.get("connections", {}))
+                   # A connection where they have made as many databases as they may: full, so Create and Copy are not shown
+                   connections={} if admin else {connection: dict(grant, full=bool(access.may_make(user, "databases", connection=connection)))
+                                                  for connection, grant in (user.get("connections") or {}).items()},
+                   menu=menu_shown() if admin else {"web": bool(user.get("web")), "sql": bool(user.get("sql"))},
+                   menu_setting={"web": cfg.get("web_menu", "auto"), "sql": cfg.get("sql_menu", "auto")})
 
 
 LINUX_USERS_LOCK = threading.Lock()
@@ -3414,6 +3811,11 @@ def api_users():
         save_config()
     linux_users_changed()
     audit("Created user " + user["username"] + " (" + user["role"] + ")")
+    # A size limit given or taken away: the hourly check runs while one is there
+    try:
+        sync_usage_job(check_now=True)
+    except (OSError, subprocess.SubprocessError):
+        app.logger.exception("Could not set the usage check's cron job")
     return jsonify(user=access.public(user))
 
 
@@ -3456,6 +3858,11 @@ def api_user(user_id):
         save_config()
     linux_users_changed()
     audit("Changed user " + user["username"])
+    # A size limit given or taken away: the hourly check runs while one is there
+    try:
+        sync_usage_job(check_now=True)
+    except (OSError, subprocess.SubprocessError):
+        app.logger.exception("Could not set the usage check's cron job")
     return jsonify(user=access.public(user))
 
 
@@ -4047,8 +4454,8 @@ def build_command(data):
             if data["action"] in ("copy", "restore"):
                 _sql_module.identifier(data.get("target", ""))
             if data.get("login") is not None:
-                if data["action"] not in ("restore", "copy"):
-                    abort(400, "SQL login creation is only supported for restore or copy")
+                if data["action"] not in ("create", "restore", "copy"):
+                    abort(400, "SQL login creation is only supported for create, restore or copy")
                 _sql_module.validate_restore_login(data)
         except ValueError as exc:
             abort(400, str(exc))
@@ -4718,7 +5125,16 @@ def authorize_task(data):
                     pass
                 if made in databases:
                     deny()
-            return lambda status: status == 0 and grant(uid, lambda target: access.grant_database(target, identifier, made))
+            # One more of their own: within how many they may make
+            if made not in (((user.get("made") or {}).get("databases") or {}).get(identifier) or []):
+                refused = access.may_make(user, "databases", connection=identifier)
+                if refused:
+                    abort(403, refused)
+            return lambda status: status == 0 and grant(uid, lambda target: access.grant_database(target, identifier, made)
+                                                       | access.record_made(target, "databases", made, identifier))
+        if action == "drop":
+            # One of theirs gone: it no longer counts against how many they may make
+            return lambda status: status == 0 and grant(uid, lambda target: access.forget_made(target, "databases", database, identifier))
         return None
     if not (user.get("web")):
         deny()
@@ -4790,8 +5206,13 @@ def authorize_task(data):
             if data.get("remove_here"):
                 need("main", "delete")
         name = data.get("name") or data.get("folder") or data.get("new_site") or ""
+        # One more of their own: within how many they may make (those still there count)
+        refused = access.may_make(user, "sites", lambda made: os.path.isdir(os.path.join(WEB_ROOT, made)))
+        if refused:
+            abort(403, refused)
         before = set(site_dirs())
-        return lambda status: status == 0 and grant(uid, lambda target: [access.grant_site(target, made) for made in set(site_dirs()) - before])
+        return lambda status: status == 0 and grant(uid, lambda target: [access.grant_site(target, made) | access.record_made(target, "sites", made)
+                                                                         for made in set(site_dirs()) - before])
     elif kind == "fix_permissions":
         need((data.get("target") or "prod") if data.get("scope") == "prod" else "main", "files")
     elif kind == "change_binding":
@@ -4803,6 +5224,8 @@ def authorize_task(data):
         if scope == "all":
             for env in ["main", *target_ids(os.path.join(WEB_ROOT, site))]:
                 need(env, "delete")
+            # Gone: it no longer counts against how many sites they may make
+            return lambda status: status == 0 and not os.path.isdir(os.path.join(WEB_ROOT, site)) and grant(uid, lambda target: access.forget_made(target, "sites", site))
         else:
             need("main" if scope == "test" else data.get("target") or "prod", "delete")
     else:

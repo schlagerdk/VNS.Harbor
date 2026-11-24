@@ -2,6 +2,72 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.70] - 2026-11-24
+
+### Features
+
+- Settings is a page of its own, beside Web Server and SQL Server (for administrators), opening on General; its menu is Harbor, Servers, This server and Software, with SSH and Samba as one part, Access: SSH and Samba side by side, and Samba's shares and users as lines in two cards beside each other, in place of dialogs opened one from another: a side menu with each tool as a part of its own (SQL Server, .NET, Node.js, SSH, Samba), then Scheduled jobs, Settings, Servers and Users (#server/sql, #server/jobs, …). On a phone the menu is a row above the part
+- Users are cards, three beside each other with what each may reach, and a dashed card after them adds one
+- The tools are cards, three beside each other with their buttons at the bottom: SQL Server, SQL tools and the sa password a card each, .NET a card each version, Samba a card for itself and, while it is on, each share and each user under their headings (and dashed cards to add a version, a share or a user)
+- The backups are in Scheduled jobs: once SQL Server and its tools are here, the backup and the log shrink are each suggested while it is not in cron, and added with a click (harbor server cron on --job); removed, it is suggested again
+- Settings are cards too, saved as they are changed: the top menu and an administrator's own start page in one, the public address as it is found (set by hand in a dialog, only where it cannot be), and the keep-alive with Turn on or off and its interval
+- Tools, Servers and Users are no longer in the menus; Preferences, the start page, is in the menu only for a user who is not an administrator and has both Web Server and SQL Server
+- A job is added or changed in a dialog of its own
+- The top menu and start page are a part of Settings of their own (Top menu); General has the public address and the mail server beside each other, keep-alive under them
+- Admin site is in the Settings menu under Harbor, no longer in the Tools menu: its page (#admin-site) belongs to Settings, which the top menu shows and its back link leads to
+- Windows is a part of Settings under Harbor (Import sites and Copy sites as cards, while there is a Windows server or environment), no longer in the Tools menu
+- The admin site's page is shown in Settings, to the right of its menu, with Admin site chosen there
+- The Tools button is gone: Processes (while something runs), Files and Terminal are one group at the top, by the account (Terminal opens the terminals open, or a new shell when there are none; + in the terminals' bar opens another), and Updates is a part of Settings under Harbor (the version here, Check for updates, the update with what changed, and Roll back). The version is shown beside the server's name at the top, with Update available beside it when there is one
+- Apache is a part of Settings under This server (its config, a test of it, its error logs and a restart, a card each), no longer in the Tools menu
+- A Samba share's folder can be chosen with Browse…, through the server's folders
+- Keep-alive keeps a log of what is wrong with the sites and environments: not answering, a certificate error, a certificate that expires within 14 days, a service that has failed, and a site stopped while it is live (visitors see the page that says it is updating). Log shows what is wrong now and what broke and was solved lately. The card says when it ran last and runs next
+- Test run in the email report's dialog checks every site now and mails a test report to the addresses typed there, shown as it is sent, before anything is saved; Send test in the mail server's dialog tries what is typed there the same way
+- Keep-alive's email report: to one address or more, when something breaks (and when it works again), once a day, or both, about the checks chosen. It goes through Harbor's mail server, set up under General for all the mail Harbor sends (SMTP with STARTTLS, SSL or none, its password kept for root only), with Send test
+- The page is called Settings in the top menu, with a gear, and its own settings part General; the quick menu of Shell, files, Apache and updates is called Tools, with a terminal icon
+- Servers: three beside each other, with a dashed card after them that adds one; another Harbor server has Open admin, its own admin in a new tab
+- Settings: what is in the top menu beside Server, one choice of four: Automatic (Web Server while there are sites here, SQL Server while it or the SQL tools are installed here, or there is a SQL connection), both, Web Server only or SQL Server only. The admin opens on the one there is
+
+- SQL Server: tables are made and changed as in Management Studio. New table and Design open a designer with a line per column: its name, a SQL Server type (nvarchar, decimal, datetime2 …) with its length, precision or scale, NULL, a default (a value, or GETDATE(), NEWID() and the like), identity and the primary key. Review SQL shows the SQL it makes (one transaction: renames, retyping, defaults, columns added and dropped, the key moved), and Run runs it. A table's rows open with Select top 1000, and a table is renamed in the designer or dropped (its name typed to confirm). Users are given this as Create and change tables
+- SQL Server: the server's logins are a panel of their own, for administrators: a login is added with its password and the databases it may use with their roles (owner, datareader, datawriter, ddladmin, backupoperator), and its databases and roles changed, its password changed, locked and let in again, or deleted (with its user in each database). Its password needs 6 characters: the logins made here are not held to SQL Server's password policy. sa and the connection's own login are left alone
+- A password typed in a dialog reaches the server again: the field shows only dots, and the forms sent those dots, so a SQL connection to another server was refused with the right password typed (since 1.0.45, seen now that a connection is tried before it is saved). The eye beside it shows the password itself
+- A new table's schema is chosen among the database's own schemas (dbo first) in place of a text field, and Add a column has room under it
+- SQL Server's own databases (master, model, msdb, tempdb) are read only in the table list: their tables can be read, not designed, dropped or added to, and the server refuses it too
+- A login's whole line opens its databases and roles
+- Usage limits: a user who may make sites can be given how many they may make and how big each may grow, and each SQL connection where they may create or copy databases the same of its databases. How many is held when they make, copy or restore to a new one, and New site, Create database and Copy are not shown once they have made as many as they may. Once an hour Harbor measures each site and database a user made, and Usage alerts under Settings, General mails the recipients set there when one grows past its limit, and when it is under again; Check now measures at once and shows every site and database the users made, by user, beside its limit, with what is over in red
+- A user past a limit sees a red warning across the top, of the sites on Web Server and of the databases on SQL Server, with what is over and by how much, and See usage; the hourly check runs while a user has a size limit, also with the alerts off. The alert mail lists, under what changed, every site and database the users made with its size and limit
+- Usage in the user menu shows a user what they have made and how big each is, beside their limits, as meters (amber near a limit, red past it); an administrator sees the same with Usage on the user's card under Users
+- The header's Terminal button is not shown to a user for a moment while the page loads
+- Empty lists of databases and logins show a big icon, what goes there and the button that makes the first; their tab counts only the user's own databases
+- The SQL page loads with a spinner in the connection's box (and in a database's tables), with no line that pushes the page; Edit connection, Create database and Backup all show only as they will stay, and one connection there is nothing to choose or change on has no box at all, its name by the heading
+- A user who is not an administrator sees only the logins of their own databases and those they made, never sa or a sysadmin
+- A user's SQL connection gives every database, only their own (those they make, copy or restore to, also before they have made one, with Create databases) or chosen ones, as segments
+- Users can be given Logins (create and change them) on a SQL connection: they see the Logins of their own databases, and may change a login only when it reaches none other and is not a sysadmin
+- A database's tables folded out under it no longer light up all at once under the pointer
+- Logins show a sysadmin as one (every database, in place of the databases whose dbo it happens to be), with a button that takes sysadmin away. A user of a login's name left without it (a database from another server) is shown, and a button links it to the login
+- Create database makes a login of its own that owns it, as harbor sql create does (a chip turns it off); a new login's password needs 6 characters, as elsewhere
+- The SQL page keeps the connection chosen last, also after a reload, and shows its databases, backups and logins one at a time under tabs with their counts, the one chosen kept. Add connection takes Refresh's place beside the connection, and Add login sits in the Logins header as Create database does in Databases'
+- Query sends a typed script to SQL Server only as hex run by sp_executesql: sqlcmd's own commands in it ran (!! ran a shell command as root on the admin server, :r read a file)
+- A user who is not an administrator is kept to the database a query is run on: the script runs as its dbo, which cannot revert, so other databases and the server are out of reach; SQL Server's own and TRUSTWORTHY databases are refused them
+- A refused SQL login says which password it tried (typed, saved or Harbor's own sa), its length and whether it begins or ends with a blank, without showing it
+- A query's columns fit what they hold: ids, GUIDs, numbers and dates are as wide as their values, and text such as a name takes the rest, also while its values are short. The SQL connection's password fields have an eye that shows what is in them
+- Query has Snippets: the T-SQL most often written (select, insert, update, delete, count, find, a transaction, create a table, add a column, an index, table sizes, who is connected …), put in at the cursor with the table it was opened on. A change made in a table's rows shows its rows again under it
+- Add SQL connection has Test connection, which tries what is typed without saving it, and Save says it is trying to log in while it does, and why not under the fields when it cannot
+- The screenshots in the README show the new layout
+
+### Fixes
+
+- The name and the server at the top no longer wrap when the top is full: Files and Terminal show their icons alone below 1400 pixels
+- A Samba password needs 6 characters, not 8
+- The email report tells of what was wrong before it took it in (turned on, or a check chosen later), once: it told only of what changed after
+- A SQL connection is tried before it is saved, and one that cannot log in is not kept (a wrong sa password was saved, and every action then failed with Login failed for user 'sa'). For sa on this server there is no password field: Harbor's own sa password is used (a browser filled the field with another saved password, and the login failed)
+- A scheduled job's row no longer jumps when its log is opened, and the log opens once it is read, at its own height
+- Add job keeps Cancel and Add job at the bottom while the form scrolls (Browse… open, say)
+- Cards to choose from (Linux or Windows in Add server, and the like) share the dialog's full width
+- Add server opened for one kind (a Windows server from Import from Windows, a Linux server's card) offers only that kind, and says which in its title
+- The dashed card that adds the first server wraps its text, which ran out of the card
+- A server's admin site is told from a Python site, which also runs from its app folder: Servers named a Python site as the admin of a server that had one
+- Opening the Server page no longer shows the page's own loading under the part's
+
 ## [1.0.69] - 2026-11-24
 
 ### Features

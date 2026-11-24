@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import re
+import socket
 import subprocess
 import sys
 import tempfile
@@ -18,6 +19,9 @@ _domains_spec = importlib.util.spec_from_file_location(
 _domains = importlib.util.module_from_spec(_domains_spec)
 _domains_spec.loader.exec_module(_domains)
 service_name = _domains.service_name
+_report_spec = importlib.util.spec_from_file_location("vns_site_report", Path(__file__).with_name("site_report.py"))
+report = importlib.util.module_from_spec(_report_spec)
+_report_spec.loader.exec_module(report)
 
 
 CONFIG = Path("/etc/vns/keep-alive.json")
@@ -26,8 +30,11 @@ DEFAULTS = {"enabled": True, "interval_minutes": 5}
 
 
 def validate(data):
-    if not isinstance(data, dict) or set(data) != set(DEFAULTS):
+    """enabled and interval_minutes, and the report of what is wrong with the sites (site_report), when it has one"""
+    if not isinstance(data, dict) or not set(DEFAULTS) <= set(data) <= set(DEFAULTS) | {"report"}:
         raise ValueError("Expected enabled and interval_minutes settings")
+    if "report" in data:
+        data = {**data, "report": report.validate_report(data["report"])}
     if not isinstance(data["enabled"], bool):
         raise ValueError("Enabled must be a boolean")
     interval = data["interval_minutes"]
@@ -60,8 +67,10 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def warm_sites(web_root=Path("/var/www"), services=Path("/etc/systemd/system"),
-               configs=Path("/etc/apache2/sites-available")):
+               configs=Path("/etc/apache2/sites-available"), results=None, certificates=None):
+    """Request each active site here. With results, what is wrong with each is added to it: {name, problems}."""
     opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoRedirect())
+    certificates = certificates or report.certificate_problems
     failures = []
     for folder in sorted(web_root.iterdir()):
         if not folder.is_dir() or folder.is_symlink():
@@ -78,6 +87,13 @@ def warm_sites(web_root=Path("/var/www"), services=Path("/etc/systemd/system"),
             state = subprocess.run(["systemctl", "is-active", unit], capture_output=True,
                                    text=True, timeout=10)
             if state.returncode in (3, 4):
+                # Failed by itself, or stopped while Apache still serves it (visitors see the page that says it is
+                # updating): each a problem of its own, so the report can leave out a site stopped on purpose
+                if results is not None:
+                    if state.stdout.strip() == "failed":
+                        results.append({"name": folder.name, "problems": {"service": f"{unit} has failed"}})
+                    elif (Path("/etc/apache2/sites-enabled") / (folder.name + ".conf")).exists():
+                        results.append({"name": folder.name, "problems": {"stopped": "Visitors see the page that says it is updating"}})
                 continue
             if state.returncode != 0:
                 raise RuntimeError("Could not read service state")
@@ -92,14 +108,24 @@ def warm_sites(web_root=Path("/var/www"), services=Path("/etc/systemd/system"),
                 "http://127.0.0.1:" + next(iter(ports)) + "/",
                 headers={"Host": binding[1], "X-Forwarded-Proto": "https" if ":443>" in config else "http",
                          "User-Agent": "VNS-KeepAlive", "Cache-Control": "no-cache"})
+            problems = {}
             try:
                 with opener.open(request, timeout=15) as response:
                     response.read(1)
             except urllib.error.HTTPError as exc:
                 # A redirect or login challenge still proves the application received the request.
                 if exc.code not in (301, 302, 303, 307, 308, 401, 403):
-                    raise RuntimeError(f"HTTP {exc.code}") from None
+                    problems["down"] = f"HTTP {exc.code}"
                 exc.close()
+            except (OSError, urllib.error.URLError) as exc:
+                problems["down"] = str(getattr(exc, "reason", exc))
+            # Its certificate as Apache here serves it, by its name
+            if ":443>" in config and results is not None:
+                problems.update(certificates(binding[1], "127.0.0.1"))
+            if results is not None:
+                results.append({"name": folder.name, "problems": problems})
+            if "down" in problems:
+                raise RuntimeError(problems["down"])
         except (OSError, ValueError, RuntimeError, urllib.error.URLError, subprocess.SubprocessError) as exc:
             print(f"Keep-alive failed for {folder.name}: {exc}", file=sys.stderr)
             failures.append(folder.name)
@@ -140,11 +166,12 @@ def environment_urls(web_root=Path("/var/www")):
     return urls
 
 
-def warm_environments(web_root=Path("/var/www"), opener=None, results=None):
+def warm_environments(web_root=Path("/var/www"), opener=None, results=None, found=None, certificates=None):
     """Request the public address of environments on other servers, Linux and Windows alike.
     How each one answered is saved in results, as site/id: {state, checked, error}, so the admin can show
     whether an environment without SSH, on IIS, is running."""
     opener = opener or urllib.request.build_opener(NoRedirect())
+    certificates = certificates or report.certificate_problems
     failures = []
     answers = {}
     for name, url in environment_urls(web_root):
@@ -163,6 +190,11 @@ def warm_environments(web_root=Path("/var/www"), opener=None, results=None):
             print(f"Keep-alive failed for {name} ({url}): {error}", file=sys.stderr)
             failures.append(name)
         answers[name] = {"state": "failed" if error else "active", "checked": int(time.time()), "error": error}
+        if found is not None:
+            problems = {"down": error} if error else {}
+            if url.startswith("https://"):
+                problems.update(certificates(url.split("/")[2]))
+            found.append({"name": name, "problems": problems})
     if results is not None:
         try:
             results.parent.mkdir(parents=True, exist_ok=True)
@@ -203,8 +235,14 @@ def run(config=CONFIG, state=STATE):
         if 0 <= now - last < settings["interval_minutes"] * 60:
             return True
         previous.write_text(str(now), encoding="utf-8")
-        local = warm_sites()
-        remote = warm_environments(results=state / "environments.json")
+        found = []
+        local = warm_sites(results=found)
+        remote = warm_environments(results=state / "environments.json", found=found)
+        # What is wrong goes into the log, and to the report's recipients as it says
+        try:
+            report.record(found, settings.get("report"), state, now=now)
+        except OSError as exc:
+            print(f"Keep-alive could not keep its log: {exc}", file=sys.stderr)
         return local and remote
 
 
@@ -231,10 +269,21 @@ def install(config=CONFIG, cron=Path("/etc/cron.d/vns-keep-alive")):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--install", action="store_true")
+    parser.add_argument("--test-report", action="store_true", help="check every site now, mail a test report, and print it as JSON")
     args = parser.parse_args()
     try:
         if args.install:
             install()
+            return 0
+        if args.test_report:
+            found = []
+            warm_sites(results=found)
+            warm_environments(found=found)
+            settings = load()
+            # A report as typed in the admin, not saved yet, comes on stdin
+            given = sys.stdin.read() if not sys.stdin.isatty() else ""
+            chosen = report.validate_report({**json.loads(given), "enabled": False}) if given.strip() else settings.get("report")
+            print(json.dumps(report.test_report(found, chosen, socket.gethostname())))
             return 0
         return 0 if run() else 1
     except (OSError, ValueError) as exc:

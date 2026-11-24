@@ -83,11 +83,13 @@ def save_connections(path, items):
             os.unlink(temporary)
 
 
-def add_connection(path, data):
-    return edit_connection(path, data)
+def add_connection(path, data, check=None):
+    return edit_connection(path, data, check=check)
 
 
-def edit_connection(path, data, connection_id=None):
+def edit_connection(path, data, connection_id=None, check=None):
+    """A connection added, or changed. check(fields), when given, tries it before it is saved: a ValueError keeps it
+    from being saved."""
     items = connections(path)
     existing = next((item for item in items if item["id"] == connection_id), None)
     if connection_id is not None and existing is None:
@@ -97,6 +99,8 @@ def edit_connection(path, data, connection_id=None):
     fields = {}
     for key in ("name", "host", "username", "password", "backup_directory"):
         value = data.get(key)
+        if key == "password" and value == "":
+            raise ValueError("Type the password of the SQL login.")
         if not isinstance(value, str) or not value or "\0" in value or len(value) > 1024:
             raise ValueError("Invalid connection field: " + key)
         fields[key] = value if key == "password" else value.strip()
@@ -117,12 +121,22 @@ def edit_connection(path, data, connection_id=None):
     host = fields["host"].strip("[]").rstrip(".").casefold()
     if any(item["id"] != connection_id and item["host"].strip("[]").rstrip(".").casefold() == host and item["port"] == port for item in items):
         raise ValueError("A connection to this SQL host and port already exists")
+    if check:
+        check(fields)
     if existing:
         items = [fields if item["id"] == connection_id else item for item in items]
     else:
         items.append(fields)
     save_connections(path, items)
     return fields["id"]
+
+
+def check_login(settings, source="saved"):
+    """Whether the connection logs in: a ValueError that says why, in plain words, when it does not"""
+    try:
+        databases(settings)
+    except (RuntimeError, OSError, subprocess.SubprocessError) as error:
+        raise ValueError(str(connect_error(settings, error, source))) from None
 
 
 def remove_connection(path, identifier):
@@ -184,13 +198,54 @@ def execute(settings, query, table=False, timeout=3600, database="master", separ
         os.unlink(filename)
 
 
-def run_query(settings, database, query):
-    """A script typed in the admin, run against one database. Returns what sqlcmd prints."""
+# A line that ends a batch, as sqlcmd reads it: GO, maybe a count, maybe a comment after it
+GO_LINE = re.compile(r"[ \t]*go(?:[ \t]+(\d+))?[ \t]*(?:--.*)?", re.IGNORECASE)
+SYSTEM_DATABASES = {"master", "model", "msdb", "tempdb"}
+
+
+def script_batches(script):
+    """The batches of a script split at its GO lines, each with how many times it runs"""
+    found, lines = [], []
+    for line in script.replace("\r\n", "\n").split("\n"):
+        match = GO_LINE.fullmatch(line)
+        if match:
+            found.append(("\n".join(lines), min(int(match.group(1) or 1), 1000)))
+            lines = []
+        else:
+            lines.append(line)
+    found.append(("\n".join(lines), 1))
+    return [(batch, count) for batch, count in found if batch.strip()]
+
+
+def sealed_script(script, sandbox=False):
+    """A typed script as sqlcmd gets it: each batch as hex, run with sp_executesql, so sqlcmd never reads a line of it.
+    sqlcmd's own commands in it (!! ran a shell command as the admin's user, :r read a file, :out wrote one) are then
+    only text SQL Server refuses. In a sandbox the batches run as the database's dbo, which cannot revert: SQL Server
+    keeps it to that database, with nothing on the server (1.0.70)"""
+    parts = ["EXECUTE AS USER = N'dbo' WITH NO REVERT;", "GO"] if sandbox else []
+    for batch, count in script_batches(script):
+        parts += [f"DECLARE @vns_batch nvarchar(max) = CAST(0x{batch.encode('utf-16-le').hex()} AS nvarchar(max));",
+                  "EXEC sys.sp_executesql @vns_batch;", "GO" + (f" {count}" if count > 1 else "")]
+    return "\n".join(parts)
+
+
+def run_query(settings, database, query, sandbox=False):
+    """A script typed in the admin, run against one database. Returns what sqlcmd prints. A sandbox (a user who is not
+    an administrator) keeps it to that database."""
     if not isinstance(database, str) or not database or len(database) > 128 or any(char in database for char in "\0\r\n"):
         raise ValueError("Choose a database")
     if not isinstance(query, str) or not query.strip() or len(query) > 1024 * 1024:
         raise ValueError("Enter a script of at most 1 MB")
-    output = execute(settings, query, table=True, timeout=300, database=database, separator=COLUMN_SEPARATOR)
+    if sandbox:
+        if database.lower() in SYSTEM_DATABASES:
+            raise ValueError(f"{database} is one of SQL Server's own databases: an administrator queries it.")
+        # TRUSTWORTHY lets a database's dbo act on the server too: then the sandbox holds nothing
+        found = query_json(settings, "SELECT CAST(is_trustworthy_on AS int) AS trustworthy FROM sys.databases WHERE name=" + literal(database))
+        if not found:
+            raise ValueError("Unknown database")
+        if found[0]["trustworthy"]:
+            raise ValueError(f"{database} is TRUSTWORTHY, which would let a script act on the whole server: an administrator queries it.")
+    output = execute(settings, sealed_script(query, sandbox), table=True, timeout=300, database=database, separator=COLUMN_SEPARATOR)
     if len(output) > 2 * 1024 * 1024:
         output = output[:2 * 1024 * 1024] + "\n… output cut at 2 MB"
     return output
@@ -426,8 +481,8 @@ def validate_restore_login(data):
     if username.casefold() in {"dbo", "guest", "sys", "information_schema"}:
         raise ValueError("Choose a username other than a built-in database user")
     password = data.get("login_password")
-    if not isinstance(password, str) or not 8 <= len(password) <= 128 or any(char in password for char in ("\0", "\r", "\n")):
-        raise ValueError("The new SQL login password must be 8-128 characters without line breaks")
+    if not isinstance(password, str) or not 6 <= len(password) <= 128 or any(char in password for char in ("\0", "\r", "\n")):
+        raise ValueError("The new SQL login password must be 6-128 characters without line breaks")
     return username, password
 
 
@@ -601,13 +656,22 @@ ACTION_STEPS = {"backup_all": "Back up every database", "create": "Create {name}
                 "copy": "Copy {name} to {target}", "restore": "Restore {target}", "delete_backup": "Delete the backup file of {name}"}
 
 
-def connect_error(settings, error):
+def tried_password(password, source="saved"):
+    """Which password a refused login tried, without showing it: where it came from, how long it is, and blanks at its
+    ends, which a password typed by hand never has"""
+    blanks = " It begins or ends with a blank." if password != password.strip() else ""
+    count = len(password)
+    return f"It tried the {source} password of {count} character{'' if count == 1 else 's'}.{blanks}"
+
+
+def connect_error(settings, error, source="saved"):
     """What a failed first connection means, in place of what sqlcmd says of it"""
     text = str(error)
     where = f'{settings["host"]}:{settings["port"]}'
     if "Login failed" in text:
-        return RuntimeError(f"SQL Server on {where} refused the login of {settings['username']}: the connection's password is not "
-                            "the one SQL Server has. Edit the connection and give it the right one.")
+        return RuntimeError(f"SQL Server on {where} refused the login of {settings['username']}: the password does not match the "
+                            f"one SQL Server has. {tried_password(settings.get('password') or '', source)} Edit the connection and "
+                            "give it the right one.")
     if any(sign in text for sign in ("Login timeout expired", "Server is not found", "TCP Provider", "network-related")):
         return RuntimeError(f"No SQL Server answers on {where}. Install SQL Server in Server tools, start it, or edit the connection "
                             "to point to a server that runs one.")
@@ -652,7 +716,13 @@ def run_action(settings, data):
     if action == "create":
         if current:
             raise ValueError("Database already exists")
+        # With a login of its own, db_owner in it, as harbor sql create makes one (create_db.sh did)
+        login = validate_restore_login(data) if data.get("login") is not None else None
+        if login and query_json(settings, "SELECT name FROM sys.server_principals WHERE name=" + literal(login[0])):
+            raise ValueError(f"There is a SQL login {login[0]} already. Choose another name for the new one.")
         execute(settings, f"CREATE DATABASE {identifier(name)};")
+        if login:
+            create_restore_login(settings, name, *login)
     elif action == "backup":
         if current["state"] != "ONLINE" or current.get("is_in_standby", False):
             raise ValueError("Backups require an online database that is not in standby")

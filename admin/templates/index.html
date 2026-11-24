@@ -34,11 +34,13 @@
 <header class="page-header">
   <a class="brand" href="#sites" title="All sites">
     <img class="logo" src="/static/harbor-mark.svg" width="38" height="38" alt="">
-    <span><h1>VNS Harbor</h1><span class="host">{{ hostname }}</span></span>
+    <span><h1>VNS Harbor</h1><span class="host">{{ hostname }}<span id="header-version" class="header-version"></span></span></span>
   </a>
+  <a id="system-update-badge" class="header-update" href="#server/updates" hidden>Update available</a>
   <nav class="view-switch" aria-label="Section">
-    <button type="button" id="switch-sites" data-view="sites">Web Server</button>
-    <button type="button" id="switch-sql" data-view="sql">SQL Server</button>
+    <button type="button" id="switch-sites" data-view="sites"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20ZM2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg><span>Web Server</span></button>
+    <button type="button" id="switch-sql" data-view="sql"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zM4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg><span>SQL Server</span></button>
+    <button type="button" id="switch-server" data-view="server" hidden><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span>Settings</span></button>
   </nav>
   <div class="search-box">
     <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
@@ -48,42 +50,39 @@
   </div>
   <span class="spacer"></span>
   <div id="server-ips" class="server-ips" role="group" aria-label="Server addresses" hidden></div>
-  <div class="processes">
-    <button id="btn-processes" class="ghost" title="Processes" aria-haspopup="true" aria-expanded="false" hidden><span class="process-indicator" aria-hidden="true"></span><span class="btn-label">Processes</span> <span id="process-count" class="count"></span></button>
-    <div id="processes-menu" class="menu processes-menu" hidden>
-      <div class="menu-group-title">Processes</div>
-      <ul id="process-list" class="process-list"></ul>
+  <!-- The server's shell and files, and the terminals open, at hand from any page: one group, as the sections are -->
+  <div class="header-tools" role="group" aria-label="Server">
+    <div class="processes">
+      <button id="btn-processes" class="ghost" title="Processes" aria-haspopup="true" aria-expanded="false" hidden><span class="process-indicator" aria-hidden="true"></span><span class="btn-label">Processes</span> <span id="process-count" class="count"></span></button>
+      <div id="processes-menu" class="menu processes-menu" hidden>
+        <div class="menu-group-title">Processes</div>
+        <ul id="process-list" class="process-list"></ul>
+      </div>
     </div>
+    <button id="header-files" type="button" class="admin-only" title="This server's files, from /"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg><span class="btn-label">Files</span></button>
+    <button id="btn-dock" type="button"{% if role != "admin" %} hidden{% endif %} title="A shell on this server; with terminals open, them (Ctrl+`)"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 17l6-6-6-6M12 19h8"/></svg><span class="btn-label">Terminal</span><span id="term-count" class="count" hidden></span></button>
   </div>
-  <button id="btn-dock" class="ghost" title="Terminals (Ctrl+`)" hidden>⌨<span class="btn-label"> Terminals</span> <span id="term-count" class="count" hidden></span></button>
   <div class="user">
-    <button id="btn-settings" class="ghost" title="Server" aria-label="Server" aria-haspopup="true">⚙<span class="btn-label"> Server</span> <span id="system-update-badge" class="badge system-update-available" hidden>Update available</span></button>
+    <button id="btn-settings" class="ghost" hidden aria-hidden="true" tabindex="-1"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 17l6-6-6-6M12 19h8"/></svg></button>
     <div id="settings-menu" class="menu" hidden>
-      <!-- No titles: the lines between the groups say enough. Shell and files, tools and servers, Apache and Windows, the admin. -->
+      <!-- No titles: the lines between the groups say enough. Shell and files, Apache and Windows, the admin. Tools and servers are on the Server page. -->
       <div class="menu-group" role="group" aria-label="Shell and files">
         <button id="btn-server-shell" type="button">Shell</button>
         <button id="btn-browse" type="button">Files (/)</button>
       </div>
-      <div class="menu-group" role="group" aria-label="Tools and servers">
-        <button id="settings-server-tools" type="button">Tools…</button>
-        <button id="settings-servers" type="button">Servers…</button>
-      </div>
-      <div class="menu-group" role="group" aria-label="Apache and Windows">
-        <button id="settings-apache-fold" type="button" class="menu-fold" data-icon="feather" data-fold-tone="teal" aria-expanded="false" aria-controls="settings-apache-sub">Apache</button>
+      <div class="menu-group" role="group" aria-label="Moved to Settings" hidden>
+        <button id="settings-apache-fold" type="button" class="menu-fold" data-icon="feather" data-fold-tone="teal" aria-expanded="false" aria-controls="settings-apache-sub" hidden>Apache</button>
         <div id="settings-apache-sub" class="menu-sub" hidden>
           <button id="settings-apache-conf" type="button" title="/etc/apache2/apache2.conf">Edit conf</button>
           <button id="settings-apache-test" type="button">Test config</button>
           <button id="settings-apache-logs" type="button">Error logs</button>
           <button id="settings-restart-apache" type="button" class="menu-danger" title="Restart Apache: all sites on this server are briefly unavailable">Restart</button>
         </div>
-        <button id="settings-windows-fold" type="button" class="menu-fold" data-icon="windows" data-fold-tone="blue" aria-expanded="false" aria-controls="settings-windows-sub">Windows</button>
-        <div id="settings-windows-sub" class="menu-sub" hidden>
+        <button id="settings-windows-fold" type="button" class="menu-fold" data-icon="windows" data-fold-tone="blue" aria-expanded="false" aria-controls="settings-windows-sub" hidden>Windows</button>
+        <div id="settings-windows-sub" class="menu-sub" hidden data-settings-only>
           <button id="settings-windows-move" type="button" title="Copy a site's environment from a Windows server here, while it stays live there">Copy sites…</button>
           <button id="settings-windows-import" type="button" title="Import sites from a Windows server's share">Import sites…</button>
         </div>
-      </div>
-      <div id="settings-admin-group" class="menu-group" role="group" aria-label="Admin" hidden>
-        <button id="settings-admin-site" type="button" hidden>Admin site</button>
       </div>
       <div class="settings-footer">
         <span id="settings-version" class="settings-version"></span>
@@ -96,25 +95,94 @@
     <button id="btn-user" class="avatar" title="Account" aria-haspopup="true">{{ user[:1]|upper }}</button>
     <div id="user-menu" class="menu" hidden>
       <div class="menu-head"><b id="menu-user">{{ user }}</b><span class="muted">{{ "Administrator" if role == "admin" else "User" }}</span></div>
-      <button id="menu-users" type="button" class="admin-only">Users…</button>
       <button id="menu-audit" type="button" class="admin-only">Activity log…</button>
       <button id="menu-preferences" type="button">Preferences…</button>
       <button id="menu-profile" type="button">Profile…</button>
+      <button id="menu-usage" type="button" hidden>Usage…</button>
       <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button type="submit" id="menu-logout">Log out</button></form>
     </div>
   </div>
 </header>
 <main>
+  <!-- A user past a limit of theirs is told so on every page, until it is under again -->
+  <div id="usage-banner" class="usage-banner" role="alert" hidden></div>
+  <section id="view-server" class="server-page" hidden>
+    <div class="server-page-head">
+      <span class="server-page-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="7" rx="2"/><rect x="3" y="13" width="18" height="7" rx="2"/><path d="M7 7.5h.01M7 16.5h.01"/></svg></span>
+      <div class="server-page-title"><h2>{{ hostname }}</h2><p id="server-tools-os">What this server has for its sites</p></div>
+      <span class="spacer"></span>
+      <button type="button" id="server-page-refresh">Refresh</button>
+    </div>
+    <div class="server-body">
+      <nav class="server-nav" role="tablist" aria-label="Server" aria-orientation="vertical">
+        <div class="server-nav-group">Harbor</div>
+        <button type="button" role="tab" id="server-tab-settings" data-tab="settings" aria-controls="server-pane-settings" aria-selected="false"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M2 14h4M10 8h4M18 16h4"/></svg><span>General</span></button>
+        <button type="button" role="tab" id="server-tab-menu" data-tab="menu" aria-controls="server-pane-menu" aria-selected="false"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"/></svg><span>Top menu</span></button>
+        <button type="button" role="tab" id="server-tab-updates" data-tab="updates" aria-controls="server-pane-updates" aria-selected="false"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8M21 3v5h-5"/></svg><span>Updates</span></button>
+        <button type="button" role="tab" id="server-tab-users" data-tab="users" aria-controls="server-pane-users" aria-selected="false"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg><span>Users</span></button>
+        <button type="button" id="server-tab-admin" class="server-nav-link" hidden><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6z"/></svg><span>Admin site</span></button>
+        <div class="server-nav-group">Servers</div>
+        <button type="button" role="tab" id="server-tab-servers" data-tab="servers" aria-controls="server-pane-servers" aria-selected="false"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h16v6H4zM4 14h16v6H4zM8 7h.01M8 17h.01"/></svg><span>Servers</span></button>
+        <button type="button" role="tab" id="server-tab-windows" data-tab="windows" aria-controls="server-pane-windows" aria-selected="false" hidden><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 5l8-1v8H3zM13 3.8 21 3v9h-8zM3 13h8v7l-8-1zM13 13h8v8l-8-1z"/></svg><span>Windows</span></button>
+        <div class="server-nav-group">This server</div>
+        <button type="button" role="tab" id="server-tab-apache" data-tab="apache" aria-controls="server-pane-apache" aria-selected="false"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.24 12.24a6 6 0 0 0-8.49-8.49L5 10.5V19h8.5zM16 8 2 22M17.5 15H9"/></svg><span>Apache</span></button>
+        <button type="button" role="tab" id="server-tab-jobs" data-tab="jobs" aria-controls="server-pane-jobs" aria-selected="false"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM12 6v6l4 2"/></svg><span>Scheduled jobs</span></button>
+        <button type="button" role="tab" id="server-tab-access" data-tab="access" aria-controls="server-pane-tools" aria-selected="false"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 11h14v10H5zM8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Access</span></button>
+        <div class="server-nav-group">Software</div>
+        <button type="button" role="tab" id="server-tab-dotnet" data-tab="dotnet" aria-controls="server-pane-tools" aria-selected="false"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2l9 5v10l-9 5-9-5V7zM9 9l6 6M15 9l-6 6"/></svg><span>.NET</span></button>
+        <button type="button" role="tab" id="server-tab-node" data-tab="node" aria-controls="server-pane-tools" aria-selected="false"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2l9 5v10l-9 5-9-5V7zM12 8v8M9 10v4M15 10v4"/></svg><span>Node.js</span></button>
+        <button type="button" role="tab" id="server-tab-sql" data-tab="sql" aria-controls="server-pane-tools" aria-selected="false"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zM4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg><span>SQL Server</span></button>
+      </nav>
+      <div class="server-content">
+        <div id="server-pane-tools" class="server-pane" role="tabpanel" hidden>
+          <div id="server-tools-list" class="server-tools" aria-busy="true"></div>
+        </div>
+        <div id="server-pane-jobs" class="server-pane" role="tabpanel" aria-labelledby="server-tab-jobs" hidden>
+        <div class="server-pane-head"><div><h3>Scheduled jobs <span id="crontab-count" class="server-pane-count"></span></h3><p id="crontab-text">What this server runs on a schedule, as root</p></div><button type="button" id="crontab-add" class="primary">＋ Add job</button></div>
+          <ul id="crontab-list" class="crontab-list" aria-busy="true"></ul>
+        </div>
+        <div id="server-pane-settings" class="server-pane" role="tabpanel" aria-labelledby="server-tab-settings" hidden>
+          <div class="server-pane-head"><div><h3>General</h3><p>How this server is reached, the mail it sends, and how its sites are kept ready</p></div></div>
+          <div id="server-settings-list" class="server-tools" aria-busy="true"></div>
+        </div>
+        <div id="server-pane-servers" class="server-pane" role="tabpanel" aria-labelledby="server-tab-servers" hidden>
+        <div class="server-pane-head"><div><h3>Servers <span id="servers-count" class="server-pane-count"></span></h3><p id="servers-release">Other servers this Harbor works with</p></div></div>
+          <div id="servers-list" class="server-tools" aria-busy="true"></div>
+        </div>
+        <div id="server-pane-apache" class="server-pane" role="tabpanel" aria-labelledby="server-tab-apache" hidden>
+          <div class="server-pane-head"><div><h3>Apache</h3><p>The web server in front of every site here</p></div></div>
+          <div id="server-apache-list" class="server-tools"></div>
+        </div>
+        <div id="server-pane-windows" class="server-pane" role="tabpanel" aria-labelledby="server-tab-windows" hidden>
+          <div class="server-pane-head"><div><h3>Windows</h3><p>Sites from a Windows server: imported here, or an environment copied while it stays live there</p></div></div>
+          <div id="server-windows-list" class="server-tools"></div>
+        </div>
+        <div id="server-pane-updates" class="server-pane" role="tabpanel" aria-labelledby="server-tab-updates" hidden>
+          <div class="server-pane-head"><div><h3>Updates</h3><p>The version of Harbor here, its updates, and going back</p></div></div>
+          <div id="server-updates-list" class="server-tools"></div>
+        </div>
+        <div id="server-pane-admin" class="server-pane" role="tabpanel" aria-labelledby="server-tab-admin" hidden></div>
+        <div id="server-pane-menu" class="server-pane" role="tabpanel" aria-labelledby="server-tab-menu" hidden>
+          <div class="server-pane-head"><div><h3>Top menu</h3><p>What is beside Settings at the top, and where the admin opens</p></div></div>
+          <div id="server-menu-list" class="server-tools"></div>
+        </div>
+        <div id="server-pane-users" class="server-pane" role="tabpanel" aria-labelledby="server-tab-users" hidden>
+        <div class="server-pane-head"><div><h3>Users <span id="users-count" class="server-pane-count"></span></h3><p id="users-text">Who can log in here, and what each of them may do</p></div></div>
+          <div id="users-list" class="server-tools users-list"></div>
+        </div>
+      </div>
+    </div>
+  </section>
   <section id="view-sql" hidden>
     <div id="sql-heading" class="detail-title sql-heading" hidden>
-      <h2>SQL Server</h2><span class="spacer"></span>
-      <button id="sql-add-connection" type="button" class="primary">Add connection</button>
+      <h2>SQL Server <span id="sql-only-connection" class="sql-only-connection" hidden></span></h2>
     </div>
     <div id="sql-connection-bar" class="panel sql-connection-bar" hidden>
       <label>Connection <select id="sql-connection"><option value="">Choose a connection...</option></select></label>
       <button id="sql-edit-connection" type="button" hidden>Edit connection</button>
+      <span id="sql-loading" class="sql-loading" role="status" hidden><span class="sql-connection-spinner" aria-hidden="true"></span>Loading…</span>
       <span class="spacer"></span>
-      <button id="sql-refresh" type="button" hidden>Refresh</button>
+      <button id="sql-add-connection" type="button" class="primary">Add connection</button>
     </div>
     <div id="sql-tools-required" class="sites-empty" hidden>
       <div class="sites-empty-icon" aria-hidden="true">
@@ -133,6 +201,12 @@
       <button id="sql-empty-add-connection" class="primary" type="button">Add connection</button>
     </div>
     <p id="sql-status" role="status" hidden></p>
+    <!-- What the page shows: its databases, their backups or the server's logins, one at a time -->
+    <nav id="sql-tabs" class="sql-tabs" role="tablist" aria-label="SQL Server" hidden>
+      <button type="button" role="tab" data-tab="databases" data-icon="database">Databases <span id="sql-databases-count" class="sql-tab-count"></span></button>
+      <button type="button" role="tab" data-tab="backups" data-icon="archive">Backups <span id="sql-backups-count" class="sql-tab-count"></span></button>
+      <button type="button" role="tab" data-tab="logins" data-icon="user">Logins <span id="sql-logins-count" class="sql-tab-count"></span></button>
+    </nav>
     <div id="sql-databases-panel" class="panel sql-table" hidden>
       <div class="sql-databases-header">
         <h3>Databases</h3>
@@ -141,6 +215,7 @@
           <button id="sql-backup-all" type="button" hidden>Backup all</button>
         </div>
       </div>
+      <div id="sql-databases-empty" hidden></div>
       <table id="sql-user-databases-table" hidden><thead><tr><th>Name</th><th class="num">Size</th><th>State</th><th>Recovery</th><th>Actions</th></tr></thead><tbody id="sql-databases"></tbody></table>
       <details id="sql-system-databases" class="sql-system-databases">
         <summary id="sql-system-summary">System databases</summary>
@@ -150,6 +225,14 @@
     <div id="sql-backups-panel" class="panel sql-table" hidden><h3>Full backups</h3>
       <p class="hint">Latest 200 full disk backups from SQL Server history, plus .bak files in the connection's backup directory that are not in that history. The latest of each database first; Older shows the ones before it. Paths are on the SQL server; historical files may have been overwritten, moved or deleted.</p>
       <table><thead><tr><th>Database</th><th>Finished</th><th class="num">Size</th><th>Server path</th><th>Actions</th></tr></thead><tbody id="sql-backups"></tbody></table>
+    </div>
+    <!-- The server's SQL logins and the databases each reaches: an administrator's -->
+    <div id="sql-logins-panel" class="panel sql-table" hidden>
+      <div class="sql-databases-header"><h3>Logins</h3>
+        <div class="sql-databases-actions"><button id="sql-add-login" type="button">Add login</button></div>
+      </div>
+      <p id="sql-logins-hint" class="hint">SQL Server's own logins, and the databases each may use with its roles there. sa and this connection's login are changed elsewhere.</p>
+      <div id="sql-logins" class="sql-logins"></div>
     </div>
   </section>
   <dialog id="dlg-sql-connection" class="newsite">
@@ -167,7 +250,8 @@
       <div class="ns-section">SQL credentials</div>
       <div class="ns-grid">
         <label>SQL username <input name="username" required autocomplete="off" value="sa"></label>
-        <label>Password <input name="password" type="password" required autocomplete="new-password" aria-describedby="sql-password-help"><span id="sql-password-help" class="hint" hidden>Leave blank to keep the saved password.</span></label>
+        <label id="sql-password-row">Password <input name="password" type="password" autocomplete="new-password" data-lpignore="true" data-1p-ignore aria-describedby="sql-password-help"><span id="sql-password-help" class="hint"></span></label>
+        <p id="sql-password-harbor" class="sql-password-harbor" hidden>Harbor's own sa password is used: it set SQL Server up here, and keeps it.</p>
       </div>
       <div class="ns-section">Backups</div>
       <label>Backup directory on SQL server <input name="backup_directory" required value="/var/opt/mssql/backup"></label>
@@ -192,7 +276,8 @@
         <p class="hint">Like production setup: an empty password uses the admin server's SSH key. During editing, leave blank to keep a saved password; disable SSH access and save to remove its credentials. First connection accepts a new host key; changed keys are rejected.</p>
       </fieldset>
       <p class="hint sql-connection-note">Credentials are stored in a root-only file on the admin server. The SQL login needs database and backup administration privileges; sqlcmd must be installed.</p>
-      <menu><button id="sql-connection-cancel" type="button" class="cancel-link">Cancel</button><button id="sql-remove-connection" type="button" class="danger" tabindex="-1" hidden>Remove connection</button><button type="submit" class="primary">Save connection</button></menu>
+      <p id="sql-connection-said" class="sql-connection-said" role="status" hidden></p>
+      <menu><button id="sql-connection-cancel" type="button" class="cancel-link">Cancel</button><button id="sql-remove-connection" type="button" class="danger" tabindex="-1" hidden>Remove connection</button><button id="sql-connection-test" type="button">Test connection</button><button id="sql-connection-save" type="submit" class="primary">Save connection</button></menu>
     </form>
   </dialog>
   <dialog id="dlg-snippet" class="newsite">
@@ -368,6 +453,7 @@
   <div class="dock-window">
     <div class="dock-bar">
       <div id="tabs"></div>
+      <button id="dock-new" class="ghost small dock-new admin-only" type="button" title="A new shell on this server" aria-label="New shell">+</button>
       <span class="spacer"></span>
       <button id="dock-size" class="ghost small" title="Maximize / restore">⤢</button>
       <button id="dock-close" class="ghost small" title="Hide (processes keep running)">✕</button>
@@ -460,13 +546,14 @@
       <div><h2 id="sql-database-title"></h2><p id="sql-database-description"></p></div>
     </header>
     <label>Database name<input name="database" required maxlength="128" autocomplete="off" placeholder="New database name"></label>
+    <label id="sql-database-make-login" class="design-chip sql-make-login" hidden><input type="checkbox" name="make_login" checked><span>Also make a login for it</span></label>
     <fieldset id="sql-database-login" hidden disabled>
       <legend>New SQL login</legend>
       <p class="hint">Creates a new login with db_owner access. Existing logins cannot be reused. Password policy and expiration are disabled.</p>
       <label>Username<input name="login" required maxlength="128" autocomplete="off"></label>
       <div class="ns-grid">
-        <label>Password<input name="password" type="password" required minlength="8" maxlength="128" autocomplete="new-password"></label>
-        <label>Repeat password<input name="confirmation" type="password" required minlength="8" maxlength="128" autocomplete="new-password"></label>
+        <label>Password<input name="password" type="password" required minlength="6" maxlength="128" autocomplete="new-password"></label>
+        <label>Repeat password<input name="confirmation" type="password" required minlength="6" maxlength="128" autocomplete="new-password"></label>
       </div>
     </fieldset>
     <p id="sql-database-error" class="error" role="alert"></p>
@@ -775,34 +862,37 @@
   </form>
 </dialog>
 
-<dialog id="dlg-server-tools" class="newsite server-tools-dialog" aria-labelledby="server-tools-title">
-  <div class="ns-head">
-    <span class="ns-icon" data-header-icon="server" aria-hidden="true"></span>
-    <div><h2 id="server-tools-title">Server tools</h2><p id="server-tools-os">What this server has for its sites</p></div>
-  </div>
-  <div id="server-tools-list" class="server-tools" aria-busy="true"></div>
-  <menu><button type="button" id="server-tools-refresh" class="cancel-link">Refresh</button><button type="button" id="server-tools-close">Close</button></menu>
-</dialog>
 
-<dialog id="dlg-servers" class="newsite server-tools-dialog" aria-labelledby="servers-title">
-  <div class="ns-head">
-    <span class="ns-icon" data-header-icon="server" aria-hidden="true"></span>
-    <div><h2 id="servers-title">Servers</h2><p id="servers-release">Other servers this Harbor works with</p></div>
-  </div>
-  <div class="users-toolbar servers-toolbar"><span id="servers-count" class="muted"></span><button type="button" id="servers-add" class="primary">＋ Add server</button></div>
-  <div id="servers-list" class="server-tools" aria-busy="true"></div>
-  <menu><button type="button" id="servers-refresh" class="cancel-link">Refresh</button><button type="button" id="servers-close">Close</button></menu>
-</dialog>
 
-<dialog id="dlg-crontab" class="newsite server-tools-dialog crontab-dialog" aria-labelledby="crontab-title">
+
+<dialog id="dlg-crontab-form" class="newsite crontab-dialog editing" aria-labelledby="crontab-form-title">
   <div class="ns-head">
     <span class="ns-icon" data-header-icon="clock" aria-hidden="true"></span>
-    <div><h2 id="crontab-title">Scheduled jobs</h2><p>What this server runs on a schedule (root's crontab)</p></div>
+    <div><h2 id="crontab-form-title">Add job</h2><p id="crontab-form-text">Something for root to run on a schedule</p></div>
   </div>
-  <div class="users-toolbar servers-toolbar"><span id="crontab-count" class="muted"></span><button type="button" id="crontab-add" class="primary">＋ Add job</button></div>
-  <ul id="crontab-list" class="crontab-list" aria-busy="true"></ul>
-  <form id="crontab-form" class="crontab-form" hidden></form>
-  <menu><button type="button" id="crontab-refresh" class="cancel-link">Refresh</button><button type="button" id="crontab-close">Close</button></menu>
+  <form id="crontab-form" class="crontab-form"></form>
+</dialog>
+
+<dialog id="dlg-mail-preview" class="newsite server-action-dialog" aria-labelledby="mail-preview-title">
+  <form method="dialog">
+    <header class="ns-head">
+      <span class="ns-icon" data-header-icon="send" aria-hidden="true"></span>
+      <div><h2 id="mail-preview-title">Test report</h2><p id="mail-preview-text"></p></div>
+    </header>
+    <div id="mail-preview-content" class="server-action-fields"></div>
+    <menu><button type="submit" class="cancel-link">Close</button></menu>
+  </form>
+</dialog>
+
+<dialog id="dlg-form" class="newsite server-action-dialog" aria-labelledby="form-dialog-title">
+  <form method="dialog" id="form-dialog">
+    <header class="ns-head">
+      <span class="ns-icon" id="form-dialog-icon" aria-hidden="true"></span>
+      <div><h2 id="form-dialog-title"></h2><p id="form-dialog-text"></p></div>
+    </header>
+    <div id="form-dialog-fields" class="server-action-fields"></div>
+    <menu><button type="button" id="form-dialog-cancel" class="cancel-link">Cancel</button><span id="form-dialog-extra" class="form-dialog-extra"></span><button type="submit" id="form-dialog-ok" class="primary"></button></menu>
+  </form>
 </dialog>
 
 <dialog id="dlg-server-action" class="newsite server-action-dialog" aria-labelledby="server-action-title">
@@ -869,15 +959,6 @@
   </form>
 </dialog>
 
-<dialog id="dlg-users" class="newsite users-dialog" aria-labelledby="users-title">
-  <div class="ns-head">
-    <span class="ns-icon" data-header-icon="user" aria-hidden="true"></span>
-    <div><h2 id="users-title">Users</h2><p>Who can log in here, and what each of them may do.</p></div>
-  </div>
-  <div class="users-toolbar"><span id="users-count" class="muted"></span><button type="button" id="users-add" class="primary">＋ Add user</button></div>
-  <div id="users-list" class="users-list"></div>
-  <menu><button type="button" id="users-close">Close</button></menu>
-</dialog>
 
 <dialog id="dlg-user" class="newsite user-dialog" aria-labelledby="user-title">
   <form id="form-user" autocomplete="off">
@@ -907,6 +988,12 @@
         <label class="option-row"><span class="option-icon" data-header-icon="globe" aria-hidden="true"></span>
           <span class="option-text"><strong>May create sites</strong><small>A site they create is theirs, with everything on it</small></span>
           <input name="create_sites" type="checkbox" class="switch small" aria-label="May create sites"></label>
+        <div id="user-site-limits" class="user-limits">
+          <label>Sites they may make <input name="limit_sites" type="number" min="0" max="10000" step="1" inputmode="numeric" placeholder="No limit"></label>
+          <div class="limit-size"><span class="limit-label">Size of each site</span>
+            <div class="size-field"><input name="limit_site_size" type="number" min="0" step="any" inputmode="decimal" placeholder="No limit" aria-label="Size of each site">
+              <span class="unit-toggle" role="radiogroup" aria-label="Unit"><label><input type="radio" name="limit_site_unit" value="MB"><span>MB</span></label><label><input type="radio" name="limit_site_unit" value="GB" checked><span>GB</span></label></span></div></div>
+        </div>
         <p class="hint">Tick a site for all of it, also environments added later, or open it and choose environments. An environment alone shows only that, not the main site. The actions count for the chosen environments: a user publishes and syncs only to those.</p>
         <div id="user-sites" class="grant-list"></div>
         <label class="option-row sftp-row"><span class="option-icon" data-header-icon="upload" aria-hidden="true"></span>
@@ -946,7 +1033,7 @@
   <form method="dialog" id="form-preferences">
     <div class="ns-head">
       <span class="ns-icon" data-header-icon="sliders" aria-hidden="true"></span>
-      <div><h2 id="preferences-title">Preferences</h2><p>For this admin site.</p></div>
+      <div><h2 id="preferences-title">Preferences</h2><p>Your own, for this admin site.</p></div>
     </div>
     <div id="preferences-start">
     <div class="ns-section">Start page</div>
@@ -955,26 +1042,6 @@
       <label class="type-card environment-option"><input type="radio" name="start_view" value="sites" required><span class="tc-title">Web Server</span><span class="tc-sub">The sites and their environments</span></label>
       <label class="type-card environment-option"><input type="radio" name="start_view" value="sql"><span class="tc-title">SQL Server</span><span class="tc-sub">For a server that is mostly a SQL Server</span></label>
     </fieldset>
-    </div>
-    <div class="admin-only-block">
-    <div class="ns-section">This server</div>
-    <label>Public address <input name="public_address" autocomplete="off" spellcheck="false" placeholder="Only behind NAT: the IP or name the internet reaches it on"></label>
-    <p class="hint">Where a site's DNS records point. Leave it empty to use the public address found automatically.</p>
-    <div class="ns-section">Site keep-alive</div>
-    <label class="sync-option keep-alive-option"><input name="keep_alive" type="checkbox">
-      <span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg></span>
-      <span class="sync-option-text"><span class="sync-option-title">Keep sites warm</span><span class="sync-option-sub">Request active sites and environments now and then, so the first visitor is not kept waiting</span></span>
-    </label>
-    <div id="keep-alive-interval" class="keep-alive-interval" role="group" aria-label="How often">
-      <span class="keep-alive-every">Every</span>
-      <button type="button" data-minutes="1">1 min</button>
-      <button type="button" data-minutes="5">5 min</button>
-      <button type="button" data-minutes="15">15 min</button>
-      <button type="button" data-minutes="30">30 min</button>
-      <button type="button" data-minutes="60">1 hour</button>
-      <label class="keep-alive-custom"><input name="keep_alive_interval" type="number" min="1" max="1440" step="1" required aria-label="Minutes"> min</label>
-    </div>
-    <p class="hint" id="preferences-keep-alive-hint">From 1 to 1440 minutes. It does not restart services or prevent Boot failed.</p>
     </div>
     <menu><button type="button" id="preferences-cancel" class="cancel-link">Cancel</button><button type="submit" class="primary">Save</button></menu>
   </form>
@@ -1115,7 +1182,12 @@
 </dialog>
 
 <dialog id="dlg-sql-query" class="wide sql-query-dialog" aria-labelledby="sql-query-title">
-  <div class="sql-query-head"><h2 id="sql-query-title">Query</h2><button type="button" id="sql-query-close">Close</button></div>
+  <div class="sql-query-head"><h2 id="sql-query-title">Query</h2><span class="spacer"></span>
+    <div id="sql-snippets" class="snippet-menu">
+      <button type="button" id="sql-snippets-trigger" class="snippet-trigger" aria-haspopup="menu" aria-expanded="false">Snippets</button>
+      <div id="sql-snippets-panel" class="snippet-panel" role="menu" aria-label="T-SQL snippets" hidden></div>
+    </div>
+    <button type="button" id="sql-query-close">Close</button></div>
   <textarea id="sql-query-text" spellcheck="false" placeholder="SELECT TOP 10 * FROM ..." aria-label="SQL script"></textarea>
   <div class="sql-query-bar"><p class="hint">Runs as the connection's login against this database. Ctrl+Enter runs the script. There is no undo.</p><span id="sql-query-status" class="muted"></span><button type="button" id="sql-query-run" class="primary">Run</button></div>
   <div id="sql-query-output" class="sql-query-output" aria-live="polite"></div>

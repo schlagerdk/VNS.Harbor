@@ -132,6 +132,17 @@ class StatusTests(Server):
 
 
 class CronTests(Server):
+    def test_on_with_a_job_adds_only_that_one(self):
+        """Scheduled jobs suggests each of Harbor's jobs that is not in cron, and adds only that one (1.0.70)"""
+        self.crontab = CUSTOM + "\n"
+        self.assertEqual(main(["server", "cron", "on", "--job", "shrink_logs"], self.system()), 0)
+        self.assertEqual(self.crontab, CUSTOM + "\n" + tools.JOBS["shrink_logs"] + "\n")
+        system = self.system()
+        self.assertEqual(main(["server", "cron", "on", "--job", "shrink_logs"], system), 0)
+        self.assertIn("The job is in root's crontab.", system.said)
+        self.assertEqual(main(["server", "cron", "on", "--job", "backup_everything"], self.system()), 0)
+        self.assertEqual(self.crontab, CUSTOM + "\n" + tools.JOBS["shrink_logs"] + "\n" + tools.JOBS["backup_everything"] + "\n")
+
     def test_on_adds_each_job_once_and_off_leaves_the_others(self):
         self.crontab = CUSTOM + "\n" + tools.JOBS["shrink_logs"] + "\n"
         self.assertEqual(main(["server", "cron", "on"], self.system()), 0)

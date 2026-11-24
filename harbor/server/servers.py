@@ -74,7 +74,12 @@ for name in sorted(os.listdir("/etc/systemd/system")) if os.path.isdir("/etc/sys
         continue
     # The admin site: its code in its folder (VNS 1.x), or its data there and its code in the release (Harbor)
     match = re.search(r"(?m)^(?:WorkingDirectory|Environment=HARBOR_ADMIN_DATA)=/var/www/([^/\n]+)/app$", text)
-    if match:
+    # A Python site runs from its app folder too: the admin's holds its login (config.json with a secret key)
+    try:
+        login = json.load(open(f"/var/www/{match.group(1)}/app/config.json")) if match else {}
+    except (OSError, ValueError):
+        login = {}
+    if isinstance(login, dict) and login.get("secret_key"):
         admin = match.group(1)
 found["admin"] = admin
 # Its own sites: the folders in /var/www that are not the admin, nor an environment managed from another server (a

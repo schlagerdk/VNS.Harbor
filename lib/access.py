@@ -12,9 +12,15 @@ A user record, as kept in config.json's "users":
    "web": bool, "create_sites": bool,
    "sites": {"<site>": {"envs": ["main", "<environment id>", ...], "new_envs": bool, "actions": [...]}},
    "sql": bool, "manage_connections": bool,
-   "connections": {"<connection id>": {"databases": ["*"] or [names], "actions": [...]}}}
+   "connections": {"<connection id>": {"databases": ["*"] or [names], "actions": [...], "own": bool,
+                                       "limits": {"databases", "database_mb"}}},
+   "limits": {"sites", "site_mb"},
+   "made": {"sites": [names], "databases": {"<connection id>": [names]}, "logins": {"<connection id>": [names]}}}
 "envs" are the environments of the site the user may see ("main" is the main site); "new_envs" adds environments
 made later. What a user creates is added to what they may use (see grant_site, grant_environment, grant_database).
+"limits" are how many sites a user may make and how big each may be (MB), a connection's the same of its databases,
+each left out for none;
+"made" is what they made, which the limits count (record_made) and lib/usage.py measures.
 """
 import re
 import secrets
@@ -42,6 +48,8 @@ SITE_ACTIONS = [
 ]
 SQL_ACTIONS = [
     ("query", "Run queries"),
+    ("tables", "Tables"),
+    ("logins", "Logins"),
     ("backup", "Back up"),
     ("restore", "Restore"),
     ("create", "Create databases"),
@@ -168,6 +176,81 @@ def grant_environment(user, site, env):
     return False
 
 
+def clean_limits(data, keys=("sites", "site_mb")):
+    """Limits: each a whole number, or left out for no limit. A user's are how many sites they may make and how big
+    each may be (MB); a SQL connection's, how many databases there and how big each."""
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise ValueError("Invalid limits.")
+    limits = {}
+    for key in keys:
+        value = data.get(key)
+        if value in (None, ""):
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value != int(value):
+            raise ValueError("A limit is a whole number, or empty for none.")
+        top = 10000 if key in ("sites", "databases") else 100 * 1024 * 1024
+        if not 0 <= int(value) <= top:
+            raise ValueError(f"A limit is between 0 and {top}.")
+        limits[key] = int(value)
+    return limits
+
+
+def made_count(user, kind, exists=None, connection=None):
+    """How many sites a user made, or databases on a connection, that are still there (exists(name) says)"""
+    made = (user or {}).get("made") or {}
+    names = made.get("sites", []) if kind == "sites" else (made.get("databases") or {}).get(connection, [])
+    return sum(1 for name in names if exists is None or exists(name))
+
+
+def limits_of(user, connection=None):
+    """A user's limits: their own for sites, or a SQL connection's for its databases"""
+    if connection is None:
+        return (user or {}).get("limits") or {}
+    return (((user or {}).get("connections") or {}).get(connection) or {}).get("limits") or {}
+
+
+def may_make(user, kind, exists=None, connection=None):
+    """None when the user may make another site, or database on the connection, else why not"""
+    if is_admin(user):
+        return None
+    limit = limits_of(user, None if kind == "sites" else connection).get(kind)
+    if limit is None:
+        return None
+    count = made_count(user, kind, exists, connection)
+    if count < limit:
+        return None
+    noun = "site" if kind == "sites" else "database"
+    return f"You have made {count} {noun}{'' if count == 1 else 's'} of the {limit} you may make. Delete one, or ask an administrator for more."
+
+
+def record_made(user, kind, name, connection=None):
+    """A site or database the user just made, for their limits"""
+    if is_admin(user):
+        return False
+    made = user.setdefault("made", {})
+    if kind == "sites":
+        names = made.setdefault("sites", [])
+    else:
+        # databases and logins: by connection
+        names = made.setdefault(kind, {}).setdefault(connection, [])
+    if name in names:
+        return False
+    names.append(name)
+    return True
+
+
+def forget_made(user, kind, name, connection=None):
+    """A site or database of theirs that is gone"""
+    made = (user or {}).get("made") or {}
+    names = made.get("sites", []) if kind == "sites" else (made.get(kind) or {}).get(connection, [])
+    if name in names:
+        names.remove(name)
+        return True
+    return False
+
+
 def grant_database(user, connection, database):
     if is_admin(user):
         return False
@@ -233,16 +316,28 @@ def clean(data, existing=None, sites=None, connections=None):
         if connections is not None and connection not in connections or not isinstance(grant, dict):
             continue
         databases = [name for name in grant.get("databases", []) if isinstance(name, str) and 0 < len(name) <= 128]
-        if databases:
+        # Only their own: the databases they make become theirs, and none else; given before they have made any (1.0.70)
+        own = grant.get("own") is True and "*" not in databases
+        if databases or own:
             user["connections"][connection] = {"databases": databases,
                                                "actions": sorted(action for action in grant.get("actions", []) if action in SQL_ACTION_NAMES)}
+            if own:
+                user["connections"][connection]["own"] = True
+            # How many databases they may make there, and how big each: with Create or Copy databases
+            limits = clean_limits(grant.get("limits"), ("databases", "database_mb"))
+            if limits and {"create", "copy"} & set(user["connections"][connection]["actions"]):
+                user["connections"][connection]["limits"] = limits
             # A connection the user made stays theirs to change
             if ((existing.get("connections") or {}).get(connection) or {}).get("owned"):
                 user["connections"][connection]["owned"] = True
+    user["limits"] = clean_limits(data.get("limits", existing.get("limits")))
+    # What they made is kept by the admin as they make it, never sent by a form
+    user["made"] = existing.get("made") or {}
     if role == "admin":
         for key in ("sites", "connections"):
             user[key] = {}
         user["sftp"] = False
+        user["limits"] = {}
     return user
 
 

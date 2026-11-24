@@ -44,7 +44,8 @@ button.small, select.small { padding: 3px 9px; font-size: 12.5px; }
 button.wide { width: 100%; padding: 9px; }
 
 .page-header { position: sticky; top: 0; z-index: 20; display: flex; align-items: center; gap: 16px; padding: 10px 24px; background: var(--gradient); box-shadow: var(--shadow); }
-.brand { display: flex; align-items: center; gap: 12px; text-decoration: none; }
+/* The name and the server never wrap: the header's other parts give way first */
+.brand { display: flex; flex: none; align-items: center; gap: 12px; text-decoration: none; white-space: nowrap; }
 .brand h1 { margin: 0; font-size: 20px; color: #fff; text-shadow: 0 2px 10px rgba(0, 0, 0, .3); }
 .brand .logo { display: block; width: 38px; height: 38px; flex: none; border-radius: 10px; box-shadow: 0 0 0 1px rgba(255, 255, 255, .35), 0 4px 12px rgba(0, 0, 0, .25); }
 /* The page's foot: Powered by VNS, at the bottom of the window when the page is shorter */
@@ -71,6 +72,12 @@ main { padding: 20px 24px; max-width: 1600px; margin: 0 auto; }
 .sites-empty { min-height: calc(100dvh - 220px); display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 40px 20px; text-align: center; }
 .sites-empty-icon { display: grid; place-items: center; width: 112px; height: 112px; margin-bottom: 24px; border: 1px solid rgba(163, 113, 247, .3); border-radius: 32px; color: #b9d8ff; background: linear-gradient(135deg, rgba(88, 166, 255, .16), rgba(163, 113, 247, .2)); box-shadow: 0 0 60px rgba(163, 113, 247, .1); }
 .sites-empty-icon .ico { width: 58px; height: 58px; }
+/* Inside a panel: as tall as it needs, not the page */
+.panel-empty { min-height: 0; padding: 36px 20px 28px; }
+.panel-empty .sites-empty-icon { width: 88px; height: 88px; margin-bottom: 18px; border-radius: 26px; }
+.panel-empty .sites-empty-icon .ico { width: 44px; height: 44px; }
+.panel-empty h2 { font-size: 22px; }
+.panel-empty p { margin-bottom: 20px; }
 .sites-empty h2 { margin: 0 0 12px; font-size: clamp(24px, 4vw, 32px); letter-spacing: -.03em; }
 .sites-empty p { max-width: 400px; margin: 0 0 28px; color: var(--muted); font-size: 15px; line-height: 1.7; }
 #btn-empty-new-site, #btn-empty-add-environment { display: inline-flex; align-items: center; gap: 10px; padding: 13px 28px; font-size: 16px; border-radius: 10px; box-shadow: 0 4px 24px rgba(63, 185, 80, .2); }
@@ -94,6 +101,13 @@ dialog.sql-query-dialog[open] { display: flex; flex-direction: column; }
 .sql-result-table tbody tr:nth-child(even) td { background: rgba(255, 255, 255, .02); }
 .sql-result-table tbody tr:hover:not(:where(:disabled, .disabled, .off)) td { background: rgba(88, 166, 255, .08); }
 .sql-result-table .num { text-align: right; }
+.sql-result-table th.sql-fit { width: 1%; }
+.sql-result-table th.sql-grow { min-width: 18ch; }
+.password-field { position: relative; display: block; }
+.password-field input { width: 100%; padding-right: 40px; }
+.password-field .password-reveal { position: absolute; top: 50%; right: 6px; transform: translateY(-50%); display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); }
+.password-field .password-reveal:hover:not(:where(:disabled, .disabled, .off)) { color: var(--text); background: rgba(255, 255, 255, .06); }
+.password-field .password-reveal .ico { width: 16px; height: 16px; }
 .sql-result-table .sql-null { color: var(--muted); font-style: italic; opacity: .7; }
 .sql-result-message, .sql-query-output > pre { margin: 0; padding: 10px 12px; background: rgba(0, 0, 0, .25); border: 1px solid var(--line); border-radius: 8px; font-size: 12px; white-space: pre-wrap; }
 .sql-result-empty { margin: 0; }
@@ -281,6 +295,8 @@ th, td { text-align: left; padding: 8px 14px; border-bottom: 1px solid var(--lin
 tr:last-child td { border-bottom: 0; }
 th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
 tbody tr:hover:not(:where(:disabled, .disabled, .off)) { background: var(--hover); }
+/* A database's tables folded out under it are not a row to point at: each table's name lights on its own */
+tbody tr.sql-tables-row:hover:not(:where(:disabled, .disabled, .off)) { background: transparent; }
 .num { text-align: right; white-space: nowrap; }
 td.tools { white-space: nowrap; text-align: right; }
 td.tools a { margin-left: 10px; font-size: 13px; }
@@ -382,9 +398,13 @@ body.login { display: grid; place-items: center; min-height: 100vh; min-height: 
 .menu-fold[aria-expanded="true"] .menu-fold-chevron .ico { transform: rotate(90deg); }
 .menu-sub { margin: 0 0 4px 14px; padding-left: 8px; border-left: 1px solid var(--line); }
 .menu-sub[hidden] { display: none; }
+/* A heading whose items are always shown under it: no chevron, nothing to click */
+.menu-fold.menu-fold-open { cursor: default; }
+.menu-fold.menu-fold-open .menu-fold-chevron { display: none; }
+.menu-fold.menu-fold-open:hover:not(:where(:disabled, .disabled, .off)) { background: transparent; }
 @media (prefers-reduced-motion: reduce) { .menu-fold-chevron .ico { transition: none; } }
 .menu-group-title { padding: 5px 10px; color: var(--muted); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; }
-#btn-dock .count { margin-left: 4px; background: #fff; color: #4b3a8c; font-weight: 700; }
+
 /* The filters take the room there is and wrap inside it, so the buttons stay together on the right */
 .toolbar .stats { margin: 0; flex: 1 1 auto; min-width: 0; }
 @media (min-width: 900px) { #view-sites > .toolbar { flex-wrap: nowrap; align-items: flex-start; } #view-sites > .toolbar > :not(.stats, .spacer) { flex: none; } }
@@ -404,6 +424,9 @@ body.login { display: grid; place-items: center; min-height: 100vh; min-height: 
 /* Several actions beside the title: only the first is pushed right, the rest follow it */
 .detail-title .detail-title-action ~ .detail-title-action { margin-left: 0; }
 .sql-heading { margin-bottom: 16px; }
+.sql-only-connection { margin-left: 8px; color: var(--muted); font-size: .7em; font-weight: 600; }
+.sql-only-connection::before { content: "· "; }
+.sql-heading .sql-loading { margin-left: 12px; }
 #site-head > .detail-title:last-child { margin-bottom: 16px; }
 #site-head > .actions { display: flex; gap: 8px; flex-wrap: wrap; padding-top: 20px; margin-bottom: 20px; }
 .envs { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 16px; }
@@ -424,6 +447,7 @@ body.login { display: grid; place-items: center; min-height: 100vh; min-height: 
 .site-layout.with-packages .package-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .targets-empty { min-height: 0; padding: 48px 20px; border: 1px dashed var(--line); border-radius: 12px; }
 body[data-view="sql"] .page-header .search-box { display: none; }
+body[data-view="server"] .page-header .search-box { display: none; }
 dialog.newsite .hint { margin-top: 8px; line-height: 1.55; }
 dialog.newsite .hint + .hint { margin-top: 10px; }
 dialog.newsite .copy-connection-toggle + .hint { margin-top: 12px; }
@@ -598,7 +622,8 @@ dialog.newsite form { padding: 0 24px 20px; }
 .ns-icon .ico { width: 24px; height: 24px; }
 .ns-head > div { min-width: 0; overflow-wrap: anywhere; }
 .ns-section { margin: 4px 0 8px; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
-.type-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 16px; }
+/* The cards share the width, however many there are */
+.type-cards { display: grid; grid-auto-columns: minmax(0, 1fr); grid-auto-flow: column; gap: 10px; margin-bottom: 16px; }
 dialog .type-card { position: relative; display: flex; flex-direction: column; gap: 2px; margin: 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; cursor: pointer; background: rgba(255,255,255,.02); transition: border-color .15s, background .15s; }
 .type-card:hover:not(:where(:disabled, .disabled, .off, :has(input:disabled))) { border-color: var(--blue); }
 .type-card input { position: absolute; opacity: 0; pointer-events: none; width: auto; }
@@ -612,7 +637,7 @@ dialog.newsite .template-status { height: 16px; line-height: 16px; overflow-y: a
 @media (max-width: 560px) { dialog.newsite .template-status { height: 32px; } }
 dialog.newsite menu { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); list-style: none; align-items: center; }
 dialog.newsite menu .cancel-action { margin-right: auto; }
-@media (max-width: 560px) { .type-cards, .ns-grid { grid-template-columns: 1fr; } }
+@media (max-width: 560px) { .type-cards, .ns-grid { grid-template-columns: 1fr; } .type-cards { grid-auto-flow: row; } }
 dialog.newsite input:not([type=radio]):not([type=checkbox]), dialog.newsite select { height: 38px; padding: 0 12px; font-size: 14px; line-height: 1.2; }
 dialog.newsite .copy-connection-toggle input[type=checkbox] { width: auto; height: auto; padding: 0; flex-shrink: 0; }
 dialog.newsite .copy-connection-toggle { flex-direction: row; align-items: center; gap: 9px; margin: 16px 0 0; padding: 12px; background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; color: var(--text); cursor: pointer; }
@@ -707,6 +732,86 @@ a.btn-link .ico { width: 13px; height: 13px; flex: none; }
 .sql-table-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sql-table-meta { font-size: 11px; white-space: nowrap; }
 .sql-tables p { margin: 0; }
+/* A table a line: its name opens its rows, its buttons beside it; New table at the top */
+.sql-tables-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.sql-tables-head .sql-tables-count { margin: 0; }
+.sql-first-table { margin: 4px 0 6px; padding: 12px; }
+.sql-add-table { margin: 8px 0 4px; }
+.sql-tables-locked { display: inline-flex; align-items: center; gap: 5px; margin-left: 10px; padding: 2px 9px; border: 1px solid rgba(210, 153, 34, .35); border-radius: 999px;
+	background: rgba(210, 153, 34, .08); color: #d29922; font-size: 11.5px; font-weight: 600; }
+.sql-login-unlinked { color: #d29922; }
+/* The SQL page's tabs: databases, backups and logins, one shown at a time */
+/* As far from the connection above as the panel under it is from them */
+.sql-tabs { display: inline-flex; flex-wrap: wrap; gap: 4px; margin: 16px 0 0; padding: 4px; border: 1px solid var(--line); border-radius: 12px; background: rgba(0, 0, 0, .2); max-width: 100%; }
+.sql-tabs[hidden], .sql-tabs button[hidden] { display: none; }
+.sql-tabs button { display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border: 0; border-radius: 9px; background: transparent; color: var(--muted); font-size: 13.5px; font-weight: 600; transition: background .15s, color .15s, box-shadow .15s; }
+.sql-tabs button .ico { width: 15px; height: 15px; margin: 0; }
+.sql-tabs button:hover:not(:where(:disabled, .disabled, .off)) { background: rgba(255, 255, 255, .04); color: var(--text); }
+.sql-tabs button[aria-selected="true"] { background: rgba(88, 166, 255, .18); color: #cfe3ff; box-shadow: inset 0 0 0 1px rgba(88, 166, 255, .6), 0 1px 8px rgba(88, 166, 255, .15); }
+.sql-tab-count { padding: 1px 7px; border-radius: 999px; background: rgba(255, 255, 255, .08); color: var(--muted); font-size: 11.5px; font-weight: 600; }
+.sql-tab-count:empty { display: none; }
+.sql-tabs button[aria-selected="true"] .sql-tab-count { background: rgba(88, 166, 255, .22); color: #cfe3ff; }
+.panel.tab-off { display: none !important; }
+@media (max-width: 560px) { .sql-tabs { display: flex; } .sql-tabs button { flex: 1; justify-content: center; padding: 8px 10px; } }
+.sql-login.editable { cursor: pointer; transition: background .15s; }
+.sql-login.editable:hover:not(:where(:disabled, .disabled, .off)) { background: rgba(255, 255, 255, .055); }
+.sql-make-login { align-self: flex-start; margin: 2px 0 14px; }
+.sql-tables-locked .ico { width: 12px; height: 12px; margin: 0; }
+.sql-table-actions { opacity: 1; }
+.sql-new-table { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; border: 1px dashed rgba(88, 166, 255, .45); border-radius: 8px; background: transparent; color: var(--blue); font-size: 12.5px; font-weight: 600; }
+.sql-new-table .ico { width: 13px; height: 13px; margin: 0; }
+.sql-new-table:hover:not(:where(:disabled, .disabled, .off)) { border-color: var(--blue); background: rgba(88, 166, 255, .06); }
+.sql-tables ul.sql-table-list, .sql-tables ul:has(> .sql-table-line) { grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); row-gap: 4px; }
+.sql-table-line { display: flex; align-items: center; gap: 6px; }
+.sql-tables li.sql-table-line button.sql-table-open { flex: 1; min-width: 0; }
+.sql-table-actions { display: flex; flex: none; gap: 4px; opacity: .55; transition: opacity .15s; }
+.sql-table-line:hover:not(:where(:disabled, .disabled, .off)) .sql-table-actions, .sql-table-actions:focus-within { opacity: 1; }
+.sql-tables li .sql-table-actions button.icon-action { display: inline-grid; width: 28px; height: 28px; padding: 0; justify-content: center; align-items: center;
+	border: 1px solid color-mix(in srgb, var(--tone) 35%, var(--line)); background: color-mix(in srgb, var(--tone) 9%, var(--panel2)); color: var(--tone); }
+/* The table designer: a line a column, the SQL shown before it runs */
+dialog#dlg-form.wide { width: min(1180px, 96vw); }
+.design-names { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
+.design-names.single { grid-template-columns: minmax(0, 1fr); }
+.design-schema { display: grid; gap: 4px; align-content: start; margin-bottom: 12px; }
+.design-schema-label { color: var(--muted); font-size: 12.5px; }
+.design-schemas { display: flex; flex-wrap: wrap; gap: 6px; min-height: 40px; align-items: center; }
+.design-editor > .access-add { margin-bottom: 14px; }
+.design-editor > .hint { margin: 0; }
+.design-grid { display: grid; gap: 6px; margin: 4px 0 10px; overflow-x: auto; }
+.design-columns { display: grid; gap: 6px; }
+.design-column { display: grid; grid-template-columns: minmax(140px, 1.4fr) 150px 150px minmax(130px, 1.2fr) auto auto auto 34px; align-items: center; gap: 8px; min-width: 920px; }
+.design-head span { color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.design-column input, .design-column select { height: 34px; padding: 0 10px; font-size: 13.5px; width: 100%; min-width: 0; }
+.design-name { font-weight: 600; }
+.design-size-cell { display: flex; gap: 6px; }
+.design-size-cell .design-size { width: 100%; }
+.design-none { padding-left: 10px; }
+.design-chip { position: relative; display: inline-flex; align-items: center; margin: 0; padding: 6px 10px; border: 1px solid var(--line); border-radius: 999px;
+	color: var(--muted); font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap; flex-direction: row; }
+.design-chip input { position: absolute; opacity: 0; pointer-events: none; width: auto; height: auto; }
+.design-chip:has(input:checked) { border-color: rgba(163, 113, 247, .6); background: rgba(163, 113, 247, .14); color: var(--text); }
+.design-chip:has(input:disabled) { opacity: .55; cursor: default; }
+.design-chip:has(input:focus-visible) { border-color: rgba(88, 166, 255, .7); }
+.design-sql { max-height: 460px; margin: 0; padding: 14px 16px; overflow: auto; border: 1px solid var(--line); border-radius: 10px; background: rgba(0, 0, 0, .3);
+	font-size: 12.5px; line-height: 1.6; white-space: pre-wrap; }
+/* Logins: a line each, and a dashed line that adds one */
+.sql-logins { display: grid; gap: 6px; }
+.sql-login { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 9px; background: rgba(255, 255, 255, .03); }
+.sql-login.locked { opacity: .65; }
+.login-databases { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.login-database { display: grid; gap: 8px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; transition: opacity .15s, border-color .15s; }
+.login-database:not(.off) { border-color: rgba(88, 166, 255, .45); background: rgba(88, 166, 255, .04); }
+.login-database.off .login-roles { opacity: .4; pointer-events: none; }
+.login-database-name { display: flex; flex-direction: row; align-items: center; gap: 8px; margin: 0; color: var(--text); cursor: pointer; }
+.login-database-name input { position: absolute; opacity: 0; pointer-events: none; width: auto; }
+.login-database-name strong { flex: 1; }
+.login-database-check { display: grid; place-items: center; width: 20px; height: 20px; border: 1px solid var(--line); border-radius: 6px; color: transparent; }
+.login-database-check .ico { width: 13px; height: 13px; margin: 0; color: inherit !important; }
+.login-database:not(.off) .login-database-check { border-color: var(--blue); background: var(--blue); color: #fff; }
+.login-database-name:has(input:focus-visible) .login-database-check { box-shadow: 0 0 0 2px rgba(88, 166, 255, .5); }
+.login-database-name .ico { width: 14px; height: 14px; margin: 0; color: var(--purple); }
+.login-roles { display: flex; flex-wrap: wrap; gap: 6px; }
+@media (max-width: 640px) { .login-databases { grid-template-columns: minmax(0, 1fr); } }
 .sql-tables-error { color: #f85149; }
 
 /* Data sync settings of a site */
@@ -751,17 +856,18 @@ a.btn-link .ico { width: 13px; height: 13px; flex: none; }
 .servers-group-count { padding: 1px 8px; border-radius: 999px; background: rgba(255, 255, 255, .07); color: var(--muted); font-size: 12px; font-weight: 600; }
 .servers-group-sub { margin-left: auto; color: var(--muted); font-size: 12px; text-align: right; }
 @media (max-width: 720px) { .servers-group { flex-wrap: wrap; } .servers-group-sub { flex-basis: 100%; margin-left: 36px; text-align: left; } }
-/* Servers with no other server yet: a dashed card beside this server's, as Add environment's card for a server to add */
-.server-add-card { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; min-width: 0; min-height: 180px;
-	padding: 20px; border: 1px dashed var(--line); border-radius: 12px; background: transparent; color: var(--muted); text-align: center; cursor: pointer;
+/* A list with nothing in it yet (Servers, Users): a dashed card that adds the first, as Add environment's card for a server */
+.add-first-card { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; min-width: 0; min-height: 180px;
+	padding: 20px; border: 1px dashed var(--line); border-radius: 12px; background: transparent; color: var(--muted); text-align: center; cursor: pointer; white-space: normal; overflow: hidden;
 	transition: border-color .15s, background .15s; }
-.server-add-card:hover:not(:where(:disabled, .disabled, .off)) { border-color: rgba(88, 166, 255, .55); background: rgba(88, 166, 255, .04); }
-.server-add-card:focus-visible { outline: none; border-color: rgba(88, 166, 255, .55); }
-.server-add-icon { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 12px; background: rgba(88, 166, 255, .12); color: var(--blue); }
-.server-add-icon .ico { width: 20px; height: 20px; margin: 0; }
-.server-add-text { display: grid; gap: 4px; max-width: 300px; }
-.server-add-text strong { color: var(--text); font-size: 15px; }
-.server-add-text small { color: var(--blue); font-size: 12.5px; line-height: 1.45; }
+.add-first-card:hover:not(:where(:disabled, .disabled, .off)) { border-color: rgba(88, 166, 255, .55); background: rgba(88, 166, 255, .04); }
+.add-first-card:focus-visible { outline: none; border-color: rgba(88, 166, 255, .55); }
+.users-list > .add-first-card { width: 100%; margin-top: 20px; }
+.add-first-icon { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 12px; background: rgba(88, 166, 255, .12); color: var(--blue); }
+.add-first-icon .ico { width: 20px; height: 20px; margin: 0; }
+.add-first-text { display: grid; justify-items: center; gap: 4px; width: 100%; max-width: 320px; min-width: 0; }
+.add-first-text strong { color: var(--text); font-size: 15px; }
+.add-first-text small { color: var(--blue); font-size: 12.5px; line-height: 1.45; }
 /* The servers to choose from in a dialog: a card each, the chosen one blue with a tick, and a dashed card to add one */
 .server-picker-row { display: grid; gap: 8px; margin-top: 14px; }
 .server-picker-row[hidden] { display: none; }
@@ -978,6 +1084,11 @@ dialog.wide.system-update-dialog { width: min(720px, 92vw); }
 /* Sites | SQL Server in the header: the two sections of the admin, always in reach */
 .view-switch { display: inline-flex; gap: 2px; margin-left: 18px; padding: 3px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255, 255, 255, .03); }
 .view-switch button { padding: 6px 14px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); font-size: 13px; font-weight: 600; cursor: pointer; }
+/* Each part of the switch with its icon */
+.view-switch button { display: inline-flex; align-items: center; gap: 6px; }
+.view-switch button[hidden] { display: none; }
+.view-switch button .ico, #btn-settings .ico { width: 14px; height: 14px; margin: 0; }
+#btn-settings { display: inline-flex; align-items: center; gap: 6px; }
 .view-switch button:hover:not(:where(:disabled, .disabled, .off)) { color: var(--text); background: var(--hover); }
 .view-switch button.active { background: rgba(163, 113, 247, .16); color: var(--text); box-shadow: 0 0 0 1px rgba(163, 113, 247, .35) inset; }
 @media (max-width: 700px) { .view-switch { margin-left: 8px; } .view-switch button { padding: 5px 9px; font-size: 12px; } }
@@ -997,7 +1108,6 @@ dialog.wide.system-update-dialog { width: min(720px, 92vw); }
 .page-header .view-switch button.active { color: #fff; background: rgba(255, 255, 255, .22); box-shadow: none; }
 
 /* Preferences: keep-alive as a card that turns on, and the interval as quick choices */
-#dlg-preferences label.sync-option { flex-direction: row; align-items: center; justify-content: flex-start; margin: 0; text-align: left; font-size: inherit; color: inherit; }
 .keep-alive-option { --option-tone: var(--green); }
 .keep-alive-interval { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 12px; transition: opacity .15s; }
 .keep-alive-interval.off { opacity: .45; }
@@ -1006,8 +1116,8 @@ dialog.wide.system-update-dialog { width: min(720px, 92vw); }
 .keep-alive-interval button:hover:not(:disabled) { border-color: color-mix(in srgb, var(--green) 60%, var(--line)); }
 .keep-alive-interval button.active { border-color: var(--green); background: color-mix(in srgb, var(--green) 14%, transparent); color: var(--green); font-weight: 600; }
 .keep-alive-interval button:disabled { cursor: default; }
-#dlg-preferences .keep-alive-custom { display: inline-flex; flex-direction: row; align-items: center; gap: 6px; margin: 0 0 0 6px; color: var(--muted); font-size: 13px; }
-#dlg-preferences .keep-alive-custom input { width: 76px; height: 32px; }
+.keep-alive-custom { display: inline-flex; flex-direction: row; align-items: center; gap: 6px; margin: 0 0 0 6px; color: var(--muted); font-size: 13px; }
+.keep-alive-custom input { width: 76px; height: 32px; }
 
 /* Multi action: the selected sites, then the actions as cards */
 #dlg-multi { width: min(720px, 94vw); max-height: 90dvh; overflow-y: auto; }
@@ -1310,7 +1420,6 @@ body[data-role="user"] #settings-menu, body[data-role="user"] #btn-multi, body[d
 #dlg-user { width: min(760px, 96vw); max-height: 92vh; overflow-y: auto; }
 .users-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
 .users-list { display: grid; gap: 8px; max-height: 60vh; overflow-y: auto; }
-.users-empty { padding: 24px 4px; text-align: center; }
 .user-row { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto 18px; align-items: center; gap: 12px; width: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel2); text-align: left; cursor: pointer; }
 .user-row:hover:not(:where(:disabled, .disabled, .off)), .user-row:focus-visible { border-color: rgba(88, 166, 255, .45); background: rgba(88, 166, 255, .06); outline: none; }
 .user-row.disabled { opacity: .6; }
@@ -1343,6 +1452,52 @@ body[data-role="user"] #settings-menu, body[data-role="user"] #btn-multi, body[d
 .grant-body { display: grid; gap: 8px; padding: 2px 12px 12px 38px; }
 .grant-label { color: var(--muted); font-size: 10.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
 .grant-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.grant-scopes { max-width: 560px; }
+/* A user's limits: how many, and how big each, side by side */
+.user-limits { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 4px 0 12px; }
+.user-limits[hidden] { display: none; }
+.usage-over { margin: 12px 0 6px; }
+.grant-limits { margin: 6px 0 0; }
+/* Usage: a meter for what is made and for each one's size, beside its limit */
+.usage-sections { display: grid; gap: 14px; }
+.usage-section { display: grid; gap: 8px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel2); }
+.usage-section-head { display: flex; align-items: center; gap: 10px; margin-bottom: 2px; }
+.usage-section-icon { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: rgba(210, 153, 34, .12); color: #d29922; }
+.usage-section-icon .ico { width: 15px; height: 15px; margin: 0; }
+.usage-meter { display: grid; gap: 5px; }
+.usage-meter-head { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; }
+.usage-meter-head strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.usage-meter-head span { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
+.usage-bar { height: 6px; border-radius: 999px; background: rgba(255, 255, 255, .07); overflow: hidden; }
+.usage-bar span { display: block; height: 100%; border-radius: inherit; background: var(--green); }
+.usage-meter.near .usage-bar span { background: #d29922; }
+.usage-meter.over .usage-bar span { background: var(--red); }
+.usage-meter.over .usage-meter-head span { color: var(--red); }
+.usage-none { margin: 0; font-size: 13px; }
+/* Over a limit: across the top of every page, not to be missed */
+.usage-banner { display: flex; align-items: center; gap: 14px; margin: 0 0 18px; padding: 14px 16px; border: 1px solid rgba(248, 81, 73, .55); border-radius: 12px;
+	background: linear-gradient(120deg, rgba(248, 81, 73, .18), rgba(248, 81, 73, .06)); box-shadow: 0 0 0 1px rgba(248, 81, 73, .08), 0 6px 24px rgba(248, 81, 73, .12); }
+.usage-banner[hidden] { display: none; }
+.usage-banner-icon { display: grid; place-items: center; flex: none; width: 38px; height: 38px; border-radius: 10px; background: rgba(248, 81, 73, .2); color: var(--red); }
+.usage-banner-icon .ico { width: 20px; height: 20px; margin: 0; }
+.usage-banner-text { display: grid; gap: 2px; flex: 1; min-width: 0; }
+.usage-banner-text strong { color: #ffb4ae; font-size: 14.5px; }
+.usage-banner-text span { color: var(--text); font-size: 13px; opacity: .9; overflow-wrap: anywhere; }
+.usage-banner button { flex: none; }
+@media (max-width: 560px) { .usage-banner { flex-wrap: wrap; } .usage-banner button { width: 100%; justify-content: center; } }
+.usage-over + .hint { margin: 0; }
+.user-limits > label, .limit-size { margin: 0; }
+.limit-size { display: flex; flex-direction: column; gap: 4px; color: var(--muted); font-size: 12.5px; }
+.size-field { display: flex; gap: 6px; align-items: stretch; }
+.size-field input { flex: 1; min-width: 0; }
+.unit-toggle { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--line); border-radius: 9px; background: rgba(0, 0, 0, .2); }
+dialog .unit-toggle label { position: relative; display: grid; place-items: center; margin: 0; padding: 0 10px; border-radius: 6px; color: var(--muted); font-size: 12px; font-weight: 600; cursor: pointer; }
+.unit-toggle input { position: absolute; opacity: 0; pointer-events: none; }
+dialog .unit-toggle label:has(input:checked) { background: rgba(88, 166, 255, .18); color: #cfe3ff; box-shadow: inset 0 0 0 1px rgba(88, 166, 255, .6); }
+dialog .unit-toggle label:has(input:focus-visible) { outline: 2px solid rgba(88, 166, 255, .55); }
+@media (max-width: 560px) { .user-limits { grid-template-columns: 1fr; } }
+.grant-own-note { margin: 0; }
+@media (max-width: 560px) { .grant-scopes { grid-template-columns: 1fr; } }
 .grant-chip { display: inline-flex; align-items: center; gap: 7px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 999px; background: rgba(0, 0, 0, .15); font-size: 12.5px; cursor: pointer; }
 .grant-chip:has(input:checked) { border-color: rgba(88, 166, 255, .5); background: rgba(88, 166, 255, .12); }
 .grant-chip.main:has(input:checked) { border-color: rgba(163, 113, 247, .55); background: rgba(163, 113, 247, .14); }
@@ -1522,7 +1677,7 @@ button.primary.danger-primary:disabled { opacity: .5; }
 	.page-header .search-box { order: 10; flex: 1 1 100%; width: auto; min-width: 0; margin: 0; }
 	.page-header .search-box #search { height: 36px; }
 	.page-header .btn-label { display: none; }
-	#btn-dock, #btn-settings { padding: 6px 10px; }
+	#btn-settings { padding: 6px 10px; }
 	/* An update is a dot on the gear, not a label */
 	#system-update-badge:not([hidden]) { display: inline-block; width: 8px; height: 8px; padding: 0; margin-left: 2px; border-radius: 50%; background: var(--orange); font-size: 0; vertical-align: top; }
 	main { padding: 12px; }
@@ -1732,10 +1887,227 @@ dialog label.env-choice:has(input:checked) { border-color: var(--env-tone); back
 .env-targets.list { overflow: visible; }
 
 /* ---- Server tools: a card per part of the server, its state and what can be done with it */
-dialog.server-tools-dialog { width: min(880px, 96vw); }
-.server-tools-dialog > .server-tools, .server-tools-dialog > menu { margin-left: 24px; margin-right: 24px; }
-.server-tools-dialog > menu { margin: 16px 0 0; }
-.server-tools-dialog > menu .cancel-link { margin-right: auto; }
+/* The Server page: the server's name and system at the top, then Tools, Scheduled jobs and Servers as tabs */
+.server-page-head { display: flex; align-items: center; gap: 16px; margin-bottom: 18px; }
+.server-page-icon { display: grid; flex: none; place-items: center; width: 48px; height: 48px; border-radius: 14px; color: #fff;
+	background: linear-gradient(135deg, #6c7bff, #8b5cf6); box-shadow: 0 4px 14px rgba(108, 123, 255, .35); }
+.server-page-icon .ico { width: 22px; height: 22px; margin: 0; }
+.server-page-title { display: grid; gap: 2px; min-width: 0; }
+.server-page-title h2 { margin: 0; font-size: 26px; overflow-wrap: anywhere; }
+.server-page-title p { margin: 0; color: var(--muted); font-size: 13.5px; }
+#server-page-refresh { flex: none; }
+/* A side menu of its parts, the part to its right; on a phone the menu is a row above it */
+.server-body { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 28px; align-items: start; }
+.server-nav { position: sticky; top: 16px; display: grid; gap: 2px; padding: 10px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
+.server-nav-group { margin: 12px 10px 4px; color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.server-nav-group:first-child { margin-top: 4px; }
+.server-nav button { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border: 0; border-radius: 9px; background: transparent;
+	color: var(--muted); font-size: 14px; font-weight: 600; text-align: left; }
+.server-nav button .ico { flex: none; width: 16px; height: 16px; margin: 0; }
+.server-nav button:hover:not(:where(:disabled, .disabled, .off, .active)) { background: var(--hover); color: var(--text); }
+.server-nav button.active { background: rgba(163, 113, 247, .14); color: var(--text); box-shadow: 0 0 0 1px rgba(163, 113, 247, .3) inset; }
+.server-nav button.active .ico { color: var(--purple); }
+.server-nav button:focus-visible { outline: none; box-shadow: 0 0 0 1px rgba(88, 166, 255, .6) inset; }
+.server-content { min-width: 0; }
+.server-pane-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
+.server-pane-head h3 { display: flex; align-items: center; gap: 10px; margin: 0; font-size: 18px; }
+.server-pane-head p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+.server-pane-count:empty { display: none; }
+.server-pane-count { padding: 1px 9px; border-radius: 999px; background: rgba(255, 255, 255, .07); color: var(--muted); font-size: 12px; font-weight: 600; }
+.server-pane .server-tools { margin-top: 0; }
+.server-pane .crontab-list { margin: 0; }
+/* A user's card: their initial where a tool has its icon */
+.tool-icon.user-initial { background: linear-gradient(135deg, #6c7bff, #8b5cf6); color: #fff; font-size: 15px; font-weight: 700; }
+.tool-card.user-locked { opacity: .6; }
+.server-pane .users-list { max-height: none; overflow: visible; }
+/* Settings: a field with its Save beside it, and the keep-alive's interval as chips */
+.settings-field { display: flex; gap: 10px; }
+.settings-field input { flex: 1; min-width: 0; height: 38px; padding: 0 12px; font-size: 14px; }
+.settings-field button { display: inline-flex; align-items: center; gap: 6px; }
+.settings-field button .ico { width: 14px; height: 14px; margin: 0; }
+.tool-card .keep-alive-interval { margin-top: 0; }
+/* Keep-alive's report: a line under its interval, with Log and its settings */
+.keep-alive-report { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; margin-top: 4px; padding: 12px; border-radius: 10px; background: rgba(255, 255, 255, .03); }
+.keep-alive-report-icon { display: grid; flex: none; place-items: center; width: 30px; height: 30px; border-radius: 8px; background: rgba(88, 166, 255, .12); color: var(--blue); }
+.keep-alive-report-icon .ico { width: 15px; height: 15px; margin: 0; }
+.keep-alive-report-text { display: grid; gap: 1px; min-width: 0; flex: 1 1 240px; }
+.keep-alive-report-text strong { font-size: 13.5px; }
+.keep-alive-report-text small { color: var(--muted); font-size: 12px; line-height: 1.4; }
+.keep-alive-report-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-left: auto; }
+.keep-alive-report-actions button { display: inline-flex; align-items: center; gap: 6px; }
+.toned-action { display: inline-flex; align-items: center; gap: 6px; }
+/* The version beside the server's name at the top, and an update as a chip beside them when there is one */
+.header-version { opacity: .75; }
+/* Shell, Files and the terminals open: one group at the top, as the sections' switch */
+.header-tools { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid rgba(255, 255, 255, .22); border-radius: 10px; background: rgba(255, 255, 255, .08); }
+.header-tools button { display: inline-flex; align-items: center; gap: 7px; padding: 6px 12px; border: 0; border-radius: 7px; background: transparent;
+	color: rgba(255, 255, 255, .85); font-size: 13px; font-weight: 600; }
+.header-tools button:hover:not(:where(:disabled, .disabled, .off)) { background: rgba(255, 255, 255, .16); color: #fff; }
+.header-tools button .ico { width: 15px; height: 15px; margin: 0; }
+.header-tools .count { min-width: 18px; padding: 0 6px; border-radius: 999px; background: #fff; color: #4b3a8c; font-size: 11px; font-weight: 800; line-height: 18px; text-align: center; }
+.header-tools .count[hidden] { display: none; }
+/* Processes in the group too, while something runs: its button as the group's */
+.header-tools .processes { position: relative; display: inline-flex; }
+.header-tools #btn-processes { display: inline-flex; align-items: center; gap: 7px; }
+.header-tools #btn-processes[hidden] { display: none; }
+.dock-new { min-width: 28px; margin-left: 6px; font-size: 16px; font-weight: 700; line-height: 1; }
+/* A user who only has the terminals sees none of it until one is open */
+.header-tools:not(:has(> button:not([hidden]):not(.admin-only), .processes > button:not([hidden]))) { display: none; }
+body:not([data-role="user"]) .header-tools { display: inline-flex; }
+@media (max-width: 1400px) { .header-tools .btn-label { display: none; } .header-tools button { padding: 6px 9px; } }
+.header-update { display: inline-flex; align-items: center; margin-left: 12px; padding: 4px 10px; border: 1px solid rgba(255, 255, 255, .35); border-radius: 999px;
+	background: rgba(210, 153, 34, .9); color: #1b1300; font-size: 12px; font-weight: 700; text-decoration: none; white-space: nowrap; }
+.header-update:hover:not(:where(:disabled, .disabled, .off)) { background: #e3a92a; }
+.header-update[hidden] { display: none; }
+.toned-action .ico { width: 14px; height: 14px; margin: 0; }
+.keep-alive-report-actions button .ico { width: 14px; height: 14px; margin: 0; }
+.report-when { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin: 0 0 4px; padding: 0; border: 0; }
+.report-checks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+@media (max-width: 640px) { .report-when, .report-checks { grid-template-columns: minmax(0, 1fr); } .keep-alive-report { flex-wrap: wrap; } }
+.mail-security { margin-bottom: 12px; }
+.mail-host-row { grid-template-columns: minmax(0, 1fr) 120px; }
+.mail-test-row { display: flex; gap: 10px; }
+/* What Test connection or Save found, under the dialog's fields */
+.sql-connection-said { display: flex; align-items: flex-start; gap: 10px; margin: 12px 0 0; padding: 10px 12px; border-radius: 9px; font-size: 13px; line-height: 1.45; }
+.sql-connection-said[hidden] { display: none; }
+.sql-connection-said .ico { flex: none; width: 15px; height: 15px; margin: 2px 0 0; }
+.sql-connection-said.busy { background: rgba(88, 166, 255, .08); color: var(--blue); }
+.sql-connection-said.ok { background: rgba(63, 185, 80, .1); color: var(--green); }
+.sql-connection-said.bad { background: rgba(248, 81, 73, .1); color: #ff8a80; }
+.sql-connection-spinner { flex: none; width: 14px; height: 14px; margin-top: 2px; border: 2px solid rgba(88, 166, 255, .3); border-top-color: var(--blue); border-radius: 50%; animation: update-spin .8s linear infinite; }
+#sql-connection-test { margin-left: auto; }
+/* At the foot of the box with the dropdown and its buttons, centred on them as they are */
+.sql-loading { display: inline-flex; align-items: center; gap: 8px; align-self: flex-end; height: var(--sql-control-height, 42px); color: var(--muted); font-size: 13px; }
+.sql-heading .sql-loading { align-self: center; height: auto; }
+.sql-tables-loading, .grant-database-list .sql-loading { height: auto; padding: 6px 0; }
+.sql-loading[hidden] { display: none; }
+.sql-loading .sql-connection-spinner { margin-top: 0; }
+.sql-password-harbor { align-self: center; margin: 0; padding: 10px 12px; border-radius: 9px; background: rgba(63, 185, 80, .08); color: var(--green); font-size: 12.5px; line-height: 1.45; }
+#sql-password-row[hidden] { display: none; }
+/* A folder field with Browse… beside it, and its panel of folders under the fields */
+.folder-field { display: flex; gap: 8px; }
+.folder-field input { flex: 1; min-width: 0; }
+.folder-browse { display: inline-flex; flex: none; align-items: center; gap: 6px; }
+.folder-browse .ico { width: 14px; height: 14px; margin: 0; color: var(--blue); }
+.crontab-browse-head .primary { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; font-size: 12.5px; }
+.crontab-browse-head .primary .ico { width: 13px; height: 13px; margin: 0; }
+.form-dialog-extra { display: inline-flex; gap: 8px; margin-left: auto; }
+.form-dialog-extra:empty { display: none; }
+.form-dialog-extra button { display: inline-flex; align-items: center; gap: 6px; }
+.form-dialog-extra button .ico { width: 14px; height: 14px; margin: 0; }
+.mail-test-row input { flex: 1; min-width: 0; }
+.mail-test-row button { display: inline-flex; flex: none; align-items: center; gap: 6px; }
+.mail-test-row button .ico { width: 14px; height: 14px; margin: 0; }
+.mail-test-said:empty { display: none; }
+.mail-test-said.ok { color: var(--green); }
+.mail-test-said.bad { color: var(--red); }
+/* The log: what is wrong now, then what broke and was solved lately */
+.report-problems, .report-events { display: grid; gap: 6px; margin: 0 0 14px; padding: 0; list-style: none; }
+.report-problem { display: flex; align-items: flex-start; gap: 10px; padding: 10px 12px; border: 1px solid rgba(248, 81, 73, .3); border-radius: 10px; background: rgba(248, 81, 73, .06); }
+.report-problem > div { display: grid; gap: 2px; min-width: 0; }
+.report-problem small { color: var(--muted); font-size: 12.5px; overflow-wrap: anywhere; }
+.report-problem .dot { margin-top: 5px; background: var(--red); }
+.report-ok { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 10px; background: rgba(63, 185, 80, .08); color: var(--green); }
+.report-ok .ico { width: 15px; height: 15px; margin: 0; }
+.report-events { max-height: 320px; overflow-y: auto; }
+.report-event { display: grid; grid-template-columns: 128px 64px minmax(0, 1fr); align-items: baseline; gap: 10px; padding: 6px 10px; border-radius: 8px; background: rgba(255, 255, 255, .025); font-size: 12.5px; }
+.report-event-when { color: var(--muted); font-variant-numeric: tabular-nums; }
+.report-event-tag { justify-self: start; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; }
+.report-event.failed .report-event-tag { background: rgba(248, 81, 73, .14); color: var(--red); }
+.report-event.recovered .report-event-tag { background: rgba(63, 185, 80, .14); color: var(--green); }
+.report-event-text { overflow-wrap: anywhere; }
+.report-mail-error { color: var(--red); }
+/* A mail as it is sent: its subject, then its text */
+.mail-preview { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.mail-preview-subject { display: flex; gap: 10px; align-items: baseline; padding: 10px 14px; border-bottom: 1px solid var(--line); background: rgba(255, 255, 255, .03); }
+.mail-preview-subject span { color: var(--muted); font-size: 12px; }
+.mail-preview-subject strong { font-size: 13.5px; overflow-wrap: anywhere; }
+.mail-preview-body { max-height: 360px; margin: 0; padding: 12px 14px; overflow: auto; font-size: 12.5px; line-height: 1.55; white-space: pre-wrap; }
+/* A job Harbor suggests: a dashed card under the jobs, tagged as a suggestion */
+.crontab-suggestions { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: 4px; list-style: none; }
+@media (max-width: 1100px) { .crontab-suggestions { grid-template-columns: minmax(0, 1fr); } }
+.add-first-card.crontab-suggestion { position: relative; width: 100%; min-height: 170px; padding-top: 34px; }
+.crontab-suggestion-tag { position: absolute; top: 12px; left: 14px; padding: 2px 9px; border-radius: 999px; background: rgba(88, 166, 255, .12); color: var(--blue);
+	font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+/* One choice of a few, as cards: a title and a line, the chosen one in the tone of its card */
+.menu-choices { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+@media (max-width: 1200px) { .menu-choices { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.menu-choice { display: grid; gap: 3px; min-width: 0; padding: 11px 13px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255, 255, 255, .02);
+	text-align: left; white-space: normal; cursor: pointer; }
+.menu-choice strong { color: var(--text); font-size: 13.5px; }
+.menu-choice small { color: var(--muted); font-size: 12px; line-height: 1.4; }
+.menu-choice:hover:not(:where(:disabled, .disabled, .off, .active)) { border-color: rgba(163, 113, 247, .45); }
+.menu-choice.active { border-color: rgba(163, 113, 247, .7); background: rgba(163, 113, 247, .12); }
+.menu-choice.active strong { color: #c9a8ff; }
+@media (max-width: 560px) { .menu-choices { grid-template-columns: minmax(0, 1fr); } }
+/* Where the admin opens, under the menu's choices */
+.menu-start { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.menu-start-label { color: var(--muted); font-size: 12.5px; font-weight: 600; }
+.menu-start strong { font-size: 13.5px; }
+.menu-start .keep-alive-interval { margin: 0; }
+.menu-start-note { color: var(--muted); font-size: 12px; }
+/* Another Harbor server's own admin, a link that looks as the buttons beside it do, in blue */
+.tool-open-admin { display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; border: 1px solid rgba(88, 166, 255, .45); border-radius: 6px;
+	background: rgba(88, 166, 255, .08); color: var(--blue); font-weight: 600; text-decoration: none; white-space: nowrap; transition: border-color .15s, background .15s; }
+.tool-open-admin .ico { width: 14px; height: 14px; margin: 0; }
+.tool-open-admin:hover:not(:where(:disabled, .disabled, .off)) { border-color: var(--blue); background: rgba(88, 166, 255, .14); }
+.tool-open-admin:focus-visible { outline: none; border-color: var(--blue); }
+/* The tools read as cards, not bars across a wide screen */
+/* The tools as cards, two beside each other; their buttons under them where there are several */
+#server-pane-tools .server-tools, #server-pane-users .users-list, #servers-list { grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: stretch; }
+#server-pane-users .users-list > .tool-card, #server-pane-users .users-list > .add-first-card { min-height: 170px; }
+#server-pane-users .users-list > .add-first-card { margin-top: 0; }
+#servers-list > .tool-card, #servers-list > .add-first-card { min-height: 190px; }
+#server-pane-tools .server-tools > .tool-card { min-height: 150px; padding: 18px 18px 16px; }
+#server-settings-list { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; }
+@media (max-width: 1400px) { #server-pane-tools .server-tools, #server-pane-users .users-list, #servers-list { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+#server-pane-tools .add-first-card { min-height: 150px; }
+/* Access: two columns, SSH and Samba, then Samba's shares and users as lines */
+#server-pane-tools .server-tools.access-layout { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+#server-pane-tools .server-tools.access-layout > .tool-card { min-height: 0; }
+@media (max-width: 1000px) { #server-pane-tools .server-tools.access-layout { grid-template-columns: minmax(0, 1fr); } }
+.access-lines { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.access-line { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 9px; background: rgba(255, 255, 255, .03); }
+.access-line-icon { display: grid; flex: none; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: rgba(255, 255, 255, .05); color: var(--muted); }
+.access-line-icon .ico { width: 14px; height: 14px; margin: 0; }
+.access-line-text { display: grid; flex: 1; gap: 1px; min-width: 0; }
+.access-line-text strong { font-size: 13.5px; }
+.access-line-text small { overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.access-line-actions { display: flex; flex: none; gap: 6px; }
+.icon-action { display: inline-grid; place-items: center; width: 30px; height: 30px; padding: 0; }
+.icon-action .ico { width: 14px; height: 14px; margin: 0; }
+.access-add { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; padding: 9px 10px; border: 1px dashed var(--line); border-radius: 9px;
+	background: transparent; color: var(--blue); font-size: 13px; font-weight: 600; }
+.access-add .ico { width: 14px; height: 14px; margin: 0; }
+.access-add:hover:not(:where(:disabled, .disabled, .off)) { border-color: rgba(88, 166, 255, .55); background: rgba(88, 166, 255, .05); }
+#server-pane-tools .server-tools > .tool-card.tool-card-wide { grid-column: 1 / -1; min-height: 0; }
+#server-settings-list > .tool-card.tool-card-wide { grid-column: 1 / -1; }
+#server-menu-list { grid-template-columns: minmax(0, 1fr); margin-top: 0; }
+#server-menu-list > .tool-card { grid-column: 1 / -1; }
+/* Chips in a card take its tone when chosen: purple in the top menu's, green in the keep-alive's */
+.tool-card .keep-alive-interval button.active { border-color: var(--tone); background: color-mix(in srgb, var(--tone) 14%, transparent); color: var(--tone); }
+.tool-card .keep-alive-interval button:hover:not(:where(:disabled, .disabled, .off, .active)) { border-color: color-mix(in srgb, var(--tone) 60%, var(--line)); }
+/* A heading across the tool cards: Samba's shares, then its users */
+.tool-group-head { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; margin: 14px 0 -2px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
+.tool-group-icon { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 8px; background: rgba(210, 153, 34, .14); color: #d29922; }
+.tool-group-icon .ico { width: 14px; height: 14px; margin: 0; }
+.tool-group-title { font-size: 13px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.tool-group-count { padding: 1px 8px; border-radius: 999px; background: rgba(255, 255, 255, .07); color: var(--muted); font-size: 12px; font-weight: 600; }
+.tool-card.actions-below > .tool-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; margin-top: auto; }
+@media (max-width: 1000px) { #server-pane-tools .server-tools, #server-pane-users .users-list, #servers-list, #server-settings-list { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 860px) {
+	.server-body { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+	.server-nav { position: static; display: flex; gap: 4px; padding: 6px; overflow-x: auto; scrollbar-width: none; }
+	.server-nav::-webkit-scrollbar { display: none; }
+	.server-nav-group { display: none; }
+	.server-nav button { flex: none; width: auto; padding: 7px 11px; font-size: 13.5px; }
+}
+@media (max-width: 700px) {
+	.server-page-head { gap: 12px; }
+	.server-page-icon { width: 40px; height: 40px; border-radius: 12px; }
+	.server-page-title h2 { font-size: 21px; }
+	.server-pane-head { flex-wrap: wrap; }
+}
 .server-tools { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 18px; min-height: 120px; }
 .server-tools-loading { grid-column: 1 / -1; display: grid; place-items: center; padding: 48px 0; color: var(--muted); }
 /* Waiting: a ring in Harbor's blue and purple that turns, the words under it */
@@ -1766,6 +2138,10 @@ dialog.server-tools-dialog { width: min(880px, 96vw); }
 .tool-state.warn { color: #d29922; background: rgba(210, 153, 34, .13); }
 .tool-state.bad { color: var(--red); background: rgba(248, 81, 73, .12); }
 .tool-state.next { color: var(--blue); background: rgba(88, 166, 255, .12); }
+/* What someone or something is (a user's role, a Samba login's kind), not a state: its own tone, no dot */
+.tool-state.role { color: var(--blue); background: rgba(88, 166, 255, .12); }
+.tool-state.role.admin { color: #c9a8ff; background: rgba(163, 113, 247, .16); }
+.tool-state.role::before { display: none; }
 .tool-text { margin: 0; color: var(--muted); font-size: 12.5px; line-height: 1.5; }
 .tool-rows { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
 .tool-row { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 7px 10px; border-radius: 8px; background: rgba(0, 0, 0, .18); font-size: 12.5px; }
@@ -1776,7 +2152,7 @@ dialog.server-tools-dialog { width: min(880px, 96vw); }
 .tool-row .dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--line); }
 .tool-row .dot.on { background: var(--green); box-shadow: 0 0 0 3px rgba(63, 185, 80, .15); }
 .tool-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; padding-top: 2px; }
-.tool-actions button { font-size: 12.5px; padding: 6px 12px; }
+.tool-actions button, .tool-actions a.tool-open-admin { font-size: 12.5px; padding: 6px 12px; }
 .tool-actions .tool-danger { color: var(--red); border-color: rgba(248, 81, 73, .35); }
 .tool-actions .tool-danger:hover:not(:where(:disabled, .disabled, .off)) { background: rgba(248, 81, 73, .1); border-color: rgba(248, 81, 73, .4); }
 .server-action-fields { display: grid; gap: 4px; }
@@ -1805,8 +2181,6 @@ dialog.newsite label.sync-option.action-option { flex-direction: row; align-item
 .action-option:has(input:disabled) { opacity: .45; cursor: default; }
 .server-action-fields .action-option:first-child { margin-top: 2px; }
 /* Servers: its toolbar as in Users, within the dialog's margins */
-.server-tools-dialog > .servers-toolbar { margin: 18px 24px 0; }
-.server-tools-dialog > .servers-toolbar + .server-tools { margin-top: 12px; }
 /* Add server: the address wide, its SSH port beside it */
 dialog.newsite .server-address-row { grid-template-columns: minmax(0, 3fr) minmax(0, 1fr); }
 @media (max-width: 560px) { dialog.newsite .server-address-row { grid-template-columns: 1fr; } }
@@ -1895,9 +2269,10 @@ dialog label.samba-chip:has(input:checked) .ico { display: block; color: var(--b
 .server-action-note { margin: 0 0 14px; padding: 10px 12px; border: 1px solid rgba(210, 153, 34, .4); border-radius: 9px; background: rgba(210, 153, 34, .08); color: #e3c27a; font-size: 13px; line-height: 1.5; }
 
 /* Scheduled jobs (root's crontab) */
-.crontab-dialog .crontab-list, .crontab-dialog .crontab-form { margin: 12px 24px 0; }
-.crontab-list { display: grid; gap: 8px; min-height: 80px; padding: 0; list-style: none; }
-.crontab-row { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
+.crontab-dialog .crontab-form { margin: 12px 24px 0; }
+.crontab-list { display: grid; align-content: start; gap: 8px; min-height: 80px; padding: 0; list-style: none; }
+/* Icon, text and buttons in a row of their own, the log under them: opening the log does not move them */
+.crontab-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 0 12px; min-width: 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); }
 .crontab-icon { display: grid; flex: none; place-items: center; width: 34px; height: 34px; border-radius: 9px; background: rgba(57, 197, 187, .12); color: #39c5bb; }
 .crontab-icon svg { width: 18px; height: 18px; }
 .crontab-text { display: grid; flex: 1; gap: 4px; min-width: 0; }
@@ -1915,8 +2290,7 @@ dialog label.samba-chip:has(input:checked) .ico { display: block; color: var(--b
 .crontab-command { overflow: hidden; color: var(--text); font-size: 12.5px; text-overflow: ellipsis; white-space: nowrap; opacity: .85; }
 .crontab-actions { display: flex; flex: none; gap: 6px; }
 /* A job's log, unfolded under it */
-.crontab-row:has(.crontab-log) { flex-wrap: wrap; }
-.crontab-log { display: grid; flex: 1 1 100%; gap: 10px; min-width: 0; margin-top: 4px; padding-top: 12px; border-top: 1px solid var(--line); }
+.crontab-log { display: grid; grid-column: 1 / -1; gap: 10px; min-width: 0; margin-top: 4px; padding-top: 12px; border-top: 1px solid var(--line); }
 .crontab-log p { margin: 0; }
 .crontab-log-summary { display: flex; flex-wrap: wrap; gap: 8px; }
 .crontab-log-runs { font-size: 12px; }
@@ -1924,6 +2298,8 @@ dialog label.samba-chip:has(input:checked) .ico { display: block; color: var(--b
 .crontab-log-block h4 { margin: 0; color: var(--muted); font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
 .crontab-log pre { max-height: 260px; margin: 0; padding: 10px 12px; overflow: auto; border-radius: 8px; background: rgba(0, 0, 0, .3); font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .crontab-log-errors { color: #ff9b94; border-left: 2px solid var(--red); }
+/* Log while its log is read: the button says so, the row keeps still */
+.crontab-log-button.loading { cursor: progress; opacity: .7; }
 .crontab-runs { display: grid; gap: 8px; max-height: 420px; padding: 8px; overflow: auto; border-radius: 8px; background: rgba(0, 0, 0, .3); }
 .crontab-run-out { min-width: 0; border: 1px solid var(--line); border-left: 3px solid var(--green); border-radius: 8px; background: var(--panel2); }
 .crontab-run-out.bad { border-left-color: var(--red); }
@@ -1947,8 +2323,7 @@ dialog.newsite form.crontab-form { display: grid; gap: 20px; padding: 24px; bord
 .crontab-form input, .crontab-form textarea { font-weight: 400; }
 .crontab-form label { margin: 0; }
 /* While a job is edited the form fills the window, with its own Cancel and Save at the bottom */
-.crontab-dialog.editing > menu, .crontab-dialog.editing .users-toolbar { display: none; }
-dialog.newsite.crontab-dialog.editing form.crontab-form { margin: 0; padding: 4px 24px 24px; border: 0; border-radius: 0; background: transparent; }
+dialog.newsite.crontab-dialog.editing form.crontab-form { margin: 0; padding: 20px 24px 24px; border: 0; border-radius: 0; background: transparent; }
 /* The command and what belongs to it (Browse…, where its output goes) in one box */
 .crontab-composer { display: grid; min-width: 0; border: 1px solid var(--line); border-radius: 10px; background: var(--panel2); transition: border-color .15s; }
 .crontab-composer:focus-within { border-color: rgba(88, 166, 255, .55); }
@@ -1988,7 +2363,9 @@ dialog.newsite.crontab-dialog.editing form.crontab-form { margin: 0; padding: 4p
 .crontab-form-actions .primary { display: inline-flex; align-items: center; gap: 8px; }
 .crontab-form-actions .primary .ico { width: 16px; height: 16px; margin: 0; }
 .crontab-form-actions .cancel-link { margin-right: auto; }
-@media (max-width: 720px) { .crontab-fields { grid-template-columns: minmax(0, 1fr); } dialog.newsite form.crontab-form { padding: 18px 16px; } .crontab-row { flex-wrap: wrap; } .crontab-actions { width: 100%; justify-content: flex-end; } }
+/* In its dialog the job's Cancel and Save stay at the bottom while the form scrolls, as every dialog's buttons do */
+#dlg-crontab-form .crontab-form-actions { position: sticky; bottom: 0; z-index: 3; margin: 0 -24px -24px; padding: 16px 24px 20px; background: var(--panel); }
+@media (max-width: 720px) { .crontab-fields { grid-template-columns: minmax(0, 1fr); } dialog.newsite form.crontab-form { padding: 18px 16px; } .crontab-actions { grid-column: 1 / -1; margin-top: 10px; justify-content: flex-end; } }
 
 /* A tool that cannot be used yet (the backups without SQL Server and the SQL tools): dimmed, its buttons still there */
 .tool-card.unavailable .tool-head, .tool-card.unavailable .tool-rows { opacity: .5; }

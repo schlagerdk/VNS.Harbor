@@ -310,7 +310,7 @@ def _server_cron(args, system):
     if args.state == "upgrade":
         cron_upgrade(system)
     else:
-        cron(system, args.state == "on")
+        cron(system, args.state == "on", args.job)
 
 
 def _server_dotnet(args, system):
@@ -536,6 +536,7 @@ def parser():
     command.set_defaults(handler=_server_status)
     command = server.add_parser("cron", help="the backup and log shrink jobs in root's crontab: on, off, or upgrade (older jobs to harbor commands)")
     command.add_argument("state", choices=("on", "off", "upgrade"))
+    command.add_argument("--job", choices=("backup_everything", "shrink_logs"), help="on: only this job (as Scheduled jobs suggests it)")
     command.set_defaults(handler=_server_cron)
     command = server.add_parser("dotnet", help="install a .NET channel (SDK and ASP.NET Core runtime), update it to its newest patch, or remove it")
     command.add_argument("action", choices=("install", "update", "remove"))

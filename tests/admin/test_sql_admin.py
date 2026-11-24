@@ -116,6 +116,36 @@ class SqlQueryTests(unittest.TestCase):
                     sql.run_query(self.settings, database, query)
             run.assert_not_called()
 
+    def test_sqlcmd_never_reads_a_typed_line(self):
+        """!! id in Query ran id as root on the admin server, and :r read a file: the typed script reaches sqlcmd only as
+        hex, run by sp_executesql (1.0.70)"""
+        script = "!! id\n:r /etc/passwd\nSELECT N'ø' AS x\ngo\nPRINT 1\nGO 3 -- three times"
+        sealed = sql.sealed_script(script)
+        for line in sealed.splitlines():
+            self.assertFalse(line.lstrip().startswith(("!!", ":")), line)
+        self.assertNotIn("passwd", sealed)
+        self.assertEqual(sealed.count("EXEC sys.sp_executesql @vns_batch;"), 2)
+        self.assertIn("\nGO 3", sealed)
+        first = sealed.split("CAST(0x", 1)[1].split(" AS", 1)[0]
+        self.assertEqual(bytes.fromhex(first).decode("utf-16-le"), "!! id\n:r /etc/passwd\nSELECT N'ø' AS x")
+        self.assertEqual(sql.script_batches("SELECT 1\nGO\n\nGO\n"), [("SELECT 1", 1)])
+        self.assertNotIn("EXECUTE AS", sealed)
+
+    def test_a_user_who_is_not_an_administrator_is_kept_to_the_database(self):
+        """Run queries ran as the connection's login, sa: a user reached every database and the server. Their scripts
+        run as the database's dbo, which cannot revert; SQL Server's own and TRUSTWORTHY databases are refused (1.0.70)"""
+        sent = []
+        with patch.object(sql, "execute", side_effect=lambda settings, text, **kw: sent.append((text, kw)) or ""), \
+                patch.object(sql, "query_json", return_value=[{"trustworthy": 0}]):
+            sql.run_query(self.settings, "Shop", "SELECT 1", sandbox=True)
+        self.assertTrue(sent[0][0].startswith("EXECUTE AS USER = N'dbo' WITH NO REVERT;\nGO\n"))
+        self.assertEqual(sent[0][1]["database"], "Shop")
+        with patch.object(sql, "execute") as execute:
+            for database, trustworthy in (("master", 0), ("TempDB", 0), ("Shop", 1)):
+                with patch.object(sql, "query_json", return_value=[{"trustworthy": trustworthy}]), self.assertRaises(ValueError):
+                    sql.run_query(self.settings, database, "SELECT 1", sandbox=True)
+            execute.assert_not_called()
+
     def test_errors_from_sql_server_are_raised_for_the_dialog(self):
         failed = subprocess.CompletedProcess([], 1, stdout="", stderr="Msg 208, Invalid object name 'x'.")
         with patch.object(sql, "sqlcmd_path", return_value="/opt/sqlcmd"), patch.object(sql.subprocess, "run", return_value=failed):
@@ -178,6 +208,32 @@ class SqlAdminTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Unknown SQL connection"):
             sql.edit_connection(self.store, self.settings, "missing")
         self.assertEqual(len(sql.connections(self.store)), 2)
+
+    def test_a_connection_that_cannot_log_in_is_not_saved(self):
+        """A wrong password was saved, and every action then failed with Login failed for user 'sa' (1.0.70)"""
+        def refused(settings):
+            raise RuntimeError("Sqlcmd: Error: Microsoft ODBC Driver 18 for SQL Server : Login failed for user 'sa'..")
+        with patch.object(sql, "databases", side_effect=refused):
+            with self.assertRaisesRegex(ValueError, "refused the login of sa"):
+                sql.add_connection(self.store, self.settings, check=sql.check_login)
+        self.assertEqual(sql.connections(self.store), [])
+        with patch.object(sql, "databases", return_value=self.rows):
+            sql.add_connection(self.store, self.settings, check=sql.check_login)
+        self.assertEqual(len(sql.connections(self.store)), 1)
+        with self.assertRaisesRegex(ValueError, "Type the password"):
+            sql.add_connection(self.store, self.settings | {"host": "other.example", "password": ""})
+
+    def test_a_refused_login_says_which_password_it_tried_without_showing_it(self):
+        """sa was refused on another server while the right password was typed: the message said nothing of what was
+        tried (1.0.70)"""
+        refused = RuntimeError("Login failed for user 'sa'.")
+        settings = self.settings | {"password": "Secret pass "}
+        said = str(sql.connect_error(settings, refused, "typed"))
+        self.assertIn("It tried the typed password of 12 characters. It begins or ends with a blank.", said)
+        self.assertNotIn("Secret", said)
+        said = str(sql.connect_error(self.settings | {"password": "abcdef"}, refused))
+        self.assertIn("the saved password of 6 characters.", said)
+        self.assertNotIn("blank", said)
 
     def test_ssh_connection_credentials_are_validated_preserved_and_redacted(self):
         fields = dict(ssh_enabled=True, ssh_host="linux.example", ssh_port=2222,
@@ -384,6 +440,24 @@ class SqlAdminTests(unittest.TestCase):
             execute.assert_not_called()
             sql.run_action(self.settings, {"action": "drop", "database": "Example", "confirmation": "Example"})
             self.assertIn("SET MULTI_USER", execute.call_args.args[1])
+
+    def test_create_makes_a_login_that_owns_the_new_database(self):
+        """Create database made no login, where harbor sql create (create_db.sh) made one of the database's name, db_owner
+        in it (1.0.70)"""
+        data = {"action": "create", "database": "Shop", "login": "Shop", "login_password": "shop12"}
+        with patch.object(sql, "databases", return_value=self.rows), patch.object(sql, "execute") as execute, \
+                patch.object(sql, "query_json", return_value=[]):
+            sql.run_action(self.settings, data)
+        sent = [call.args[1] for call in execute.call_args_list]
+        self.assertEqual(sent[0], "CREATE DATABASE [Shop];")
+        self.assertIn("CREATE LOGIN [Shop] WITH PASSWORD=N'shop12'", sent[1])
+        self.assertIn("ALTER ROLE [db_owner] ADD MEMBER [Shop];", sent[1])
+        # A login of that name already there: nothing is made, not even the database
+        with patch.object(sql, "databases", return_value=self.rows), patch.object(sql, "execute") as execute, \
+                patch.object(sql, "query_json", return_value=[{"name": "Shop"}]):
+            with self.assertRaisesRegex(ValueError, "There is a SQL login Shop already"):
+                sql.run_action(self.settings, data)
+            execute.assert_not_called()
 
     def test_backup_all_skips_system_and_offline_databases(self):
         rows = self.rows + [{"id": 7, "name": "Standby", "state": "ONLINE", "is_in_standby": True}]
@@ -642,21 +716,55 @@ class SqlAdminTests(unittest.TestCase):
             self.assertEqual(sql.backups(self.settings | {"backup_directory": self.directory.name}), [])
 
 
+class ScopedLoginsTests(unittest.TestCase):
+    def test_a_user_who_may_change_logins_sees_and_changes_only_their_own(self):
+        """Users had no say over SQL logins: Logins is given per connection, and such a user sees only their databases,
+        and only the logins that reach them or that they made, never sa or a sysadmin (1.0.70)"""
+        spec = importlib.util.spec_from_file_location("access_for_logins", ROOT / "lib/access.py")
+        access = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(access)
+        self.assertIn("logins", access.SQL_ACTION_NAMES)
+        nodes = [node for node in ast.parse((ROOT / "admin/app.py").read_text()).body
+                 if isinstance(node, ast.FunctionDef) and node.name == "scoped_logins"]
+        ns = {"access": access}
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), "scoped logins", "exec"), ns)
+        found = {"databases": ["Shop", "Other"], "roles": [], "logins": [
+            {"name": "shop", "protected": False, "sysadmin": False, "databases": [{"database": "Shop", "roles": []}], "unlinked": []},
+            {"name": "both", "protected": False, "sysadmin": False, "databases": [{"database": "Shop", "roles": []}, {"database": "Other", "roles": []}], "unlinked": []},
+            {"name": "boss", "protected": False, "sysadmin": True, "databases": [], "unlinked": []},
+            {"name": "new", "protected": False, "sysadmin": False, "databases": [], "unlinked": []}]}
+        user = {"id": "u", "role": "user", "sql": True, "connections": {"c": {"databases": ["Shop"], "actions": ["logins"]}}}
+        scoped = ns["scoped_logins"](user, "c", found)
+        self.assertEqual(scoped["databases"], ["Shop"])
+        # Another's login, a sysadmin and one of no database they did not make are not shown at all (a test user saw sa)
+        self.assertEqual([login["name"] for login in scoped["logins"]], ["shop"])
+        user["made"] = {"logins": {"c": ["new"]}}
+        self.assertEqual([login["name"] for login in ns["scoped_logins"](user, "c", found)["logins"]], ["shop", "new"])
+        self.assertFalse(any(login["protected"] for login in ns["scoped_logins"](user, "c", found)["logins"]))
+        self.assertIs(ns["scoped_logins"]({"id": "a", "role": "admin"}, "c", found), found)
+        self.assertTrue(access.can_sql(user, "c", None, "logins"))
+        self.assertFalse(access.can_sql(user | {"connections": {"c": {"databases": ["Shop"], "actions": ["query"]}}}, "c", None, "logins"))
+
+
 class SqlApiTests(unittest.TestCase):
     def setUp(self):
         tool = patch.object(sql, "sqlcmd_path", return_value="/test/sqlcmd")
         tool.start()
         self.addCleanup(tool.stop)
+        # A connection is tried before it is saved: here it logs in
+        login = patch.object(sql, "databases", return_value=[])
+        login.start()
+        self.addCleanup(login.stop)
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
         self.store = str(Path(self.directory.name) / "connections.json")
         self.app = Flask(__name__)
         self.ns = dict(app=self.app, request=request, jsonify=jsonify, abort=abort, subprocess=subprocess,
                        SQL_LOCK=threading.Lock(), SQL_CONNECTIONS=self.store, SQL_HELPER=str(ROOT / "lib/sql_admin.py"),
-                       _sql_module=sql, sys=sys, json=json, os=os, HARBOR_DIR=str(ROOT), LIB_DIR=str(ROOT / "lib"), HARBOR_COMMAND=str(ROOT / "bin/harbor"),
+                       _sql_module=sql, sys=sys, json=json, os=os, socket=__import__("socket"), HARBOR_DIR=str(ROOT), LIB_DIR=str(ROOT / "lib"), HARBOR_COMMAND=str(ROOT / "bin/harbor"),
                        error=lambda message, status=400: (jsonify(error=message), status))
         source = ROOT / "admin/app.py"
-        names = {"api_sql_connections", "api_sql_status", "build_command"}
+        names = {"api_sql_connections", "api_sql_connection_test", "local_sa_password", "api_sql_status", "build_command"}
         nodes = [node for node in ast.parse(source.read_text()).body if isinstance(node, ast.FunctionDef) and node.name in names]
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "sql API", "exec"), self.ns)
         add_target_helpers(self.ns)
@@ -685,6 +793,43 @@ class SqlApiTests(unittest.TestCase):
         self.assertIn("ACCEPT_EULA=Y apt-get install -y mssql-tools18 unixodbc-dev", shared)
         with patch.object(os.path, "isfile", return_value=False), self.assertRaises(InternalServerError):
             self.ns["build_command"]({"kind": "install_sql_tools"})
+
+    def test_a_connection_is_tested_without_being_saved(self):
+        """Test connection tries what is typed: whether it logs in, in plain words when not, and nothing is kept (1.0.70)"""
+        typed = {"name": "Here", "host": "sql.example.com", "port": 1433, "username": "app", "password": "test-only", "backup_directory": "/b", "trust_certificate": True}
+        self.ns["me"] = lambda: {"id": "root", "role": "admin"}
+        self.ns["access"] = type("access", (), {"is_admin": staticmethod(lambda user: True)})
+        response = self.client.post("/api/sql/connections/test", json=typed)
+        self.assertEqual(response.json, {"ok": True, "databases": 0})
+        with patch.object(sql, "databases", side_effect=RuntimeError("Login timeout expired. TCP Provider: Error code 0x2749.")):
+            response = self.client.post("/api/sql/connections/test", json=typed)
+        self.assertFalse(response.json["ok"])
+        self.assertIn("No SQL Server answers on sql.example.com:1433", response.json["error"])
+        self.assertEqual(sql.connections(self.store), [])
+
+    def test_tables_of_sql_servers_own_databases_are_not_changed(self):
+        """master, model, msdb and tempdb could be designed and dropped in like any other: they are read only (1.0.70)"""
+        source = ROOT / "admin/app.py"
+        tree = ast.parse(source.read_text())
+        nodes = [node for node in tree.body if (isinstance(node, ast.FunctionDef) and node.name == "api_sql_table")
+                 or (isinstance(node, ast.Assign) and any(getattr(target, "id", "") == "SQL_SYSTEM_DATABASES" for target in node.targets))]
+        ran = []
+        self.ns.update(require_sql=lambda *args: None, sql_settings=lambda connection: self.settings_for_test,
+                       audit=lambda text: None, sql_failure=lambda exc: (jsonify(error=str(exc)), 422),
+                       _sql_design=type("design", (), {"plan_drop": staticmethod(lambda schema, table: "DROP TABLE x"),
+                                                        "apply": staticmethod(lambda *args: ran.append(args))}))
+        self.settings_for_test = {}
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), "sql table API", "exec"), self.ns)
+        for database in ("master", "MSDB", "tempdb", "model"):
+            response = self.client.post("/api/sql/local/table", json={"database": database, "table": "spt_monitor", "action": "drop",
+                                                                      "confirmation": "spt_monitor", "run": True})
+            self.assertEqual(response.status_code, 403, database)
+            self.assertIn("SQL Server's own databases", response.json["error"])
+        self.assertEqual(ran, [])
+        response = self.client.post("/api/sql/local/table", json={"database": "Shop", "table": "Orders", "action": "drop",
+                                                                  "confirmation": "Orders", "run": True})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(ran), 1)
 
     def test_connection_api_redacts_credentials_and_builds_allowlisted_task(self):
         response = self.client.post("/api/sql/connections", json={

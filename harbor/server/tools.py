@@ -174,17 +174,19 @@ def status(system, sql_folder=SQL_DIR):
 
 
 # ---- cron
-def cron(system, on):
-    """The backup and log shrink jobs in root's crontab once each, or taken out; other jobs stay as they are"""
+def cron(system, on, only=None):
+    """The backup and log shrink jobs in root's crontab once each (or only one of them), or taken out; other jobs stay
+    as they are"""
     table = crontab(system)
     lines = table.splitlines()
     if on:
-        missing = [line for name, line in JOBS.items() if not job_lines(table, name)]
+        missing = [line for name, line in JOBS.items() if not job_lines(table, name) and only in (None, name)]
         if not missing:
-            system.say("The backup and log shrink jobs are in root's crontab.")
+            system.say("The backup and log shrink jobs are in root's crontab." if only is None else "The job is in root's crontab.")
             return
-        system.plan(["Add the backup and log shrink jobs to root's crontab"])
-        system.step("Add the backup and log shrink jobs to root's crontab")
+        step = "Add the backup and log shrink jobs to root's crontab" if only is None else f"Add the {'backup' if only == 'backup_everything' else 'log shrink'} job to root's crontab"
+        system.plan([step])
+        system.step(step)
         lines += missing
     else:
         mine = {line for name in JOBS for line in job_lines(table, name)}
@@ -197,7 +199,8 @@ def cron(system, on):
         lines = [line for index, line in enumerate(lines) if line not in mine
                  and not (LABEL.match(line) and index + 1 < len(lines) and lines[index + 1] in mine)]
     system.run("crontab", "-", input="".join(line + "\n" for line in lines))
-    system.say("Backups every 4 hours (at :15), logs shrunk every 4 hours." if on else "No backups or log shrinks are run by cron now.")
+    system.say(("Backups every 4 hours (at :15), logs shrunk every 4 hours." if only is None else "The job is in root's crontab.") if on
+               else "No backups or log shrinks are run by cron now.")
 
 
 # ---- .NET

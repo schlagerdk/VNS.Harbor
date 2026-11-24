@@ -96,6 +96,22 @@ class AccessTests(unittest.TestCase):
         self.assertTrue(access.grant_environment(user, "shop.dk", "qa"))
         self.assertTrue(access.sees_env(user, "shop.dk", "qa"))
 
+    def test_only_their_own_databases_before_they_have_made_one(self):
+        """A connection given with no database was dropped, so a user could not be given only what they make (1.0.70)"""
+        user = self.user(sql=True, connections={"c1": {"databases": [], "own": True, "actions": ["create", "query"]}})
+        self.assertEqual(user["connections"]["c1"], {"databases": [], "actions": ["create", "query"], "own": True})
+        self.assertTrue(access.can_sql(user, "c1", None, "create"))
+        self.assertFalse(access.can_sql(user, "c1", "Shop", "query"))
+        self.assertTrue(access.grant_database(user, "c1", "Mine"))
+        self.assertTrue(access.can_sql(user, "c1", "Mine", "query"))
+        self.assertFalse(access.can_sql(user, "c1", "Shop", "view"))
+        # Kept as their own when saved again, and dropped as before without it
+        again = access.clean({"role": "user", "connections": user["connections"]}, existing=user, connections=["c1"])
+        self.assertEqual(again["connections"]["c1"]["databases"], ["Mine"])
+        self.assertTrue(again["connections"]["c1"]["own"])
+        self.assertEqual(self.user(sql=True, connections={"c1": {"databases": [], "actions": ["create"]}})["connections"], {})
+        self.assertNotIn("own", self.user(sql=True, connections={"c1": {"databases": ["*"], "own": True}})["connections"]["c1"])
+
     def test_an_admin_has_no_grants_and_can_do_everything(self):
         admin = self.user(role="admin", sites={"shop.dk": {"envs": ["main"], "actions": ["logs"]}})
         self.assertEqual(admin["sites"], {})
