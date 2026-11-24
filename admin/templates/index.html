@@ -172,6 +172,8 @@
         <div id="server-pane-users" class="server-pane" role="tabpanel" aria-labelledby="server-tab-users" hidden>
         <div class="server-pane-head"><div><h3>Users <span id="users-count" class="server-pane-count"></span></h3><p id="users-text">Who can log in here, and what each of them may do</p></div></div>
           <div id="users-list" class="server-tools users-list"></div>
+          <div class="server-pane-head templates-head"><div><h3>Templates <span id="templates-count" class="server-pane-count"></span></h3><p>Rules for new users: what they may do on each site and SQL connection you give them. A new user starts from one with a click.</p></div></div>
+          <div id="templates-list" class="server-tools users-list"></div>
         </div>
       </div>
     </div>
@@ -665,7 +667,15 @@
     <div class="ns-section">Name and address</div>
     <div class="ns-grid">
       <label>Folder name <input name="site" required placeholder="www.example.com" autocomplete="off" spellcheck="false"></label>
-      <label>Binding (domain) <input name="binding" placeholder="Empty: answers any name" autocomplete="off" spellcheck="false"></label>
+      <label id="site-binding-field">Binding (domain) <input name="binding" placeholder="Empty: answers any name" autocomplete="off" spellcheck="false"></label>
+    </div>
+    <!-- A temporary address under a domain set in Settings, while the site's own domain does not point here yet -->
+    <div id="site-temp" class="temp-address" hidden>
+      <label class="sync-option copy-option temp-choice"><input name="temp_address" type="checkbox"><span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7"/></svg></span><span class="sync-option-text"><span class="sync-option-title">Use a temporary address</span><span class="sync-option-sub">For a site whose own domain does not point here yet: a name under one of this server's domains. Move it to its own domain later with Change bindings</span></span></label>
+      <div id="site-temp-pick" class="temp-pick" hidden>
+        <span class="temp-pick-label">Under</span>
+        <div id="site-temp-domains" class="temp-domain-chips" role="radiogroup" aria-label="Domain"></div>
+      </div>
     </div>
     <input type="hidden" name="certificate" value="n">
     <div id="site-dns"></div>
@@ -977,6 +987,9 @@
     </div>
     <!-- A new user can start from a template: the access of one saved before -->
     <div id="user-templates" class="user-templates" hidden></div>
+    <!-- A template has a name and rules: none of who a user is -->
+    <label id="template-name-field" hidden>Template name <input name="template_name" maxlength="60" autocomplete="off" placeholder="Web developer"></label>
+    <div id="user-identity">
     <div class="ns-grid">
       <label>Username <input name="username" required maxlength="64" autocomplete="off" spellcheck="false"></label>
       <label>Password <input name="password" type="password" minlength="12" maxlength="128" autocomplete="new-password"></label>
@@ -991,6 +1004,7 @@
     <label class="option-row user-locked"><span class="option-icon lock" data-header-icon="lock" aria-hidden="true"></span>
       <span class="option-text"><strong>Locked</strong><small>Cannot log in, and a session that is open ends at once</small></span>
       <input name="disabled" type="checkbox" class="switch small danger" aria-label="Locked"></label>
+    </div>
     <div id="user-scope">
       <!-- Web Server, SFTP and SQL Server: a part each, framed in its own colour, its switch at the top -->
       <section class="user-part tone-web">
@@ -1007,8 +1021,9 @@
             <div class="size-field"><input name="limit_site_size" type="number" min="0" step="any" inputmode="decimal" placeholder="No limit" aria-label="Size of each site">
               <span class="unit-toggle" role="radiogroup" aria-label="Unit"><label><input type="radio" name="limit_site_unit" value="MB"><span>MB</span></label><label><input type="radio" name="limit_site_unit" value="GB" checked><span>GB</span></label></span></div></div>
         </div>
-        <p class="hint">Tick a site for all of it, also environments added later, or open it and choose environments. An environment alone shows only that, not the main site. The actions count for the chosen environments: a user publishes and syncs only to those.</p>
+        <p id="user-sites-hint" class="hint">Tick a site for all of it, also environments added later, or open it and choose environments. An environment alone shows only that, not the main site. The actions count for the chosen environments: a user publishes and syncs only to those.</p>
         <div id="user-sites" class="grant-list"></div>
+        <div id="template-site-rules" hidden></div>
       </div>
       </section>
       <section id="user-sftp-part" class="user-part tone-sftp">
@@ -1032,11 +1047,12 @@
           <span class="option-text"><strong>May add SQL connections</strong><small>One they add is theirs to change; the others stay locked</small></span>
           <input name="manage_connections" type="checkbox" class="switch small" aria-label="May add SQL connections"></label>
         <div id="user-connections" class="grant-list"></div>
+        <div id="template-sql-rules" hidden></div>
       </div>
       </section>
     </div>
     <p id="user-error" class="error" role="alert"></p>
-    <menu><li class="cancel-action"><button type="button" id="user-cancel" class="cancel-link">Cancel</button></li><li><button type="button" id="user-template-save">Save as template</button></li><li><button type="button" id="user-delete" class="danger" hidden>Delete user</button></li><li><button type="submit" class="primary" id="user-save">Save</button></li></menu>
+    <menu><li class="cancel-action"><button type="button" id="user-cancel" class="cancel-link">Cancel</button></li><li><button type="button" id="user-delete" class="danger" hidden>Delete user</button></li><li><button type="button" id="user-save-stay">Save</button></li><li><button type="submit" class="primary" id="user-save">Save and close</button></li></menu>
   </form>
 </dialog>
 
@@ -1192,6 +1208,7 @@
       <button type="button" id="editor-snippets-trigger" class="snippet-trigger" aria-haspopup="menu" aria-expanded="false">Snippets</button>
       <div id="editor-snippets-panel" class="snippet-panel" role="menu" aria-label="Snippets" hidden></div>
     </div>
+    <button type="button" id="editor-rename" hidden>Rename…</button>
     <button type="button" id="editor-close">Close</button>
     <button id="editor-save" class="primary">Save (Ctrl+S)</button>
   </div>

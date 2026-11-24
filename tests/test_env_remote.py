@@ -115,3 +115,14 @@ class RemoteSiteTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CustomScriptNameTests(unittest.TestCase):
+    def test_a_script_is_a_file_in_the_scripts_folder(self):
+        """An environment's own custom script is named, never a path or a hidden file (1.0.77)"""
+        from harbor.environments.remote import SCRIPT_NAME, STATUS
+        for name in ("cleanup.sh", "delete_empty_folders.sh", "a-b.1.sh"):
+            self.assertTrue(SCRIPT_NAME.fullmatch(name), name)
+        for name in ("../x.sh", "x/y.sh", ".hidden.sh", "x.py", "x.sh; rm -rf /", "", "a b.sh"):
+            self.assertFalse(SCRIPT_NAME.fullmatch(name), name)
+        self.assertIn('"custom_scripts"', STATUS, "the status lists its scripts")

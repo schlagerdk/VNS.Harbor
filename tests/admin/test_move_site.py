@@ -147,9 +147,12 @@ class HttpsChoiceTests(unittest.TestCase):
         # Off at first: HTTPS is chosen, not taken for granted
         self.assertEqual(self.html.count('<input name="https_choice" type="checkbox">'), 2)
         self.assertEqual(self.html.count('<input type="hidden" name="certificate" value="n">'), 2)
-        self.assertIn('dnsCard(siteForm.binding, { onState: siteHttps.state })', self.source)
+        # New site's DNS card also tells the temporary address when the binding does not point here (1.0.77)
+        self.assertIn("dnsCard(siteForm.binding, { onState: (state) => {\n\tsiteHttps.state(state);", self.source)
         self.assertIn('dnsCard($("#form-setup-site").binding, { onState: setupHttps.state })', self.source)
-        self.assertIn('const allowed = value === "here" || value === "empty";', self.source)
+        # Shown only when the binding points here: hidden, not greyed out, also for an empty binding (1.0.77)
+        self.assertIn('const allowed = value === "here";', self.source)
+        self.assertIn('card.closest(".https-choice").hidden = !allowed;', self.source)
 
 
 class AdminTests(unittest.TestCase):

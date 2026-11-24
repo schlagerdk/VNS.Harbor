@@ -901,7 +901,7 @@ def parser():
     command.add_argument("site")
     command.set_defaults(handler=_register_environment)
     command = environment.add_parser("remote", help="status, start, stop, restart, logs, check_service, edit_service, edit_conf, "
-                                     "shell, files or config of an environment on another Linux server (was remote_site.sh)")
+                                     "shell, files, config, scripts or run_script (VNS_SCRIPT) of an environment on another Linux server (was remote_site.sh)")
     command.add_argument("site")
     command.add_argument("action", nargs="?", default="")
     command.set_defaults(handler=_remote_action)

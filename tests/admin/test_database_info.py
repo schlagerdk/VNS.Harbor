@@ -191,7 +191,7 @@ with patch.dict(os.environ, {"SITE":"prod.test", "UNIT":"prod.test", "DATABASE_C
         # The link shows the alias as it is written (an international name in its own letters) and opens its DNS name
         self.assertIn('openLink(aliasLabels(env)[index], scheme + "://" + alias + "/")', alias_row)
         start = detail.index('\tif ((site.kind === "csharp" || site.kind === "umbraco") && env.database)')
-        row = detail[start:detail.index('\n\tif (env.port)', start)]
+        row = detail[start:detail.index('\n\tif (env.dotnet)', start)]
         harness = r"""
 const assert = require("node:assert/strict");
 const el = (tag, properties, ...children) => ({tag, ...properties, children});

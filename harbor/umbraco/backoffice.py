@@ -136,6 +136,9 @@ def connect(system, name, environment="main", harbor_url=""):
         path.write_text(text)
         path.chmod(0o640)
         system.run("chown", "root:www-data", str(path), check=False, capture=True)
+        # Never a user's: the site's folder gives their Linux group its files (harbor/server/users.py), not this one
+        if system.which("setfacl"):
+            system.run("setfacl", "-b", str(path), check=False, capture=True)
     elif found.windows:
         # On the IIS site's share; the site reads it as the app pool's user, as its appsettings.json
         from harbor.environments.windows import Share

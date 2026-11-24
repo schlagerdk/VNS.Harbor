@@ -581,6 +581,27 @@ dialog.files-dialog { padding: 18px; }
 .script-menu-item-label { min-width: 0; overflow-wrap: anywhere; font-weight: 500; }
 .script-menu-item code { max-width: 52%; overflow: hidden; color: var(--muted); font: 10px/1.4 ui-monospace, Menlo, Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
 @media (prefers-reduced-motion: reduce) { .script-menu-chevron { transition: none; } }
+/* An administrator's own: a pencil beside each script, and New script… at the bottom */
+.script-menu-row { display: flex; align-items: center; gap: 4px; }
+.script-menu-row .script-menu-item { flex: 1; }
+.script-menu-edit { display: grid; flex: none; place-items: center; width: 30px; height: 30px; padding: 0; border-color: transparent; background: transparent; color: var(--muted); }
+.script-menu-edit:hover:not(:where(:disabled, .disabled, .off)), .script-menu-edit:focus-visible { border-color: rgba(210, 153, 34, .35); background: rgba(210, 153, 34, .12); color: #d29922; }
+.script-menu-edit .ico { width: 14px; height: 14px; margin: 0; }
+.script-menu-edit.danger:hover:not(:where(:disabled, .disabled, .off)), .script-menu-edit.danger:focus-visible { border-color: rgba(248, 81, 73, .4); background: rgba(248, 81, 73, .12); color: var(--red); }
+.script-menu-empty { margin: 0; padding: 12px 8px 8px; color: var(--muted); font-size: 12.5px; }
+/* Scripts someone other than root can change: not run until an administrator makes them root's */
+.script-menu-warning { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 10px; margin: 6px 4px 4px; padding: 10px; border: 1px solid rgba(210, 153, 34, .35); border-radius: 10px; background: rgba(210, 153, 34, .08); }
+.script-menu-warning-icon { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 7px; background: rgba(210, 153, 34, .15); color: #d29922; }
+.script-menu-warning-icon .ico { width: 14px; height: 14px; margin: 0; }
+.script-menu-warning-text { display: grid; gap: 2px; }
+.script-menu-warning-text strong { font-size: 12.5px; color: #d29922; }
+.script-menu-warning-text small { color: var(--muted); font-size: 11.5px; line-height: 1.4; }
+.script-menu-warning button { grid-column: 2; justify-self: start; }
+.script-menu-warning button .ico { width: 13px; height: 13px; margin: 0; }
+.script-menu-footer { position: sticky; bottom: -8px; margin: 4px -8px -8px; padding: 8px; border-top: 1px solid var(--line); background: var(--panel); }
+.script-menu-new { display: inline-flex; align-items: center; gap: 7px; width: 100%; justify-content: center; border-color: rgba(63, 185, 80, .4); background: rgba(63, 185, 80, .1); color: var(--green); }
+.script-menu-new:hover:not(:where(:disabled, .disabled, .off)), .script-menu-new:focus-visible { border-color: var(--green); background: rgba(63, 185, 80, .18); }
+.script-menu-new .ico { width: 14px; height: 14px; margin: 0; }
 .badge.version { text-transform: none; color: #fff; background: #57606a; }
 .badge.version[data-major="0"] { background: #8250df; }
 .badge.version[data-major="1"] { background: #0969da; }
@@ -778,9 +799,12 @@ a.btn-link .ico { width: 13px; height: 13px; flex: none; }
 .user-template button { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border: 0; border-radius: 0; background: transparent; color: var(--text); font-size: 12.5px; font-weight: 600; }
 .user-template button .ico { width: 13px; height: 13px; margin: 0; }
 .user-template .user-template-use .ico { color: #c9a8ff; }
-.user-template .user-template-delete { padding: 5px 8px 5px 4px; color: var(--muted); }
+/* A template's rules: framed as a site given to a user, its chips without the indent of a tree */
+#dlg-user .template-rules .grant-body { padding: 12px 14px 14px; }
+#dlg-user #template-name-field { margin-bottom: 4px; }
+/* The templates under the users, as a list of their own */
+.server-pane-head.templates-head { margin-top: 32px; }
 .user-template button:hover:not(:where(:disabled, .disabled, .off)) { background: rgba(255, 255, 255, .05); }
-.user-template .user-template-delete:hover:not(:where(:disabled, .disabled, .off)) { color: var(--red); }
 .sql-tables-locked .ico { width: 12px; height: 12px; margin: 0; }
 .sql-table-actions { opacity: 1; }
 .sql-new-table { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; border: 1px dashed rgba(88, 166, 255, .45); border-radius: 8px; background: transparent; color: var(--blue); font-size: 12.5px; font-weight: 600; }
@@ -1478,6 +1502,8 @@ body[data-role="user"] #settings-menu, body[data-role="user"] #btn-multi, body[d
 .grant-label { color: var(--muted); font-size: 10.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
 .grant-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .grant-scopes { max-width: 560px; }
+/* Two choices (a template's: no databases to pick): two columns, none left empty */
+.grant-scopes.two { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 380px; }
 /* A user's limits: how many, and how big each, side by side */
 .user-limits { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 4px 0 12px; }
 .user-limits[hidden] { display: none; }
@@ -1633,6 +1659,19 @@ dialog.newsite > .ns-head { margin: 0 0 4px; }
 .profile-confirm label { margin: 0; }
 .grant-database-list { max-height: 180px; overflow-y: auto; padding: 2px; }
 .grant-database-list[hidden] { display: none; }
+/* The filter above a long list of sites or databases in a user's access */
+.grant-search-box { position: relative; display: flex; align-items: center; max-width: 340px; }
+.grant-search-box[hidden], #dlg-user .grant-chip[hidden], .grant-site[hidden], .grant-no-match[hidden] { display: none; }
+#dlg-user .grant-search { width: 100%; min-width: 0; height: 34px; margin: 0; padding: 0 38px 0 36px; border: 1px solid var(--line); border-radius: 10px; background: rgba(0, 0, 0, .22); font-size: 13px; transition: background .15s, border-color .15s, box-shadow .15s; }
+#dlg-user .grant-search:hover:not(:where(:disabled, .disabled, .off)) { border-color: rgba(255, 255, 255, .16); }
+#dlg-user .grant-search:focus { outline: none; background: rgba(0, 0, 0, .3); border-color: rgba(88, 166, 255, .55); box-shadow: 0 0 0 3px rgba(88, 166, 255, .14); }
+.grant-search::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; display: none; }
+.grant-search-box .search-icon { left: 12px; width: 15px; height: 15px; color: var(--muted); }
+.grant-search-box .search-clear { right: 6px; background: rgba(255, 255, 255, .12); color: var(--text); }
+.grant-search-box .search-clear:hover:not(:where(:disabled, .disabled, .off)), .grant-search-box .search-clear:focus-visible { background: rgba(255, 255, 255, .24); }
+.grant-search-box:has(.grant-search:not(:placeholder-shown)) .search-clear { display: grid; }
+.grant-no-match { margin: 0; font-size: 12.5px; }
+@media (max-width: 700px) { .grant-search-box { max-width: none; } }
 /* Every dialog keeps its buttons at the bottom and, with a header, that at the top: only what is between scrolls.
    The footer reaches the dialog's edges, on its own background, so nothing shows through it. */
 dialog.newsite > menu, dialog.newsite > form > menu { position: sticky; bottom: 0; z-index: 3; background: var(--panel); }
@@ -2266,6 +2305,7 @@ body:not([data-role="user"]) .header-tools { display: inline-flex; }
 .tool-row .tool-row-detail { flex: 1; min-width: 0; overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .tool-row code { overflow: hidden; color: var(--muted); font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
 .tool-row .tool-row-action { flex: none; padding: 3px 9px; font-size: 12px; }
+.tool-row .icon-action { flex: none; width: 28px; height: 28px; }
 .tool-row .dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--line); }
 .tool-row .dot.on { background: var(--green); box-shadow: 0 0 0 3px rgba(63, 185, 80, .15); }
 .tool-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: auto; padding-top: 2px; }
@@ -2662,3 +2702,18 @@ dialog .windows-field input, dialog .windows-field select { width: 100%; min-hei
 /* A password in a dialog: a plain text field holding only dots, the password kept by app.js (secretField), so no browser
    takes it for a password to save. The dots a little apart, as a password field shows them. */
 input.masked-password { letter-spacing: .12em; }
+/* A new site's temporary address: an option card, and a chip for each domain when there is more than one */
+.temp-address { display: grid; gap: 10px; margin: 2px 0 12px; }
+.temp-address[hidden], .temp-pick[hidden] { display: none; }
+.temp-pick { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding-left: 4px; }
+.temp-pick-label { color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.temp-domain-chips { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.temp-domain-chip { display: inline-flex; align-items: center; gap: 7px; max-width: 100%; padding: 5px 12px; border: 1px solid var(--line); border-radius: 999px; background: rgba(0, 0, 0, .15); color: var(--text); font-size: 12.5px; }
+.temp-domain-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.temp-domain-chip .ico { flex: none; width: 13px; height: 13px; margin: 0; color: #39c5cf; }
+.temp-domain-chip:hover:not(:where(:disabled, .disabled, .off)) { border-color: rgba(57, 197, 207, .55); }
+.temp-domain-chip.active { border-color: rgba(57, 197, 207, .7); background: rgba(57, 197, 207, .14); }
+/* A binding made for a temporary address: shown, not typed in */
+input.made-binding, input.made-binding:focus { border-style: dashed; border-color: rgba(57, 197, 207, .45); background: rgba(57, 197, 207, .05); color: #9fe3e8; cursor: default; }
+/* Set up with HTTPS: only where it can be had, when the binding points here */
+.https-choice[hidden] { display: none; }

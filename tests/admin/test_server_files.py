@@ -67,10 +67,14 @@ class ServerFilesTests(unittest.TestCase):
         for folder in ("scripts", ".vns-publish", "wwwroot"):
             (site / folder).mkdir(parents=True)
         (site / "scripts/publish.sh").write_text("runs as root")
-        names = {"hidden_from_user", "file_access", "file_env", "file_env_root"}
+        # Harbor's own files where the site runs: its token and login key, and what the last publish put there (1.0.77)
+        (site / "wwwroot/vns-harbor.json").write_text('{"loginKey": "secret"}')
+        (site / "wwwroot/.harbor-published").write_text("app.dll")
+        (site / "wwwroot/app.dll").write_text("app")
+        names = {"hidden_from_user", "names_hidden_file", "file_access", "file_env", "file_env_root"}
         nodes = [node for node in ast.parse((APP / "app.py").read_text()).body
                  if isinstance(node, ast.FunctionDef) and node.name in names
-                 or isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "USER_HIDDEN_FOLDERS"]
+                 or isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") in ("USER_HIDDEN_FOLDERS", "USER_HIDDEN_FILES")]
         self.ns.update(is_admin=lambda: False, site_dirs=lambda: ["example.test"], target_ids=lambda root: [])
         exec(compile(ast.Module(body=nodes, type_ignores=[]), str(APP / "app.py"), "exec"), self.ns)
         response = self.client.get("/api/site-fs/example.test/list")
@@ -78,6 +82,22 @@ class ServerFilesTests(unittest.TestCase):
         self.assertEqual([item["name"] for item in response.json["items"]], ["wwwroot"])
         response = self.client.get("/api/site-fs/example.test/read", query_string={"path": "scripts/publish.sh"})
         self.assertEqual(response.status_code, 403)
+        response = self.client.get("/api/site-fs/example.test/list", query_string={"path": "wwwroot"})
+        self.assertEqual([item["name"] for item in response.json["items"]], ["app.dll"])
+        for path in ("wwwroot/vns-harbor.json", "wwwroot/.harbor-published"):
+            for action in ("read", "download"):
+                self.assertEqual(self.client.get("/api/site-fs/example.test/" + action, query_string={"path": path}).status_code, 403, (action, path))
+            for action in ("save", "delete"):
+                response = self.client.post("/api/site-fs/example.test/" + action, json={"path": path, "content": "{}"}, headers={"X-CSRF-Token": "test-csrf"})
+                self.assertEqual(response.status_code, 403, (action, path))
+        # Nor made or renamed to one of them, to be read where the site runs
+        for action, path in (("newfile", "wwwroot"), ("rename", "wwwroot/app.dll")):
+            response = self.client.post("/api/site-fs/example.test/" + action, json={"path": path, "name": "VNS-Harbor.json"}, headers={"X-CSRF-Token": "test-csrf"})
+            self.assertEqual(response.status_code, 403, action)
+        response = self.client.post("/api/site-fs/example.test/upload", data={"path": "wwwroot", "files": (io.BytesIO(b"{}"), "vns-harbor.json")},
+                                    headers={"X-CSRF-Token": "test-csrf"})
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual((site / "wwwroot/vns-harbor.json").read_text(), '{"loginKey": "secret"}')
 
     def test_site_browser_is_confined_to_its_root_for_all_operations(self):
         site = self.web / "example.test"

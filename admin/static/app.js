@@ -57,7 +57,7 @@ function canSql(connection, database, action) {
 // The permission a button on a site's page needs, by its label; "admin" is an administrator's alone
 const buttonPermission = {
 	"Publish": "publish", "Publish all": "publish", "Publish environments": "publish",
-	"Clear logs": "clear_logs", "Sync data…": "sync_data", "Sync settings…": "sync_settings", "Sync setup…": "sync_any",
+	"Clear logs": "clear_logs", "Sync data…": "sync_data", "Sync settings…": "sync_settings", "Sync setup…": "sync_setup",
 	"Fix permissions": "files", "Change bindings": "bindings", "Issue certificate": "bindings", "Change environment": "bindings",
 	"Check service": "admin", "Edit service": "admin", "Edit config": "admin", "Edit web.config": "files", "Edit appsettings.json": "appsettings",
 	"Stop": "service", "Start": "service", "Restart": "service", "Logs": "logs", "Shell": "terminal", "Files": "files",
@@ -69,7 +69,6 @@ function allowedButton(label, site, envKey) {
 	const need = buttonPermission[label];
 	if (!need || currentUser.admin) return true;
 	if (need === "admin") return false;
-	if (need === "sync_any") return can(site.name, envKey, "sync_data") || can(site.name, envKey, "sync_settings");
 	if (need === "copy_site") return currentUser.create_sites && can(site.name, envKey, "files");
 	if (need === "delete_all") return (site.environments || []).every((env) => can(site.name, envKeyOf(env), "delete"));
 	if (envKey) return can(site.name, envKey, need);
@@ -305,7 +304,7 @@ function dnsCard(input, { expect: expected = "", name: targetName = "", aliases 
 			? `The public address could not be found, only an internal one (${address}). Set the public address under Preferences, so the record points to where the internet reaches it.`
 			: internal
 				? `${expect} is an internal address, so the name points to a public address that forwards to it. Harbor cannot see that forwarding from here: the certificate is issued when the name reaches the server.`
-				: `Make one of these where the domain's DNS is kept. An HTTPS certificate is issued only when the name points ${expect ? "to " + expect : "here"}.`;
+				: `Make one of these where the domain's DNS is kept. An HTTPS certificate is issued only when the name points ${expect ? "to " + expect : "here"}: until then the site runs on HTTP, and Issue certificate gives it one later.`;
 		note.classList.toggle("warn", Boolean(!expect && server?.behind_nat));
 		if (!name.includes(".")) {
 			status.className = "dns-status muted";
@@ -616,13 +615,20 @@ function focusOnceEnabled(dialog, button) {
 }
 
 // Replaces prompt()/confirm(). Resolves to the entered text (or true without an input), or null when cancelled.
-function ask({ title, message = "", value = "", placeholder = "", ok = "OK", danger = false, input = true, match = null, extra = null, checkbox = null, checkboxChecked = false, loginCheckbox = false, dns = null, dnsCheck = null }) {
+// filter: what may stand in the field, applied as it is typed or pasted (a name of only some characters); valid: when
+// OK can be used
+function ask({ title, message = "", value = "", placeholder = "", ok = "OK", danger = false, input = true, match = null, extra = null, checkbox = null, checkboxChecked = false, loginCheckbox = false, dns = null, dnsCheck = null, filter = null, valid = null }) {
 	const dlg = $("#dlg-prompt");
 	const field = $("#prompt-input");
 	// dnsCheck: names that must point to the server before OK can be used, as for a certificate
 	let dnsReady = !dnsCheck;
+	// A name typed before (a temporary address made last time) is typed in again
+	field.readOnly = false;
+	field.classList.remove("made-binding");
+	// A temporary address (dns.temp: the name it is made from), offered when the name does not point here
+	const temp = dns && input && dns.temp && (currentUser.temp_domains || []).length ? tempAddressChoice(field, dns.temp) : null;
 	// With an extra field (aliases), its names are checked with the main one
-	$("#prompt-dns").replaceChildren(...(dns && input ? [dnsCard(field, { ...dns, aliases: extra ? $("#prompt-extra") : null })]
+	$("#prompt-dns").replaceChildren(...(dns && input ? [dnsCard(field, { ...dns, aliases: extra ? $("#prompt-extra") : null, onState: (state) => temp?.state(state) }), ...(temp ? [temp] : [])]
 		: dnsCheck ? [certificateDnsCard(dnsCheck, (ready) => {
 			dnsReady = ready;
 			if (!dlg.open) return;
@@ -688,10 +694,21 @@ function ask({ title, message = "", value = "", placeholder = "", ok = "OK", dan
 	}
 	okButton.value = "ok";
 	okButton.textContent = ok;
-	const updateConfirmation = () => { okButton.disabled = (match !== null && field.value !== match) || !dnsReady; };
+	const updateConfirmation = () => { okButton.disabled = (match !== null && field.value !== match) || !dnsReady || Boolean(valid && !valid(field.value)); };
 	updateConfirmation();
 	dlg.classList.toggle("danger", danger);
-	field.oninput = updateConfirmation;
+	field.oninput = () => {
+		if (filter) {
+			// The caret stays after what was typed, as many characters as are left before it
+			const before = filter(field.value.slice(0, field.selectionStart ?? field.value.length));
+			const cleaned = filter(field.value);
+			if (cleaned !== field.value) {
+				field.value = cleaned;
+				field.setSelectionRange(before.length, before.length);
+			}
+		}
+		updateConfirmation();
+	};
 	$("#form-prompt").onsubmit = (event) => {
 		updateConfirmation();
 		if (okButton.disabled) event.preventDefault();
@@ -920,7 +937,7 @@ function remoteLabel(ref) {
 	const site = allSites.find((item) => item.name === name);
 	const env = site?.environments.find((item) => item.target === target);
 	if (!env) return ref;
-	return `${bindingLabel(env) || name} @ ${env.host || "?"}`;
+	return currentUser.admin ? `${bindingLabel(env) || name} @ ${env.host || "?"}` : bindingLabel(env) || name;
 }
 
 // Environments are always listed as Development, Test, Staging, Production. Anything else comes last.
@@ -1179,14 +1196,15 @@ for (const layout of ["grid", "list"]) {
 
 function renderSites() {
 	const siteCount = listedSites().length;
-	// One site needs no search; an administrator can also take it out of their header (Settings, Top menu)
-	const hideFilters = siteCount <= 1 || currentUser.header?.search === false;
-	if (hideFilters) {
-		filter = "all";
+	// One site needs no search or filter; an administrator can also take the search out of their header (Settings, Top
+	// menu), which leaves the filters as they are
+	const hideSearch = siteCount <= 1 || currentUser.header?.search === false;
+	if (siteCount <= 1) filter = "all";
+	if (hideSearch) {
 		query = "";
 		$("#search").value = "";
 	}
-	$("#search").hidden = hideFilters;
+	$("#search").hidden = hideSearch;
 	renderStats();
 	// Check for updates says how many sites it covers when a search or filter narrows them
 	const checkable = updateCheckSites().length;
@@ -1364,7 +1382,8 @@ const osLogos = {
 };
 function remoteIcon(env) {
 	const os = env.mode === "windows" ? "windows" : "linux";
-	const label = `Remote ${os === "windows" ? "Windows" : "Linux"} server: ${env.host}`;
+	// Its address is an administrator's alone
+	const label = `Remote ${os === "windows" ? "Windows" : "Linux"} server` + (currentUser.admin ? `: ${env.host}` : "");
 	const icon = el("span", { className: "remote-icon", title: label, ariaLabel: label }, svgIcon("server"));
 	icon.append(el("span", { className: "os-logo os-" + os, innerHTML: osLogos[os] }));
 	return icon;
@@ -1382,8 +1401,9 @@ function envFolderLabel(site, env) {
 	if (new Set(kinds).size === kinds.length) return null;
 	const folder = envFolderName(env) || (env.folder || env.path || "").replace(/\/+$/, "").split("/").pop() || bindingLabel(env);
 	if (!folder) return null;
-	const where = env.mode === "windows" ? env.folder : env.mode === "remote" ? `${env.host}:/var/www/${env.folder}` : "/var/www/" + (env.path || env.folder);
-	return el("span", { className: "env-folder", textContent: folder, title: "Folder: " + where });
+	const where = env.mode === "windows" ? env.folder : env.mode === "remote" ? `${currentUser.admin ? env.host + ":" : ""}/var/www/${env.folder}` : "/var/www/" + (env.path || env.folder);
+	// The folder's place only for those with Files there, as the card's Folder row
+	return el("span", { className: "env-folder", textContent: folder, title: can(site.name, envKeyOf(env), "files") ? "Folder: " + where : "" });
 }
 
 function publishBadge(env) {
@@ -1545,8 +1565,9 @@ function customScriptGroups(files) {
 function customScripts(site) {
 	return site.scripts.filter((file) => !file.startsWith("_") && !hasScriptButton(site, file));
 }
-function scriptSelect(site, className) {
-	const files = customScripts(site);
+function scriptSelect(site, env = null, className = "") {
+	const target = env && isTarget(env) ? env.target || "prod" : null;
+	const files = target ? env.custom_scripts || [] : customScripts(site);
 	const groups = customScriptGroups(files);
 	const menu = el("div", { className: "script-menu " + (className || "") });
 	const trigger = el("button", {
@@ -1561,6 +1582,25 @@ function scriptSelect(site, className) {
 		el("span", { className: "script-menu-eyebrow", textContent: "SITE AUTOMATIONS" }),
 		el("strong", { textContent: "Custom scripts" }),
 		el("span", { className: "script-menu-count", textContent: String(files.length) + (files.length === 1 ? " script" : " scripts") })));
+	if (!files.length) panel.append(el("p", { className: "script-menu-empty", textContent: target ? "This environment has no scripts of its own yet." : "This site has no scripts yet." }));
+	// Scripts someone other than root can change are not run, as they run as root: an administrator checks them and
+	// makes them root's here
+	const unsafe = (target ? env.custom_scripts_safe : site.custom_scripts_safe) === false;
+	if (unsafe && currentUser.admin && files.length) {
+		panel.append(el("div", { className: "script-menu-warning" },
+			el("span", { className: "script-menu-warning-icon" }, svgIcon("alert")),
+			el("div", { className: "script-menu-warning-text" }, el("strong", { textContent: "Not run yet" }),
+				el("small", { textContent: "Someone other than root can change these scripts, and they run as root. Check what they do, then make them root's." })),
+			Object.assign(tonedButton("Make them root's…", "lock", "amber", async () => {
+				panel.hidden = true;
+				trigger.setAttribute("aria-expanded", "false");
+				if (!(await ask({ title: "Make the scripts root's?", input: false, ok: "Make them root's",
+					message: `Every script in the scripts folder of ${target ? "this environment" : "the site"} then runs as root from here, as it is now. Someone other than root could have changed them: check what each one does first.` }))) return;
+				await api(customScriptUrl(site, target), { json: { action: "secure" } });
+				toast("The scripts are root's now.", "ok");
+				await loadSites();
+			}), { className: "small toned-action" })));
+	}
 	panel.setAttribute("role", "menu");
 	panel.setAttribute("aria-label", "Custom site scripts");
 	for (const group of groups) {
@@ -1575,15 +1615,32 @@ function scriptSelect(site, className) {
 					event.stopPropagation();
 					panel.hidden = true;
 					trigger.setAttribute("aria-expanded", "false");
-					run(() => openTask({ kind: "script", site: site.name, script: file }));
+					run(() => openTask(target ? { kind: "env_script", site: site.name, target, script: file } : { kind: "script", site: site.name, script: file }));
 				},
 			}, el("span", { className: "script-menu-item-label", textContent: label }),
 			el("code", { textContent: file }));
 			item.dataset.script = file;
 			item.setAttribute("role", "menuitem");
-			section.append(item);
+			// An administrator changes a script from the menu: it runs as root, so it is theirs alone
+			if (!currentUser.admin) {
+				section.append(item);
+				continue;
+			}
+			const edit = el("button", { type: "button", className: "script-menu-edit", title: `Edit ${file}`, ariaLabel: `Edit ${file}`,
+				onclick: (event) => { event.stopPropagation(); closeMenu(); run(() => editCustomScript(site, target, file)); } }, svgIcon("pencil"));
+			const remove = el("button", { type: "button", className: "script-menu-edit danger", title: `Delete ${file}`, ariaLabel: `Delete ${file}`,
+				onclick: (event) => { event.stopPropagation(); closeMenu(); run(() => deleteCustomScript(site, target, file)); } }, svgIcon("trash"));
+			section.append(el("div", { className: "script-menu-row" }, item, edit, remove));
 		}
 		panel.append(section);
+	}
+	function closeMenu() {
+		panel.hidden = true;
+		trigger.setAttribute("aria-expanded", "false");
+	}
+	if (currentUser.admin) {
+		panel.append(el("div", { className: "script-menu-footer" }, el("button", { type: "button", className: "small script-menu-new", role: "menuitem",
+			onclick: (event) => { event.stopPropagation(); closeMenu(); run(() => newCustomScript(site, target)); } }, svgIcon("plus"), el("span", { textContent: "New script…" }))));
 	}
 	trigger.onclick = (event) => {
 		event.stopPropagation();
@@ -1597,6 +1654,72 @@ function scriptSelect(site, className) {
 	menu.append(trigger, panel);
 	menu.addEventListener("click", (event) => event.stopPropagation());
 	return menu;
+}
+
+// A custom script in the editor, as a file is: saved as root's, where only root may write, so it may be run
+function customScriptUrl(site, target) {
+	return `/api/sites/${encodeURIComponent(site.name)}/custom-scripts${target ? "?target=" + encodeURIComponent(target) : ""}`;
+}
+async function editCustomScript(site, target, file, content = null) {
+	if (!(await discardOk())) return;
+	const url = customScriptUrl(site, target);
+	const text = content ?? (await api(url + (target ? "&" : "?") + "path=" + encodeURIComponent(file))).content;
+	openFileSite = null;
+	openFile = file;
+	configurationEditor = null;
+	openFileSaveUrl = url;
+	showScriptRename({ site, target, file });
+	if (!editorDialog.open) editorDialog.showModal();
+	$("#editor-path").textContent = `${file} · ${site.name}${target ? " · " + target : ""}`;
+	$("#editor-status").textContent = "";
+	await showInEditor(file, text);
+	refreshSnippetMenu();
+	setDirty(false);
+}
+// Only what a script's name may hold, as it is typed: a space becomes _, æ, ø and å ae, oe and aa, the rest is left out
+const scriptNameFilter = (text) => text.replace(/æ/g, "ae").replace(/ø/g, "oe").replace(/å/g, "aa").replace(/Æ/g, "Ae").replace(/Ø/g, "Oe").replace(/Å/g, "Aa")
+	.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/\s/g, "_").replace(/[^\w.-]/g, "").replace(/^\./, "").slice(0, 100);
+const validScriptName = (text) => /^[\w-][\w.-]*$/.test(text.replace(/\.sh$/i, ""));
+// The custom script open in the editor, which Rename… renames; null for any other file
+let openCustomScript = null;
+function showScriptRename(script) {
+	openCustomScript = script;
+	$("#editor-rename").hidden = !script;
+}
+$("#editor-rename").dataset.tone = "amber";
+$("#editor-rename").prepend(svgIcon("pencil"));
+$("#editor-rename").classList.add("toned-action");
+$("#editor-rename").onclick = () => run(async () => {
+	const script = openCustomScript;
+	if (!script) return;
+	const typed = await ask({ title: `Rename ${script.file}`, message: "Letters, numbers, . _ and -; .sh is added.", value: script.file.replace(/\.sh$/i, ""),
+		ok: "Rename", filter: scriptNameFilter, valid: (text) => validScriptName(text) && text.replace(/\.sh$/i, "") + ".sh" !== script.file });
+	if (!typed) return;
+	const name = typed.trim().replace(/\.sh$/i, "") + ".sh";
+	await api(customScriptUrl(script.site, script.target), { json: { action: "rename", path: script.file, name } });
+	// What is in the editor is saved under its new name from now on
+	openFile = name;
+	showScriptRename({ ...script, file: name });
+	$("#editor-path").textContent = `${name} · ${script.site.name}${script.target ? " · " + script.target : ""}`;
+	toast(`Renamed to ${name}.`, "ok");
+	await loadSites();
+});
+// A script deleted, after the name of it is typed, as the other confirmations that delete
+async function deleteCustomScript(site, target, file) {
+	if (!(await ask({ title: `Delete ${file}?`, message: `It is gone from ${target ? "the environment" : "the site"} at once. Type ${file} to confirm.`, match: file, danger: true, ok: "Delete" }))) return;
+	await api(customScriptUrl(site, target), { json: { action: "delete", path: file } });
+	toast(`${file} is deleted.`, "ok");
+	await loadSites();
+}
+async function newCustomScript(site, target) {
+	let name = await ask({ title: "New script", message: `A script of ${target ? "this environment" : "the site"} of its own, run as root in its folder. Letters, numbers, . _ and -; .sh is added.`,
+		placeholder: "cleanup_temp_files", ok: "Create", filter: scriptNameFilter, valid: validScriptName });
+	if (!name) return;
+	name = name.trim().replace(/\.sh$/i, "") + ".sh";
+	const content = "#!/usr/bin/env bash\n# Runs as root in the site's folder\nset -euo pipefail\n\n";
+	await api(customScriptUrl(site, target), { json: { action: "save", path: name, content } });
+	await loadSites();
+	await editCustomScript(site, target, name, content);
 }
 
 document.addEventListener("click", (event) => {
@@ -1947,15 +2070,18 @@ function envPanel(site, env) {
 		}));
 	}
 	if (env.dotnet) meta.append(el("dt", { textContent: "Runtime" }), el("dd", { textContent: dotnetLabel(env.dotnet), title: `This environment runs on .NET ${env.dotnet}, read from its runtimeconfig.json` }));
-	if (env.port) meta.append(el("dt", { textContent: "Port" }), el("dd", { textContent: env.port }));
+	// The port and the server (its login and address) are an administrator's alone; the folder only for those with Files
+	// on the environment
+	if (env.port && currentUser.admin) meta.append(el("dt", { textContent: "Port" }), el("dd", { textContent: env.port }));
+	const showFolder = can(site.name, envKeyOf(env), "files");
 	if (env.mode === "remote") {
-		meta.append(el("dt", { textContent: "Server" }), el("dd", { textContent: `${env.user || "?"}@${env.host || "?"}:${env.ssh_port || 22}` }));
-		meta.append(el("dt", { textContent: "Folder" }), el("dd", { textContent: env.folder ? "/var/www/" + env.folder : "—" }));
+		if (currentUser.admin) meta.append(el("dt", { textContent: "Server" }), el("dd", { textContent: `${env.user || "?"}@${env.host || "?"}:${env.ssh_port || 22}` }));
+		if (showFolder) meta.append(el("dt", { textContent: "Folder" }), el("dd", { textContent: env.folder ? "/var/www/" + env.folder : "—" }));
 	} else if (env.mode === "windows") {
-		meta.append(el("dt", { textContent: "Server" }), el("dd", { textContent: `${env.user || "?"}@${env.host || "?"} (Windows)` }));
-		meta.append(el("dt", { textContent: "Folder" }), el("dd", { textContent: env.folder || "—" }));
+		if (currentUser.admin) meta.append(el("dt", { textContent: "Server" }), el("dd", { textContent: `${env.user || "?"}@${env.host || "?"} (Windows)` }));
+		if (showFolder) meta.append(el("dt", { textContent: "Folder" }), el("dd", { textContent: env.folder || "—" }));
 	} else {
-		meta.append(el("dt", { textContent: "Folder" }), el("dd", { textContent: "/var/www/" + env.path }));
+		if (showFolder) meta.append(el("dt", { textContent: "Folder" }), el("dd", { textContent: "/var/www/" + env.path }));
 		if (env.unit) meta.append(el("dt", { textContent: "Service" }), el("dd", { textContent: env.unit }));
 	}
 
@@ -2036,7 +2162,10 @@ function envPanel(site, env) {
 		// Setup first, at the left: the syncs it allows stand at the right
 		sync.prepend(el("button", { textContent: "Sync setup…", className: "small sync-setup", title: dataSyncSummary(env), onclick: () => run(() => openDataSyncDialog(site, env)) }));
 	}
-	if (!isTarget(env) && customScripts(site).length) quick.append(scriptSelect(site));
+	// Custom scripts: the main site's, or an environment's own (not on Windows); an administrator has the menu also
+	// without one, to make the first
+	const ownScripts = isTarget(env) ? env.custom_scripts || [] : customScripts(site);
+	if (!missing && env.mode !== "windows" && (ownScripts.length || currentUser.admin)) quick.append(scriptSelect(site, env));
 	if (env.mode === "windows") {
 		// web.config is the IIS site's config, appsettings.json its application settings
 		const tools = actionRow("Config");
@@ -2351,17 +2480,60 @@ for (const source of ["apache"]) {
 	});
 }
 
+// Use a temporary address, as an option card under a binding: a name under one of this server's domains (Settings,
+// General), made from base. Shown when the binding is checked and does not point here, or while it is on; the binding
+// then shows the name, and is not typed in. As New site has it.
+function tempAddressChoice(input, base) {
+	const domains = currentUser.temp_domains || [];
+	const typed = input.value;
+	let domain = null, dnsState = "empty";
+	const box = el("input", { type: "checkbox" });
+	const chips = el("div", { className: "temp-domain-chips", role: "radiogroup", ariaLabel: "Domain" });
+	const pick = el("div", { className: "temp-pick" }, el("span", { className: "temp-pick-label", textContent: "Under" }), chips);
+	const element = el("div", { className: "temp-address" },
+		el("label", { className: "sync-option copy-option temp-choice" }, box, el("span", { className: "sync-option-icon", ariaHidden: "true" }, svgIcon("link")),
+			el("span", { className: "sync-option-text" }, el("span", { className: "sync-option-title", textContent: "Use a temporary address" }),
+				el("span", { className: "sync-option-sub", textContent: "While its own domain does not point here: a name under one of this server's domains. Change the binding to its own domain later" }))),
+		pick);
+	const name = () => (domain ? `${tempLabel(base)}.${domain}` : typed);
+	const draw = () => {
+		const on = box.checked;
+		if (on && !domain) domain = domains[0].name;
+		if (!on) domain = null;
+		element.hidden = !(on || ["elsewhere", "unknown", "local"].includes(dnsState));
+		pick.hidden = !on || domains.length < 2;
+		input.readOnly = on;
+		input.classList.toggle("made-binding", on);
+		chips.replaceChildren(...domains.map((item) => el("button", {
+			type: "button", className: "temp-domain-chip" + (domain === item.name ? " active" : ""), role: "radio", ariaChecked: String(domain === item.name),
+			onclick: () => { domain = item.name; input.value = name(); draw(); },
+		}, svgIcon("globe"), el("span", { textContent: item.display }))));
+	};
+	box.onchange = () => { draw(); input.value = name(); };
+	element.state = (state) => {
+		if (state === "checking") return;
+		dnsState = state;
+		draw();
+	};
+	draw();
+	return element;
+}
+
 async function changeBinding(site, scope, env) {
 	const current = env ? bindingLabel(env) : site.binding;
 	const label = scope === "prod" ? "production site" : "test site";
 	const bindings = await ask({
 		title: `Change ${label} bindings`,
-		placeholder: scope === "prod" ? "" : "Empty: answers any name",
+		placeholder: scope === "prod" || !currentUser.admin ? "" : "Empty: answers any name",
+		// Change waits for a binding where an empty one is not theirs to give
+		valid: (text) => Boolean(text.trim()) || (scope !== "prod" && currentUser.admin),
 		message: `Set the primary domain and aliases for the ${label} of ${siteLabel(site)}. Aliases must resolve to the same server. HTTP-only sites remain HTTP-only; certificates are updated only for HTTPS sites. Only an HTTP-only site can use a name without a dot, such as the server's own name on the local network.`,
 		value: current,
 		extra: { label: "Aliases (one per line)", value: aliasLabels(env).join("\n"), placeholder: "www.example.com\napi.example.com" },
-		// DNS points at the server the site is on: a remote environment's own host
-		dns: env?.mode === "remote" ? { expect: env.host || "" } : env?.mode === "windows" ? { expect: env.host || "" } : {},
+		// DNS points at the server the site is on: a remote environment's own host. One here can have a temporary address,
+		// made from the site's name (and the environment's, so they differ)
+		dns: env?.mode === "remote" ? { expect: env.host || "" } : env?.mode === "windows" ? { expect: env.host || "" }
+			: { temp: scope === "prod" && env ? `${env.target || "prod"}.${site.name}` : site.name },
 		ok: "Change",
 	});
 	if (!bindings) return;
@@ -3285,16 +3457,50 @@ siteForm.addEventListener("click", (event) => {
 	if (event.detail > 0 && event.target.closest(".type-card")) setTimeout(() => siteForm.site.focus());
 });
 siteForm.elements.template.oninput = syncTemplateVersion;
-siteForm.site.oninput = () => { if (!siteForm.binding.dataset.edited) siteForm.binding.value = siteForm.site.value; };
+// A temporary address: a name under a domain whose every name points here (Settings, General), made from the folder
+// name and following it while it is typed. Chosen with its option card; the binding field is then the name it makes
+let tempDomain = null;
+const tempLabel = (site) => site.trim().toLowerCase().replace(/æ/g, "ae").replace(/ø/g, "oe").replace(/å/g, "aa").normalize("NFKD").replace(/[\u0300-\u036f]/g, "")
+	.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 63).replace(/-+$/, "") || "new-site";
+function tempBinding() {
+	// Nothing before a folder name is typed: no name is made up
+	return tempDomain && siteForm.site.value.trim() ? `${tempLabel(siteForm.site.value)}.${tempDomain}` : tempDomain ? "" : siteForm.site.value;
+}
+function showTempDomains() {
+	const domains = currentUser.temp_domains || [];
+	const on = Boolean(domains.length) && siteForm.elements.temp_address.checked;
+	if (on && !domains.some(({ name }) => name === tempDomain)) tempDomain = domains[0].name;
+	if (!on) tempDomain = null;
+	showTempChoice();
+	// The binding shows the name it makes, and is not typed in; a choice of domain only when there is more than one
+	siteForm.binding.readOnly = on;
+	// A site for any name (an empty binding) is the server's: an administrator's to make, a user gives a binding
+	siteForm.binding.placeholder = on ? "Made from the folder name" : currentUser.admin ? "Empty: answers any name" : "www.example.com";
+	siteForm.binding.required = !currentUser.admin;
+	siteForm.binding.classList.toggle("made-binding", on);
+	$("#site-temp-pick").hidden = !on || domains.length < 2;
+	$("#site-temp-domains").replaceChildren(...domains.map(({ name, display }) => el("button", {
+		type: "button", className: "temp-domain-chip" + (tempDomain === name ? " active" : ""), role: "radio", ariaChecked: String(tempDomain === name),
+		onclick: () => { tempDomain = name; siteForm.binding.value = tempBinding(); showTempDomains(); },
+	}, svgIcon("globe"), el("span", { textContent: display }))));
+}
+siteForm.elements.temp_address.addEventListener("change", () => {
+	delete siteForm.binding.dataset.edited;
+	showTempDomains();
+	siteForm.binding.value = tempBinding();
+});
+siteForm.site.oninput = () => {
+	if (!siteForm.binding.dataset.edited || tempDomain) siteForm.binding.value = tempBinding();
+	if (tempDomain) showTempDomains();
+};
 siteForm.binding.oninput = () => { siteForm.binding.dataset.edited = "1"; };
-// HTTPS as an option card, sent as certificate y or n. It is a choice only when the binding points here: the
-// certificate is issued as the site is made. An empty binding is the site for any name, where the server decides.
-// The choice comes back when DNS is right. Off at first: HTTPS is chosen, not taken for granted.
+// HTTPS as an option card, sent as certificate y or n. It is shown only when the binding points here: the
+// certificate is issued as the site is made (the DNS card says so meanwhile). Hidden at first, and for an empty
+// binding (the site for any name). The choice comes back when DNS is right. Off at first: HTTPS is chosen, not taken
+// for granted.
 function httpsChoice(form) {
 	const box = form.elements.https_choice;
 	const card = box.closest("label");
-	const sub = card.querySelector(".sync-option-sub");
-	const text = sub.textContent;
 	let chosen = false;
 	const send = () => { form.elements.certificate.value = box.checked ? "y" : "n"; };
 	box.addEventListener("change", () => {
@@ -3303,10 +3509,9 @@ function httpsChoice(form) {
 	});
 	const state = (value) => {
 		if (value === "checking") return;
-		const allowed = value === "here" || value === "empty";
+		const allowed = value === "here";
 		box.disabled = !allowed;
-		card.classList.toggle("disabled", !allowed);
-		sub.textContent = allowed ? text : "Possible once DNS for the binding points here. Until then it runs on HTTP, and Issue certificate gives it one later";
+		card.closest(".https-choice").hidden = !allowed;
 		box.checked = allowed && chosen;
 		send();
 	};
@@ -3314,13 +3519,28 @@ function httpsChoice(form) {
 }
 const siteHttps = httpsChoice(siteForm);
 const setupHttps = httpsChoice($("#form-setup-site"));
-$("#site-dns").replaceChildren(dnsCard(siteForm.binding, { onState: siteHttps.state }));
+// The temporary address is offered only when it helps: the binding is checked and does not point here (or it is on)
+let siteDnsState = "empty";
+function showTempChoice() {
+	const relevant = ["elsewhere", "unknown", "local"].includes(siteDnsState);
+	$("#site-temp").hidden = !(currentUser.temp_domains || []).length || !(relevant || siteForm.elements.temp_address.checked);
+}
+$("#site-dns").replaceChildren(dnsCard(siteForm.binding, { onState: (state) => {
+	siteHttps.state(state);
+	if (state === "checking") return;
+	siteDnsState = state;
+	showTempChoice();
+} }));
 $("#setup-site-dns").replaceChildren(dnsCard($("#form-setup-site").binding, { onState: setupHttps.state }));
 // The binding's message is about the certificate choice as well: any change clears it, or the browser keeps
 // refusing the form before it is checked again
 for (const type of ["input", "change"]) siteForm.addEventListener(type, () => siteForm.binding.setCustomValidity(""));
-$("#btn-new-site").onclick = () => { siteForm.reset(); siteForm.elements.template.setCustomValidity(""); siteForm.binding.setCustomValidity(""); delete siteForm.binding.dataset.edited; delete siteForm.elements.publish.dataset.edited; syncSiteForm(); dialog.showModal(); siteForm.site.focus(); };
-$("#btn-new-site").addEventListener("click", () => siteHttps.reset());
+$("#btn-new-site").onclick = () => { siteForm.reset(); siteForm.elements.template.setCustomValidity(""); siteForm.binding.setCustomValidity(""); delete siteForm.binding.dataset.edited; delete siteForm.elements.publish.dataset.edited; tempDomain = null; showTempDomains(); syncSiteForm(); dialog.showModal(); siteForm.site.focus(); };
+$("#btn-new-site").addEventListener("click", () => {
+	siteHttps.reset();
+	siteDnsState = "empty";
+	showTempChoice();
+});
 $("#btn-empty-new-site").onclick = () => $("#btn-new-site").click();
 $("#site-cancel").onclick = (e) => { e.preventDefault(); dialog.close(); };
 siteForm.onsubmit = (event) => {
@@ -5520,6 +5740,7 @@ async function editFile(path, remoteSite = null) {
 	openFileSite = siteOfFile(path, remoteSite);
 	openFile = path;
 	configurationEditor = null;
+	showScriptRename(null);
 	openFileSaveUrl = saveUrl;
 	if (!editorDialog.open) editorDialog.showModal();
 	$("#editor-path").textContent = path;
@@ -5535,6 +5756,7 @@ async function editApacheConfig() {
 	const url = "/api/server/apache-config";
 	const data = await api(url);
 	configurationEditor = { url, kind: "conf", encoding: "utf-8" };
+	showScriptRename(null);
 	openFileSite = null;
 	openFile = data.path;
 	if (!editorDialog.open) editorDialog.showModal();
@@ -5561,6 +5783,7 @@ async function editConfiguration(site, env, kind) {
 		data = await api(url + "&encoding=" + encodeURIComponent(encoding));
 	}
 	configurationEditor = { url, kind, encoding: data.encoding || "utf-8" };
+	showScriptRename(null);
 	openFileSite = site;
 	openFile = data.path;
 	if (!editorDialog.open) editorDialog.showModal();
@@ -5681,6 +5904,7 @@ async function closeEditor() {
 	if (!(await discardOk())) return;
 	openFile = null;
 	configurationEditor = null;
+	showScriptRename(null);
 	setDirty(false);
 	editorDialog.close();
 }
@@ -6850,10 +7074,9 @@ async function openServerSettings() {
 	try {
 		const [server, keepAlive] = await Promise.all([loadServerAddress().catch(() => null),
 			api("/api/keep-alive").catch(() => ({ installed: false, enabled: false, interval_minutes: 5 }))]);
-		// The address and the mail server beside each other, keep-alive across the width under them
-		const keepAliveWide = keepAliveCard(keepAlive);
-		keepAliveWide.classList.add("tool-card-wide");
-		list.replaceChildren(publicAddressCard(server), await mailCard(), keepAliveWide);
+		const domains = await api("/api/temp-domains").catch(() => ({ domains: [] }));
+		// Two beside each other: the address and the mail server, then the temporary addresses and keep-alive
+		list.replaceChildren(publicAddressCard(server), await mailCard(), tempDomainsCard(domains.domains, server), keepAliveCard(keepAlive));
 	} finally {
 		list.removeAttribute("aria-busy");
 	}
@@ -6869,6 +7092,91 @@ function publicAddressCard(server) {
 		actions: [toolButton(own ? "Edit…" : "Set…", () => askPublicAddress(server))] });
 	card.querySelector(".tool-head").append(...card.querySelectorAll(":scope > .tool-actions"));
 	return card;
+}
+
+// The domains a new site can have a temporary address under: each one's every name points here (*.domain)
+function tempDomainsCard(domains, server) {
+	// A red trash button on each, as the project's other icon buttons that remove
+	const remove = ({ name, display }) => Object.assign(tonedButton("", "trash", "red", async () => {
+		if (!(await ask({ title: `Remove ${display}?`, message: "New sites can no longer have a temporary address under it. Sites that have one keep it.", input: false, ok: "Remove", danger: true }))) return;
+		await api("/api/temp-domains?name=" + encodeURIComponent(name), { method: "DELETE" });
+		await refreshTempDomains();
+	}), { title: `Remove ${display}`, ariaLabel: `Remove ${display}`, className: "icon-action" });
+	const card = toolCard({ icon: "link", tone: "teal", title: "Temporary addresses", detail: domains.length ? `${domains.length} domain${domains.length === 1 ? "" : "s"}` : "No domains yet",
+		state: domains.length ? "On" : "", stateClass: "ok",
+		text: "A new site can have a name under one of these until its own domain points here, such as shop-example-com.example.net. Each needs a wildcard DNS record (*) to this server.",
+		rows: domains.map((domain) => toolRow("*." + domain.display, "Checked when added", { on: true, action: remove(domain) })),
+		actions: [tonedButton("Add domain…", "plus", "teal", () => {
+			const input = el("input", { name: "domain", required: true, autocomplete: "off", spellcheck: false, placeholder: "example.net" });
+			// Add is there to click once every name under it points here
+			const dns = wildcardDnsCard(input, server?.address || "", (pointing) => { $("#form-dialog-ok").disabled = !pointing; });
+			openFormDialog({ icon: "link", title: "Add a domain", ok: "Add", text: "Every name under it must point to this server: one wildcard DNS record does it.",
+				fields: [el("label", {}, "Domain", input), dns],
+				submit: async (form) => {
+					try {
+						await api("/api/temp-domains", { json: { name: dnsAscii(dnsName(form.elements.domain.value)) } });
+					} catch (error) {
+						// Shown in its DNS card, which checks again; a reason that is not DNS (in the list already) under it
+						await dns.check();
+						if (dns.classList.contains("here")) {
+							dns.querySelector(".dns-note").textContent = error.message;
+							$("#form-dialog-ok").disabled = true;
+						}
+						return false;
+					}
+					await refreshTempDomains();
+					toast("The domain is added.", "ok");
+				} });
+			$("#form-dialog-ok").disabled = true;
+		})] });
+	// Its button at the top beside its state, as Public address has
+	card.querySelector(".tool-head").append(...card.querySelectorAll(":scope > .tool-actions"));
+	return card;
+}
+// Whether every name under a domain points here, as the DNS card shows a name: checked while it is typed, with the
+// wildcard record to make when it does not. A name no one made stands in for all of them.
+function wildcardDnsCard(input, address, onState) {
+	const status = el("span", { className: "dns-status" });
+	const records = el("div", { className: "dns-records" });
+	const note = el("p", { className: "dns-note" });
+	const title = el("strong", { textContent: "DNS for every name under it" });
+	const card = el("div", { className: "dns-card" }, el("div", { className: "dns-head" }, el("span", { className: "dns-icon" }, svgIcon("globe")), title, status), records, note);
+	card.hidden = true;
+	let asked = "", timer = null;
+	card.check = async () => {
+		const domain = dnsAscii(dnsName(input.value).replace(/^\*\./, ""));
+		card.hidden = !domain.includes(".");
+		onState(false);
+		if (card.hidden) return;
+		const shown = dnsName(input.value).replace(/^\*\./, "");
+		title.textContent = `DNS for *.${shown}`;
+		asked = domain;
+		card.classList.remove("here");
+		card.classList.add("checking");
+		status.className = "dns-status checking";
+		status.textContent = "Checking…";
+		records.replaceChildren(dnsRecord("A", `*.${shown}`, address || "this server's address"));
+		let answer = null;
+		try { answer = await api(`/api/dns?name=${encodeURIComponent(`harbor-check-${Math.random().toString(36).slice(2, 10)}.${domain}`)}`); } catch (error) { /* shown below */ }
+		if (asked !== domain) return;
+		card.classList.remove("checking");
+		const here = Boolean(answer?.here);
+		card.classList.toggle("here", here);
+		status.className = "dns-status " + (here ? "ok" : answer?.addresses?.length ? "warn" : "muted");
+		status.textContent = here ? (answer.proxy ? "Via " + answer.proxy : "Points here") : !answer ? "Could not check" : answer.addresses.length ? "Points to " + answer.addresses[0] : "No record yet";
+		records.hidden = here;
+		note.textContent = here ? "" : "Make this record where the domain's DNS is kept. It can take a few minutes before it is seen here.";
+		onState(here);
+	};
+	input.addEventListener("input", () => {
+		clearTimeout(timer);
+		timer = setTimeout(card.check, 500);
+	});
+	return card;
+}
+async function refreshTempDomains() {
+	try { currentUser = await api("/api/me"); } catch (error) { /* the settings show it anyway */ }
+	await openServerSettings();
 }
 
 function askPublicAddress(server) {
@@ -8473,6 +8781,8 @@ document.addEventListener("visibilitychange", () => {
 const userDialog = $("#dlg-user");
 const userForm = $("#form-user");
 let usersData = null;
+// The rules of the template a new user started from: what a site or connection ticked for them gives
+let grantRules = null;
 const defaultSiteActions = ["service", "logs", "publish", "sync_data", "sync_settings", "clear_logs"];
 const defaultSqlActions = ["query", "backup"];
 
@@ -8531,9 +8841,106 @@ function renderUsers() {
 	// Three beside each other, and a dashed card after them that adds one, as everywhere on the Server page
 	$("#users-list").replaceChildren(...users.map(userCard),
 		addFirstCard(users.length ? "Add a user" : "Add your first user", "Give someone a login of their own, with only the sites and databases they may use", () => openUserEditor()));
+	const templates = usersData.templates || [];
+	$("#templates-count").textContent = templates.length ? String(templates.length) : "";
+	$("#templates-list").replaceChildren(...templates.map(templateCard),
+		addFirstCard(templates.length ? "Add a template" : "Add your first template", "What a new user may do on each site and SQL connection you give them", () => openTemplateEditor()));
+}
+// A template as a card, as a user is: what each site and connection gives, and Edit
+function templateCard(template) {
+	const rules = template.access;
+	const count = (actions) => `${actions.length} action${actions.length === 1 ? "" : "s"}`;
+	const rows = [
+		...(rules.web ? [toolRow("Web Server", `${count(rules.site_rules.actions)} on each site` + (rules.create_sites ? " · creates sites" : ""), { on: true })] : []),
+		...(rules.web && rules.sftp ? [toolRow("SFTP", "Their sites' folders", { on: true })] : []),
+		...(rules.sql ? [toolRow("SQL Server", `${rules.sql_rules.own ? "Only their own" : "Every database"} · ${count(rules.sql_rules.actions)}`, { on: true })] : []),
+		...(rules.web || rules.sql ? [] : [toolRow("Access", "None", { on: false })]),
+	];
+	const card = toolCard({ icon: "file", tone: "purple", title: template.name, detail: "Template", rows,
+		actions: [toolButton("Edit…", () => openTemplateEditor(template), "ghost")] });
+	card.classList.add("actions-below");
+	return card;
 }
 
 // The site tree: a site's box gives all of it; opened, its environments one by one, and its actions
+// A filter above a long list in a user's access: hides each item that does not hold every word typed
+// (an item's text is its data-search, or what it shows). Shown only when the list is long enough to need it.
+function grantSearch(list, placeholder) {
+	const input = el("input", { type: "search", className: "grant-search", placeholder, autocomplete: "off", spellcheck: false, ariaLabel: placeholder });
+	const clear = el("button", { type: "button", className: "search-clear", ariaLabel: "Clear filter", title: "Clear filter" });
+	clear.innerHTML = '<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
+	const icon = '<svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>';
+	const box = el("div", { className: "grant-search-box" }, input, clear);
+	box.insertAdjacentHTML("afterbegin", icon);
+	const empty = el("p", { className: "muted grant-no-match", textContent: "Nothing matches the filter.", hidden: true });
+	const items = () => [...list.children].filter((item) => item.matches(".grant-site, .grant-chip"));
+	const apply = () => {
+		const words = input.value.toLowerCase().split(/\s+/).filter(Boolean);
+		let shown = 0;
+		for (const item of items()) {
+			item.hidden = !words.every((word) => (item.dataset.search || item.textContent).toLowerCase().includes(word));
+			if (!item.hidden) shown += 1;
+		}
+		empty.hidden = box.hidden || shown > 0 || !words.length;
+	};
+	input.oninput = apply;
+	clear.onclick = () => { input.value = ""; apply(); input.focus(); };
+	// Escape empties the filter first; only an empty one lets the dialog close
+	input.onkeydown = (event) => {
+		if (event.key === "Escape" && input.value) {
+			event.preventDefault();
+			event.stopPropagation();
+			input.value = "";
+			apply();
+		}
+	};
+	// After the list is drawn again: shown when it is long and may be seen, emptied when it is hidden
+	box.reset = (visible = true, keep = false) => {
+		box.hidden = !visible || items().length <= 6;
+		if (box.hidden || !keep) input.value = "";
+		apply();
+	};
+	box.empty = empty;
+	box.hidden = true;
+	return box;
+}
+
+// What a user may do on a site, a chip each; read() gives those ticked. As a user's site and a template show them.
+function siteActionChips(chosen) {
+	const chips = usersData.site_actions.map(([value, text]) => {
+		const box = el("input", { type: "checkbox", value, checked: chosen.includes(value) });
+		const chip = el("label", { className: "grant-chip action" }, box, el("span", { textContent: text }));
+		if (value === "terminal") chip.title = "A shell in the site's folder as their own Linux user: everything that user may do there, Files and deleting too";
+		return chip;
+	});
+	// A terminal reaches the folder as the user's Linux user: it gives Files as well
+	const actionBox = (value) => chips.map((chip) => chip.querySelector("input")).find((box) => box.value === value);
+	const terminalBox = actionBox("terminal"), filesBox = actionBox("files");
+	const terminalGivesFiles = () => {
+		if (!terminalBox || !filesBox) return;
+		if (terminalBox.checked) filesBox.checked = true;
+		filesBox.disabled = terminalBox.checked;
+		filesBox.closest("label").title = terminalBox.checked ? "Given by Terminal" : "";
+	};
+	if (terminalBox) terminalBox.addEventListener("change", terminalGivesFiles);
+	terminalGivesFiles();
+	chips.read = () => chips.map((chip) => chip.querySelector("input")).filter((box) => box.checked).map((box) => box.value);
+	return chips;
+}
+// What a user may do on a SQL connection, a chip each
+function sqlActionChips(chosen) {
+	const chips = usersData.sql_actions.map(([value, text]) => el("label", { className: "grant-chip action" },
+		el("input", { type: "checkbox", value, checked: chosen.includes(value) }), el("span", { textContent: text })));
+	chips.read = () => chips.map((chip) => chip.querySelector("input")).filter((box) => box.checked).map((box) => box.value);
+	return chips;
+}
+// Which databases on a connection, as segments: every one, only their own, and (for a user) the ones chosen
+function databaseScopes(name, initial, withChosen = true) {
+	return [["all", "Every database", "Also those made later"], ["own", "Only their own", "Those they make"], ...(withChosen ? [["chosen", "Chosen ones", "Picked below"]] : [])]
+		.map(([value, title, text]) => el("label", { className: "samba-segment" }, el("input", { type: "radio", name, value, checked: value === initial }),
+			el("strong", { textContent: title }), el("small", { textContent: text })));
+}
+
 function siteGrantRow(name, envKeys, grant, user = null) {
 	const site = allSites.find((item) => item.name === name);
 	const label = (key) => {
@@ -8548,24 +8955,9 @@ function siteGrantRow(name, envKeys, grant, user = null) {
 		box.dataset.env = key;
 		return [key, box, el("label", { className: "grant-chip" + (key === "main" ? " main" : "") }, box, el("span", { textContent: label(key) }))];
 	});
-	const newEnvs = el("input", { type: "checkbox", checked: grant ? Boolean(grant.new_envs) : true });
-	const actionBoxes = usersData.site_actions.map(([value, text]) => {
-		const box = el("input", { type: "checkbox", value, checked: (grant?.actions || defaultSiteActions).includes(value) });
-		const chip = el("label", { className: "grant-chip action" }, box, el("span", { textContent: text }));
-		if (value === "terminal") chip.title = "A shell in the site's folder as their own Linux user: everything that user may do there, Files and deleting too";
-		return chip;
-	});
-	// A terminal reaches the folder as the user's Linux user: it gives Files as well
-	const actionBox = (value) => actionBoxes.map((chip) => chip.querySelector("input")).find((box) => box.value === value);
-	const terminalBox = actionBox("terminal"), filesBox = actionBox("files");
-	const terminalGivesFiles = () => {
-		if (!terminalBox || !filesBox) return;
-		if (terminalBox.checked) filesBox.checked = true;
-		filesBox.disabled = terminalBox.checked;
-		filesBox.closest("label").title = terminalBox.checked ? "Given by Terminal" : "";
-	};
-	if (terminalBox) terminalBox.addEventListener("change", terminalGivesFiles);
-	terminalGivesFiles();
+	// Not given yet: as the template the user started from says, or the defaults
+	const newEnvs = el("input", { type: "checkbox", checked: grant ? Boolean(grant.new_envs) : grantRules?.site_rules?.new_envs ?? true });
+	const actionBoxes = siteActionChips(grant?.actions || grantRules?.site_rules?.actions || defaultSiteActions);
 	const sync = () => {
 		const count = envBoxes.filter(([, box]) => box.checked).length;
 		whole.checked = count === envBoxes.length;
@@ -8599,6 +8991,8 @@ function siteGrantRow(name, envKeys, grant, user = null) {
 			el("span", { className: "muted", textContent: envKeys.length > 1 ? `${envKeys.length - 1} environment${envKeys.length === 2 ? "" : "s"}` : "" }), toggle),
 		body);
 	row.dataset.site = name;
+	// What the filter matches: the site's name and what it is shown as, and its environments
+	row.dataset.search = [name, site ? siteLabel(site) : "", ...envKeys.map(label)].join(" ");
 	row.collect = () => {
 		const envs = envBoxes.filter(([, box]) => box.checked).map(([key]) => key);
 		if (!envs.length) return null;
@@ -8616,17 +9010,16 @@ function connectionGrantRow(connection, grant, user = null) {
 	const chosen = new Set(grant?.databases || ["*"]);
 	// Which databases: every one (also those made later), only those they make themselves, or the ones chosen here
 	const scopeName = "sql-scope-" + connection.id;
-	const initial = chosen.has("*") ? "all" : grant?.own ? "own" : "chosen";
-	const scopes = [["all", "Every database", "Also those made later"], ["own", "Only their own", "Those they make"], ["chosen", "Chosen ones", "Picked below"]]
-		.map(([value, title, text]) => el("label", { className: "samba-segment" }, el("input", { type: "radio", name: scopeName, value, checked: value === initial }),
-			el("strong", { textContent: title }), el("small", { textContent: text })));
+	// Not given yet: as the template the user started from says
+	const initial = !grant ? (grantRules?.sql_rules?.own ? "own" : "all") : chosen.has("*") ? "all" : grant.own ? "own" : "chosen";
+	const scopes = databaseScopes(scopeName, initial);
 	const scope = () => scopes.map((label) => label.querySelector("input")).find((input) => input.checked)?.value || "all";
 	const list = el("div", { className: "grant-chips grant-database-list" });
+	const listSearch = grantSearch(list, "Filter databases…");
 	const ownNote = el("p", { className: "hint grant-own-note" });
-	const actions = usersData.sql_actions.map(([value, text]) => el("label", { className: "grant-chip action" },
-		el("input", { type: "checkbox", value, checked: (grant?.actions || defaultSqlActions).includes(value) }), el("span", { textContent: text })));
+	const actions = sqlActionChips(grant?.actions || grantRules?.sql_rules?.actions || defaultSqlActions);
 	const made = [...chosen].filter((name) => name !== "*");
-	const limitRow = databaseLimitFields(grant?.limits);
+	const limitRow = databaseLimitFields((grant ? grant.limits : grantRules?.sql_rules?.limits) || {});
 	// Each database they made here: its own size, bigger or smaller than every database's; empty, the default above
 	const ownDatabases = user?.made?.databases?.[connection.id] || [];
 	const databaseSizes = ownDatabases.map((name) => {
@@ -8645,6 +9038,7 @@ function connectionGrantRow(connection, grant, user = null) {
 	const showList = () => {
 		const now = scope();
 		list.hidden = now !== "chosen";
+		listSearch.reset(now === "chosen", true);
 		ownNote.hidden = now !== "own";
 		ownNote.textContent = made.length ? `Theirs so far: ${made.join(", ")}. A database they make, copy or restore to becomes theirs.`
 			: "None yet. A database they make, copy or restore to becomes theirs.";
@@ -8661,6 +9055,7 @@ function connectionGrantRow(connection, grant, user = null) {
 			list.replaceChildren(...(names.length ? names.sort((a, b) => a.localeCompare(b)).map((name) => el("label", { className: "grant-chip" },
 				el("input", { type: "checkbox", value: name, checked: chosen.has(name) }), el("span", { textContent: name })))
 				: [el("span", { className: "muted", textContent: "The connection has no databases yet." })]));
+			listSearch.reset(!list.hidden);
 		} catch (error) {
 			loaded = false;
 			list.replaceChildren(el("span", { className: "error", textContent: "The databases could not be read: " + error.message }));
@@ -8679,7 +9074,7 @@ function connectionGrantRow(connection, grant, user = null) {
 	const body = el("div", { className: "grant-body", hidden: !grant },
 		el("div", { className: "grant-label", textContent: "Databases" }),
 		el("div", { className: "samba-segments grant-scopes", role: "radiogroup", ariaLabel: "Databases" }, ...scopes),
-		list, ownNote,
+		listSearch, list, listSearch.empty, ownNote,
 		el("div", { className: "grant-label", textContent: "May" }), el("div", { className: "grant-chips" }, ...actions), limitRow,
 		...(databaseSizes.length ? [el("div", { className: "user-limits grant-limits database-sizes" }, ...databaseSizes)] : []));
 	showLimits();
@@ -8777,21 +9172,40 @@ function databaseLimitFields(limits = {}) {
 	return element;
 }
 
-function openUserEditor(user = null, template = null) {
-	// A user to change has an id; without one it is a new user, maybe from a template's access
-	const editing = Boolean(user?.id);
+// The sites in a user's access get a filter above them when there are many
+const userSitesSearch = grantSearch($("#user-sites"), "Filter sites…");
+$("#user-sites").before(userSitesSearch);
+$("#user-sites").after(userSitesSearch.empty);
+// A template in the same window as a user: its name and rules in place of who they are and which sites and connections
+function openTemplateEditor(template = null) {
+	const rules = template?.access || { web: true, site_rules: { actions: defaultSiteActions, new_envs: true }, sql_rules: { actions: defaultSqlActions } };
+	openUserEditor(rules, null, template || {});
+}
+function openUserEditor(user = null, template = null, editTemplate = undefined) {
+	// A user to change has an id; without one it is a new user, maybe from a template's rules
+	const asTemplate = editTemplate !== undefined;
+	const editing = !asTemplate && Boolean(user?.id);
+	grantRules = template?.access || null;
 	userForm.reset();
-	userForm.dataset.id = user?.id || "";
-	$("#user-title").textContent = editing ? user.name || user.username : "Add user";
-	$("#user-description").textContent = editing ? "Change what they may do. It counts at once; a new password logs them out." : "They log in with this name and password.";
+	userForm.dataset.id = editing ? user.id : "";
+	userForm.dataset.template = asTemplate ? editTemplate.id || "" : "";
+	userForm.dataset.mode = asTemplate ? "template" : "user";
+	$("#user-title").textContent = asTemplate ? editTemplate.name || "Add template" : editing ? user.name || user.username : "Add user";
+	$("#user-description").textContent = asTemplate ? "What a new user started from it may do on each site and SQL connection you give them. Users made from it keep what they have when it changes."
+		: editing ? "Change what they may do. It counts at once; a new password logs them out." : "They log in with this name and password.";
 	$("#user-error").textContent = "";
+	$("#user-identity").hidden = asTemplate;
+	$("#template-name-field").hidden = !asTemplate;
+	userForm.template_name.required = asTemplate;
+	userForm.template_name.value = editTemplate?.name || "";
+	userForm.username.required = !asTemplate;
 	userForm.username.value = user?.username || "";
 	userForm.elements.name.value = user?.name || "";
-	userForm.password.required = !editing;
+	userForm.password.required = !editing && !asTemplate;
 	userForm.password.placeholder = editing ? "Leave empty to keep it" : "At least 12 characters";
-	// Changing a user: no templates; a new one: the templates, the one it started from lit
-	showUserTemplates(editing ? null : template || undefined);
-	userForm.querySelector(`input[name=role][value=${user?.role || "user"}]`).checked = true;
+	// Changing a user or a template: no templates; a new user: the templates, the one it started from lit
+	showUserTemplates(editing || asTemplate ? null : template || undefined);
+	userForm.querySelector(`input[name=role][value=${asTemplate ? "user" : user?.role || "user"}]`).checked = true;
 	userForm.disabled.checked = Boolean(user?.disabled);
 	userForm.web.checked = user ? Boolean(user.web) : true;
 	userForm.create_sites.checked = Boolean(user?.create_sites);
@@ -8809,7 +9223,7 @@ function openUserEditor(user = null, template = null) {
 	userForm.sftp_password.placeholder = user?.sftp ? "Leave empty to keep it" : "At least 12 characters";
 	userForm.sftp_keys.dataset.loaded = "";
 	$("#user-sftp-address").textContent = user?.linux ? `sftp://${user.linux}@${location.hostname}` : "made when you save";
-	if (user?.sftp) {
+	if (editing && user.sftp) {
 		api(`/api/users/${encodeURIComponent(user.id)}/sftp`).then((data) => {
 			userForm.sftp_keys.value = data.keys || "";
 			userForm.sftp_keys.dataset.loaded = data.keys || "";
@@ -8818,21 +9232,69 @@ function openUserEditor(user = null, template = null) {
 	}
 	userForm.sql.checked = Boolean(user?.sql);
 	userForm.manage_connections.checked = Boolean(user?.manage_connections);
-	$("#user-sites").replaceChildren(...Object.entries(usersData.sites).sort(([a], [b]) => a.localeCompare(b))
-		.map(([name, envs]) => siteGrantRow(name, envs, user?.sites?.[name], user)));
-	$("#user-connections").replaceChildren(...(usersData.connections.length ? usersData.connections.map((connection) => connectionGrantRow(connection, user?.connections?.[connection.id], user))
+	// A user: the sites and connections, each ticked or not; a template: what each one given to a user gives
+	$("#user-sites").replaceChildren(...(asTemplate ? [] : Object.entries(usersData.sites).sort(([a], [b]) => a.localeCompare(b))
+		.map(([name, envs]) => siteGrantRow(name, envs, user?.sites?.[name], user))));
+	userSitesSearch.reset(!asTemplate);
+	$("#user-sites-hint").hidden = asTemplate;
+	$("#user-connections").replaceChildren(...(asTemplate ? [] : usersData.connections.length ? usersData.connections.map((connection) => connectionGrantRow(connection, user?.connections?.[connection.id], user))
 		: [el("p", { className: "muted", textContent: "There are no SQL connections yet." })]));
-	$("#user-delete").hidden = !editing;
+	$("#template-site-rules").replaceChildren(...(asTemplate ? [templateSiteRules(user.site_rules || {})] : []));
+	$("#template-sql-rules").replaceChildren(...(asTemplate ? [templateSqlRules(user.sql_rules || {})] : []));
+	$("#template-site-rules").hidden = $("#template-sql-rules").hidden = !asTemplate;
+	$("#user-delete").hidden = asTemplate ? !editTemplate.id : !editing;
+	$("#user-delete").textContent = asTemplate ? "Delete template" : "Delete user";
 	showUserScope();
-	userDialog.showModal();
-	userForm.username.focus();
+	if (!userDialog.open) userDialog.showModal();
+	(asTemplate ? userForm.template_name : userForm.username).focus();
+}
+// A template's rules for each site a user is given: what they may do there, and whether environments added later follow
+function templateSiteRules(rules) {
+	const actions = siteActionChips(rules.actions || defaultSiteActions);
+	const later = el("input", { type: "checkbox", checked: rules.new_envs ?? true });
+	const element = el("div", { className: "grant-site granted template-rules" }, el("div", { className: "grant-body" },
+		el("div", { className: "grant-label", textContent: "May, on each site they are given" }), el("div", { className: "grant-chips" }, ...actions),
+		el("div", { className: "grant-label", textContent: "Environments" }),
+		el("div", { className: "grant-chips" }, el("label", { className: "grant-chip later", title: "When a whole site is given: environments added to it later are given too" }, later,
+			el("span", { textContent: "Environments added later" })))));
+	element.read = () => ({ actions: actions.read(), new_envs: later.checked });
+	return element;
+}
+// A template's rules for each SQL connection a user is given: which databases, what they may do, and how many they make
+function templateSqlRules(rules) {
+	const scopes = databaseScopes("template-sql-scope", rules.own ? "own" : "all", false);
+	const actions = sqlActionChips(rules.actions || defaultSqlActions);
+	const limits = databaseLimitFields(rules.limits || {});
+	const makes = () => actions.read().some((action) => action === "create" || action === "copy");
+	const showLimits = () => { limits.hidden = !makes(); };
+	for (const chip of actions) chip.querySelector("input").addEventListener("change", showLimits);
+	// Only their own: everything on what they make is theirs, so every action comes with it (each can be taken off)
+	for (const label of scopes) label.querySelector("input").onchange = () => {
+		if (label.querySelector("input").value === "own") for (const chip of actions) chip.querySelector("input").checked = true;
+		showLimits();
+	};
+	showLimits();
+	const element = el("div", { className: "grant-site granted template-rules" }, el("div", { className: "grant-body" },
+		el("div", { className: "grant-label", textContent: "Databases, on each connection they are given" }),
+		el("div", { className: "samba-segments grant-scopes two", role: "radiogroup", ariaLabel: "Databases" }, ...scopes),
+		el("div", { className: "grant-label", textContent: "May" }), el("div", { className: "grant-chips" }, ...actions), limits));
+	element.read = () => ({ own: scopes.some((label) => label.querySelector("input").checked && label.querySelector("input").value === "own"),
+		actions: actions.read(), ...(makes() ? { limits: limits.read() } : {}) });
+	return element;
+}
+// What the template window gives: the parts, the limits and the rules for each site and connection
+function templateAccess() {
+	return { web: userForm.web.checked, create_sites: userForm.create_sites.checked, sftp: userForm.sftp.checked, sql: userForm.sql.checked,
+		manage_connections: userForm.manage_connections.checked, limits: userLimits(),
+		site_rules: $("#template-site-rules").firstChild.read(), sql_rules: $("#template-sql-rules").firstChild.read() };
 }
 function showUserScope() {
 	const admin = userForm.role.value === "admin";
 	$("#user-scope").hidden = admin;
 	$("#user-web").hidden = !userForm.web.checked;
 	$("#user-sql").hidden = !userForm.sql.checked;
-	$("#user-sftp").hidden = !userForm.sftp.checked;
+	// A template has no password or keys: they are each user's own
+	$("#user-sftp").hidden = !userForm.sftp.checked || userForm.dataset.mode === "template";
 	// SFTP reaches their sites' folders: a part of its own while the Web Server is theirs
 	$("#user-sftp-part").hidden = !userForm.web.checked;
 }
@@ -8854,7 +9316,7 @@ function userAccess() {
 	return { role: userForm.role.value, web: userForm.web.checked, create_sites: userForm.create_sites.checked, sql: userForm.sql.checked,
 		manage_connections: userForm.manage_connections.checked, sites, connections, sftp: userForm.sftp.checked, limits: userLimits() };
 }
-// A new user starts from a template: a chip each above the fields, the one used lit; a template is deleted from there
+// A new user starts from a template: a chip each above the fields, the one used lit; templates are made under Users
 function showUserTemplates(chosen) {
 	const box = $("#user-templates");
 	const templates = usersData?.templates || [];
@@ -8862,35 +9324,28 @@ function showUserTemplates(chosen) {
 	if (box.hidden) return box.replaceChildren();
 	box.replaceChildren(el("span", { className: "user-templates-label", textContent: "Start from" }),
 		el("div", { className: "user-template-chips" }, ...templates.map((template) => el("span", { className: "user-template" + (chosen?.id === template.id ? " active" : "") },
-			el("button", { type: "button", className: "user-template-use", ariaPressed: String(chosen?.id === template.id), title: `Give the new user the access of ${template.name}`,
-				onclick: () => useUserTemplate(template) }, svgIcon("file"), template.name),
-			el("button", { type: "button", className: "user-template-delete", title: `Delete the template ${template.name}`, ariaLabel: `Delete the template ${template.name}`,
-				onclick: () => run(async () => {
-					if (!(await ask({ title: `Delete ${template.name}?`, message: "The template goes. Users made from it keep what they have.", input: false, ok: "Delete", danger: true }))) return;
-					usersData.templates = (await api("/api/user-templates/" + encodeURIComponent(template.id), { method: "DELETE" })).templates;
-					showUserTemplates(chosen?.id === template.id ? undefined : chosen);
-				}) }, svgIcon("x"))))));
+			el("button", { type: "button", className: "user-template-use", ariaPressed: String(chosen?.id === template.id), title: `Start from ${template.name}: each site and SQL connection you give them gives what it says`,
+				onclick: () => useUserTemplate(template) }, svgIcon("file"), template.name)))));
 }
 function useUserTemplate(template) {
-	// What is typed already (the username, name and password) stays; the rest is the template's
+	// What is typed already (the username, name and password) stays; the parts and limits are the template's, and each
+	// site or connection ticked gives what its rules say
 	const typed = { username: userForm.username.value, name: userForm.elements.name.value, password: userForm.password.value };
-	openUserEditor({ ...template.access, username: typed.username, name: typed.name }, template);
+	const { site_rules: _site, sql_rules: _sql, ...parts } = template.access;
+	openUserEditor({ ...parts, username: typed.username, name: typed.name }, template);
 	userForm.password.value = typed.password;
 }
-$("#user-template-save").dataset.tone = "purple";
-$("#user-template-save").prepend(svgIcon("file"));
-$("#user-template-save").classList.add("toned-action");
-$("#user-template-save").onclick = () => run(async () => {
-	const name = await ask({ title: "Save as template", message: "Its access (sites, SFTP, SQL Server and the limits) is kept under this name, for new users to start from. A template of the same name is replaced.",
-		placeholder: "Web developer", ok: "Save template" });
-	if (!name) return;
-	const saved = await api("/api/user-templates", { json: { name, access: userAccess() } });
-	usersData.templates = saved.templates;
-	if (!userForm.dataset.id) showUserTemplates(saved.template);
-	toast(`The template ${saved.template.name} is saved.`, "ok");
-});
+// Save keeps the window open, Save and close (Enter) closes it
+$("#user-save-stay").dataset.tone = "teal";
+$("#user-save-stay").prepend(svgIcon("check"));
+$("#user-save-stay").classList.add("toned-action");
+$("#user-save-stay").onclick = () => { if (userForm.reportValidity()) saveUserForm(false); };
 userForm.onsubmit = (event) => {
 	event.preventDefault();
+	saveUserForm(true);
+};
+function saveUserForm(close) {
+	if (userForm.dataset.mode === "template") return saveTemplateForm(close);
 	run(async () => {
 		const id = userForm.dataset.id;
 		const body = { username: userForm.username.value.trim(), name: userForm.elements.name.value.trim(), disabled: userForm.disabled.checked, ...userAccess() };
@@ -8908,15 +9363,47 @@ userForm.onsubmit = (event) => {
 			if (saved && !id) userForm.dataset.id = saved.user.id;
 			return;
 		}
-		userDialog.close();
 		toast(id ? "User saved" : "User added", "ok");
 		await openUsers();
 		// Opened from Usage: it shows the limits just saved
 		if (serverTabOpen("usage")) await openUsageSettings();
+		if (close) return userDialog.close();
+		// Still open: the user as saved, where the window was
+		const scroll = userDialog.scrollTop;
+		openUserEditor(usersData.users.find((user) => user.id === saved.user.id) || saved.user);
+		userDialog.scrollTop = scroll;
 	});
-};
+}
+function saveTemplateForm(close) {
+	run(async () => {
+		let saved;
+		try {
+			saved = await api("/api/user-templates", { json: { ...(userForm.dataset.template ? { id: userForm.dataset.template } : {}), name: userForm.template_name.value, access: templateAccess() } });
+		} catch (error) {
+			$("#user-error").textContent = error.message;
+			return;
+		}
+		usersData.templates = saved.templates;
+		renderUsers();
+		toast(`The template ${saved.template.name} is saved`, "ok");
+		if (close) return userDialog.close();
+		userForm.dataset.template = saved.template.id;
+		$("#user-title").textContent = saved.template.name;
+		$("#user-delete").hidden = false;
+		$("#user-error").textContent = "";
+	});
+}
 $("#user-cancel").onclick = () => userDialog.close();
 $("#user-delete").onclick = () => run(async () => {
+	if (userForm.dataset.mode === "template") {
+		const name = userForm.template_name.value.trim() || $("#user-title").textContent;
+		if (!(await ask({ title: `Delete ${name}?`, message: "The template goes. Users made from it keep what they have.", input: false, ok: "Delete", danger: true }))) return;
+		usersData.templates = (await api("/api/user-templates/" + encodeURIComponent(userForm.dataset.template), { method: "DELETE" })).templates;
+		userDialog.close();
+		renderUsers();
+		toast("Template deleted", "ok");
+		return;
+	}
 	const name = userForm.username.value;
 	const user = (usersData?.users || []).find((item) => item.id === userForm.dataset.id) || {};
 	// What they made and is still here: it can go with them, sites and databases each by choice

@@ -14,6 +14,8 @@ FUNCTIONS = {"fs_full_path", "target_folder", "target_ids", "target_scope", "tar
              "adopted_sites", "service_dll", "project_assembly", "adoption_candidates", "managed_by", "publishable_targets", "sync_prod_binding",
              # A migrated site (phase 6)
              "site_migrated", "migrated_site_json", "custom_scripts_dir", "migrated_scripts", "target_scripts",
+             # An empty binding: an administrator's, and only one (1.0.77); custom scripts of an environment
+             "any_name_site", "env_scripts_dir", "listed_scripts",
              "harbor_script_command", "publish_entry", "save_migrated_setting", "harbor_argv",
              # Publish all goes the way the work goes
              "environment_order"}
@@ -33,6 +35,7 @@ def add_target_helpers(ns):
     import json
     for name, value in (("glob", glob), ("os", os), ("re", re), ("abort", abort), ("json", json),
                         ("HARBOR_COMMAND", "/vns/bin/harbor"), ("SCRIPT_RE", re.compile(r"^[A-Za-z0-9_.-]+\.sh$")),
+                        ("CUSTOM_SCRIPT_RE", re.compile(r"[\w-][\w.-]{0,99}\.sh")), ("default_site_name", lambda: ""),
                         # Never the test server's own state: no site in a test is migrated unless the test says so
                         ("HARBOR_SITES", "/nonexistent/harbor/sites"),
                         ("parse_prod", lambda root, target="prod": None), ("remote_status", lambda site, target="prod": {}),

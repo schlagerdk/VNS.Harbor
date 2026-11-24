@@ -176,10 +176,14 @@ class SiteGroupTests(UserTests):
         # Never on the folders that hold passwords
         self.assertIn("setfacl -R -P -x g:site-shop-dk /var/www/shop.dk/scripts", system.commands)
         self.assertIn("setfacl -R -P -x g:site-shop-dk /var/www/shop.dk/.vns-publish", system.commands)
-        # Bo loses the grant: only the members change, the ACLs stay
+        # Nor on the file with the site's token and login key for Harbor, wherever it is (1.0.77)
+        close = "find -P /var/www/shop.dk -type f -name vns-harbor.json -exec setfacl -x g:site-shop-dk {} +"
+        self.assertIn(close, system.commands)
+        # Bo loses the grant: only the members change, the ACLs stay; the file is closed again, also a group given it before
         system = self.sync(self.users())
         self.assertEqual(users.members(system, "site-shop-dk"), {"anna"})
         self.assertFalse(any(command.startswith("setfacl -R -P -m") for command in system.commands))
+        self.assertIn(close, system.commands)
         # Nobody has it: the group and its ACLs go
         system = self.sync(self.users(anna_actions=("logs",)))
         self.assertEqual(users.site_groups(system), {})

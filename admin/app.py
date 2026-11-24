@@ -747,6 +747,51 @@ def via_cloudflare(found):
     return bool(found) and all(ours(address) for address in found)
 
 
+# Domains whose every name points here (a wildcard DNS record, *.domain), for a new site's temporary address until its
+# own domain is ready (1.0.77)
+def temp_domains():
+    return [name for name in cfg.get("temp_domains", []) if isinstance(name, str)]
+
+
+def temp_domains_shown():
+    """The domains as the page shows them: the name, and in its own letters"""
+    return [{"name": name, "display": display_dns_name(name)} for name in temp_domains()]
+
+
+def wildcard_points_here(domain):
+    """Whether *.domain points here: a name under it no one made resolves to this server"""
+    return points_here(f"harbor-check-{secrets.token_hex(4)}.{domain}")
+
+
+@app.route("/api/temp-domains", methods=["GET", "POST", "DELETE"])
+def api_temp_domains():
+    """The domains for temporary addresses: read by those who may create sites, added (when *.domain points here) and
+    removed by an administrator"""
+    user = me()
+    if request.method == "GET":
+        if not (access.is_admin(user) or user.get("create_sites")):
+            abort(403, "You do not have access to do this.")
+        return jsonify(domains=temp_domains_shown())
+    require_admin()
+    data = request.get_json(silent=True) or {}
+    name = dns_name(str(data.get("name") or request.args.get("name") or "").strip().rstrip(".").removeprefix("*."), "domain", fully_qualified=True).lower()
+    with CONFIG_LOCK:
+        domains = temp_domains()
+        if request.method == "DELETE":
+            cfg["temp_domains"] = [item for item in domains if item != name]
+        else:
+            if name in domains:
+                return error(display_dns_name(name) + " is in the list already.")
+            if not wildcard_points_here(name):
+                address = cfg.get("public_address") or detected_public_address() or "this server's address"
+                return error(f"*.{display_dns_name(name)} does not point to this server. Add a wildcard record for it "
+                             f"(* A {address}), then add it again.")
+            cfg["temp_domains"] = sorted(domains + [name])
+        save_config()
+    audit(("Removed" if request.method == "DELETE" else "Added") + " the temporary address domain " + name)
+    return jsonify(domains=temp_domains_shown())
+
+
 def points_here(name):
     """Whether a DNS name resolves to this server now. Let's Encrypt issues a certificate only then."""
     return not not_pointing([name])
@@ -961,6 +1006,57 @@ def own_scripts_dir(site):
     return os.path.join(HARBOR_SITES, site, "scripts")
 
 
+# A custom script's name: a file in a scripts folder, never a path or a hidden file
+CUSTOM_SCRIPT_RE = re.compile(r"[\w-][\w.-]{0,99}\.sh")
+
+
+def env_scripts_dir(site, target):
+    """Where an environment's own custom scripts are: the scripts folder in its site folder here, or None for one on
+    another Linux server (they are there, in its site folder). An environment on Windows has none."""
+    prod = parse_prod(os.path.join(WEB_ROOT, site), target) or {}
+    if prod.get("PROD_TARGET") == "windows":
+        abort(400, "An environment on Windows has no custom scripts")
+    if not prod.get("PROD_LOCAL_PATH"):
+        return None
+    full = os.path.realpath(prod["PROD_LOCAL_PATH"])
+    if not full.startswith(WEB_ROOT + os.sep):
+        abort(400, "The environment's folder is not under " + WEB_ROOT)
+    return os.path.join(full, "scripts")
+
+
+def listed_scripts(folder):
+    try:
+        return sorted(name for name in os.listdir(folder) if CUSTOM_SCRIPT_RE.fullmatch(name) and os.path.isfile(os.path.join(folder, name)))
+    except OSError:
+        return []
+
+
+def owned_by_root(path):
+    try:
+        info = os.lstat(path)
+    except OSError:
+        return False
+    return info.st_uid == 0 and not info.st_mode & 0o022
+
+
+def scripts_safe(folder):
+    """Whether a scripts folder and every script in it are root's, and no one else may write them: else they are not
+    run (runnable), and the menu offers to make them root's"""
+    if not os.path.isdir(folder):
+        return True
+    return owned_by_root(folder) and all(owned_by_root(os.path.join(folder, name)) for name in os.listdir(folder) if name.endswith(".sh"))
+
+
+def make_root_only(folder):
+    """A scripts folder and all in it root's, and no one else may write them; links are left as they are"""
+    for here, folders, files in os.walk(folder):
+        for path in [here, *(os.path.join(here, name) for name in folders + files)]:
+            if os.path.islink(path):
+                continue
+            os.chown(path, 0, 0)
+            os.chmod(path, os.stat(path).st_mode & 0o7755)
+
+
 def root_only(path):
     """A script the admin runs as root, and its folder: root's, and no one else may write them. A site's app user
     (www-data) owns the site's folder and could swap in a scripts folder of its own; such a script is not run"""
@@ -977,8 +1073,8 @@ def root_only(path):
 def runnable(path):
     if not root_only(path):
         abort(400, f"{os.path.basename(path)} is not run: it or its folder can be changed by someone other than root, and it "
-                   "runs as root. A script of your own is fine where root owns it and only root can write it: check it, then "
-                   f"chown -R root:root {os.path.dirname(path)} && chmod -R go-w {os.path.dirname(path)}")
+                   "runs as root. Check what it does, then an administrator makes the scripts root's with Make them root's… "
+                   f"in Run custom script (or: chown -R root:root {os.path.dirname(path)} && chmod -R go-w {os.path.dirname(path)})")
     return path
 
 
@@ -1184,7 +1280,7 @@ def remote_key(site, target="prod"):
 
 def remote_command(site, action, timeout=60, target="prod", **kwargs):
     if target != "prod":
-        kwargs["env"] = {**os.environ, "VNS_TARGET": target}
+        kwargs["env"] = {**kwargs.get("env", os.environ), "VNS_TARGET": target}
     try:
         result = subprocess.run(
             [*harbor_argv("remote_site.sh"), site, action],
@@ -1621,7 +1717,9 @@ def site_info(name, states):
             # An environment with its own folder under the web root is a separate site that was moved here
             separate = inside and target != "prod" and os.path.relpath(full, WEB_ROOT).split(os.sep)[0] != name
             environments.append(environment_info(key, "Production", unit, prod["PROD_BINDING"] or conf_binding(unit), prod["PROD_PORT_HTTP"] or service_port(unit),
-                                                 rel(full) if inside else "", states, mode="local", exists=os.path.isdir(full), separate=separate, **details))
+                                                 rel(full) if inside else "", states, mode="local", exists=os.path.isdir(full), separate=separate,
+                                                 custom_scripts=listed_scripts(os.path.join(full, "scripts")) if inside else [],
+                                                 custom_scripts_safe=scripts_safe(os.path.join(full, "scripts")) if inside else True, **details))
         else:
             environments.append({**details, "key": key, "label": "Production", "mode": "remote", "unit": "", "state": "", "binding": prod["PROD_BINDING"],
                                  "port": prod["PROD_PORT_HTTP"], "path": "", "host": prod["PROD_IP"], "user": prod["PROD_USER"],
@@ -1703,6 +1801,8 @@ def site_info(name, states):
         "packages": packages,
         "package_errors": package_errors,
         "scripts": scripts,
+        # Its scripts folder root's alone, or its scripts are not run (an administrator can make it so)
+        "custom_scripts_safe": scripts_safe(os.path.join(root, "scripts")),
         "admin": name == ADMIN_SITE,
         "answers_any_name": default_site_name() == name,
         "not_set_up": not_set_up,
@@ -1808,11 +1908,24 @@ def file_env(full):
 
 # Folders a user never reaches, so they are not shown either: what is in scripts/ runs as root
 USER_HIDDEN_FOLDERS = ("scripts", ".vns-publish")
+# Harbor's own files where a site runs, wherever they are in its folder: vns-harbor.json holds the site's token and login
+# key for Harbor (the VNS.Harbor package), .harbor-published what the last publish put there
+USER_HIDDEN_FILES = ("vns-harbor.json", ".harbor-published")
 
 
 def hidden_from_user(path):
-    """Whether a path, relative to an environment's folder, is in a folder only administrators see"""
-    return not is_admin() and (path or "").replace("\\", "/").strip("/").split("/")[0] in USER_HIDDEN_FOLDERS
+    """Whether a path, relative to an environment's folder, is in a folder or is a file only administrators see"""
+    parts = (path or "").replace("\\", "/").strip("/").split("/")
+    return not is_admin() and (parts[0] in USER_HIDDEN_FOLDERS or parts[-1].lower() in USER_HIDDEN_FILES)
+
+
+def names_hidden_file():
+    """A new name in the request (New file, New folder, Rename, Upload) that is one of Harbor's own files"""
+    names = [upload.filename or "" for upload in request.files.getlist("files")] if request.files else []
+    body = request.get_json(silent=True) if request.is_json else None
+    if isinstance(body, dict) and isinstance(body.get("name"), str):
+        names.append(body["name"])
+    return any(os.path.basename(name.replace("\\", "/")).strip().lower() in USER_HIDDEN_FILES for name in names)
 
 
 def file_access(site, env, action, path):
@@ -1823,7 +1936,7 @@ def file_access(site, env, action, path):
     if is_admin():
         return
     path = (path or "").replace("\\", "/").strip("/")
-    if hidden_from_user(path) or ".." in path.split("/"):
+    if hidden_from_user(path) or ".." in path.split("/") or names_hidden_file():
         abort(403, "You do not have access to this folder.")
     if access.can(me(), site, env, "files"):
         return
@@ -3685,8 +3798,11 @@ def api_me():
                    # Made as many as they may: the buttons that make one more are not shown (the server refuses it too)
                    create_sites=admin or bool(user.get("create_sites")) and not access.may_make(user, "sites", lambda made: os.path.isdir(os.path.join(WEB_ROOT, made))),
                    manage_connections=admin or bool(user.get("manage_connections")),
+                   # Where a new site can have a temporary address, for those who may create sites
+                   temp_domains=temp_domains_shown() if admin or user.get("create_sites") else [],
                    usage=_usage.shows_usage(user), usage_over=usage_over(user),
-                   header=header_shown(user) if admin else {part: False for part in HEADER_PARTS},
+                   # A user's header: the site search, never the server's addresses, files or terminal
+                   header=header_shown(user) if admin else {part: part == "search" for part in HEADER_PARTS},
                    sites={} if admin else {site: {"envs": grant.get("envs", []), "new_envs": grant.get("new_envs", False),
                                                   "known": grant.get("known", []), "actions": grant.get("actions", [])}
                                            for site, grant in (user.get("sites") or {}).items()},
@@ -3815,15 +3931,20 @@ def linux_names():
 
 @app.route("/api/user-templates", methods=["POST"])
 def api_user_templates():
-    """A user's access kept as a template under a name (one of the same name is replaced), to start new users from"""
+    """A template saved: a new one, or the one its id names. Rules to start new users from: what they may do on each
+    site and SQL connection they are given, never which."""
     require_admin()
     with CONFIG_LOCK:
-        templates = cfg.setdefault("user_templates", [])
+        templates = access.templates(cfg)
         data = request.get_json(silent=True) or {}
         name = " ".join(str(data.get("name", "")).split())
-        same = next((item for item in templates if item["name"].casefold() == name.casefold()), None)
+        same = next((item for item in templates if item["id"] == data.get("id")), None) if data.get("id") else None
+        if data.get("id") and same is None:
+            return error("The template is gone. Close the window and open it again.", 404)
+        if any(item["name"].casefold() == name.casefold() and item is not same for item in templates):
+            return error("There is a template of that name already.")
         try:
-            template = access.clean_template(data, sites=site_environments(), connections=sql_connection_ids(), existing=same)
+            template = access.clean_template(data, existing=same)
         except ValueError as exc:
             return error(str(exc))
         cfg["user_templates"] = [template if item is same else item for item in templates] if same else templates + [template]
@@ -3836,7 +3957,7 @@ def api_user_templates():
 def api_user_template(template_id):
     require_admin()
     with CONFIG_LOCK:
-        templates = cfg.get("user_templates", [])
+        templates = access.templates(cfg)
         gone = next((item for item in templates if item["id"] == template_id), None)
         if gone is None:
             abort(404, "No such template")
@@ -3854,7 +3975,7 @@ def api_users():
         names = linux_names()
         listed = [dict(user, linux=names.get(user.get("id"), "")) for user in access.visible_users(cfg, me())]
         return jsonify(users=listed, sites=sites, connections=sql_connections_public(),
-                       site_actions=access.SITE_ACTIONS, sql_actions=access.SQL_ACTIONS, templates=cfg.get("user_templates", []))
+                       site_actions=access.SITE_ACTIONS, sql_actions=access.SQL_ACTIONS, templates=access.templates(cfg))
     data = request.get_json(silent=True) or {}
     password = data.get("password") or ""
     if len(password) < 12:
@@ -3990,7 +4111,7 @@ def terminal_scope(payload):
         return "all"
     if payload.get("scope") in ("all", "prod", "test", "main"):
         return "main" if payload["scope"] == "test" else payload["scope"]
-    if kind in ("remote_tool", "create_prod", "sync_env", "move_env", "register_env", "data_sync", "data_sync_settings"):
+    if kind in ("remote_tool", "create_prod", "sync_env", "move_env", "register_env", "data_sync", "data_sync_settings", "env_script"):
         return "prod"
     if kind == "script":
         script = payload.get("script", "")
@@ -4010,6 +4131,8 @@ def terminal_auto_close(payload):
         return payload.get("tool") == "shell"
     if kind == "apache":
         return payload.get("tool") == "restart"
+    if kind == "env_script":
+        return True
     if kind == "script":
         return payload.get("script") not in {
             "check_service.sh", "edit_service.sh", "edit_conf.sh",
@@ -4155,6 +4278,15 @@ def site_arg(data):
 
 
 DEFAULT_SITE_LINK = "/etc/apache2/sites-enabled/00-vns-default.conf"
+
+
+def any_name_site(check_taken=True):
+    """A site that answers any name no other site has (an empty binding) is the server's: an administrator's to make,
+    and only one. A user is asked for a binding, and never told of a site they do not know."""
+    if not access.is_admin(me()):
+        abort(400, "Give the site a binding: the domain it answers on.")
+    if check_taken and default_site_name():
+        abort(400, default_site_name() + " already answers any name. Only one site can.")
 
 
 def default_site_name():
@@ -4693,6 +4825,23 @@ def build_command(data):
             "both", root, *([local] if main_too else []),
             *(publish_entry(site, target) for target in active),
         ], root
+    if kind == "env_script":
+        # An environment's own custom script: here as root, from a folder only root may write; on another Linux server
+        # over SSH, as Harbor's other actions there
+        site = site_arg(data)
+        target = target_arg(site, data)
+        script = data.get("script", "")
+        if not isinstance(script, str) or not CUSTOM_SCRIPT_RE.fullmatch(script):
+            abort(400, "Unknown script")
+        folder = env_scripts_dir(site, target)
+        title = "%s · %s: %s" % (site, target, script)
+        if folder is None:
+            remote_site(site, target)
+            return title, ["/usr/bin/env", "VNS_TARGET=" + target, "VNS_SCRIPT=" + script, *harbor_argv("remote_site.sh"), site, "run_script"], WEB_ROOT
+        path = os.path.realpath(os.path.join(folder, script))
+        if os.path.dirname(path) != os.path.realpath(folder) or not os.path.isfile(path):
+            abort(400, "Unknown script")
+        return title, [bash, runnable(path)], os.path.dirname(folder)
     if kind == "script" and site_migrated(site_arg(data)):
         site = site_arg(data)
         script = data.get("script", "")
@@ -4795,9 +4944,8 @@ def build_command(data):
         if not isinstance(binding, str):
             abort(400, "Invalid binding")
         if binding in ("", "*"):
+            any_name_site()
             binding = "*"
-            if default_site_name():
-                abort(400, default_site_name() + " already answers any name. Only one site can.")
         else:
             binding = dns_name(binding, "binding", fully_qualified=certificate == "y", short=certificate == "n")
         environment = data.get("environment", "")
@@ -4927,9 +5075,8 @@ def build_command(data):
         if not isinstance(binding, str):
             abort(400, "Invalid binding")
         if binding in ("", "*"):
+            any_name_site()
             binding = "*"
-            if default_site_name():
-                abort(400, default_site_name() + " already answers any name. Only one site can.")
         else:
             binding = dns_name(binding, "binding", fully_qualified=certificate == "y", short=certificate == "n")
             # The certificate is issued as the site is created: it fails while DNS points elsewhere
@@ -5028,6 +5175,7 @@ def build_command(data):
         if binding in ("", "*"):
             if data.get("scope") == "prod":
                 abort(400, "An environment needs a binding")
+            any_name_site(check_taken=False)
             binding = "*"
         else:
             binding = dns_name(binding, "binding", short=True)
@@ -5235,6 +5383,8 @@ def authorize_task(data):
         action = ("publish" if script.startswith("publish") else "clear_logs" if script.startswith("clear_logs")
                   else "sync_settings" if script == "sync_prod.sh" else "packages" if script == "outdated.sh" else "scripts")
         need(env, action)
+    elif kind == "env_script":
+        need(data.get("target") or "prod", "scripts")
     elif kind in ("dotnet_package", "update_package"):
         need("main", "packages")
     elif kind == "bulk":
@@ -5266,8 +5416,7 @@ def authorize_task(data):
         return lambda status: status == 0 and grant(uid, lambda target: [access.grant_environment(target, site, env)
                                                                     for env in set(target_ids(os.path.join(WEB_ROOT, site))) - before])
     elif kind in ("data_sync_settings",):
-        env = data.get("id") or "main"
-        need(env, "sync_data") if access.can(user, site, env, "sync_data") else need(env, "sync_settings")
+        need(data.get("id") or "main", "sync_setup")
     elif kind == "data_sync":
         need(data.get("source") or "main", "sync_data")
         for env in str(data.get("destination", "")).split(","):
@@ -5508,6 +5657,87 @@ def data_sync_id(site, value):
     return target_arg(site, {"target": value})
 
 
+@app.route("/api/sites/<site>/custom-scripts", methods=["GET", "POST"])
+def custom_script_file(site):
+    """Read, save, rename or delete a custom script of the main site or of an environment (?target=). An administrator's
+    alone: a script runs as root. Saved as root's, in a folder only root may write, so it may be run."""
+    require_admin()
+    if site not in site_dirs():
+        abort(400, "Unknown site")
+    data = (request.get_json(silent=True) or {}) if request.method == "POST" else {"action": "read", "path": request.args.get("path", "")}
+    if not isinstance(data, dict) or data.get("action") not in ("read", "save", "delete", "rename", "secure"):
+        abort(400, "Expected read, save, rename, delete or secure")
+    # secure: the whole folder made root's, no script named
+    script = data.get("path") if data["action"] != "secure" else "folder.sh"
+    names = [script, data.get("name")] if data["action"] == "rename" else [script]
+    if any(not isinstance(name, str) or not CUSTOM_SCRIPT_RE.fullmatch(name) for name in names):
+        abort(400, "Use letters, numbers, . _ and - for the script's name, ending in .sh")
+    target = request.args.get("target") or "main"
+    if target == "main":
+        folder = custom_scripts_dir(site, script)
+    else:
+        target = target_arg(site, {"target": target})
+        folder = env_scripts_dir(site, target)
+    if folder is None:
+        remote_site(site, target)
+        REMOTE_STATUS.pop(remote_key(site, target), None)
+        result = remote_command(site, "scripts", timeout=60, target=target, input=json.dumps(data).encode("utf-8"),
+                                env={**os.environ, "VNS_TARGET": target, "VNS_SCRIPT": script})
+        try:
+            response = json.loads(result.stdout)
+        except ValueError:
+            abort(502, "Invalid answer from the server")
+        if isinstance(response, dict) and response.get("error"):
+            abort(400, response["error"])
+        if data["action"] != "read":
+            audit("Made the scripts of %s · %s root's" % (site, target) if data["action"] == "secure" else
+                  "%s the script %s of %s · %s" % ({"save": "Saved", "delete": "Deleted", "rename": "Renamed"}[data["action"]],
+                                                   script + (" to " + data["name"] if data["action"] == "rename" else ""), site, target))
+        return jsonify(response)
+    if data["action"] == "secure":
+        folder = os.path.join(WEB_ROOT, site, "scripts") if target == "main" else folder
+        if os.path.isdir(folder):
+            make_root_only(folder)
+        audit("Made the scripts of %s · %s root's" % (site, target))
+        return jsonify(ok=True)
+    path = os.path.join(folder, script)
+    if data["action"] == "read":
+        try:
+            with open(path, encoding="utf-8") as handle:
+                return jsonify(content=handle.read())
+        except FileNotFoundError:
+            return jsonify(content="")
+    if data["action"] == "delete":
+        if os.path.isfile(path):
+            os.remove(path)
+        audit("Deleted the script %s of %s · %s" % (script, site, target))
+        return jsonify(ok=True)
+    if data["action"] == "rename":
+        renamed = os.path.join(folder, data["name"])
+        if not os.path.isfile(path):
+            abort(404, "The script is gone.")
+        if os.path.lexists(renamed):
+            abort(400, data["name"] + " is there already.")
+        os.rename(path, renamed)
+        audit("Renamed the script %s of %s · %s to %s" % (script, site, target, data["name"]))
+        return jsonify(ok=True)
+    content = data.get("content", "")
+    if not isinstance(content, str):
+        abort(400, "Expected the script's text")
+    if os.path.isdir(folder) and not root_only(folder):
+        abort(400, f"{folder} can be changed by someone other than root, and its scripts run as root. Check it, then "
+                   f"chown -R root:root {folder} && chmod -R go-w {folder}")
+    os.makedirs(folder, mode=0o755, exist_ok=True)
+    os.chown(folder, 0, 0)
+    os.chmod(folder, 0o755)
+    with open(path, "w", encoding="utf-8", newline="") as handle:
+        handle.write(content)
+    os.chown(path, 0, 0)
+    os.chmod(path, 0o755)
+    audit("Saved the script %s of %s · %s" % (script, site, target))
+    return jsonify(ok=True)
+
+
 @app.route("/api/sites/<site>/data-sync", methods=["POST"])
 def save_data_sync(site):
     if site not in site_dirs():
@@ -5516,7 +5746,7 @@ def save_data_sync(site):
     if not isinstance(data, dict) or not isinstance(data.get("settings"), dict):
         abort(400, "Expected data sync settings")
     site_id = data_sync_id(site, data.get("id"))
-    if not (access.can(me(), site, site_id, "sync_data") or access.can(me(), site, site_id, "sync_settings")):
+    if not access.can(me(), site, site_id, "sync_setup"):
         abort(403, "You do not have access to do this.")
     try:
         settings = _data_sync_module.save(os.path.join(WEB_ROOT, site), site_id, data["settings"])

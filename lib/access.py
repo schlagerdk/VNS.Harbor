@@ -31,30 +31,37 @@ ENV_RE = re.compile(r"^(main|[a-z0-9][a-z0-9-]{0,62})$")
 
 # What a user may be given on a site, in the order the admin shows them
 SITE_ACTIONS = [
+    # Running it, and its logs
     ("service", "Start, stop and restart"),
     ("logs", "Logs"),
+    ("clear_logs", "Clear logs"),
+    # Publishing and syncing
     ("publish", "Publish"),
     ("sync_data", "Sync data"),
     ("sync_settings", "Sync settings"),
-    ("clear_logs", "Clear logs"),
+    ("sync_setup", "Change Sync setup"),
+    # Its files and what runs in them
     ("appsettings", "Edit appsettings.json"),
     ("files", "Files"),
     ("terminal", "Terminal"),
+    ("scripts", "Run custom scripts"),
     ("packages", "NuGet packages"),
+    # Its setup
     ("bindings", "Bindings and certificates"),
     ("create_env", "Add environments"),
     ("delete", "Delete"),
-    ("scripts", "Run custom scripts"),
 ]
 SQL_ACTIONS = [
+    # Working in a database
     ("query", "Run queries"),
     ("tables", "Tables"),
-    ("logins", "Logins"),
     ("backup", "Back up"),
     ("restore", "Restore"),
+    # Making and removing databases, and their logins
     ("create", "Create databases"),
     ("copy", "Copy databases"),
     ("delete", "Delete databases"),
+    ("logins", "Logins"),
 ]
 SITE_ACTION_NAMES = {name for name, _ in SITE_ACTIONS}
 SQL_ACTION_NAMES = {name for name, _ in SQL_ACTIONS}
@@ -251,21 +258,61 @@ def forget_made(user, kind, name, connection=None):
     return False
 
 
-# A user template: what a user may do, kept under a name to start new users from. Their name, password, lock and what
-# they made are never in it.
-TEMPLATE_KEYS = ("role", "web", "create_sites", "sftp", "sql", "manage_connections", "sites", "connections", "limits")
+# A user template: rules under a name to start new users from. Which sites and SQL connections a user gets is chosen
+# for each user; the template says what they may do on each one they are given (1.0.77). A name, password, lock or
+# what they made is never in it.
+TEMPLATE_KEYS = ("web", "create_sites", "sftp", "sql", "manage_connections", "limits", "site_rules", "sql_rules")
+# What a site or SQL connection gives when nothing else says (as the user window ticks them)
+DEFAULT_SITE_ACTIONS = ["clear_logs", "logs", "publish", "service", "sync_data", "sync_settings"]
+DEFAULT_SQL_ACTIONS = ["backup", "query"]
 
 
-def clean_template(data, sites=None, connections=None, existing=None):
-    """A template from what the user window sent, checked as a user is: {id, name, access}"""
+def site_actions(given):
+    actions = sorted({action for action in given if action in SITE_ACTION_NAMES})
+    # A terminal reaches the site's folder as the user's Linux user: it is Files as well
+    return sorted(actions + ["files"]) if "terminal" in actions and "files" not in actions else actions
+
+
+def template_rules(given):
+    """A template's rules, checked. One saved before 1.0.77 kept the sites and connections of a user: what they gave on
+    them (every action on any of them) becomes the rules."""
+    given = given if isinstance(given, dict) else {}
+    site = given.get("site_rules")
+    sql = given.get("sql_rules")
+    if not isinstance(site, dict):
+        grants = [grant for grant in (given.get("sites") or {}).values() if isinstance(grant, dict)] if isinstance(given.get("sites"), dict) else []
+        site = {"actions": [action for grant in grants for action in grant.get("actions") or []] if grants else DEFAULT_SITE_ACTIONS,
+                "new_envs": all(grant.get("new_envs") for grant in grants) if grants else True}
+    if not isinstance(sql, dict):
+        grants = [grant for grant in (given.get("connections") or {}).values() if isinstance(grant, dict)] if isinstance(given.get("connections"), dict) else []
+        sql = {"actions": [action for grant in grants for action in grant.get("actions") or []] if grants else DEFAULT_SQL_ACTIONS,
+               "own": bool(grants) and all(grant.get("own") for grant in grants),
+               "limits": next((grant["limits"] for grant in grants if isinstance(grant.get("limits"), dict)), None)}
+    rules = {key: bool(given.get(key, key == "web")) for key in ("web", "create_sites", "sftp", "sql", "manage_connections")}
+    rules["limits"] = clean_limits(given.get("limits"))
+    rules["site_rules"] = {"actions": site_actions(site.get("actions") or []), "new_envs": bool(site.get("new_envs", True))}
+    sql_rules = {"own": sql.get("own") is True, "actions": sorted({action for action in sql.get("actions") or [] if action in SQL_ACTION_NAMES})}
+    # How many databases they may make on a connection, and how big each: with Create or Copy databases
+    limits = clean_limits(sql.get("limits"), ("databases", "database_mb"))
+    if limits and {"create", "copy"} & set(sql_rules["actions"]):
+        sql_rules["limits"] = limits
+    rules["sql_rules"] = sql_rules
+    return rules
+
+
+def clean_template(data, existing=None):
+    """A template from what the template window sent, checked: {id, name, access}"""
     if not isinstance(data, dict):
         raise ValueError("Expected a template.")
     name = " ".join(str(data.get("name", "")).split())
     if not name or len(name) > 60:
         raise ValueError("Give the template a name of at most 60 characters.")
-    given = data.get("access") if isinstance(data.get("access"), dict) else {}
-    user = clean({**{key: given[key] for key in TEMPLATE_KEYS if key in given}, "username": "template"}, sites=sites, connections=connections)
-    return {"id": (existing or {}).get("id") or "t_" + secrets.token_hex(6), "name": name, "access": {key: user[key] for key in TEMPLATE_KEYS if key in user}}
+    return {"id": (existing or {}).get("id") or "t_" + secrets.token_hex(6), "name": name, "access": template_rules(data.get("access"))}
+
+
+def templates(config):
+    """The templates as the admin shows them, those saved before 1.0.77 as rules"""
+    return [clean_template(template, existing=template) for template in config.get("user_templates", []) if isinstance(template, dict) and template.get("name")]
 
 
 def grant_database(user, connection, database):
@@ -316,10 +363,7 @@ def clean(data, existing=None, sites=None, connections=None):
             continue
         envs = [env for env in grant.get("envs", []) if isinstance(env, str) and ENV_RE.match(env)
                 and (sites is None or env in sites[site])]
-        actions = sorted(action for action in grant.get("actions", []) if action in SITE_ACTION_NAMES)
-        # A terminal reaches the site's folder as the user's Linux user: it is Files as well
-        if "terminal" in actions and "files" not in actions:
-            actions = sorted(actions + ["files"])
+        actions = site_actions(grant.get("actions", []))
         if envs:
             entry = {"envs": envs, "new_envs": bool(grant.get("new_envs")), "actions": actions}
             # A site they made can have its own size limit, in place of the one their limits give every site

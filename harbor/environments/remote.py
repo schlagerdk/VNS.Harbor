@@ -1,9 +1,10 @@
 """What the admin does with an environment on another Linux server: its status, start, stop, logs, editing its
-service or Apache config, a shell, its files and its config. From remote_site.sh.
+service or Apache config, a shell, its files and its config, and its own custom scripts. From remote_site.sh.
 
 What runs on the server is sent word for word as the script sent it. The values sent with it are quoted for any POSIX
 shell (the script used bash's printf %q, which the server's bash reads the same).
 """
+import os
 from pathlib import Path
 import re
 import shlex
@@ -87,8 +88,86 @@ print(json.dumps({
     "binding": binding.group(1) if binding else "",
     "aliases": aliases,
     "port": port.group(1) if port else "",
+    # Its own custom scripts, in the scripts folder of its site folder, and whether they are root's alone (else not run)
+    "custom_scripts": sorted(path.name for path in Path("/var/www", site, "scripts").glob("*.sh") if path.is_file())
+        if Path("/var/www", site, "scripts").is_dir() else [],
+    "custom_scripts_safe": not Path("/var/www", site, "scripts").is_dir() or all(
+        item.lstat().st_uid == 0 and not item.lstat().st_mode & 0o022
+        for item in [Path("/var/www", site, "scripts"), *Path("/var/www", site, "scripts").glob("*.sh")]),
 }))
 PY
+'''
+
+# A custom script's name: a file in the scripts folder, never a path or a hidden file
+SCRIPT_NAME = re.compile(r"[\w-][\w.-]{0,99}\.sh")
+
+# An environment's own custom script run as root, in its site folder: only when root owns it and its folder and no one
+# else may write them, as the admin runs a site's scripts here (a site's app user could otherwise put in its own)
+RUN_SCRIPT = '''set -euo pipefail
+folder="/var/www/$SITE/scripts"
+file="$folder/$SCRIPT"
+[[ -f $file ]] || { echo "There is no $SCRIPT in $folder."; exit 1; }
+for item in "$folder" "$file"; do
+	read -r owner mode < <(stat -c "%u %a" "$item")
+	if [[ $owner != 0 ]] || (( 8#$mode & 8#022 )); then
+		echo "$SCRIPT is not run: $item can be changed by someone other than root, and it runs as root."
+		echo "Check what it does, then an administrator makes the scripts root's with Make them root's… in Run custom script"
+		echo "(or: chown -R root:root $folder && chmod -R go-w $folder)"
+		exit 1
+	fi
+done
+cd "/var/www/$SITE"
+exec bash "$file"
+'''
+
+# Read, save, rename or delete an environment's own custom script: JSON in, JSON out. Saved as root, so it may be run.
+SCRIPTS = '''import json, os, re, sys
+from pathlib import Path
+request = json.load(sys.stdin)
+folder = Path("/var/www", os.environ["SITE"], "scripts")
+path = folder / os.environ["SCRIPT"]
+action = request.get("action")
+if action == "read":
+    print(json.dumps({"content": path.read_text(encoding="utf-8") if path.is_file() else ""}))
+elif action == "save":
+    if not folder.is_dir():
+        folder.mkdir(mode=0o755)
+    os.chown(folder, 0, 0)
+    os.chmod(folder, 0o755)
+    path.write_text(str(request.get("content", "")), encoding="utf-8")
+    os.chown(path, 0, 0)
+    os.chmod(path, 0o755)
+    print(json.dumps({"ok": True}))
+elif action == "delete":
+    if path.is_file():
+        path.unlink()
+    print(json.dumps({"ok": True}))
+elif action == "secure":
+    # The folder and all in it root's, and no one else may write them; links are left as they are
+    for here, folders, files in os.walk(folder) if folder.is_dir() else []:
+        for item in [Path(here), *(Path(here, name) for name in folders + files)]:
+            if item.is_symlink():
+                continue
+            os.chown(item, 0, 0)
+            os.chmod(item, item.stat().st_mode & 0o7755)
+    print(json.dumps({"ok": True}))
+elif action == "rename":
+    # A refusal is an answer, shown as the admin's own: not a failure of the connection
+    name = str(request.get("name", ""))
+    if not re.fullmatch(r"[\\w-][\\w.-]{0,99}\\.sh", name):
+        print(json.dumps({"error": "Use letters, numbers, . _ and - for the script's name, ending in .sh"}))
+        sys.exit(0)
+    if not path.is_file():
+        print(json.dumps({"error": "The script is gone."}))
+        sys.exit(0)
+    if (folder / name).exists():
+        print(json.dumps({"error": name + " is there already."}))
+        sys.exit(0)
+    path.rename(folder / name)
+    print(json.dumps({"ok": True}))
+else:
+    print(json.dumps({"error": "Unknown script action"}))
+    sys.exit(1)
 '''
 
 SERVICE = r'''set -euo pipefail
@@ -149,6 +228,16 @@ def remote_action(system, name, action, target="prod"):
     elif action in INTERACTIVE:
         command = f"env TERM=xterm-256color COLORTERM=truecolor {assignments(**values)} bash -c {shlex.quote(INTERACTIVE[action])}"
         result = settings.remote_exec(system, environment, command, tty=True, check=False)
+    elif action in ("run_script", "scripts"):
+        script = os.environ.get("VNS_SCRIPT", "")
+        if not SCRIPT_NAME.fullmatch(script):
+            raise Stop("Invalid script name. Use letters, numbers, . _ and -, ending in .sh.")
+        variables = assignments(**values, SCRIPT=script)
+        if action == "run_script":
+            command = f"env TERM=xterm-256color COLORTERM=truecolor {variables} bash -c {shlex.quote(RUN_SCRIPT)}"
+            result = settings.remote_exec(system, environment, command, tty=True, check=False)
+        else:
+            result = settings.remote_exec(system, environment, f"env {variables} python3 -c {shlex.quote(SCRIPTS)}", check=False)
     elif action in ("files", "config"):
         from harbor.core.names import standalone
         code = standalone((LIB / ("managed_config.py" if action == "config" else "remote_files.py")).read_text()).rstrip("\n")

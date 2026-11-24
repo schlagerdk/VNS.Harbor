@@ -112,25 +112,44 @@ class AccessTests(unittest.TestCase):
         self.assertEqual(self.user(sql=True, connections={"c1": {"databases": [], "actions": ["create"]}})["connections"], {})
         self.assertNotIn("own", self.user(sql=True, connections={"c1": {"databases": ["*"], "own": True}})["connections"]["c1"])
 
-    def test_a_template_keeps_access_and_nothing_of_the_person(self):
-        """A user's access kept under a name to start new users from: never their name, password, lock or what they made
-        (1.0.74)"""
+    def test_a_template_keeps_rules_and_nothing_of_the_person(self):
+        """Rules to start new users from: what they may do on each site and SQL connection they are given, never which
+        ones, nor their name, password, lock or what they made (1.0.77)"""
         template = access.clean_template({"name": "  Web   developer ", "access": {
-            "role": "user", "web": True, "create_sites": True, "sftp": True, "limits": {"sites": 3, "site_mb": 2048},
-            "sites": {"shop.dk": {"envs": ["main"], "actions": ["logs"]}, "gone.dk": {"envs": ["main"], "actions": ["logs"]}},
-            "username": "anna", "password_hash": "x", "disabled": True, "made": {"sites": ["shop.dk"]}}}, sites=SITES, connections=["c1"])
+            "web": True, "create_sites": True, "sftp": True, "limits": {"sites": 3, "site_mb": 2048},
+            "site_rules": {"actions": ["logs", "terminal", "nonsense"], "new_envs": False},
+            "sql_rules": {"own": True, "actions": ["create", "query"], "limits": {"databases": 2}},
+            "sites": {"shop.dk": {"envs": ["main"], "actions": ["logs"]}}, "connections": {"c1": {"databases": ["*"]}},
+            "username": "anna", "password_hash": "x", "disabled": True, "made": {"sites": ["shop.dk"]}}})
         self.assertEqual(template["name"], "Web developer")
         self.assertTrue(template["id"].startswith("t_"))
         kept = template["access"]
-        self.assertEqual(set(kept), set(access.TEMPLATE_KEYS))
-        self.assertEqual(list(kept["sites"]), ["shop.dk"], "a site that is not here is not kept")
+        self.assertEqual(set(kept), set(access.TEMPLATE_KEYS), "no sites, connections or anything of the person")
+        self.assertEqual(kept["site_rules"], {"actions": ["files", "logs", "terminal"], "new_envs": False}, "a terminal gives Files")
+        self.assertEqual(kept["sql_rules"], {"own": True, "actions": ["create", "query"], "limits": {"databases": 2}})
         self.assertEqual(kept["limits"], {"sites": 3, "site_mb": 2048})
         self.assertTrue(kept["create_sites"])
-        again = access.clean_template({"name": "Web developer", "access": kept}, sites=SITES, connections=["c1"], existing=template)
-        self.assertEqual(again["id"], template["id"], "saved again under its name, the same template")
+        again = access.clean_template({"name": "Web developer", "access": kept}, existing=template)
+        self.assertEqual(again, template, "saved again, the same template")
+        no_making = access.clean_template({"name": "x", "access": {"sql_rules": {"actions": ["query"], "limits": {"databases": 2}}}})
+        self.assertNotIn("limits", no_making["access"]["sql_rules"], "limits only with Create or Copy databases")
         for bad in ({"name": ""}, {"name": "x" * 61}, "x"):
             with self.assertRaises(ValueError):
-                access.clean_template(bad, sites=SITES)
+                access.clean_template(bad)
+
+    def test_a_template_saved_before_keeps_what_its_sites_gave_as_rules(self):
+        """Templates from 1.0.76 kept a user's sites and connections: what they gave becomes the rules"""
+        old = {"id": "t_1", "name": "Old", "access": {"role": "user", "web": True, "sql": True,
+               "sites": {"shop.dk": {"envs": ["main"], "new_envs": True, "actions": ["logs"]},
+                         "blog.dk": {"envs": ["main"], "new_envs": True, "actions": ["publish"]}},
+               "connections": {"c1": {"databases": [], "own": True, "actions": ["create"], "limits": {"databases": 1}}}}}
+        [template] = access.templates({"user_templates": [old]})
+        self.assertEqual(template["id"], "t_1")
+        self.assertEqual(template["access"]["site_rules"], {"actions": ["logs", "publish"], "new_envs": True})
+        self.assertEqual(template["access"]["sql_rules"], {"own": True, "actions": ["create"], "limits": {"databases": 1}})
+        self.assertNotIn("sites", template["access"])
+        [empty] = access.templates({"user_templates": [{"id": "t_2", "name": "Empty", "access": {}}]})
+        self.assertEqual(empty["access"]["site_rules"]["actions"], access.DEFAULT_SITE_ACTIONS, "nothing given: the defaults")
 
     def test_an_admin_has_no_grants_and_can_do_everything(self):
         admin = self.user(role="admin", sites={"shop.dk": {"envs": ["main"], "actions": ["logs"]}})

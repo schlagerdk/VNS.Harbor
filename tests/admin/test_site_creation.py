@@ -225,7 +225,7 @@ class CreateCommandTests(unittest.TestCase):
     def setUp(self):
         source = ast.parse((APP / "app.py").read_text())
         nodes = [node for node in source.body if
-                 isinstance(node, ast.FunctionDef) and node.name in ("build_command", "dns_name") or
+                 isinstance(node, ast.FunctionDef) and node.name in ("build_command", "dns_name", "any_name_site") or
                  isinstance(node, ast.Assign) and any(
                      isinstance(target, ast.Name) and target.id in
                      ("NAME_RE", "BINDING_RE", "PROJECT_RE", "FOLDER_RE", "VERSION_RE", "PACKAGE_RE")
@@ -237,6 +237,9 @@ class CreateCommandTests(unittest.TestCase):
                    "installed_dotnet_templates": lambda: [{"short_name": name} for name in ("web", "webapi", "custom")],
                    "app": Flask(__name__), "subprocess": subprocess, "default_site_name": lambda: "",
                    "display_dns_name": lambda value: value}
+        self.user = {"id": "root", "role": "admin"}
+        self.ns["me"] = lambda: self.user
+        self.ns["access"] = type("access", (), {"is_admin": staticmethod(lambda user: user["role"] == "admin")})
         self.here = {"example.test"}
         self.ns["points_here"] = lambda name: name in self.here
         self.ns["default_umbraco_version"] = lambda: "18.3.1"
@@ -359,6 +362,14 @@ class CreateCommandTests(unittest.TestCase):
         self.ns["default_site_name"] = lambda: "other.test"
         with self.assertRaisesRegex(BadRequest, "already answers any name"):
             self.command(binding="")
+        # A user is asked for a binding, and never told of a site they do not know (1.0.77)
+        self.user = {"id": "u_1", "role": "user", "create_sites": True}
+        for binding in ("", "*"):
+            with self.assertRaises(BadRequest) as refused:
+                self.command(binding=binding)
+            self.assertIn("Give the site a binding", refused.exception.description)
+            self.assertNotIn("other.test", refused.exception.description)
+        self.assertEqual(self.command(binding="example.test")[7], "example.test")
 
     def test_idn_duplicates_and_invalid_inputs_are_rejected(self):
         self.ns["site_dirs"] = lambda: ["xn--5cab8c.dk"]

@@ -2,6 +2,26 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.77] - Unreleased
+
+### Features
+
+- A user's access has a filter above the sites when there are many, and above the databases when Chosen ones lists many: it hides what does not match each word typed
+- Change Sync setup is a permission of its own on a site: only a user given it sees Sync setup… and may save it (before, Sync data or Sync settings gave it). Users who should keep it must be given it
+- A user never sees an environment's port or its server (login and address, also in the server icon's tip and the Files title), and sees its folder only with Files on it
+- A user never reaches Harbor's own files where a site runs: vns-harbor.json (the site's token and login key for Harbor) and .harbor-published are not shown in Files and cannot be read, changed, made, renamed to or uploaded. Through SFTP and Terminal the site's group no longer reads vns-harbor.json: its ACL is taken off when it is written and at every users sync
+- User templates are rules, not a copy of a user: what a new user may do on each site and SQL connection they are given (the actions, environments added later, which databases and how many they make), the parts, SFTP and the limits, never which sites or connections. They are made and changed under Settings, Users, Templates, in the user window; a new user starts from one, and each site or connection ticked for them gives what its rules say. Templates saved before keep what their sites and connections gave as rules
+- The user window has Save, which keeps it open, and Save and close
+- Custom scripts on environments: each environment has its own, in the scripts folder of its site folder (here, or on its Linux server), and Run custom script on its card runs them there as root, in its folder. An administrator makes one with New script… in that menu, changes it with the pencil beside it, in the editor (where Rename… gives it another name), and deletes it with the trash can (its name typed to confirm); it is saved as root's, where only root may write. A script whose folder someone other than root can change is not run: the menu says so to an administrator, who checks the scripts and makes them root's with Make them root's…. A user with Run custom scripts on the environment runs them
+- Temporary addresses: Settings, General lists domains whose every name points to this server (a wildcard DNS record, checked when one is added). New site shows a chip for each under the binding: one click gives the site a name under it, made from the folder name (shop-example-com.example.net), so a site can be made, also with HTTPS, before its own domain points here. Change bindings moves it to its own domain later. Change bindings offers a temporary address too, for the site and its environments on this server (made from the site's name, and the environment's)
+- What a user may do stands in groups: running and logs, publishing and syncing, files and what runs in them, setup; and on SQL Server, working in a database before making and removing them
+
+### Bug fixes
+
+- Set up with HTTPS is shown only when the binding points here (New site, Set up site), instead of greyed out, and Use a temporary address only when the binding is checked and does not point here: the DNS card says that the site runs on HTTP until then, and Issue certificate gives it one later
+- A user is asked for a binding when they make a site or change its binding: an empty one (a site for any name) is the server's, an administrator's to give, and a user is never told of another site that has it
+- The filters above the sites (All, With environments, Umbraco, …) work for a user: a click was undone at once, as a user's header had no search. A user has the site search too, and an administrator who takes the search out of their header keeps the filters
+
 ## [1.0.76] - 2026-11-24
 
 ### Features

@@ -22,6 +22,8 @@ STICKY = "/var/lib/harbor/site-sticky.json"
 WEB_ROOT = "/var/www"
 # Hold passwords until phase 6: a site's group never reaches them
 EXCLUDED = ("scripts", ".vns-publish")
+# Harbor's files where the site runs that hold its token and login key for Harbor: never the site's group's either
+EXCLUDED_FILES = ("vns-harbor.json",)
 SITE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9.-]{0,252}")
 SHELL = "/bin/bash"
 NO_SHELL = "/usr/sbin/nologin"
@@ -191,6 +193,16 @@ def grant_folder(system, site, group):
     for name in EXCLUDED:
         if system.path(f"{root}/{name}").exists():
             revoke_folder(system, f"{root}/{name}", group)
+    close_files(system, site, group)
+
+
+def close_files(system, site, group):
+    """EXCLUDED_FILES wherever they are in the site's folder: not the group's, also when it was given them before"""
+    if not system.which("setfacl") or not system.path(f"{WEB_ROOT}/{site}").is_dir():
+        return
+    for name in EXCLUDED_FILES:
+        system.run("find", "-P", f"{WEB_ROOT}/{site}", "-type", "f", "-name", name, "-exec", "setfacl", "-x", f"g:{group}", "{}", "+",
+                   check=False, capture=True)
 
 
 def revoke_folder(system, folder, group):
@@ -236,6 +248,9 @@ def sync_sites(system, users, names):
                 sticky = read_json(system.path(STICKY)) or []
                 system.run("chmod", "-t", f"{WEB_ROOT}/{site}")
                 write_json(system.path(STICKY), sorted(set(sticky) | {site}))
+                close_files(system, site, group)
+            else:
+                close_files(system, site, group)
             if names_here != members(system, group):
                 system.run("gpasswd", "-M", ",".join(sorted(names_here)), group, capture=True)
     finally:
