@@ -10,7 +10,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from tests.harness import sent_today  # noqa: E402
+from tests.harness import sent_today, without_acme_folders  # noqa: E402
 
 from harbor.cli import main  # noqa: E402
 from harbor.core.system import RecordingSystem, Result  # noqa: E402
@@ -66,7 +66,7 @@ class SiteActionTests(unittest.TestCase):
             code = main(["site", "action", "shop.dk", "change_env", given], system)
             self.assertEqual(code, result.returncode, (given, result.stderr))
             self.assertEqual(self.new.files(), self.old.files(), given)
-            self.assertEqual(system.commands, self.old.commands(), given)
+            self.assertEqual([without_acme_folders(line) for line in system.commands], self.old.commands(), given)
             self.assertEqual(bool(system.asked), not given)
 
     def test_unknown_environment_and_action(self):
@@ -91,7 +91,7 @@ class SiteActionTests(unittest.TestCase):
         code = main(["site", "action", "shop.dk", "issue_certificate", "--yes"], system)
         self.assertEqual(code, result.returncode, result.stderr)
         self.assertEqual(self.new.files(), self.old.files())
-        self.assertEqual(system.commands, self.old.commands())
+        self.assertEqual([without_acme_folders(line) for line in system.commands], self.old.commands())
         # Not confirmed: nothing happens
         system = RecordingSystem(root=self.new.root, replies=["n"])
         self.assertEqual(main(["site", "action", "shop.dk", "issue_certificate"], system), 1)
@@ -157,7 +157,7 @@ class EnvironmentActionTests(unittest.TestCase):
                 self.assertEqual(system.commands[0], " ".join(["sshpass", "-e", name, *argv]), args)
                 self.assertEqual(system.environments[0], {"SSHPASS": "s3 cret"})
                 self.assertEqual(variables, {"SSHPASS": "s3 cret"})
-                self.assertEqual(system.inputs[0], sent_today(sent), args)
+                self.assertEqual(without_acme_folders(system.inputs[0]), sent_today(sent), args)
                 self.assertEqual((self.target / "publish_prod.sh").read_text(), settings_after, args)
 
     def test_windows_refuses_a_certificate_and_changes_web_config(self):

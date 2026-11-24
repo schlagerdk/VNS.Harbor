@@ -35,6 +35,7 @@ class CertificateAliasTests(unittest.TestCase):
                 + shell_function(common, "issue_certificate")
                 + '\nsudo() { "$@"; }\n'
                   'require_acme() { :; }\n'
+                  '_acmeFolders=(--home /etc/acmesh --config-home /etc/ssl/data)\n'
                   'set_certificate_domains() {\n'
                   '  _certificateDomainAliases=(www.example.test api.example.test)\n'
                   '  _certificateDomains=(example.test www.example.test api.example.test)\n'

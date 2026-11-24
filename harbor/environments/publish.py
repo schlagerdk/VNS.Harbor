@@ -36,6 +36,8 @@ if [[ -f ${conf} ]]; then
 fi
 certdir=/etc/ssl/certs/${BINDING}_ecc
 acme=/etc/acmesh/acme.sh
+# Its folders, as harbor server init installed it: without them acme.sh keeps its state in /root/.acme.sh, where its cron job never looks
+acme_folders=(--home /etc/acmesh --config-home /etc/ssl/data)
 source /opt/harbor/current/lib/common.sh 2>/dev/null || source /vns/apache/lib/common.sh
 
 if [[ -e ${service} ]] && ! grep -qx "WorkingDirectory=${root}" "${service}"; then
@@ -157,17 +159,17 @@ EOF
 		awk -v d="${BINDING}" '($1 == "ServerName" || $1 == "ServerAlias") { for (i = 2; i <= NF; i++) if (tolower($i) == tolower(d)) f = 1 } END { exit !f }' "${c}" && used=1
 	done
 	if [[ ${used} == 0 ]]; then
-		"${acme}" --remove -d "${BINDING}" >/dev/null 2>&1 || true
+		"${acme}" "${acme_folders[@]}" --remove -d "${BINDING}" >/dev/null 2>&1 || true
 		rm -rf "/etc/ssl/certs/${BINDING}" "/etc/ssl/certs/${BINDING}_ecc"
 	fi
 	rc=0
-	"${acme}" --issue --apache --force --server letsencrypt "${certificate_args[@]}" || rc=$?
+	"${acme}" "${acme_folders[@]}" --issue --apache --force --server letsencrypt "${certificate_args[@]}" || rc=$?
 	if [[ ${rc} -ne 0 && ${rc} -ne 2 ]]; then
 		echo "Certificate issue failed. Check that DNS for ${BINDING} points to this server." >&2
 		exit 1
 	fi
 	mkdir -p "${certdir}"
-	"${acme}" --install-cert -d "${BINDING}" --key-file "${certdir}/${BINDING}.key" \
+	"${acme}" "${acme_folders[@]}" --install-cert -d "${BINDING}" --key-file "${certdir}/${BINDING}.key" \
 		--fullchain-file "${certdir}/fullchain.cer" --reloadcmd "systemctl reload apache2"
 fi
 

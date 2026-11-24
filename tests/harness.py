@@ -159,10 +159,23 @@ class Server:
 TEMPORARY = re.compile(r"/tmp/tmp[.\w]+")
 
 
+# The folders harbor gives acme.sh (1.0.67), which the frozen scripts did not: without them acme.sh kept its state in
+# /root/.acme.sh, where its cron job never renewed it
+ACME_FOLDERS = re.compile(r"(?m)^[ \t]*# Its folders, as harbor server init installed it:.*\n[ \t]*_?acme_?[Ff]olders=\(.*\)\n")
+
+
+def without_acme_folders(text):
+    """A command or a script of harbor's as the frozen scripts had it: acme.sh without its folders"""
+    text = ACME_FOLDERS.sub("", text)
+    return text.replace(' "${acme_folders[@]}"', "").replace(' "${_acmeFolders[@]}"', "") \
+        .replace("acme.sh --home /etc/acmesh --config-home /etc/ssl/data ", "acme.sh ")
+
+
 def harbor_commands(system):
     """harbor's commands as the script's are compared: the apache folder as APACHE. Without the service's security
-    settings (lib/harden_service.py), a step harbor has that the scripts never did."""
-    return [line.replace(str(APACHE), "APACHE").replace(str(system.root), "") for line in system.commands if "harden_service.py" not in line]
+    settings (lib/harden_service.py), a step harbor has that the scripts never did, and without acme.sh's folders."""
+    return [without_acme_folders(line.replace(str(APACHE), "APACHE").replace(str(system.root), "")) for line in system.commands
+            if "harden_service.py" not in line]
 
 
 def without_temporary(commands):
@@ -185,6 +198,7 @@ def as_frozen(script):
     script = script.replace(today + "\ndir=${ROOT}\n", "dir=${ROOT}\n").replace(today, "source /vns/apache/lib/common.sh").replace("Run harbor server init there first.", "Run apache/init.sh there first.")
     # The service's security settings (lib/harden_service.py) are a step harbor has that the script never did
     script = re.sub(r'(?m)^python3 "\$\{_apacheDir\}/lib/harden_service\.py" .*\n', "", script)
+    script = without_acme_folders(script)
     return re.sub(r'python3 "\$\{_apacheDir\}/lib/([\w.]+)"', r"python3 /vns/apache/lib/\1", script)
 
 

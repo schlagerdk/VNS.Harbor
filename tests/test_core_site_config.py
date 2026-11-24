@@ -16,6 +16,7 @@ from harbor.core import site_config  # noqa: E402
 from harbor.core.system import RecordingSystem  # noqa: E402
 from harbor.core.templates import Site  # noqa: E402
 from tests.test_core_bindings import COMMON, NEEDS_BASH_4  # noqa: E402
+from tests.harness import without_acme_folders  # noqa: E402
 
 # The Harbor installation (what was the apache folder: lib/ and the templates)
 APACHE = ROOT
@@ -75,8 +76,10 @@ class SiteConfigTests(unittest.TestCase):
     def same(self, result):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(self.new.files(), self.old.files())
-        # harbor sets up the service's security settings (lib/harden_service.py), which the script did not
-        self.assertEqual([line for line in self.system.commands if "harden_service.py" not in line], self.old.commands())
+        # harbor sets up the service's security settings (lib/harden_service.py), which the script did not, and gives
+        # acme.sh its folders, which the script did not either (1.0.67)
+        ours = [without_acme_folders(line) for line in self.system.commands if "harden_service.py" not in line]
+        self.assertEqual(ours, self.old.commands())
 
     def site_vars(self):
         return ('_site=shop.dk; _binding=shop.dk; _projectName=Shop; _portHttp=4010; set_site_vars; '
@@ -155,6 +158,12 @@ class SiteConfigTests(unittest.TestCase):
         self.assertFalse((self.new.root / "etc/ssl/certs/old.shop.dk_ecc").exists())
         self.assertIn("-d shop.dk -d www.shop.dk -d old.shop.dk", " ".join(self.system.commands))
         self.assertEqual(self.system.said, [line for line in result.stdout.splitlines()])
+        # acme.sh runs in the folders its cron job reads: without them it kept the certificate in /root/.acme.sh,
+        # where it was never renewed (1.0.67)
+        calls = [command for command in self.system.commands if command.startswith("/etc/acmesh/acme.sh ")]
+        self.assertEqual(len(calls), 3, self.system.commands)
+        for command in calls:
+            self.assertTrue(command.startswith("/etc/acmesh/acme.sh --home /etc/acmesh --config-home /etc/ssl/data --"), command)
 
     def test_production_tls_config(self):
         conf = "<VirtualHost *:80>\n  ServerName Shop.dk\n  ServerAlias www.shop.dk WWW.shop.dk shop.dk # note\n</VirtualHost>\n"

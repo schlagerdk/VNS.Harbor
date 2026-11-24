@@ -2,6 +2,14 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.67] - 2026-11-24
+
+### Fixes
+
+- Certificates are renewed: Harbor ran acme.sh without the folders `harbor server init` installed it with, so acme.sh kept each certificate it issued in /root/.acme.sh, where its cron job never looks ("is not an issued domain, skipping"), and none was renewed. Every acme.sh call now names those folders, and the update moves the certificates kept in /root/.acme.sh to where the cron job renews them (`harbor server adopt-certificates`, `--dry-run` tells what it would do). Only certificates for names a site on the server answers to are moved: another server's, left in a server made from a copy of it, stays. One installed that acme.sh knows nowhere is named, to be issued again
+- Changing the binding of an HTTPS site whose old binding was its name no longer deletes the new certificate just installed for it, and Issue certificate on a site with HTTPS no longer deletes the certificate its config serves (acme.sh then refused to issue)
+- Reissue certificate installs the certificate where the site's config reads it, so each renewal reloads Apache
+
 ## [1.0.66] - 2026-11-23
 
 ### Features

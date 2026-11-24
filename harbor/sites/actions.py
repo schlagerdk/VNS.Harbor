@@ -3,7 +3,7 @@ import re
 
 from harbor.core.bindings import certificate_domains
 from harbor.core.names import normalize_site_name
-from harbor.core.site_config import ACME, ACME_SERVER, clean_stale_acme, configure_umbraco_https, enable_https_config, require_acme
+from harbor.core.site_config import ACME, ACME_FOLDERS, ACME_SERVER, clean_stale_acme, configure_umbraco_https, enable_https_config, require_acme
 from harbor.core.system import Stop
 from harbor.core.templates import Site
 
@@ -64,12 +64,12 @@ def issue_certificate(system, name, yes=False):
     for domain in domains:
         clean_stale_acme(system, site, domain)
     arguments = [argument for domain in domains for argument in ("-d", domain)]
-    issued = system.run(ACME, "--issue", "--apache", "--force", "--server", ACME_SERVER, *arguments, check=False)
+    issued = system.run(ACME, *ACME_FOLDERS, "--issue", "--apache", "--force", "--server", ACME_SERVER, *arguments, check=False)
     if issued.returncode not in (0, 2):
         raise Stop(f"Certificate issue failed. Check that DNS for {binding} points to this server.")
     system.path(site.certificate_directory).mkdir(parents=True, exist_ok=True)
     system.step("Install the certificate")
-    system.run(ACME, "--install-cert", "-d", binding, "--key-file", site.key_file, "--fullchain-file", site.certificate_file,
+    system.run(ACME, *ACME_FOLDERS, "--install-cert", "-d", binding, "--key-file", site.key_file, "--fullchain-file", site.certificate_file,
                "--reloadcmd", "systemctl reload apache2")
     try:
         enable_https_config(system, site, binding)

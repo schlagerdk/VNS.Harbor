@@ -20,6 +20,8 @@ EDITABLE = re.compile(r"web\.config|appsettings(\.[A-Za-z0-9_-]+)?\.json")
 
 ISSUE_CERTIFICATE = r'''set -euo pipefail
 acme=/etc/acmesh/acme.sh
+# Its folders, as harbor server init installed it: without them acme.sh keeps its state in /root/.acme.sh, where its cron job never looks
+acme_folders=(--home /etc/acmesh --config-home /etc/ssl/data)
 certdir=/etc/ssl/certs/${BINDING}_ecc
 source /opt/harbor/current/lib/common.sh 2>/dev/null || source /vns/apache/lib/common.sh
 unit=$(normalize_dns_name "${SITE}" unit)
@@ -42,13 +44,13 @@ domain_args=()
 for domain in "${domains[@]}"; do domain_args+=(-d "${domain}"); done
 printf 'Issue certificate for: %s\n' "${domains[*]}"
 rc=0
-"${acme}" --issue --apache --force --server "${ACME_SERVER}" "${domain_args[@]}" || rc=$?
+"${acme}" "${acme_folders[@]}" --issue --apache --force --server "${ACME_SERVER}" "${domain_args[@]}" || rc=$?
 if [[ ${rc} -ne 0 && ${rc} -ne 2 ]]; then
 	echo "Certificate issue failed. Check that DNS for ${BINDING} points to this server." >&2
 	exit 1
 fi
 mkdir -p "${certdir}"
-"${acme}" --install-cert -d "${BINDING}" --key-file "${certdir}/${BINDING}.key" \
+"${acme}" "${acme_folders[@]}" --install-cert -d "${BINDING}" --key-file "${certdir}/${BINDING}.key" \
 	--fullchain-file "${certdir}/fullchain.cer" --reloadcmd "systemctl reload apache2"
 ensure_production_tls_config "${conf}" "/etc/systemd/system/${unit}.service" "${SITE}" \
 	"${BINDING}" "${ROOT}" "${certdir}" "${MAIL}" "${UMBRACO}"

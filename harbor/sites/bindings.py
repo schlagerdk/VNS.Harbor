@@ -13,7 +13,7 @@ import tempfile
 
 from harbor.core.bindings import certificate_domains, replace_server_aliases, server_aliases, server_aliases_from_config, site_binding
 from harbor.core.names import normalize_site_name
-from harbor.core.site_config import (ACME, ACME_SERVER, DEFAULT_SITE_LINK, SSL_ON, clean_stale_acme, default_site,
+from harbor.core.site_config import (ACME, ACME_FOLDERS, ACME_SERVER, DEFAULT_SITE_LINK, SSL_ON, clean_stale_acme, default_site,
                                      make_default_site, read_template, require_acme)
 from harbor.core.system import CommandFailed, Stop
 from harbor.core.templates import Site, render
@@ -199,10 +199,10 @@ def change_binding(system, name="", new_binding="", aliases=None, yes=False):
                     if domain not in (old_binding, name):
                         clean_stale_acme(system, site, domain)
                 arguments = [argument for domain in domains for argument in ("-d", domain)]
-                issued = system.run(ACME, "--issue", "--apache", "--force", "--server", ACME_SERVER, *arguments, check=False)
+                issued = system.run(ACME, *ACME_FOLDERS, "--issue", "--apache", "--force", "--server", ACME_SERVER, *arguments, check=False)
                 if issued.returncode not in (0, 2):
                     fail("", issued.returncode)
-                if not system.run(ACME, "--install-cert", "-d", new_binding, "--key-file", site.key_file, "--fullchain-file",
+                if not system.run(ACME, *ACME_FOLDERS, "--install-cert", "-d", new_binding, "--key-file", site.key_file, "--fullchain-file",
                                   site.certificate_file, "--reloadcmd", "systemctl reload apache2", check=False).ok:
                     fail()
                 config.write_text(new_config)
@@ -234,8 +234,8 @@ def change_binding(system, name="", new_binding="", aliases=None, yes=False):
             system.say(f"Previous binding {old_binding} is still used; keeping its certificate.")
         else:
             system.step(f"Revoke and remove certificate for {old_binding}")
-            system.run(ACME, "--revoke", "-d", old_binding)
-            system.run(ACME, "--remove", "-d", old_binding)
+            system.run(ACME, *ACME_FOLDERS, "--revoke", "-d", old_binding)
+            system.run(ACME, *ACME_FOLDERS, "--remove", "-d", old_binding)
             clean_stale_acme(system, site, old_binding)
 
     system.say(f"Bindings updated: {scheme}://{new_binding}/ (aliases: {' '.join(new_aliases) or 'none'}, folder: {name})")

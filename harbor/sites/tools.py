@@ -12,7 +12,7 @@ import tempfile
 
 from harbor.core.bindings import certificate_domains
 from harbor.core.dotnet import runtime_identifier
-from harbor.core.site_config import ACME, ACME_SERVER, require_acme
+from harbor.core.site_config import ACME, ACME_FOLDERS, ACME_SERVER, require_acme
 from harbor.core.system import CommandFailed, Stop
 from harbor.sites.actions import site_named
 from harbor.core.paths import BIN, LIB
@@ -163,11 +163,14 @@ def reissue_certificate(system, name):
     except (ValueError, RuntimeError) as error:
         raise Stop(str(error)) from None
     issue = f"Issue certificate for {' '.join(domains)}"
-    system.plan([issue, "Reload apache"])
+    system.plan([issue, "Install the certificate"])
     system.step(issue)
-    system.run(ACME, "--issue", "--apache", "--server", ACME_SERVER, "--force", *(argument for domain in domains for argument in ("-d", domain)))
-    system.step("Reload apache")
-    system.run("systemctl", "reload", "apache2")
+    system.run(ACME, *ACME_FOLDERS, "--issue", "--apache", "--server", ACME_SERVER, "--force", *(argument for domain in domains for argument in ("-d", domain)))
+    # Installed where the config reads it, so each renewal reloads Apache (and a certificate acme.sh did not know is
+    # renewed from now on)
+    system.step("Install the certificate")
+    system.run(ACME, *ACME_FOLDERS, "--install-cert", "-d", binding.lower(), "--key-file", site.key_file, "--fullchain-file", site.certificate_file,
+               "--reloadcmd", "systemctl reload apache2")
 
 
 def outdated(system, name):

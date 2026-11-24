@@ -444,6 +444,11 @@ def _server_init(args, system):
     init(system)
 
 
+def _adopt_certificates(args, system):
+    from harbor.server.acme import adopt
+    adopt(system, args.dry_run)
+
+
 def _admin(args, system):
     from harbor.install import admin
     if args.command == "install":
@@ -524,6 +529,9 @@ def parser():
     command.set_defaults(handler=_tls_policy)
     command = server.add_parser("init", help="make a new server ready for sites: Apache, acme.sh, keep-alive (was apache/init.sh). .NET comes with the first site that needs it")
     command.set_defaults(handler=_server_init)
+    command = server.add_parser("adopt-certificates", help="move the certificates acme.sh kept in /root/.acme.sh to where its cron job renews them (1.0.67)")
+    command.add_argument("--dry-run", action="store_true", help="tell what it would do, change nothing")
+    command.set_defaults(handler=_adopt_certificates)
     command = server.add_parser("status", help="SQL Server, sqlcmd, the sa password, cron jobs, .NET and Node.js here, as JSON")
     command.set_defaults(handler=_server_status)
     command = server.add_parser("cron", help="the backup and log shrink jobs in root's crontab: on, off, or upgrade (older jobs to harbor commands)")

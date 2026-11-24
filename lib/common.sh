@@ -14,6 +14,8 @@ _portReservationFile=""
 _rootPath=${VNS_WEB_ROOT:-/var/www}
 _publishFolder=_publish
 _acme=/etc/acmesh/acme.sh
+# Its folders, as harbor server init installed it: without them acme.sh keeps its state in /root/.acme.sh
+_acmeFolders=(--home /etc/acmesh --config-home /etc/ssl/data)
 _acmeServer=letsencrypt
 _adminMail=mhs@vns.dk
 
@@ -450,7 +452,7 @@ clean_stale_acme() {
 	done
 	if [[ -d /etc/ssl/certs/${_domain} || -d /etc/ssl/certs/${_domain}_ecc ]]; then
 		echo "Remove leftover certificate data for ${_domain}"
-		sudo "${_acme}" --remove -d "${_domain}" >/dev/null 2>&1 || true
+		sudo "${_acme}" "${_acmeFolders[@]}" --remove -d "${_domain}" >/dev/null 2>&1 || true
 		sudo rm -rf "/etc/ssl/certs/${_domain}" "/etc/ssl/certs/${_domain}_ecc"
 	fi
 }
@@ -475,14 +477,14 @@ issue_certificate() {
 	echo "Issue certificate"
 	echo "Certificate domains: ${_certificateDomainNames}"
 	# acme.sh returns 2 when a still-valid certificate is skipped
-	sudo "${_acme}" --issue --apache --force --server "${_acmeServer}" "${_certificateDomainArgs[@]}" || {
+	sudo "${_acme}" "${_acmeFolders[@]}" --issue --apache --force --server "${_acmeServer}" "${_certificateDomainArgs[@]}" || {
 		local _status=$?
 		[[ ${_status} -eq 2 ]] || return "${_status}"
 	}
 
 	echo "Install certificate for Apache"
 	sudo mkdir -p "${_certificateDirectory}"
-	sudo "${_acme}" --install-cert -d "${_binding}" \
+	sudo "${_acme}" "${_acmeFolders[@]}" --install-cert -d "${_binding}" \
 		--key-file "${_keyFile}" \
 		--fullchain-file "${_certificateFile}" \
 		--reloadcmd "systemctl reload apache2"

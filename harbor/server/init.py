@@ -1,13 +1,12 @@
 """A new server made ready for sites: Apache, acme.sh and the keep-alive job (was apache/init.sh). Each step is harmless
 to repeat. .NET comes with the first site that needs it (harbor.core.dotnet), Samba from Server tools (harbor.server.samba)."""
 from harbor.core.paths import LIB
+from harbor.core.site_config import ACME, ACME_FOLDERS
 from harbor.core.templates import ADMIN_MAIL
 
 PACKAGES = ("curl", "unzip", "zip", "tar", "git", "rsync", "ca-certificates", "uuid-runtime", "python3", "python3-venv",
             "python3-pip", "cron", "acl", "apache2", "sshpass")
 MODULES = ("ssl", "rewrite", "headers", "proxy", "proxy_http", "proxy_wstunnel")
-ACME = "/etc/acmesh/acme.sh"
-ACME_FOLDERS = ("--home", "/etc/acmesh", "--config-home", "/etc/ssl/data")
 INITIALIZED = "/var/lib/vns/apache-initialized"
 
 

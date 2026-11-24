@@ -14,7 +14,7 @@ import shutil
 
 from harbor.core.bindings import validate_binding
 from harbor.core.names import normalize_site_name, service_name
-from harbor.core.site_config import ACME, clean_stale_acme, default_site, DEFAULT_SITE_LINK
+from harbor.core.site_config import ACME, ACME_FOLDERS, clean_stale_acme, default_site, DEFAULT_SITE_LINK
 from harbor.core.system import Stop
 from harbor.core.templates import Site
 from harbor.environments import settings
@@ -135,8 +135,8 @@ class Deletion:
             system.say(f"Keep certificate for {domain}; another enabled site uses it.")
             return
         system.step(f"Revoke and remove certificate for {domain}")
-        system.run(ACME, "--revoke", "-d", domain, check=False)
-        system.run(ACME, "--remove", "-d", domain, check=False)
+        system.run(ACME, *ACME_FOLDERS, "--revoke", "-d", domain, check=False)
+        system.run(ACME, *ACME_FOLDERS, "--remove", "-d", domain, check=False)
         remove(system, directory)
         # acme.sh keeps its files in a folder named after the binding, and --remove does not delete them
         clean_stale_acme(system, self.site, domain)

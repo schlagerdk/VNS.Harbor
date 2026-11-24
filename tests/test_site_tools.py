@@ -103,7 +103,12 @@ class SiteToolTests(unittest.TestCase):
             acme = server.root / "etc/acmesh/acme.sh"
             acme.exists() or acme.write_text("#!/bin/bash\n")
             acme.chmod(0o755)
-        self.compare("common/scripts/issue_certificat.sh", ["site", "reissue-certificate"])
+        # The script reloaded Apache; harbor installs the certificate where the config reads it, which reloads it and
+        # makes each renewal reload it too (1.0.67)
+        result, system = self.compare("common/scripts/issue_certificat.sh", ["site", "reissue-certificate"], skip=("systemctl reload", "/etc/acmesh/acme.sh --install-cert"))
+        self.assertIn("/etc/acmesh/acme.sh --home /etc/acmesh --config-home /etc/ssl/data --install-cert -d shop.dk "
+                      "--key-file /etc/ssl/certs/shop.dk_ecc/shop.dk.key --fullchain-file /etc/ssl/certs/shop.dk_ecc/fullchain.cer "
+                      "--reloadcmd systemctl reload apache2", system.commands)
 
     def test_publish(self):
         result, system = self.compare("csharp/scripts/publish.sh", ["site", "publish"], "Release", answers={"systemctl is-active --quiet": ""})

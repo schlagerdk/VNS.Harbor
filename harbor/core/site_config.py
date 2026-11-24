@@ -14,6 +14,9 @@ from harbor.core.bindings import certificate_domains, replace_server_aliases, va
 from harbor.core.templates import render
 
 ACME = "/etc/acmesh/acme.sh"
+# The folders harbor server init installed acme.sh with, and its cron job runs it with: without them it keeps its state in
+# /root/.acme.sh, and the certificates issued there are never renewed (1.0.67)
+ACME_FOLDERS = ("--home", "/etc/acmesh", "--config-home", "/etc/ssl/data")
 ACME_SERVER = "letsencrypt"
 DEFAULT_SITE_LINK = "/etc/apache2/sites-enabled/00-vns-default.conf"
 SSL_ON = re.compile(r"(?m)^[ \t]*SSLEngine[ \t]+On([ \t]|$)")
@@ -148,7 +151,9 @@ def require_acme(system):
 
 def clean_stale_acme(system, site, domain):
     """Remove leftover acme.sh state for a domain (such as a key from a deleted site), so a certificate can be
-    issued. Kept when another enabled site still uses the domain."""
+    issued. Kept when another enabled site still uses the domain, and the site's own certificate folder while its
+    config uses it: Apache would lose the certificate it serves (a new one for a new binding, or the one acme.sh
+    issues again over that config, which it refuses while the config names missing files)."""
     for path in sorted(system.path("/etc/apache2/sites-enabled").glob("*.conf")):
         if path.name == f"{site.name}.conf" or not path.exists():
             continue
@@ -158,9 +163,12 @@ def clean_stale_acme(system, site, domain):
                 return
     if system.path(f"/etc/ssl/certs/{domain}").is_dir() or system.path(f"/etc/ssl/certs/{domain}_ecc").is_dir():
         system.say(f"Remove leftover certificate data for {domain}")
-        system.run(ACME, "--remove", "-d", domain, check=False)
+        system.run(ACME, *ACME_FOLDERS, "--remove", "-d", domain, check=False)
+        config = system.path(site.config_path)
+        in_use = config.is_file() and site.certificate_file in config.read_text(errors="replace")
         for folder in (f"/etc/ssl/certs/{domain}", f"/etc/ssl/certs/{domain}_ecc"):
-            shutil.rmtree(system.path(folder), ignore_errors=True)
+            if not (in_use and folder == site.certificate_directory):
+                shutil.rmtree(system.path(folder), ignore_errors=True)
 
 
 def issue_certificate(system, site, binding):
@@ -185,12 +193,12 @@ def issue_certificate(system, site, binding):
     system.say(f"Certificate domains: {' '.join(domains)}")
     arguments = [argument for domain in domains for argument in ("-d", domain)]
     # acme.sh returns 2 when a still valid certificate is kept
-    issued = system.run(ACME, "--issue", "--apache", "--force", "--server", ACME_SERVER, *arguments, check=False)
+    issued = system.run(ACME, *ACME_FOLDERS, "--issue", "--apache", "--force", "--server", ACME_SERVER, *arguments, check=False)
     if issued.returncode not in (0, 2):
         raise RuntimeError(f"The certificate could not be issued (acme.sh exit {issued.returncode}).")
     system.say("Install certificate for Apache")
     system.path(site.certificate_directory).mkdir(parents=True, exist_ok=True)
-    system.run(ACME, "--install-cert", "-d", binding, "--key-file", site.key_file, "--fullchain-file", site.certificate_file,
+    system.run(ACME, *ACME_FOLDERS, "--install-cert", "-d", binding, "--key-file", site.key_file, "--fullchain-file", site.certificate_file,
                "--reloadcmd", "systemctl reload apache2")
 
 

@@ -16,6 +16,8 @@ source /opt/harbor/current/lib/common.sh 2>/dev/null || source /vns/apache/lib/c
 unit=$(normalize_dns_name "${SITE}" unit)
 conf=/etc/apache2/sites-available/${SITE}.conf
 acme=/etc/acmesh/acme.sh
+# Its folders, as harbor server init installed it: without them acme.sh keeps its state in /root/.acme.sh, where its cron job never looks
+acme_folders=(--home /etc/acmesh --config-home /etc/ssl/data)
 oldcert=/etc/ssl/certs/${OLD}_ecc
 newcert=/etc/ssl/certs/${NEW}_ecc
 settings=${ROOT}/appsettings.json
@@ -87,18 +89,18 @@ if [[ ${scheme} == https ]]; then
 	for domain in "${domains[@]}"; do domain_args+=(-d "${domain}"); done
 	printf 'Issue certificate for: %s\n' "${domains[*]}"
 	if [[ ${NEW} != "${OLD}" ]] && ! used_by_other "${NEW}"; then
-		"${acme}" --remove -d "${NEW}" >/dev/null 2>&1 || true
+		"${acme}" "${acme_folders[@]}" --remove -d "${NEW}" >/dev/null 2>&1 || true
 		rm -rf "/etc/ssl/certs/${NEW}" "${newcert}"
 	fi
 	rc=0
-	"${acme}" --issue --apache --force --server "${ACME_SERVER}" "${domain_args[@]}" || rc=$?
+	"${acme}" "${acme_folders[@]}" --issue --apache --force --server "${ACME_SERVER}" "${domain_args[@]}" || rc=$?
 	if [[ ${rc} -ne 0 && ${rc} -ne 2 ]]; then
 		echo "Certificate issue failed. Check that DNS for ${NEW} points to this server." >&2
 		rollback
 		exit 1
 	fi
 	mkdir -p "${newcert}"
-	"${acme}" --install-cert -d "${NEW}" --key-file "${newcert}/${NEW}.key" \
+	"${acme}" "${acme_folders[@]}" --install-cert -d "${NEW}" --key-file "${newcert}/${NEW}.key" \
 		--fullchain-file "${newcert}/fullchain.cer" --reloadcmd "systemctl reload apache2" || { rollback; exit 1; }
 
 	# 3. Point the config to the new certificate
@@ -122,8 +124,8 @@ if [[ ${OLD} != "${NEW}" && ${scheme} == https ]]; then
 		echo "Previous binding ${OLD} is still used; keeping its certificate."
 	else
 		echo "Revoke and remove certificate for ${OLD}"
-		"${acme}" --revoke -d "${OLD}" || true
-		"${acme}" --remove -d "${OLD}" || true
+		"${acme}" "${acme_folders[@]}" --revoke -d "${OLD}" || true
+		"${acme}" "${acme_folders[@]}" --remove -d "${OLD}" || true
 		rm -rf "/etc/ssl/certs/${OLD}" "${oldcert}"
 	fi
 fi

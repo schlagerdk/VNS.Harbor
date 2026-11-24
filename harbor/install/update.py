@@ -144,6 +144,9 @@ def after_update(system):
     worked.append(attempt(system, "Not every site was migrated: sudo harbor migrate --dry-run tells why.", "python3", harbor, "migrate"))
     worked.append(attempt(system, "The sa password was not kept in Harbor.", "python3", harbor, "sql", "import-sa-password"))
     worked.append(attempt(system, "The backup jobs were not changed to harbor commands.", "python3", harbor, "server", "cron", "upgrade"))
+    # The certificates acme.sh kept in /root/.acme.sh (before 1.0.67) moved to where its cron job renews them
+    worked.append(attempt(system, "Not every certificate was moved to where acme.sh renews it: sudo harbor server adopt-certificates --dry-run tells why.",
+                          "python3", harbor, "server", "adopt-certificates"))
     # Harbor's image signing key (1.0.46) taken off every service: it broke sites' images made by hand. Not restarted
     attempt(system, "Harbor's image signing key was not taken off every site's service.", "python3", f"{LIB}/harden_service.py", "--all")
     # Every server an environment runs on is in Servers: one made before that was needed is added (its own step, as
