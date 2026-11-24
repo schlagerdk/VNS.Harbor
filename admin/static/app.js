@@ -586,6 +586,13 @@ async function copyText(text, container) {
 
 let copyStatusTimer = null;
 
+// A dialog's button that was disabled when the dialog opened (a certificate's, while DNS is checked) could not take
+// the focus the dialog gave it: it takes it once it is enabled, unless a field of the dialog has it
+function focusOnceEnabled(dialog, button) {
+	const focused = document.activeElement;
+	if (!button.disabled && !(dialog.contains(focused) && focused.matches("input, textarea, select"))) button.focus();
+}
+
 // Replaces prompt()/confirm(). Resolves to the entered text (or true without an input), or null when cancelled.
 function ask({ title, message = "", value = "", placeholder = "", ok = "OK", danger = false, input = true, match = null, extra = null, checkbox = null, checkboxChecked = false, loginCheckbox = false, dns = null, dnsCheck = null }) {
 	const dlg = $("#dlg-prompt");
@@ -594,7 +601,12 @@ function ask({ title, message = "", value = "", placeholder = "", ok = "OK", dan
 	let dnsReady = !dnsCheck;
 	// With an extra field (aliases), its names are checked with the main one
 	$("#prompt-dns").replaceChildren(...(dns && input ? [dnsCard(field, { ...dns, aliases: extra ? $("#prompt-extra") : null })]
-		: dnsCheck ? [certificateDnsCard(dnsCheck, (ready) => { dnsReady = ready; if (dlg.open) updateConfirmation(); })] : []));
+		: dnsCheck ? [certificateDnsCard(dnsCheck, (ready) => {
+			dnsReady = ready;
+			if (!dlg.open) return;
+			updateConfirmation();
+			focusOnceEnabled(dlg, okButton);
+		})] : []));
 	const extraRow = $("#prompt-extra-row");
 	const extraField = $("#prompt-extra");
 	const okButton = $("#prompt-ok");
@@ -7785,13 +7797,24 @@ async function showCronLog(row, entry, button) {
 }
 
 // A job's output split into its runs, where it starts each with a line such as ----- 23.11.2026 20:00 -----
-// (Harbor's jobs and the scripts made like them). The first may be the end of a run the tail cut off.
+// (Harbor's jobs and the scripts made like them), or acme.sh's [Tue Nov 24 10:14:29 CET 2026] ===Starting cron===.
+// The first may be the end of a run the tail cut off.
 const CRON_RUN_START = /^-{5} (\d\d\.\d\d\.\d{4} \d\d:\d\d) -{5,}\s*$/;
+// acme.sh's time on each line: [Tue Nov 24 10:14:29 CET 2026]
+const ACME_TIME = /^\[\w{3} (\w{3}) +(\d{1,2}) (\d\d:\d\d)(:\d\d) \S+ (\d{4})\] /;
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+function cronRunStart(line) {
+	const harbor = line.match(CRON_RUN_START);
+	if (harbor) return harbor[1];
+	const acme = line.match(ACME_TIME);
+	if (!acme || line.slice(acme[0].length).trim() !== "===Starting cron===" || !MONTHS.includes(acme[1])) return null;
+	return `${acme[2].padStart(2, "0")}.${String(MONTHS.indexOf(acme[1]) + 1).padStart(2, "0")}.${acme[5]} ${acme[3]}`;
+}
 function cronRuns(lines) {
 	const runs = [];
 	for (const line of lines) {
-		const start = line.match(CRON_RUN_START);
-		if (start || !runs.length) runs.push({ when: start ? start[1] : "", lines: [] });
+		const start = cronRunStart(line);
+		if (start || !runs.length) runs.push({ when: start || "", lines: [] });
 		if (!start) runs.at(-1).lines.push(line);
 	}
 	for (const run of runs) {
@@ -7816,7 +7839,8 @@ function cronOutput(lines, errors) {
 				el("span", { textContent: run.when || "Earlier (the start is cut off)" }),
 				...(last ? [el("span", { className: "crontab-run-tag", textContent: "Latest" })] : []),
 				...(failed ? [el("span", { className: "crontab-run-tag bad", textContent: "Errors" })] : [])),
-			el("pre", { textContent: run.lines.join("\n") || "No output." }));
+			el("pre", { textContent: run.lines.filter((line) => !/^\[[^\]]+\] ===End cron===\s*$/.test(line))
+				.map((line) => line.replace(ACME_TIME, (_, month, day, time, seconds) => time + seconds + "  ")).join("\n") || "No output." }));
 	}));
 }
 

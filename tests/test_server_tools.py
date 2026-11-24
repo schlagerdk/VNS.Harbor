@@ -307,6 +307,19 @@ class SaSecretTests(Server):
         self.assertNotIn("secret", system.commands[run])
 
 
+    def test_the_backup_log_starts_each_run_with_its_time(self):
+        """The admin cuts a job's log into runs at that line: the permissions step said its line before it, which
+        came out as a run of its own (1.0.68)"""
+        from harbor.sql import databases
+        (self.root / "var/opt/mssql/backup").mkdir(parents=True)
+        system = self.system(answers={"/opt/mssql-tools18/bin/sqlcmd": "ROW|1|shop|1024|1.0"})
+        with mock.patch.dict(os.environ, {"SQLCMDPASSWORD": "pw"}):
+            databases.backup_everything(system)
+        self.assertRegex(system.said[0], r"^----- \d\d\.\d\d\.\d{4} \d\d:\d\d -----$")
+        self.assertNotIn("Ensure SQL Server can read and overwrite backup files", system.said)
+        self.assertIn("chown mssql:mssql /var/opt/mssql/backup", system.commands)
+
+
 class CronLabelAndClearTests(Server):
     def test_a_label_is_the_comment_line_above_its_job(self):
         self.crontab = "# made by hand\n# Harbor label: Delete old 2DM data\n" + CUSTOM + "\n# Harbor label: nothing under it\n"

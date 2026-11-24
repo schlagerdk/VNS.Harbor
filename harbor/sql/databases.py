@@ -86,13 +86,15 @@ def render(template, replacements, password=None):
     return file.name
 
 
-def prepare_backup_permissions(system):
-    """The backup folder, and every .bak in it, readable and writable for SQL Server"""
+def prepare_backup_permissions(system, quiet=False):
+    """The backup folder, and every .bak in it, readable and writable for SQL Server: done before each use, as a .bak
+    put there by hand may belong to someone else. quiet for the backup job, whose log tells only what it backed up."""
     folder = system.path(BACKUPS)
     if folder.is_symlink():
         raise Stop("Backup directory must not be a symbolic link.")
     folder.mkdir(parents=True, exist_ok=True)
-    system.say("Ensure SQL Server can read and overwrite backup files")
+    if not quiet:
+        system.say("Ensure SQL Server can read and overwrite backup files")
     system.run("chown", "mssql:mssql", BACKUPS)
     system.run("chmod", "750", BACKUPS)
     for backup in sorted(folder.iterdir()):
@@ -215,8 +217,9 @@ def report(system, sql, *options, stop_on_error=True):
 def backup_everything(system):
     zone = "Europe/Copenhagen"
     try:
-        prepare_backup_permissions(system)
+        # The run's first line, which the admin starts its card of the run with
         system.say(f"----- {stamp(zone)} -----")
+        prepare_backup_permissions(system, quiet=True)
         result, rows = report(system, TEMPLATES / "backup_everything.sql")
         if rows:
             system.say(table(["Nr", "Database", "Size", "Time", "Speed"],

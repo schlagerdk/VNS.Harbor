@@ -2,6 +2,18 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.68] - 2026-11-24
+
+### Features
+
+- A scheduled job's log shows acme.sh's certificate runs as cards too, one per run with when it started, and its lines with the time only
+
+### Fixes
+
+- Issue certificate: the button takes the focus once the DNS check has found that the names point here, so Enter issues the certificate (it was disabled while DNS was checked, and lost the focus the dialog gave it)
+- The SQL backup's log no longer starts each run with "Ensure SQL Server can read and overwrite backup files" before the run's time, which came out as a card of its own: the job makes the backup folder SQL Server's without saying so, as it always has
+- The tests of an environment's binding compare its script without acme.sh's folders, as the other tests of the frozen scripts do (they failed in 1.0.67)
+
 ## [1.0.67] - 2026-11-24
 
 ### Fixes
