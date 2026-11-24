@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.81] - Unreleased
+
+### Bug fixes
+
+- In Run custom script's menu a script's file stands under its name, never on top of it beside the pencil and the trash can
+
 ## [1.0.80] - 2026-11-24
 
 ### Features
