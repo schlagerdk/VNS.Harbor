@@ -87,7 +87,8 @@ class HeaderAddressTests(unittest.TestCase):
 
     def test_header_has_the_addresses_for_administrators_only(self):
         self.assertIn('<div id="server-ips" class="server-ips" role="group" aria-label="Server addresses" hidden></div>', self.html)
-        self.assertIn("if (!currentUser.admin) {\n\t\tbox.hidden = true;", self.source)
+        # An administrator's, unless they took them out of their header (Settings, Top menu, 1.0.71)
+        self.assertIn("if (!currentUser.admin || currentUser.header?.addresses === false) {\n\t\tbox.hidden = true;", self.source)
 
     def test_external_is_where_dns_should_point_and_a_click_copies(self):
         self.assertIn('const external = data.address && !privateIPv4(data.address) ? data.address : "";', self.source)
