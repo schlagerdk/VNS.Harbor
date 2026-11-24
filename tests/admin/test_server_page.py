@@ -16,7 +16,7 @@ class ServerPageTests(unittest.TestCase):
             self.assertNotIn(gone, PAGE)
         self.assertIn('<section id="view-server"', PAGE)
         # A part each in the side menu: every tool, then the server's own parts
-        for tab in ("sql", "dotnet", "node", "access", "jobs", "settings", "servers", "users"):
+        for tab in ("sql", "dotnet", "node", "access", "jobs", "settings", "servers", "users", "usage"):
             self.assertIn(f'id="server-tab-{tab}"', PAGE)
         for pane in ("tools", "jobs", "settings", "servers", "users"):
             self.assertIn(f'id="server-pane-{pane}"', PAGE)

@@ -136,7 +136,7 @@ class UsageCheckTests(unittest.TestCase):
         anna["create_sites"] = True
         shown = usage.of_user(self.data, anna, {"c1": "Local SQL Server"}, **self.measure())
         self.assertEqual(shown["sites"], {"may_make": True, "count_limit": None, "size_limit_mb": 100,
-                                          "items": [{"name": "big.dk", "size_mb": 250.0}, {"name": "small.dk", "size_mb": 20.0}]})
+                                          "items": [{"name": "big.dk", "size_mb": 250.0, "limit_mb": 100}, {"name": "small.dk", "size_mb": 20.0, "limit_mb": 100}]})
         self.assertEqual([(item["name"], item["size_limit_mb"], [db["name"] for db in item["items"]]) for item in shown["connections"]],
                          [("Local SQL Server", 1024, ["Shop", "Tiny"])])
         # A site that is gone is not shown; a SQL Server that does not answer says so
@@ -158,6 +158,48 @@ class UsageCheckTests(unittest.TestCase):
         self.assertFalse(usage.needed(self.data), "a count limit alone needs no measuring")
         (self.data / "usage.json").write_text(json.dumps({"enabled": True, "emails": ["ops@example.com"]}))
         self.assertTrue(usage.needed(self.data))
+
+    def test_an_overview_of_every_site_and_database_for_an_administrator(self):
+        """Usage under Settings: everything here, biggest first, who made it and its limit (1.0.70)"""
+        self.sites["admin.example.com"] = 5.0
+        sizes = {"Shop": 2048.0, "Tiny": 3.0, "Legacy": 500.0}
+        shown = usage.overview(self.data, ["admin.example.com", "big.dk", "free.dk", "gone.dk"], {"c1": "Local SQL Server"},
+                               measure_site=lambda site: self.sites.get(site), measure_databases=lambda data, connection, user_only=False: sizes)
+        self.assertEqual([(item["name"], item["user"], item["limit_mb"]) for item in shown["sites"]],
+                         [("free.dk", "bo", None), ("big.dk", "Anna", 100), ("admin.example.com", None, None)])
+        self.assertEqual([(item["name"], item["user"], item["limit_mb"]) for item in shown["connections"][0]["databases"]],
+                         [("Shop", "Anna", 1024), ("Legacy", None, None), ("Tiny", "Anna", 1024)])
+        self.assertEqual(shown["connections"][0]["name"], "Local SQL Server")
+        self.assertFalse(shown["connections"][0]["unreachable"])
+
+    def test_a_site_can_have_its_own_size_limit(self):
+        """Each site a user made takes the size their limits give every site, unless it has its own, bigger or smaller
+        (1.0.71)"""
+        config = json.loads((self.data / "config.json").read_text())
+        config["users"][0]["sites"] = {"big.dk": {"envs": ["main"], "actions": [], "size_mb": 500}, "small.dk": {"envs": ["main"], "actions": [], "size_mb": 10}}
+        (self.data / "config.json").write_text(json.dumps(config))
+        over = usage.check(self.data, **self.measure())
+        self.assertEqual([(item["name"], item["limit_mb"]) for item in over if item["kind"] == "site"], [("small.dk", 10)])
+        self.assertEqual(usage.site_limit(config["users"][0], "big.dk"), 500)
+        self.assertEqual(usage.site_limit(config["users"][0], "other.dk"), 100)
+        cleaned = access.clean({"username": "anna", "role": "user", "web": True, "sites": {"shop.dk": {"envs": ["main"], "actions": [], "size_mb": 2048}}},
+                               sites={"shop.dk": ["main"]})
+        self.assertEqual(cleaned["sites"]["shop.dk"]["size_mb"], 2048)
+        self.assertNotIn("size_mb", access.clean({"username": "anna", "role": "user", "web": True, "sites": {"shop.dk": {"envs": ["main"], "actions": []}}},
+                                                 sites={"shop.dk": ["main"]})["sites"]["shop.dk"])
+
+    def test_a_database_can_have_its_own_size(self):
+        """A database a user made takes the size its connection gives every database of theirs, unless it has its own
+        (1.0.71)"""
+        config = json.loads((self.data / "config.json").read_text())
+        config["users"][0]["connections"]["c1"]["sizes"] = {"Shop": 4096, "Tiny": 1}
+        (self.data / "config.json").write_text(json.dumps(config))
+        over = usage.check(self.data, **self.measure())
+        self.assertEqual([(item["name"], item["limit_mb"]) for item in over if item["kind"] == "database"], [("Tiny", 1)])
+        self.assertEqual(usage.database_limit(config["users"][0], "c1", "Other"), 1024)
+        cleaned = access.clean({"username": "anna", "role": "user", "sql": True, "connections": {
+            "c1": {"databases": [], "own": True, "actions": ["create"], "sizes": {"Shop": 2048, "Free": ""}}}}, connections=["c1"])
+        self.assertEqual(cleaned["connections"]["c1"]["sizes"], {"Shop": 2048})
 
     def test_settings_and_the_hourly_job(self):
         self.assertEqual(usage.validate_settings({"enabled": True, "emails": ["ops@example.com"]}), {"enabled": True, "emails": ["ops@example.com"]})

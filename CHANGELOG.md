@@ -2,6 +2,28 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.71] - 2026-11-24
+
+### Features
+
+- Settings has Usage: every site and every database on each connection, biggest first, with who made it and its limit (red past it), measured as it opens. A name opens the site, or the SQL page on its connection; a user opens their access and limits at the size of what was clicked, its card folded out and the field lit and ready. The usage alerts moved there from General
+- Deleting a user who made sites or databases asks whether those go with them, each by choice and named, and deletes them as one task with a step each
+- Delete database asks with cards, the logins that go with it named (those used by it alone) and its backup files
+- The SQL connection is a card as the others: its icon, where it goes (login @ host:port) under the choice, Edit as an amber pencil and Add connection as a green plus
+- Top menu has Header shows: the site search, the server's IP addresses, Files and Terminal in the header, each on or off by each administrator for themselves (open terminals show Terminal anyway)
+- A site opened from Settings or the SQL page leads back there (Back to Usage, say), not to All sites, also after a reload
+- Only their own on a user's SQL connection ticks every action, as what they make is theirs; each can still be taken off
+- A user changed or deleted from Usage shows in it at once
+- A user's window has Web Server, SFTP and SQL Server as a part each, framed in its own colour with its switch at the top; SFTP is its own part while the Web Server is theirs, and its SSH keys field no longer resizes
+- Create database's Also make a login for it is a card as the other choices, and once a user has made as many databases as they may, Create database goes as the SQL page shows again
+- A database a user made can have its own size as well, on its connection under the user, bigger or smaller than every database there; empty, it takes that one
+- A site a user made can have its own size, bigger or smaller than the one every site of theirs gets; empty, it takes that one (named in the field). Usage, the warning and the alerts go by it
+- A column's type in the table designer is chosen in a dropdown of the page's own (the one chosen ticked, arrows, Enter, Escape and a letter to jump)
+- The Logins tab is there as the SQL page opens, its logins read beside the databases with a spinner until they come
+- Delete database and Delete user look as every other confirmation that deletes: a red title, no banner, and Delete grey and off until the name is typed as it is, then red; the name to type copies when clicked
+- The SQL connection's window has its buttons on one row: Cancel, then Remove, Test connection and Save, each with its icon
+- What changed under Updates shows the release notes since the version here in a window, with every change on GitHub a link away
+
 ## [1.0.70] - 2026-11-24
 
 ### Features

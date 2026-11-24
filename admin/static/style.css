@@ -196,8 +196,16 @@ a.link:hover:not(:where(:disabled, .disabled, .off)) { text-decoration: underlin
 .actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: auto; padding-top: 6px; border-top: 1px solid var(--line); }
 
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; }
-.sql-connection-bar { display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap; padding: 16px; }
+/* The connection, as a card of the page: its icon, the choice with where it goes under it, and its buttons */
+.sql-connection-bar { --tone: var(--purple); display: flex; gap: 14px; align-items: center; flex-wrap: wrap; padding: 16px 18px;
+	background: linear-gradient(135deg, color-mix(in srgb, var(--tone) 10%, transparent), transparent 55%), var(--panel2); }
 .sql-connection-bar > button { min-height: 42px; }
+.sql-connection-icon { width: 44px; height: 44px; border-radius: 12px; }
+.sql-connection-icon .ico { width: 22px; height: 22px; }
+.sql-connection-choice { display: grid; gap: 5px; min-width: 0; }
+.sql-connection-choice label { margin: 0; }
+.sql-connection-host { color: var(--muted); font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+.sql-connection-host:empty { display: none; }
 .sql-connection-bar label { margin: 0; min-width: 220px; }
 .sql-connection-bar label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 12px; }
 #sql-connection { appearance: none; width: min(320px, 100%); padding: 10px 40px 10px 14px; border-radius: 10px; border-color: rgba(163, 113, 247, .45); color: var(--text); font-size: 14px; font-weight: 600; background: var(--panel2) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 24 24' fill='none' stroke='%238b949e' stroke-width='2'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 12px center; }
@@ -323,7 +331,8 @@ dialog menu { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 8p
 dialog menu .cancel-link { margin-right: auto; align-self: center; padding: 8px 0; border: 0; background: transparent; color: var(--blue); font: inherit; text-decoration: none; cursor: pointer; }
 dialog menu .cancel-link:hover:not(:where(:disabled, .disabled, .off)) { background: transparent; text-decoration: underline; }
 dialog.danger h2 { color: var(--red); }
-dialog.danger .primary { background: #da3633; border-color: var(--red); }
+/* Red while it can be used; grey and quiet until then, as every button that cannot be used yet */
+dialog.danger .primary:not(:disabled) { background: #da3633; border-color: var(--red); }
 #prompt-ok:disabled { opacity: .4; cursor: not-allowed; background: var(--panel2); border-color: var(--line); color: var(--muted); }
 #dlg-prompt { width: min(520px, 92vw); min-width: 0; }
 #prompt-message { overflow-wrap: anywhere; }
@@ -597,16 +606,14 @@ button[data-tone="gray"] { --tone: #9da7b3; }
 .menu button[data-tone] .ico { color: var(--tone); }
 .menu button[data-tone]:hover:not(:where(:disabled, .disabled, .off)) { background: var(--hover); border-color: transparent; }
 button.primary[data-tone] { background: #238636; border-color: #2ea043; color: #fff; }
-#sql-remove-connection { padding-left: 0; padding-right: 0; border: 0; background: transparent; color: var(--red); align-self: center; }
-#sql-remove-connection:hover:not(:where(:disabled, .disabled, .off)) { background: transparent; text-decoration: underline; }
-#form-sql-connection menu { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; }
-#sql-connection-cancel { grid-column: 1; grid-row: 1; justify-self: start; }
-#sql-remove-connection { grid-column: 2; grid-row: 1; justify-self: center; }
-#form-sql-connection menu > button[type="submit"] { grid-column: 3; grid-row: 1; justify-self: end; }
+/* The connection's buttons on one row: Cancel at the left; Remove, Test and Save at the right, each with its icon */
+#form-sql-connection menu { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+#sql-connection-cancel { margin-right: auto; }
+#form-sql-connection menu > button:not(.cancel-link) { display: inline-flex; align-items: center; gap: 6px; }
+#form-sql-connection menu > button .ico { width: 15px; height: 15px; margin: 0; }
 @media (max-width: 560px) {
-	#form-sql-connection menu { grid-template-columns: minmax(0, 1fr) auto; }
-	#form-sql-connection menu > button[type="submit"] { grid-column: 2; }
-	#sql-remove-connection { grid-column: 1 / -1; grid-row: 2; }
+	#form-sql-connection menu > button:not(.cancel-link) { flex: 1 1 auto; justify-content: center; }
+	#sql-connection-cancel { flex-basis: 100%; }
 }
 /* Delete buttons stand alone at the far right of their row */
 .actions > button.danger, #site-head .actions > button.danger { margin-left: auto; }
@@ -615,6 +622,9 @@ dialog.editor #editor-box { flex: 1; min-height: 0; border: 1px solid var(--line
 /* New site dialog */
 dialog.newsite { width: min(640px, 94vw); max-height: 90vh; max-height: 90dvh; padding: 0; overflow-y: auto; }
 dialog.newsite form { padding: 0 24px 20px; }
+/* A window that deletes has no banner: its title and text stand at the top as a confirmation's do */
+dialog.newsite.danger > form > header:not(.ns-head) { margin-bottom: 14px; padding-top: 22px; }
+dialog.newsite.danger > form > header:not(.ns-head) h2 { margin: 0 0 8px; }
 .ns-head { display: flex; align-items: center; gap: 14px; margin: 0 -24px 18px; padding: 20px 24px; background: linear-gradient(135deg, rgba(88,101,242,.35), rgba(139,92,246,.22)); border-bottom: 1px solid var(--line); }
 .ns-head h2 { margin: 0; font-size: 20px; }
 .ns-head p { margin: 2px 0 0; font-size: 13px; }
@@ -755,7 +765,9 @@ a.btn-link .ico { width: 13px; height: 13px; flex: none; }
 @media (max-width: 560px) { .sql-tabs { display: flex; } .sql-tabs button { flex: 1; justify-content: center; padding: 8px 10px; } }
 .sql-login.editable { cursor: pointer; transition: background .15s; }
 .sql-login.editable:hover:not(:where(:disabled, .disabled, .off)) { background: rgba(255, 255, 255, .055); }
-.sql-make-login { align-self: flex-start; margin: 2px 0 14px; }
+#dlg-sql-database label.sql-make-login { margin: 2px 0 14px; }
+#dlg-sql-database label.sql-make-login[hidden] { display: none; }
+#dlg-user textarea[name=sftp_keys] { resize: none; height: 84px; }
 .sql-tables-locked .ico { width: 12px; height: 12px; margin: 0; }
 .sql-table-actions { opacity: 1; }
 .sql-new-table { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; border: 1px dashed rgba(88, 166, 255, .45); border-radius: 8px; background: transparent; color: var(--blue); font-size: 12.5px; font-weight: 600; }
@@ -1458,14 +1470,24 @@ body[data-role="user"] #settings-menu, body[data-role="user"] #btn-multi, body[d
 .user-limits[hidden] { display: none; }
 .usage-over { margin: 12px 0 6px; }
 .grant-limits { margin: 6px 0 0; }
+.site-size-limit { grid-template-columns: minmax(0, 1fr); max-width: 420px; }
+/* The size field Usage led to: lit for a moment, so the eye finds it */
+/* A frame with room around the label and the field, behind them: it fades out */
+.limit-size.limit-found { position: relative; }
+.limit-size.limit-found::after { content: ""; position: absolute; inset: -9px -10px; z-index: 0; border: 2px solid rgba(88, 166, 255, .6); border-radius: 13px;
+	background: rgba(88, 166, 255, .08); box-shadow: 0 0 18px rgba(88, 166, 255, .25); pointer-events: none; animation: limit-found 1.6s ease-out forwards; }
+.limit-size.limit-found > * { position: relative; z-index: 1; }
+@keyframes limit-found { 0%, 40% { opacity: 1; } 100% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .limit-size.limit-found::after { animation: none; opacity: 1; } }
 /* Usage: a meter for what is made and for each one's size, beside its limit */
 .usage-sections { display: grid; gap: 14px; }
 .usage-section { display: grid; gap: 8px; padding: 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel2); }
 .usage-section-head { display: flex; align-items: center; gap: 10px; margin-bottom: 2px; }
 .usage-section-icon { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; background: rgba(210, 153, 34, .12); color: #d29922; }
 .usage-section-icon .ico { width: 15px; height: 15px; margin: 0; }
-.usage-meter { display: grid; gap: 5px; }
-.usage-meter-head { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; }
+.usage-meter { display: grid; gap: 9px; }
+.usage-meter-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; font-size: 13px; }
+.usage-meter-head strong { display: inline-flex; align-items: center; min-width: 0; }
 .usage-meter-head strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .usage-meter-head span { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
 .usage-bar { height: 6px; border-radius: 999px; background: rgba(255, 255, 255, .07); overflow: hidden; }
@@ -1474,6 +1496,35 @@ body[data-role="user"] #settings-menu, body[data-role="user"] #btn-multi, body[d
 .usage-meter.over .usage-bar span { background: var(--red); }
 .usage-meter.over .usage-meter-head span { color: var(--red); }
 .usage-none { margin: 0; font-size: 13px; }
+.usage-overview { display: grid; gap: 14px; }
+.confirm-field { display: grid; gap: 6px; margin-bottom: 12px; }
+/* A dropdown as the page's own (premiumSelect) */
+.pselect { position: relative; min-width: 0; }
+.pselect-trigger { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; height: 34px; padding: 0 10px 0 12px;
+	border: 1px solid var(--line); border-radius: 8px; background: var(--panel2); color: var(--text); font-size: 13.5px; font-weight: 500; text-align: left; cursor: pointer; }
+.pselect-trigger:hover:not(:where(:disabled, .disabled, .off)) { border-color: rgba(163, 113, 247, .5); }
+.pselect-trigger:focus-visible, .pselect-trigger[aria-expanded="true"] { outline: none; border-color: rgba(163, 113, 247, .75); box-shadow: 0 0 0 3px rgba(163, 113, 247, .16); }
+.pselect-value { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pselect-trigger .ico { flex: none; width: 14px; height: 14px; margin: 0; color: var(--muted); transform: rotate(90deg); transition: transform .15s; }
+.pselect-trigger[aria-expanded="true"] .ico { transform: rotate(-90deg); }
+.pselect-list { position: fixed; z-index: 1000; margin: 0; padding: 5px; overflow-y: auto; list-style: none; border: 1px solid rgba(163, 113, 247, .35); border-radius: 10px;
+	background: #1b2029; box-shadow: 0 14px 40px rgba(0, 0, 0, .55), 0 0 0 1px rgba(0, 0, 0, .3); }
+.pselect-list[hidden] { display: none; }
+.pselect-option { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 7px 10px; border-radius: 7px; color: var(--text); font-size: 13.5px; cursor: pointer; white-space: nowrap; }
+.pselect-option .ico { width: 14px; height: 14px; margin: 0; color: #c9a8ff; visibility: hidden; }
+.pselect-option[aria-selected="true"] { color: #e6dcff; font-weight: 600; }
+.pselect-option[aria-selected="true"] .ico { visibility: visible; }
+.pselect-option.active { background: rgba(163, 113, 247, .16); }
+.confirm-field-label { color: var(--muted); font-size: 12.5px; }
+/* Usage under Settings: the alerts, then the sites and each connection's databases, each across the width */
+#server-usage-list > .tool-card { grid-column: 1 / -1; }
+.usage-total { margin-left: auto; color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.usage-owner { margin-left: 8px; padding: 1px 8px; border-radius: 999px; background: rgba(88, 166, 255, .12); color: var(--blue); font-size: 11px; font-weight: 600; }
+.usage-owner.none { background: rgba(255, 255, 255, .06); color: var(--muted); }
+.usage-open { padding: 0; border: 0; background: none; color: var(--text); font: inherit; font-weight: 600; cursor: pointer; }
+.usage-open:hover:not(:where(:disabled, .disabled, .off)) { color: var(--blue); text-decoration: underline; text-underline-offset: 3px; }
+button.usage-owner { border: 1px solid rgba(88, 166, 255, .3); cursor: pointer; font-family: inherit; line-height: 1.5; }
+button.usage-owner:hover:not(:where(:disabled, .disabled, .off)) { background: rgba(88, 166, 255, .22); border-color: rgba(88, 166, 255, .6); }
 /* Over a limit: across the top of every page, not to be missed */
 .usage-banner { display: flex; align-items: center; gap: 14px; margin: 0 0 18px; padding: 14px 16px; border: 1px solid rgba(248, 81, 73, .55); border-radius: 12px;
 	background: linear-gradient(120deg, rgba(248, 81, 73, .18), rgba(248, 81, 73, .06)); box-shadow: 0 0 0 1px rgba(248, 81, 73, .08), 0 6px 24px rgba(248, 81, 73, .12); }
@@ -1489,7 +1540,8 @@ body[data-role="user"] #settings-menu, body[data-role="user"] #btn-multi, body[d
 .user-limits > label, .limit-size { margin: 0; }
 .limit-size { display: flex; flex-direction: column; gap: 4px; color: var(--muted); font-size: 12.5px; }
 .size-field { display: flex; gap: 6px; align-items: stretch; }
-.size-field input { flex: 1; min-width: 0; }
+/* The number white as in every field, not the grey of the label it stands under */
+.size-field input { flex: 1; min-width: 0; color: var(--text); }
 .unit-toggle { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--line); border-radius: 9px; background: rgba(0, 0, 0, .2); }
 dialog .unit-toggle label { position: relative; display: grid; place-items: center; margin: 0; padding: 0 10px; border-radius: 6px; color: var(--muted); font-size: 12px; font-weight: 600; cursor: pointer; }
 .unit-toggle input { position: absolute; opacity: 0; pointer-events: none; }
@@ -1545,6 +1597,22 @@ dialog.newsite > form > .ns-head, dialog.newsite > .ns-head { position: sticky; 
 /* Room between the text and the buttons, with a line as in the large dialogs */
 #dlg-prompt > form > menu, #dlg-prompt > menu, #dlg-encoding > form > menu { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
 .layout-toggle[hidden] { display: none; }
+/* Web Server, SFTP and SQL Server in the user editor: a part each, framed in its own colour, its switch at the top and
+   what it gives under a line */
+#dlg-user .user-part { --part: var(--blue); margin-top: 16px; padding: 0 16px; border: 1px solid color-mix(in srgb, var(--part) 30%, var(--line)); border-radius: 14px;
+	background: linear-gradient(180deg, color-mix(in srgb, var(--part) 7%, transparent), transparent 90px), var(--panel); }
+#dlg-user .user-part[hidden] { display: none; }
+#dlg-user .user-part.tone-sftp { --part: #39c5bb; }
+#dlg-user .user-part.tone-sql { --part: var(--purple); }
+#dlg-user .user-part > .grant-card, #dlg-user .user-part > .grant-card:has(.switch:checked) { margin: 0; padding: 14px 0; border: 0; border-radius: 0; background: transparent; }
+#dlg-user .user-part > .grant-card:hover:not(:where(:disabled, .disabled, .off, :has(input:disabled))) { border-color: transparent; }
+#dlg-user .user-part:has(> .grant-area:not([hidden])) > .grant-card { border-bottom: 1px solid color-mix(in srgb, var(--part) 22%, var(--line)); }
+#dlg-user .user-part > .grant-area { margin: 0; padding: 14px 0 16px; }
+#dlg-user .user-part .grant-card-icon { color: color-mix(in srgb, var(--part) 70%, #fff); background: color-mix(in srgb, var(--part) 18%, transparent); }
+#dlg-user .user-part .switch:checked { border-color: var(--part); background: var(--part); }
+#dlg-user .user-part > .sftp-area { margin: 0; border: 0; border-radius: 0; background: transparent; }
+#dlg-user .user-part > .grant-area > .option-row { margin: 0 0 4px; }
+#dlg-user .user-part > .grant-area > .option-row::before { content: none; }
 /* Web Server and SQL Server in the user editor: a card each, with a switch */
 #dlg-user .grant-card { display: grid; grid-template-columns: 38px minmax(0, 1fr) auto; align-items: center; gap: 12px; margin: 16px 0 10px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel2); cursor: pointer; transition: border-color .15s, background .15s; }
 #dlg-user .grant-card:hover:not(:where(:disabled, .disabled, .off, :has(input:disabled))) { border-color: rgba(88, 166, 255, .35); }
@@ -1952,7 +2020,7 @@ dialog label.env-choice:has(input:checked) { border-color: var(--env-tone); back
 .header-tools #btn-processes[hidden] { display: none; }
 .dock-new { min-width: 28px; margin-left: 6px; font-size: 16px; font-weight: 700; line-height: 1; }
 /* A user who only has the terminals sees none of it until one is open */
-.header-tools:not(:has(> button:not([hidden]):not(.admin-only), .processes > button:not([hidden]))) { display: none; }
+.header-tools:not(:has(> button:not([hidden]), .processes > button:not([hidden]))) { display: none; }
 body:not([data-role="user"]) .header-tools { display: inline-flex; }
 @media (max-width: 1400px) { .header-tools .btn-label { display: none; } .header-tools button { padding: 6px 9px; } }
 .header-update { display: inline-flex; align-items: center; margin-left: 12px; padding: 4px 10px; border: 1px solid rgba(255, 255, 255, .35); border-radius: 999px;
@@ -1975,9 +2043,8 @@ body:not([data-role="user"]) .header-tools { display: inline-flex; }
 .sql-connection-said.ok { background: rgba(63, 185, 80, .1); color: var(--green); }
 .sql-connection-said.bad { background: rgba(248, 81, 73, .1); color: #ff8a80; }
 .sql-connection-spinner { flex: none; width: 14px; height: 14px; margin-top: 2px; border: 2px solid rgba(88, 166, 255, .3); border-top-color: var(--blue); border-radius: 50%; animation: update-spin .8s linear infinite; }
-#sql-connection-test { margin-left: auto; }
-/* At the foot of the box with the dropdown and its buttons, centred on them as they are */
-.sql-loading { display: inline-flex; align-items: center; gap: 8px; align-self: flex-end; height: var(--sql-control-height, 42px); color: var(--muted); font-size: 13px; }
+/* Beside the dropdown and its buttons, centred on them */
+.sql-loading { display: inline-flex; align-items: center; gap: 8px; align-self: center; height: auto; color: var(--muted); font-size: 13px; }
 .sql-heading .sql-loading { align-self: center; height: auto; }
 .sql-tables-loading, .grant-database-list .sql-loading { height: auto; padding: 6px 0; }
 .sql-loading[hidden] { display: none; }

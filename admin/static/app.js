@@ -103,6 +103,10 @@ function applyAccess() {
 	showUsageBanner();
 	$("#sql-add-connection").hidden = !currentUser.manage_connections;
 	showServerAddresses();
+	// Files in the header, unless the administrator took it out (Settings, Top menu)
+	$("#header-files").hidden = !currentUser.admin || currentUser.header?.files === false;
+	// Terminal the same way, open terminals (counted beside it) keep it
+	$("#btn-dock").hidden = !Number($("#term-count").textContent || 0) && !(currentUser.admin && currentUser.header?.terminal !== false);
 }
 // The server's internal and external address in the header, for administrators. A click copies one.
 function privateIPv4(address) {
@@ -110,8 +114,10 @@ function privateIPv4(address) {
 }
 async function showServerAddresses() {
 	const box = $("#server-ips");
-	if (!currentUser.admin) {
+	if (!currentUser.admin || currentUser.header?.addresses === false) {
 		box.hidden = true;
+		// Shown again later (turned on in Top menu): drawn again, not taken for the same as before
+		delete box.dataset.key;
 		return;
 	}
 	let data;
@@ -768,6 +774,7 @@ async function route() {
 	} else if (view === "site" && arg) {
 		if (filesDialog.open) filesDialog.close();
 		showView("site");
+		showSiteBack();
 		placeSitePage(allSites.find((site) => site.name === arg)?.admin);
 		// A site's page always opens at its top, wherever the list was scrolled to
 		window.scrollTo(0, 0);
@@ -780,6 +787,31 @@ async function route() {
 		if (filesDialog.open) filesDialog.close();
 		showView("sites");
 	}
+}
+// A site opened from elsewhere than the list (Settings' Usage, the SQL page) leads back there, named as it is: from the
+// list, or a site's link, back to All sites
+// It is kept for the tab (sessionStorage), so a reload of that site leads back the same way.
+let siteBack = null;
+window.addEventListener("hashchange", (event) => {
+	const to = new URL(event.newURL).hash, from = new URL(event.oldURL).hash;
+	if (!to.startsWith("#site/") || from.startsWith("#site/")) return;
+	siteBack = from.startsWith("#server/") || from.startsWith("#sql") ? from : null;
+	try { sessionStorage.setItem("vns-site-back", JSON.stringify({ site: to, back: siteBack })); } catch (error) { /* none */ }
+});
+function showSiteBack() {
+	// A reload: where this site was opened from, kept for the tab
+	try {
+		const kept = JSON.parse(sessionStorage.getItem("vns-site-back") || "null");
+		siteBack = kept && kept.site === location.hash ? kept.back : null;
+	} catch (error) { siteBack = null; }
+	let label = "All sites";
+	if (siteBack?.startsWith("#sql")) label = "SQL Server";
+	else if (siteBack?.startsWith("#server/")) {
+		const tab = siteBack.slice("#server/".length);
+		label = $("#server-tab-" + tab)?.textContent.trim() || "Settings";
+	}
+	$("#site-back").href = siteBack || "#sites";
+	$("#site-back-label").textContent = label;
 }
 window.addEventListener("hashchange", route);
 const go = (hash) => { location.hash = hash; };
@@ -1146,7 +1178,8 @@ for (const layout of ["grid", "list"]) {
 
 function renderSites() {
 	const siteCount = listedSites().length;
-	const hideFilters = siteCount <= 1;
+	// One site needs no search; an administrator can also take it out of their header (Settings, Top menu)
+	const hideFilters = siteCount <= 1 || currentUser.header?.search === false;
 	if (hideFilters) {
 		filter = "all";
 		query = "";
@@ -3112,12 +3145,18 @@ $("#menu-usage").onclick = () => {
 	$("#user-menu").hidden = true;
 	run(() => showUsage("/api/usage/mine", "Your usage"));
 };
-function usageMeter(label, used, limit, text) {
+function usageMeter(label, used, limit, text, who = undefined, open = null, openWho = null) {
 	// Full at the limit; amber from 80 %, red past it
 	const share = limit ? used / limit : 0;
 	const state = !limit ? "" : share > 1 ? "over" : share >= .8 ? "near" : "ok";
 	return el("div", { className: "usage-meter " + state },
-		el("div", { className: "usage-meter-head" }, el("strong", { textContent: label }), el("span", { textContent: text })),
+		el("div", { className: "usage-meter-head" }, el("strong", {},
+			// Its name opens it, in the overview: the site's page, or the SQL page on its connection
+			open ? el("button", { type: "button", className: "usage-open", textContent: label, title: `Open ${label}`, onclick: () => run(open) }) : label,
+			// Who made it: a user opens their settings, to change their limits; else the administrators'
+			...(who === undefined ? [] : [who && openWho
+				? el("button", { type: "button", className: "usage-owner", textContent: who, title: `${who}: their access and limits`, onclick: () => run(openWho) })
+				: el("small", { className: "usage-owner" + (who ? "" : " none"), textContent: who || "Admin" })])), el("span", { textContent: text })),
 		...(limit ? [el("div", { className: "usage-bar", role: "meter", ariaValueNow: String(Math.round(share * 100)), ariaValueMin: "0", ariaValueMax: "100", ariaLabel: label },
 			el("span", { style: `width: ${Math.min(100, Math.max(share * 100, used ? 2 : 0))}%` }))] : []));
 }
@@ -3127,8 +3166,10 @@ function usageSection(title, icon, counted, noun, part) {
 	const head = el("div", { className: "usage-section-head" }, el("span", { className: "usage-section-icon" }, svgIcon(icon)), el("strong", { textContent: title }));
 	const made = usageMeter(`${noun[0].toUpperCase() + noun.slice(1)}s made`, count, part.count_limit,
 		part.count_limit == null ? `${count} · no limit` : `${count} of ${part.count_limit}`);
-	const each = items.length ? items.map((item) => usageMeter(item.name, item.size_mb, part.size_limit_mb,
-		part.size_limit_mb == null ? usageSize(item.size_mb) : `${usageSize(item.size_mb)} of ${usageSize(part.size_limit_mb)}`))
+	// Each with its own limit when it has one (a site's), else the one for them all
+	const limitOf = (item) => item.limit_mb !== undefined ? item.limit_mb : part.size_limit_mb;
+	const each = items.length ? items.map((item) => usageMeter(item.name, item.size_mb, limitOf(item),
+		limitOf(item) == null ? usageSize(item.size_mb) : `${usageSize(item.size_mb)} of ${usageSize(limitOf(item))}`))
 		: [el("p", { className: "muted usage-none", textContent: part.unreachable ? `The ${noun}s could not be measured now: the SQL Server did not answer.` : `No ${noun}s of their own yet.` })];
 	return el("section", { className: "usage-section" }, head, ...(counted ? [made] : []), ...each);
 }
@@ -3138,8 +3179,9 @@ async function showUsage(url, title) {
 	const usage = await api(url);
 	// Their own, measured now: the warning across the page follows it at once, not at the next hourly check
 	if (url === "/api/usage/mine") {
-		const over = (kind, part) => part.size_limit_mb == null ? [] : part.items.filter((item) => item.size_mb > part.size_limit_mb)
-			.map((item) => ({ kind, name: item.name, size_mb: item.size_mb, limit_mb: part.size_limit_mb }));
+		const limit = (part, item) => item.limit_mb !== undefined ? item.limit_mb : part.size_limit_mb;
+		const over = (kind, part) => part.items.filter((item) => limit(part, item) != null && item.size_mb > limit(part, item))
+			.map((item) => ({ kind, name: item.name, size_mb: item.size_mb, limit_mb: limit(part, item) }));
 		currentUser.usage_over = [...over("site", usage.sites), ...usage.connections.flatMap((connection) => connection.unreachable
 			? (currentUser.usage_over || []).filter((item) => item.kind === "database" && item.connection === connection.id) : over("database", connection))];
 		showUsageBanner();
@@ -5676,7 +5718,8 @@ function updateTerminalState() {
 	$("#term-count").textContent = count;
 	$("#term-count").hidden = !count;
 	// Terminal is there for an administrator (a new shell) and, with terminals open, for anyone who has them
-	$("#btn-dock").hidden = !count && !currentUser.admin;
+	// Open terminals always show it; else an administrator's, unless they took it out of their header
+	$("#btn-dock").hidden = !count && !(currentUser.admin && currentUser.header?.terminal !== false);
 	if (!count) $("#dock").hidden = true;
 	updateProcesses();
 }
@@ -6336,9 +6379,15 @@ async function loadSqlConnections(selected = $("#sql-connection").value || saved
 }
 
 async function refreshSql() {
+	// What a user may do here can have changed by what they just did (as many databases made as they may): read again
+	if (!currentUser.admin) {
+		try { currentUser = await api("/api/me"); accessSnapshot = JSON.stringify(currentUser); } catch (error) { /* goes on with what it had */ }
+	}
 	const id = sqlToolsAvailable ? $("#sql-connection").value : "";
 	const selectedConnection = sqlConnections.find((item) => item.id === id);
 	$("#sql-connection").title = selectedConnection ? `${selectedConnection.host}:${selectedConnection.port}` : "";
+	// Where it goes, under the choice
+	$("#sql-connection-host").textContent = selectedConnection ? `${selectedConnection.username || ""}${selectedConnection.username ? " @ " : ""}${selectedConnection.host}:${selectedConnection.port}` : "";
 	const generation = ++sqlLoadGeneration;
 	const hasConnections = sqlToolsAvailable && sqlConnections.length > 0;
 	$("#sql-tools-required").hidden = sqlToolsAvailable;
@@ -6377,6 +6426,8 @@ async function refreshSql() {
 		$("#sql-status").textContent = "Add a local or remote SQL connection to get started.";
 		return;
 	}
+	// The logins come beside the databases, not after them: their tab is there from the start
+	if (canSql(id, null, "logins")) run(() => loadSqlLogins(id));
 	// Loading: a spinner in the connection's box, not a line that pushes the page down and is gone again
 	$("#sql-status").textContent = "";
 	$("#sql-status").hidden = true;
@@ -6386,7 +6437,6 @@ async function refreshSql() {
 		if (generation !== sqlLoadGeneration) return;
 		sqlSnapshot = data;
 		$("#sql-backups-panel").hidden = data.backups.length === 0;
-		if (canSql(id, null, "logins")) run(() => loadSqlLogins(id));
 		const hasUserDatabases = data.databases.some((database) => database.id > 4);
 		$("#sql-backup-all").hidden = !hasUserDatabases || !canSql(id, "*", "backup");
 		// With none yet, the dashed line under the heading makes the first: one button, not two
@@ -6472,14 +6522,140 @@ async function sqlDatabaseAction(action, database) {
 		if (!values) return;
 		Object.assign(payload, values);
 	} else if (action === "drop") {
-		const confirmation = await ask({ title: "Delete database?", message: `This permanently deletes ${database.name} and disconnects all sessions. Shared and administrator logins are kept. Type ${database.name} to confirm.`, match: database.name, danger: true, ok: "Delete", loginCheckbox: true,
-			checkbox: sqlSnapshot.backup_file_access ? "Also delete backup files for this database" : null });
-		if (!confirmation) return;
-		payload.confirmation = confirmation.value;
-		payload.delete_login = confirmation.deleteLogin;
-		payload.delete_backups = sqlSnapshot.backup_file_access ? confirmation.checked : false;
+		const answer = await askDropDatabase(database);
+		if (!answer) return;
+		Object.assign(payload, answer);
 	} else if (!(await ask({ title: "Backup database?", message: `Create a full copy-only backup of ${database.name} in the connection's server-side backup directory.`, input: false, ok: "Backup" }))) return;
 	await openTask(payload);
+}
+
+// A dropdown as the page's own: a button that shows the choice, and a list under it with the one chosen ticked. Arrows,
+// Enter and Escape as a select has them; a click outside closes it. Its value and change event are a select's.
+function premiumSelect({ options, value, label = "", className = "" }) {
+	let current = value ?? options[0];
+	const shown = el("span", { className: "pselect-value", textContent: current });
+	const trigger = el("button", { type: "button", className: "pselect-trigger", ariaLabel: label, ariaHaspopup: "listbox", ariaExpanded: "false" },
+		shown, svgIcon("chevron"));
+	const list = el("ul", { className: "pselect-list", role: "listbox", ariaLabel: label, hidden: true });
+	const box = el("div", { className: "pselect " + className }, trigger);
+	let active = -1;
+	const items = options.map((option, index) => {
+		const item = el("li", { role: "option", className: "pselect-option", textContent: option, ariaSelected: String(option === current),
+			onmousedown: (event) => event.preventDefault(), onclick: () => choose(index), onmouseenter: () => mark(index) },
+			svgIcon("check"));
+		list.append(item);
+		return item;
+	});
+	const mark = (index) => {
+		active = index;
+		items.forEach((item, at) => item.classList.toggle("active", at === index));
+		items[index]?.scrollIntoView({ block: "nearest" });
+	};
+	const place = () => {
+		// Fixed under the button (above it when there is no room), so a scrolled table around it does not cut it off
+		const rect = trigger.getBoundingClientRect();
+		const below = window.innerHeight - rect.bottom - 12;
+		const height = Math.min(320, Math.max(below, rect.top - 12));
+		list.style.left = rect.left + "px";
+		list.style.minWidth = rect.width + "px";
+		list.style.maxHeight = height + "px";
+		list.style.top = (below >= Math.min(320, list.scrollHeight) || below >= rect.top ? rect.bottom + 4 : rect.top - 4 - Math.min(height, list.scrollHeight)) + "px";
+	};
+	const close = () => {
+		if (list.hidden) return;
+		list.hidden = true;
+		trigger.setAttribute("aria-expanded", "false");
+		document.removeEventListener("mousedown", outside, true);
+		window.removeEventListener("resize", close);
+		document.removeEventListener("scroll", onScroll, true);
+	};
+	const outside = (event) => { if (!box.contains(event.target) && !list.contains(event.target)) close(); };
+	const onScroll = (event) => { if (!list.contains(event.target)) close(); };
+	const open = () => {
+		const dialog = trigger.closest("dialog");
+		(dialog || document.body).append(list);
+		// Gone with the dialog, so lists do not pile up in it
+		dialog?.addEventListener("close", () => { close(); list.remove(); }, { once: true });
+		list.hidden = false;
+		trigger.setAttribute("aria-expanded", "true");
+		place();
+		mark(Math.max(0, options.indexOf(current)));
+		document.addEventListener("mousedown", outside, true);
+		window.addEventListener("resize", close);
+		document.addEventListener("scroll", onScroll, true);
+	};
+	const choose = (index) => {
+		const next = options[index];
+		close();
+		trigger.focus();
+		if (next === current) return;
+		current = next;
+		shown.textContent = next;
+		items.forEach((item, at) => item.setAttribute("aria-selected", String(at === index)));
+		box.dispatchEvent(new Event("change", { bubbles: true }));
+	};
+	trigger.onclick = () => (list.hidden ? open() : close());
+	trigger.onkeydown = (event) => {
+		if (list.hidden) {
+			if (["ArrowDown", "ArrowUp", "Enter", " "].includes(event.key)) { event.preventDefault(); open(); }
+			return;
+		}
+		if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); }
+		else if (event.key === "ArrowDown") { event.preventDefault(); mark(Math.min(options.length - 1, active + 1)); }
+		else if (event.key === "ArrowUp") { event.preventDefault(); mark(Math.max(0, active - 1)); }
+		else if (event.key === "Enter" || event.key === " ") { event.preventDefault(); choose(active); }
+		else if (event.key === "Tab") close();
+		else if (event.key.length === 1) {
+			// A letter goes to the next option that starts with it
+			const start = (active + 1) % options.length;
+			const found = [...options.keys()].map((at) => (start + at) % options.length).find((at) => options[at].toLowerCase().startsWith(event.key.toLowerCase()));
+			if (found !== undefined) mark(found);
+		}
+	};
+	Object.defineProperty(box, "value", { get: () => current, set: (next) => { if (options.includes(next)) { current = next; shown.textContent = next; } } });
+	// Closed with the dialog it is in
+	box.closeList = close;
+	return box;
+}
+
+// Type <name> to confirm, in a form dialog: the name is a button that copies it, as the confirmations elsewhere have
+function confirmField(match) {
+	// The dialog's button waits for it, as the other confirmations' do (openFormDialog reads data-match)
+	const field = el("input", { name: "confirmation", required: true, autocomplete: "off", spellcheck: false });
+	field.dataset.match = match;
+	const copy = el("button", { type: "button", className: "confirmation-copy", textContent: match, title: "Copy confirmation text",
+		ariaLabel: "Copy confirmation text: " + match, onclick: async () => {
+			try {
+				await copyText(match, formDialog);
+				toast("Copied to clipboard.", "ok");
+			} catch (error) {
+				toast(error.message, "error");
+			}
+			field.focus({ preventScroll: true });
+		} });
+	return el("div", { className: "confirm-field" }, el("span", { className: "confirm-field-label" }, "Type ", copy, " to confirm"), field);
+}
+
+// Delete a database: what goes with it as cards, its own logins (named, when the logins are known here) and its backup
+// files, and its name typed to confirm. Shared and administrator logins always stay.
+function askDropDatabase(database) {
+	return new Promise((resolve) => {
+		let answered = null;
+		// Logins that reach this database and no other: the ones that go with it
+		const own = (sqlLogins?.logins || []).filter((login) => !login.protected && !login.sysadmin && login.databases.length === 1 && login.databases[0].database === database.name).map((login) => login.name);
+		const fields = [
+			checkOption("delete_login", own.length ? `Also delete ${own.length === 1 ? "its login" : `its ${own.length} logins`}` : "Also delete its own logins",
+				own.length ? `${own.join(", ")}: used by this database alone` : "Logins used by this database alone. Shared and administrator logins stay", true, "user", "red"),
+			...(sqlSnapshot.backup_file_access ? [checkOption("delete_backups", "Also delete its backup files", "The .bak files of this database in the backup directory", false, "archive", "amber")] : []),
+			confirmField(database.name),
+		];
+		openFormDialog({ icon: "trash", title: `Delete ${database.name}?`, text: "It is deleted for good, and every session on it is disconnected.", ok: "Delete", danger: true, fields,
+			submit: (form) => {
+				if (form.elements.confirmation.value !== database.name) throw new Error(`Type ${database.name} to confirm.`);
+				answered = { confirmation: database.name, delete_login: form.elements.delete_login.checked, delete_backups: Boolean(form.elements.delete_backups?.checked) };
+			} });
+			formDialog.addEventListener("close", () => resolve(answered), { once: true });
+	});
 }
 
 // One dialog asks everything: the name to restore as, and a new login for a new database,
@@ -6598,9 +6774,9 @@ function askSqlDatabase(source = null) {
 
 function decorateSql() {
 	const styles = {
-		"Add connection": ["server", "blue"], "Remove connection": ["trash", "red"],
+		"Add connection": ["plus", "green"], "Remove connection": ["trash", "red"],
 		"Install SQL tools": ["download", "blue"],
-		"Edit connection": ["server", "blue"],
+		"Edit connection": ["pencil", "amber"],
 		"Create database": ["server", "green"], "Add login": ["user", "green"], "Backup": ["download", "blue"],
 		"Backup all": ["download", "blue"], "Copy": ["sync", "purple"],
 		"Restore": ["upload", "amber"], "Refresh": ["sync", "blue"],
@@ -6669,15 +6845,12 @@ async function openServerSettings() {
 	list.setAttribute("aria-busy", "true");
 	if (!list.childElementCount) list.replaceChildren(loadingState("Reading the settings…"));
 	try {
-		const [server, keepAlive, usage] = await Promise.all([loadServerAddress().catch(() => null),
-			api("/api/keep-alive").catch(() => ({ installed: false, enabled: false, interval_minutes: 5 })),
-			api("/api/usage").catch(() => null)]);
-		// The address and the mail server beside each other, keep-alive and the usage alerts across the width under them
+		const [server, keepAlive] = await Promise.all([loadServerAddress().catch(() => null),
+			api("/api/keep-alive").catch(() => ({ installed: false, enabled: false, interval_minutes: 5 }))]);
+		// The address and the mail server beside each other, keep-alive across the width under them
 		const keepAliveWide = keepAliveCard(keepAlive);
 		keepAliveWide.classList.add("tool-card-wide");
-		const usageWide = usage ? usageCard(usage) : null;
-		usageWide?.classList.add("tool-card-wide");
-		list.replaceChildren(publicAddressCard(server), await mailCard(), keepAliveWide, ...(usageWide ? [usageWide] : []));
+		list.replaceChildren(publicAddressCard(server), await mailCard(), keepAliveWide);
 	} finally {
 		list.removeAttribute("aria-busy");
 	}
@@ -6759,7 +6932,7 @@ function drawUpdates() {
 		stateClass: result.status === "error" ? "bad" : available || unknown ? "warn" : "ok",
 		text: result.status === "error" ? result.error : `Checked ${lastUpdateCheck?.checkedAt ? formatDate(lastUpdateCheck.checkedAt) : "—"}.`,
 		actions: [check, ...(available || unknown ? [toolButton(unknown ? "Initialize / update…" : `Update to ${latest}…`, openSystemUpdateDialog, "primary")] : []),
-			...(result.compare_url && available ? [el("a", { className: "tool-open-admin", href: result.compare_url, target: "_blank", rel: "noopener noreferrer" }, svgIcon("external"), "What changed")] : [])] });
+			...(available && result.mode === "release" ? [tonedButton("What changed", "file", "blue", () => showWhatChanged(result))] : [])] });
 	version.classList.add("actions-below");
 	const earlier = result.rollback;
 	const back = toolCard({ icon: "undo", tone: "amber", title: "Roll back", detail: earlier ? `To v${earlier.version}` : "Nothing to go back to",
@@ -6829,6 +7002,21 @@ function menuCard() {
 		start.append(el("strong", { textContent: shown.web ? "Web Server" : "SQL Server" }), el("small", { className: "menu-start-note", textContent: "The one in the menu" }));
 	}
 	card.append(start);
+	// What the header shows beside the menu: each of the three on or off, the administrator's own
+	const header = currentUser.header || { search: true, addresses: true, files: true, terminal: true };
+	const parts = [["search", "Search", "search"], ["addresses", "IP addresses", "globe"], ["files", "Files", "folder"], ["terminal", "Terminal", "terminal"]];
+	card.append(el("div", { className: "menu-start" }, el("span", { className: "menu-start-label", textContent: "Header shows" }),
+		el("div", { className: "keep-alive-interval header-parts", role: "group", ariaLabel: "In the header" },
+			...parts.map(([key, label, icon]) => el("button", { type: "button", className: header[key] ? "active" : "", ariaPressed: String(header[key]),
+				onclick: () => run(async () => {
+					const saved = await api("/api/preferences", { method: "PUT", json: { header: { [key]: !header[key] } } });
+					currentUser.header = saved.header;
+					applyAccess();
+					if (sitesLoaded) renderSites();
+					toast(`${label} ${saved.header[key] ? "is in" : "is out of"} the header.`, "ok");
+					await openMenuSettings();
+				}) }, svgIcon(icon), label))),
+		el("small", { className: "menu-start-note", textContent: "Your own. Open terminals show Terminal anyway." })));
 	// Across the width: the four choices on one line, the other settings under it
 	card.classList.add("tool-card-wide");
 	return card;
@@ -6837,8 +7025,13 @@ function menuCard() {
 // A dialog of fields for a setting saved straight away (not a task): submit(form) saves, and closes it when it went well.
 // Without ok it only shows (a log): its one button closes it.
 const formDialog = $("#dlg-form");
-function openFormDialog({ icon, title, text = "", fields, ok = "", submit = null, extra = [], wide = false }) {
+function openFormDialog({ icon, title, text = "", fields, ok = "", submit = null, extra = [], wide = false, danger = false }) {
 	formDialog.classList.toggle("wide", wide);
+	// A delete looks as every other confirmation that deletes (ask with danger): no banner or icon at the top, its title
+	// red, its button the plain one made red, without an icon; any other has the banner and a green button with a check
+	formDialog.classList.toggle("danger", danger);
+	formDialog.querySelector("header").classList.toggle("ns-head", !danger);
+	$("#form-dialog-icon").hidden = danger;
 	const form = $("#form-dialog");
 	$("#form-dialog-icon").replaceChildren(svgIcon(icon));
 	$("#form-dialog-title").textContent = title;
@@ -6847,7 +7040,7 @@ function openFormDialog({ icon, title, text = "", fields, ok = "", submit = null
 	// Buttons beside the dialog's own, such as a test of what is typed
 	$("#form-dialog-extra").replaceChildren(...extra);
 	$("#form-dialog-ok").hidden = !ok;
-	$("#form-dialog-ok").replaceChildren(...(ok ? [svgIcon("check"), ok] : []));
+	$("#form-dialog-ok").replaceChildren(...(ok ? [...(danger ? [] : [svgIcon("check")]), ok] : []));
 	$("#form-dialog-cancel").textContent = ok ? "Cancel" : "Close";
 	form.onsubmit = (event) => {
 		event.preventDefault();
@@ -6858,10 +7051,15 @@ function openFormDialog({ icon, title, text = "", fields, ok = "", submit = null
 			try {
 				if (await submit(form) !== false) formDialog.close();
 			} finally {
-				button.disabled = false;
+				syncConfirm();
 			}
 		});
 	};
+	// A name to type first (confirmField): the button is off until it is typed as it is, as in the other confirmations
+	const confirm = form.querySelector("input[data-match]");
+	const syncConfirm = () => { $("#form-dialog-ok").disabled = Boolean(confirm) && confirm.value !== confirm.dataset.match; };
+	if (confirm) confirm.addEventListener("input", syncConfirm);
+	syncConfirm();
 	formDialog.showModal();
 	form.querySelector("input:not([type=checkbox]):not([type=radio]), textarea")?.focus();
 }
@@ -6929,7 +7127,7 @@ function usageCard(usage) {
 				? [tonedButton("Edit…", "pencil", "amber", () => askUsage(usage)), tonedButton("Turn off", "stop", "red", async () => {
 					await api("/api/usage", { method: "PUT", json: { enabled: false, emails: usage.emails } });
 					toast("The usage alerts are off.", "ok");
-					await openServerSettings();
+					await openUsageSettings();
 				})]
 				: [toolButton(usage.emails.length ? "Turn on…" : "Set up…", () => askUsage(usage), "primary")])] });
 	card.querySelector(".tool-head").append(...card.querySelectorAll(":scope > .tool-actions"));
@@ -6948,8 +7146,79 @@ function askUsage(usage) {
 			const emails = form.elements.emails.value.split(/[\s,;]+/).map((item) => item.trim()).filter(Boolean);
 			await api("/api/usage", { method: "PUT", json: { enabled: true, emails } });
 			toast("The usage alerts are on.", "ok");
-			await openServerSettings();
+			await openUsageSettings();
 		} });
+}
+// In a user's window just opened: the size field of one site ({site}) or database ({connection, database}) of theirs,
+// its card folded out, scrolled to, lit for a moment and ready to type in
+function focusUserLimit(target) {
+	if (!target) return;
+	let row, field;
+	if (target.site) {
+		row = [...$("#user-sites").children].find((item) => item.dataset.site === target.site);
+		field = row?.sizeField;
+	} else {
+		row = [...$("#user-connections").children].find((item) => item.dataset.connection === target.connection);
+		field = row?.databaseSizes?.find((item) => item.database === target.database);
+	}
+	if (!row || !field) return;
+	const body = row.querySelector(".grant-body");
+	if (body?.hidden) {
+		body.hidden = false;
+		row.querySelector(".grant-toggle")?.setAttribute("aria-expanded", "true");
+	}
+	requestAnimationFrame(() => {
+		field.scrollIntoView({ block: "center", behavior: "smooth" });
+		field.querySelector("input[type=number]")?.focus({ preventScroll: true });
+		field.classList.add("limit-found");
+		setTimeout(() => field.classList.remove("limit-found"), 1600);
+	});
+}
+
+// Usage under Settings: the alerts, then every site and every database on each connection, biggest first, each with
+// who made it and its limit. Measured as it opens, so it shows what is there now.
+async function openUsageSettings() {
+	const list = $("#server-usage-list");
+	list.setAttribute("aria-busy", "true");
+	const alerts = await api("/api/usage").catch(() => null);
+	const alertsCard = alerts ? usageCard(alerts) : null;
+	alertsCard?.classList.add("tool-card-wide");
+	const measuring = el("div", { className: "tool-card tool-card-wide usage-overview" }, loadingState("Measuring the sites and databases…"));
+	list.replaceChildren(...(alertsCard ? [alertsCard] : []), measuring);
+	try {
+		const all = await api("/api/usage/all");
+		const total = (items) => usageSize(Math.round(items.reduce((sum, item) => sum + item.size_mb, 0) * 10) / 10);
+		// The user opens at the size of what was clicked: that site's, or that database's on its connection
+		const openUser = (id, target) => async () => {
+			usersData = usersData || await api("/api/users");
+			const user = usersData.users.find((item) => item.id === id);
+			if (!user) throw new Error("That user is gone.");
+			openUserEditor(user);
+			focusUserLimit(target);
+		};
+		const meter = (item, open, target) => usageMeter(item.name, item.size_mb, item.limit_mb,
+			(item.limit_mb == null ? usageSize(item.size_mb) : `${usageSize(item.size_mb)} of ${usageSize(item.limit_mb)}`), item.user, open,
+			item.user_id ? openUser(item.user_id, target) : null);
+		const section = (icon, title, items, empty, open, target) => el("section", { className: "tool-card tool-card-wide usage-overview" },
+			el("div", { className: "usage-section-head" }, el("span", { className: "usage-section-icon" }, svgIcon(icon)), el("strong", { textContent: title }),
+				el("span", { className: "usage-total", textContent: items.length ? `${items.length} · ${total(items)}` : "" })),
+			...(items.length ? items.map((item) => meter(item, () => open(item), target(item))) : [el("p", { className: "muted usage-none", textContent: empty })]));
+		// A database opens the SQL page on its connection, its tab Databases
+		const openDatabase = (connection) => () => {
+			try { localStorage.setItem("vns-sql-connection", connection.id); localStorage.setItem("vns-sql-tab", "databases"); } catch (error) { /* none */ }
+			sqlTab = "databases";
+			if ($("#sql-connection").querySelector(`option[value="${CSS.escape(connection.id)}"]`)) $("#sql-connection").value = connection.id;
+			go("#sql");
+		};
+		measuring.replaceWith(section("globe", "Sites", all.sites, "No sites on this server yet.", (item) => go(siteLink(item.name)), (item) => ({ site: item.name })),
+			...all.connections.map((connection) => section("database", `Databases · ${connection.name}`, connection.databases,
+				connection.unreachable ? "The SQL Server did not answer, or has no databases of its own." : "No databases yet.", openDatabase(connection),
+				(item) => ({ connection: connection.id, database: item.name }))));
+	} catch (error) {
+		measuring.replaceChildren(el("p", { className: "error", textContent: error.message }));
+	} finally {
+		list.removeAttribute("aria-busy");
+	}
 }
 async function checkUsage() {
 	toast("Measuring the sites and databases…", "info");
@@ -7221,8 +7490,7 @@ async function openTableDesigner(database, table = null) {
 	const list = el("div", { className: "design-columns" });
 	const functions = el("datalist", { id: "design-functions" }, ...data.functions.map((item) => el("option", { value: item })));
 	const row = (column) => {
-		const type = el("select", { className: "design-type", ariaLabel: "Type" }, ...data.types.map((item) => el("option", { value: item, textContent: item, selected: item === column.type })));
-		if (!data.types.includes(column.type)) type.prepend(el("option", { value: column.type, textContent: column.type, selected: true }));
+		const type = premiumSelect({ options: data.types.includes(column.type) ? data.types : [column.type, ...data.types], value: column.type, label: "Type", className: "design-type" });
 		const length = el("input", { className: "design-size", ariaLabel: "Length", value: column.length ?? "", placeholder: "length" });
 		const precision = el("input", { className: "design-size", type: "number", min: 1, max: 38, ariaLabel: "Precision", value: column.precision ?? 18, title: "Precision" });
 		const scale = el("input", { className: "design-size", type: "number", min: 0, max: 38, ariaLabel: "Scale", value: column.scale ?? (params.scale.has(column.type) ? 7 : 2), title: "Scale" });
@@ -7237,7 +7505,7 @@ async function openTableDesigner(database, table = null) {
 			else if (params.scale.has(kind)) size.replaceChildren(scale);
 			else size.replaceChildren(el("span", { className: "muted design-none", textContent: "—" }));
 		};
-		type.onchange = showSize;
+		type.addEventListener("change", showSize);
 		showSize();
 		const chip = (label, checked, title) => {
 			const box = el("input", { type: "checkbox", checked: Boolean(checked) });
@@ -7335,6 +7603,15 @@ async function refreshSqlTables(database) {
 let sqlLogins = null;
 async function loadSqlLogins(connection) {
 	const panel = $("#sql-logins-panel");
+	// On their way: the tab is there, its panel a spinner, until they come
+	if (panel.hidden) {
+		panel.hidden = false;
+		$("#sql-logins-count").textContent = "";
+		$("#sql-add-login").hidden = true;
+		$("#sql-logins-hint").hidden = true;
+		$("#sql-logins").replaceChildren(el("span", { className: "sql-loading", role: "status" }, el("span", { className: "sql-connection-spinner", ariaHidden: "true" }), "Reading the logins…"));
+		applySqlTab();
+	}
 	try {
 		sqlLogins = await api(`/api/sql/${encodeURIComponent(connection)}/logins`);
 	} catch (error) {
@@ -7746,8 +8023,13 @@ function sqlConnectionSaid(state, text) {
 }
 function sqlConnectionBusy(busy, label = "") {
 	for (const id of ["sql-connection-test", "sql-connection-save"]) $("#" + id).disabled = busy;
-	$("#sql-connection-save").textContent = busy && label ? label : "Save connection";
+	$("#sql-connection-save").replaceChildren(svgIcon("check"), busy && label ? label : "Save connection");
 }
+$("#sql-remove-connection").dataset.tone = "red";
+$("#sql-remove-connection").prepend(svgIcon("trash"));
+$("#sql-remove-connection").classList.add("toned-action");
+$("#sql-remove-connection").title = "Remove the connection from this admin: its databases stay";
+$("#sql-connection-save").prepend(svgIcon("check"));
 $("#sql-connection-test").dataset.tone = "blue";
 $("#sql-connection-test").prepend(svgIcon("activity"));
 $("#sql-connection-test").classList.add("toned-action");
@@ -8046,6 +8328,24 @@ function markdownBlock(text) {
 	return box;
 }
 const shortCommit = (value) => (value || "").slice(0, 7);
+// What the releases since the one here bring, read here: each version's notes, newest first, with GitHub a link away
+function releaseSections(result) {
+	return (result.releases || []).map((release) => el("section", { className: "system-update-release" },
+		el("div", { className: "system-update-release-head" },
+			el("strong", { textContent: release.name }),
+			release.date ? el("span", { className: "muted", textContent: formatDate(release.date) }) : "",
+			release.url ? el("a", { href: release.url, target: "_blank", rel: "noopener noreferrer", textContent: "On GitHub ↗" }) : ""),
+		markdownBlock(release.notes || (result.notes_unavailable
+			? "The release notes could not be read from GitHub right now. They are on GitHub." : "No notes."))));
+}
+function showWhatChanged(result) {
+	const sections = releaseSections(result);
+	openFormDialog({ icon: "file", title: "What changed", wide: true,
+		text: `From v${result.installed_version} to v${result.latest_version}`,
+		fields: [el("div", { className: "system-update-notes what-changed" }, ...(sections.length ? sections : [el("p", { className: "muted", textContent: "No release notes for this update." })]))],
+		extra: result.compare_url ? [el("a", { className: "tool-open-admin", href: result.compare_url, target: "_blank", rel: "noopener noreferrer" }, svgIcon("external"), "Every change on GitHub")] : [] });
+}
+
 // What an update brings, before it starts: the versions, the release notes or the latest commit, and a link
 async function openSystemUpdateDialog() {
 	const result = await api("/api/system-update?refresh=1");
@@ -8056,15 +8356,7 @@ async function openSystemUpdateDialog() {
 	const notes = $("#system-update-notes");
 	notes.replaceChildren();
 	if (releases) {
-		for (const release of result.releases || []) {
-			notes.append(el("section", { className: "system-update-release" },
-				el("div", { className: "system-update-release-head" },
-					el("strong", { textContent: release.name }),
-					release.date ? el("span", { className: "muted", textContent: formatDate(release.date) }) : "",
-					release.url ? el("a", { href: release.url, target: "_blank", rel: "noopener noreferrer", textContent: "On GitHub ↗" }) : ""),
-				markdownBlock(release.notes || (result.notes_unavailable
-					? "The release notes could not be read from GitHub right now. They are on GitHub." : "No notes."))));
-		}
+		notes.append(...releaseSections(result));
 	} else if (result.latest_commit) {
 		const commit = result.latest_commit;
 		notes.append(el("section", { className: "system-update-release" },
@@ -8111,7 +8403,7 @@ decorate($("#settings-menu"));
 // Restarting Apache takes every site down for a moment: it stands last, in red
 $("#settings-restart-apache").dataset.tone = "red";
 // The account menu: every item with its icon
-for (const [id, icon, tone] of [["menu-audit", "clock", "amber"], ["menu-preferences", "sliders", "purple"], ["menu-profile", "user", "blue"], ["menu-usage", "archive", "amber"], ["menu-logout", "logout", "red"]]) {
+for (const [id, icon, tone] of [["menu-audit", "clock", "amber"], ["menu-preferences", "sliders", "purple"], ["menu-profile", "user", "blue"], ["menu-usage", "archive", "teal"], ["menu-logout", "logout", "red"]]) {
 	$("#" + id).dataset.tone = tone;
 	$("#" + id).prepend(svgIcon(icon));
 }
@@ -8177,7 +8469,7 @@ function userCard(user) {
 			// Their usage, when they may make sites or databases or have made some
 			...(!admin && (user.create_sites || user.made?.sites?.length || Object.values(user.made?.databases || {}).some((names) => names.length)
 				|| Object.values(user.connections || {}).some((grant) => (grant.actions || []).some((action) => action === "create" || action === "copy")))
-				? [tonedButton("Usage", "archive", "amber", () => showUsage(`/api/users/${encodeURIComponent(user.id)}/usage`, `Usage of ${user.name || user.username}`))] : [])] });
+				? [tonedButton("Usage", "archive", "teal", () => showUsage(`/api/users/${encodeURIComponent(user.id)}/usage`, `Usage of ${user.name || user.username}`))] : [])] });
 	card.classList.toggle("user-locked", Boolean(user.disabled));
 	const initial = card.querySelector(".tool-icon");
 	initial.classList.add("user-initial");
@@ -8195,7 +8487,7 @@ function renderUsers() {
 }
 
 // The site tree: a site's box gives all of it; opened, its environments one by one, and its actions
-function siteGrantRow(name, envKeys, grant) {
+function siteGrantRow(name, envKeys, grant, user = null) {
 	const site = allSites.find((item) => item.name === name);
 	const label = (key) => {
 		const env = site?.environments.find((item) => envKeyOf(item) === key);
@@ -8248,6 +8540,13 @@ function siteGrantRow(name, envKeys, grant) {
 			...(envKeys.length > 1 ? [el("label", { className: "grant-chip later", title: "Environments added to the site later are given too" }, newEnvs, el("span", { textContent: "Environments added later" }))] : [])),
 		el("div", { className: "grant-label", textContent: "May" }),
 		el("div", { className: "grant-chips" }, ...actionBoxes));
+	// A site they made: its own size, bigger or smaller than every site's; empty, the default set above
+	const made = (user?.made?.sites || []).includes(name);
+	const size = made ? sizeField("Size of this site", grant?.size_mb ?? null, siteSizeDefault(), siteSizeUnit()) : null;
+	if (size) {
+		size.classList.add("site-size-own");
+		body.append(el("div", { className: "user-limits grant-limits site-size-limit" }, size));
+	}
 	const row = el("div", { className: "grant-site" },
 		el("div", { className: "grant-head" }, el("label", {}, whole, el("strong", { textContent: site ? siteLabel(site) : name })),
 			el("span", { className: "muted", textContent: envKeys.length > 1 ? `${envKeys.length - 1} environment${envKeys.length === 2 ? "" : "s"}` : "" }), toggle),
@@ -8256,13 +8555,16 @@ function siteGrantRow(name, envKeys, grant) {
 	row.collect = () => {
 		const envs = envBoxes.filter(([, box]) => box.checked).map(([key]) => key);
 		if (!envs.length) return null;
-		return { envs, new_envs: newEnvs.checked && envs.length === envKeys.length, actions: actionBoxes.map((chip) => chip.querySelector("input")).filter((box) => box.checked).map((box) => box.value) };
+		const own = size?.read();
+		return { envs, new_envs: newEnvs.checked && envs.length === envKeys.length, actions: actionBoxes.map((chip) => chip.querySelector("input")).filter((box) => box.checked).map((box) => box.value),
+			...(own != null ? { size_mb: own } : {}) };
 	};
+	row.sizeField = size;
 	sync();
 	return row;
 }
 
-function connectionGrantRow(connection, grant) {
+function connectionGrantRow(connection, grant, user = null) {
 	const box = el("input", { type: "checkbox", checked: Boolean(grant) });
 	const chosen = new Set(grant?.databases || ["*"]);
 	// Which databases: every one (also those made later), only those they make themselves, or the ones chosen here
@@ -8278,6 +8580,17 @@ function connectionGrantRow(connection, grant) {
 		el("input", { type: "checkbox", value, checked: (grant?.actions || defaultSqlActions).includes(value) }), el("span", { textContent: text })));
 	const made = [...chosen].filter((name) => name !== "*");
 	const limitRow = databaseLimitFields(grant?.limits);
+	// Each database they made here: its own size, bigger or smaller than every database's; empty, the default above
+	const ownDatabases = user?.made?.databases?.[connection.id] || [];
+	const databaseSizes = ownDatabases.map((name) => {
+		const [text, unit] = limitRow.sizeDefault();
+		const field = sizeField(`Size of ${name}`, grant?.sizes?.[name] ?? null, text, unit);
+		field.database = name;
+		return field;
+	});
+	if (databaseSizes.length) {
+		limitRow.addEventListener("input", () => { const [text, unit] = limitRow.sizeDefault(); for (const field of databaseSizes) field.setDefault(text, unit); });
+	}
 	const makes = () => actions.some((chip) => ["create", "copy"].includes(chip.querySelector("input").value) && chip.querySelector("input").checked);
 	const showLimits = () => { limitRow.hidden = !makes(); };
 	for (const chip of actions) chip.querySelector("input").addEventListener("change", showLimits);
@@ -8308,8 +8621,9 @@ function connectionGrantRow(connection, grant) {
 	};
 	for (const label of scopes) label.querySelector("input").onchange = () => {
 		// Only their own is nothing without making one: Create databases comes with it
+		// Only their own: everything on what they make is theirs, so every action comes with it (each can be taken off)
 		if (scope() === "own") {
-			actions.find((chip) => chip.querySelector("input").value === "create").querySelector("input").checked = true;
+			for (const chip of actions) chip.querySelector("input").checked = true;
 			showLimits();
 		}
 		if (scope() === "chosen") load();
@@ -8319,7 +8633,8 @@ function connectionGrantRow(connection, grant) {
 		el("div", { className: "grant-label", textContent: "Databases" }),
 		el("div", { className: "samba-segments grant-scopes", role: "radiogroup", ariaLabel: "Databases" }, ...scopes),
 		list, ownNote,
-		el("div", { className: "grant-label", textContent: "May" }), el("div", { className: "grant-chips" }, ...actions), limitRow);
+		el("div", { className: "grant-label", textContent: "May" }), el("div", { className: "grant-chips" }, ...actions), limitRow,
+		...(databaseSizes.length ? [el("div", { className: "user-limits grant-limits database-sizes" }, ...databaseSizes)] : []));
 	showLimits();
 	box.onchange = () => {
 		body.hidden = !box.checked;
@@ -8331,6 +8646,8 @@ function connectionGrantRow(connection, grant) {
 			el("span", { className: "muted", textContent: connection.host + (connection.port ? ":" + connection.port : "") })), body);
 	showList();
 	if (grant && initial === "chosen") load();
+	row.dataset.connection = connection.id;
+	row.databaseSizes = databaseSizes;
 	row.collect = () => {
 		if (!box.checked) return null;
 		const now = scope();
@@ -8338,6 +8655,7 @@ function connectionGrantRow(connection, grant) {
 		const picked = loaded ? [...list.querySelectorAll("input:checked")].map((item) => item.value) : made;
 		return { databases: now === "all" ? ["*"] : now === "own" ? made : picked, ...(now === "own" ? { own: true } : {}),
 			...(makes() ? { limits: limitRow.read() } : {}),
+			...(databaseSizes.some((field) => field.read() != null) ? { sizes: Object.fromEntries(databaseSizes.filter((field) => field.read() != null).map((field) => [field.database, field.read()])) } : {}),
 			actions: actions.map((chip) => chip.querySelector("input")).filter((item) => item.checked).map((item) => item.value),
 			...(grant?.owned ? { owned: true } : {}) };
 	};
@@ -8360,25 +8678,54 @@ function showUserLimits() {
 	$("#user-site-limits").hidden = !userForm.create_sites.checked;
 }
 userForm.create_sites.addEventListener("change", showUserLimits);
-// How many databases they may make on a connection, and how big each: as the site limits look, read as a whole
+// The sites' own size fields name the default as it is typed above
+for (const name of ["limit_site_size", "limit_site_unit"]) userForm.addEventListener("input", (event) => {
+	if (event.target.name !== name) return;
+	for (const row of $("#user-sites").children) row.sizeField?.setDefault(siteSizeDefault(), siteSizeUnit());
+});
 let limitFieldsMade = 0;
-function databaseLimitFields(limits = {}) {
-	const unitName = "db_limit_unit_" + ++limitFieldsMade;
-	const size = limits.database_mb;
-	const gb = size == null || size % 1024 === 0;
-	const count = el("input", { type: "number", min: 0, max: 10000, step: 1, inputMode: "numeric", placeholder: "No limit", value: limits.databases ?? "" });
-	const amount = el("input", { type: "number", min: 0, step: "any", inputMode: "decimal", placeholder: "No limit", ariaLabel: "Size of each database",
-		value: size == null ? "" : gb ? size / 1024 : size });
+// A size in MB or GB, as the limits' fields: empty is none (or the default its placeholder names). read() gives MB.
+function sizeField(label, mb = null, placeholder = "No limit", emptyUnit = "GB") {
+	const unitName = "size_unit_" + ++limitFieldsMade;
+	const gb = mb == null ? emptyUnit === "GB" : mb % 1024 === 0;
+	const amount = el("input", { type: "number", min: 0, step: "any", inputMode: "decimal", placeholder, ariaLabel: label, value: mb == null ? "" : gb ? mb / 1024 : mb });
 	const unit = (value) => el("label", {}, el("input", { type: "radio", name: unitName, value, checked: (gb ? "GB" : "MB") === value }), el("span", { textContent: value }));
-	const element = el("div", { className: "user-limits grant-limits" },
-		el("label", {}, "Databases they may make", count),
-		el("div", { className: "limit-size" }, el("span", { className: "limit-label", textContent: "Size of each database" }),
-			el("div", { className: "size-field" }, amount, el("span", { className: "unit-toggle", role: "radiogroup", ariaLabel: "Unit" }, unit("MB"), unit("GB")))));
+	const element = el("div", { className: "limit-size" }, el("span", { className: "limit-label", textContent: label }),
+		el("div", { className: "size-field" }, amount, el("span", { className: "unit-toggle", role: "radiogroup", ariaLabel: "Unit" }, unit("MB"), unit("GB"))));
+	element.read = () => amount.value.trim() === "" ? null
+		: Math.round(Number(amount.value) * (element.querySelector(`input[name=${unitName}]:checked`)?.value === "GB" ? 1024 : 1));
+	// The default it stands for: its name in the field, and while the field is empty, its unit as well
+	element.setDefault = (text, unit) => {
+		amount.placeholder = text;
+		if (amount.value.trim() === "" && unit) element.querySelector(`input[name=${unitName}][value=${unit}]`).checked = true;
+	};
+	return element;
+}
+// The unit the size every site gets is typed in, above
+function siteSizeUnit() {
+	return userForm.querySelector("input[name=limit_site_unit]:checked")?.value || "GB";
+}
+// The size every site a user makes may have, as typed now: the default a site's own field names
+function siteSizeDefault() {
+	const limit = userLimits().site_mb;
+	return limit == null ? "Default: no limit" : `Default: ${usageSize(limit)}`;
+}
+// How many databases they may make on a connection, and how big each: as the site limits look, read as a whole
+function databaseLimitFields(limits = {}) {
+	const count = el("input", { type: "number", min: 0, max: 10000, step: 1, inputMode: "numeric", placeholder: "No limit", value: limits.databases ?? "" });
+	const size = sizeField("Size of each database", limits.database_mb ?? null);
+	const element = el("div", { className: "user-limits grant-limits" }, el("label", {}, "Databases they may make", count), size);
 	element.read = () => {
 		const result = {};
 		if (count.value.trim() !== "") result.databases = Math.round(Number(count.value));
-		if (amount.value.trim() !== "") result.database_mb = Math.round(Number(amount.value) * (element.querySelector(`input[name=${unitName}]:checked`)?.value === "GB" ? 1024 : 1));
+		const mb = size.read();
+		if (mb != null) result.database_mb = mb;
 		return result;
+	};
+	// The size every database there gets, as typed now: the default each database's own field names, in its unit
+	element.sizeDefault = () => {
+		const mb = size.read();
+		return [mb == null ? "Default: no limit" : `Default: ${usageSize(mb)}`, size.querySelector(".unit-toggle input:checked")?.value || "GB"];
 	};
 	return element;
 }
@@ -8421,8 +8768,8 @@ function openUserEditor(user = null) {
 	userForm.sql.checked = Boolean(user?.sql);
 	userForm.manage_connections.checked = Boolean(user?.manage_connections);
 	$("#user-sites").replaceChildren(...Object.entries(usersData.sites).sort(([a], [b]) => a.localeCompare(b))
-		.map(([name, envs]) => siteGrantRow(name, envs, user?.sites?.[name])));
-	$("#user-connections").replaceChildren(...(usersData.connections.length ? usersData.connections.map((connection) => connectionGrantRow(connection, user?.connections?.[connection.id]))
+		.map(([name, envs]) => siteGrantRow(name, envs, user?.sites?.[name], user)));
+	$("#user-connections").replaceChildren(...(usersData.connections.length ? usersData.connections.map((connection) => connectionGrantRow(connection, user?.connections?.[connection.id], user))
 		: [el("p", { className: "muted", textContent: "There are no SQL connections yet." })]));
 	$("#user-delete").hidden = !user;
 	showUserScope();
@@ -8435,6 +8782,8 @@ function showUserScope() {
 	$("#user-web").hidden = !userForm.web.checked;
 	$("#user-sql").hidden = !userForm.sql.checked;
 	$("#user-sftp").hidden = !userForm.sftp.checked;
+	// SFTP reaches their sites' folders: a part of its own while the Web Server is theirs
+	$("#user-sftp-part").hidden = !userForm.web.checked;
 }
 userForm.onchange = (event) => { if (["role", "web", "sql", "sftp"].includes(event.target.name)) showUserScope(); };
 userForm.onsubmit = (event) => {
@@ -8472,17 +8821,44 @@ userForm.onsubmit = (event) => {
 		userDialog.close();
 		toast(id ? "User saved" : "User added", "ok");
 		await openUsers();
+		// Opened from Usage: it shows the limits just saved
+		if (serverTabOpen("usage")) await openUsageSettings();
 	});
 };
 $("#user-cancel").onclick = () => userDialog.close();
 $("#user-delete").onclick = () => run(async () => {
 	const name = userForm.username.value;
-	if (!(await ask({ title: "Delete user?", message: `${name} can no longer log in. What they made stays. Type ${name} to confirm.`, match: name, danger: true, ok: "Delete" }))) return;
-	await api("/api/users/" + encodeURIComponent(userForm.dataset.id), { method: "DELETE" });
+	const user = (usersData?.users || []).find((item) => item.id === userForm.dataset.id) || {};
+	// What they made and is still here: it can go with them, sites and databases each by choice
+	const sites = (user.made?.sites || []).filter((site) => (usersData?.sites || {})[site] !== undefined);
+	const databases = Object.fromEntries(Object.entries(user.made?.databases || {}).filter(([, names]) => names.length));
+	const databaseNames = Object.values(databases).flat();
+	if (!sites.length && !databaseNames.length) {
+		if (!(await ask({ title: "Delete user?", message: `${name} can no longer log in. Type ${name} to confirm.`, match: name, danger: true, ok: "Delete" }))) return;
+		await deleteUser(userForm.dataset.id);
+		return;
+	}
+	const list = (items) => items.length > 4 ? `${items.slice(0, 4).join(", ")} and ${items.length - 4} more` : items.join(", ");
+	openFormDialog({ icon: "trash", title: `Delete ${name}?`, text: "They can no longer log in. What they made can go with them, or stay with the administrators.", ok: "Delete", danger: true,
+		fields: [
+			...(sites.length ? [checkOption("with_sites", `Also delete their ${sites.length === 1 ? "site" : sites.length + " sites"}`, list(sites) + ": every environment, its files and its service", false, "globe", "red")] : []),
+			...(databaseNames.length ? [checkOption("with_databases", `Also delete their ${databaseNames.length === 1 ? "database" : databaseNames.length + " databases"}`, list(databaseNames) + ", with their own logins", false, "database", "red")] : []),
+			confirmField(name),
+		],
+		submit: async (form) => {
+			if (form.elements.confirmation.value !== name) throw new Error(`Type ${name} to confirm.`);
+			const withSites = Boolean(form.elements.with_sites?.checked), withDatabases = Boolean(form.elements.with_databases?.checked);
+			await deleteUser(userForm.dataset.id);
+			if (withSites || withDatabases) await openTask({ kind: "delete_user_made", sites: withSites ? sites : [], databases: withDatabases ? databases : {} });
+		} });
+});
+async function deleteUser(id) {
+	await api("/api/users/" + encodeURIComponent(id), { method: "DELETE" });
 	userDialog.close();
 	toast("User deleted", "ok");
 	await openUsers();
-});
+	if (serverTabOpen("usage")) await openUsageSettings();
+}
 
 
 
@@ -8527,7 +8903,7 @@ $("#audit-clear").onclick = () => run(async () => {
 // Each tool is a part of its own in the side menu; they share one pane, drawn from one look at the server
 // SSH and Samba are one part, Access: how the server itself is reached
 const TOOL_TABS = ["sql", "dotnet", "node", "access"];
-const SERVER_TABS = [...TOOL_TABS, "apache", "jobs", "settings", "servers", "users", "windows", "updates", "menu"];
+const SERVER_TABS = [...TOOL_TABS, "apache", "jobs", "settings", "servers", "users", "usage", "windows", "updates", "menu"];
 const TOOL_OF_CARD = { "SQL Server": "sql", "SQL tools": "sql", "sa password": "sql", Backups: "sql", "Node.js": "node", SSH: "access", Samba: "access" };
 // Settings opens on General: what most often is looked for
 let serverTab = "settings";
@@ -8541,7 +8917,7 @@ async function showServerTab(tab) {
 		$("#server-tab-" + name).setAttribute("aria-selected", String(name === tab));
 		$("#server-tab-" + name).classList.toggle("active", name === tab);
 	}
-	for (const pane of ["tools", "apache", "jobs", "settings", "servers", "users", "windows", "updates", "menu"]) $("#server-pane-" + pane).hidden = pane !== paneOf(tab);
+	for (const pane of ["tools", "apache", "jobs", "settings", "servers", "users", "usage", "windows", "updates", "menu"]) $("#server-pane-" + pane).hidden = pane !== paneOf(tab);
 	// The admin site's page, when it was open here, is not
 	$("#server-pane-admin").hidden = true;
 	$("#server-tab-admin").classList.remove("active");
@@ -8555,7 +8931,7 @@ async function showServerTab(tab) {
 		// Another tool is shown from what was read already; Refresh, or coming from another part, reads again
 		if (toolsDrawn && before === "tools") return;
 	}
-	await run({ tools: openServerTools, jobs: openCrontab, servers: openServers, users: openUsers, settings: openServerSettings, menu: openMenuSettings, apache: openApacheSettings, windows: openWindowsSettings, updates: openUpdatesSettings }[paneOf(tab)]);
+	await run({ tools: openServerTools, jobs: openCrontab, servers: openServers, users: openUsers, usage: openUsageSettings, settings: openServerSettings, menu: openMenuSettings, apache: openApacheSettings, windows: openWindowsSettings, updates: openUpdatesSettings }[paneOf(tab)]);
 }
 function showToolCards() {
 	// Access is two columns (SSH and Samba, then its shares and users); the other tools three

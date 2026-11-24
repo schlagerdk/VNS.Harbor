@@ -245,6 +245,14 @@ def user_usage(user):
     return _usage.of_user(DATA, user, names, measure_site=measure_site)
 
 
+@app.route("/api/usage/all")
+def api_usage_all():
+    """Every site and database, how big each is now, who made it and its limit: Usage under Settings"""
+    require_admin()
+    connections = {item["id"]: item.get("name") or item["id"] for item in _sql_module.public_connections(SQL_CONNECTIONS)} if os.path.isfile(SQL_CONNECTIONS) else {}
+    return jsonify(_usage.overview(DATA, site_dirs(), connections, measure_site=lambda site: _usage.site_mb(site, WEB_ROOT)))
+
+
 @app.route("/api/usage/mine")
 def api_usage_mine():
     """What the user logged in has made, and how big each is, beside their limits"""
@@ -531,10 +539,18 @@ def index():
         shown = menu_shown()
         start = "sql" if not shown["web"] else "sites" if not shown["sql"] else start
     return render_template("index.html", csrf=csrf_token(), admin_site=ADMIN_SITE, hostname=socket.gethostname(), user=user.get("name") or user["username"],
-                           start_view=start, role="admin" if access.is_admin(user) else "user")
+                           start_view=start, role="admin" if access.is_admin(user) else "user", header=header_shown(user))
 
 
 MENU_SETTINGS = ("auto", "show", "hide")
+# What an administrator sees in the header beside the menu: the site search, the server's addresses, Files and Terminal;
+# each their own
+HEADER_PARTS = ("search", "addresses", "files", "terminal")
+
+
+def header_shown(user):
+    saved = (cfg.get("header") if user.get("id") == access.ROOT else user.get("header")) or {}
+    return {part: saved.get(part) is not False for part in HEADER_PARTS}
 
 
 def has_sites():
@@ -584,6 +600,17 @@ def api_preferences():
             cfg.update(changes)
             save_config()
         return jsonify(menu={"web": cfg.get("web_menu", "auto"), "sql": cfg.get("sql_menu", "auto")}, shown=menu_shown())
+    if "header" in data:
+        # What the header shows beside the menu: each administrator's own (root's is the server's)
+        require_admin()
+        given = data.get("header")
+        if not isinstance(given, dict) or any(key not in HEADER_PARTS or not isinstance(value, bool) for key, value in given.items()):
+            return error("The header shows search, addresses, files and terminal, each on or off.")
+        with CONFIG_LOCK:
+            target = cfg if me().get("id") == access.ROOT else me()
+            target["header"] = {**header_shown(me()), **given}
+            save_config()
+        return jsonify(header=header_shown(me()))
     if "public_address" in data:
         # The server's address as the internet sees it, for a server behind NAT: what DNS records point to
         require_admin()
@@ -3659,6 +3686,7 @@ def api_me():
                    create_sites=admin or bool(user.get("create_sites")) and not access.may_make(user, "sites", lambda made: os.path.isdir(os.path.join(WEB_ROOT, made))),
                    manage_connections=admin or bool(user.get("manage_connections")),
                    usage=_usage.shows_usage(user), usage_over=usage_over(user),
+                   header=header_shown(user) if admin else {part: False for part in HEADER_PARTS},
                    sites={} if admin else {site: {"envs": grant.get("envs", []), "new_envs": grant.get("new_envs", False),
                                                   "known": grant.get("known", []), "actions": grant.get("actions", [])}
                                            for site, grant in (user.get("sites") or {}).items()},
@@ -3887,7 +3915,7 @@ def terminal_activity_sites(payload):
     kind = payload.get("kind")
     if kind == "shell" or (kind == "remote_tool" and payload.get("tool") == "shell"):
         return []
-    if kind == "bulk":
+    if kind in ("bulk", "delete_user_made"):
         return payload.get("sites", [])
     return [payload["site"]] if payload.get("site") else []
 
@@ -3940,7 +3968,7 @@ def terminal_scope(payload):
 
 def terminal_auto_close(payload):
     kind = payload.get("kind")
-    if kind in ("shell", "create_site", "setup_site", "copy_site", "register_env", "create_prod", "sync_env", "data_sync", "data_sync_settings", "move_env", "move_site", "adopt_site", "release_site", "delete_site", "change_binding", "prod_action", "dotnet_package", "fix_permissions", "publish_both", "bulk", "update_package", "sql_action", "install_sql_tools", "server_tool", "servers",
+    if kind in ("shell", "create_site", "setup_site", "copy_site", "register_env", "create_prod", "sync_env", "data_sync", "data_sync_settings", "move_env", "move_site", "adopt_site", "release_site", "delete_site", "delete_user_made", "change_binding", "prod_action", "dotnet_package", "fix_permissions", "publish_both", "bulk", "update_package", "sql_action", "install_sql_tools", "server_tool", "servers",
                 # Moving sites and environments from Windows: an action with its steps, not a terminal
                 "windows_import", "windows_refresh", "windows_refresh_all", "windows_take_over",
                 "windows_move", "windows_move_refresh", "windows_move_refresh_all", "windows_move_take_over"):
@@ -5010,6 +5038,31 @@ def build_command(data):
                 abort(404, "Unknown site")
             return "Test %s: %s" % (action.replace("_", " "), site), [*harbor_argv("test_action.sh"), site, action, *args], HARBOR_DIR
         return "Prod %s: %s" % (action.replace("_", " "), site), with_target([*harbor_argv("prod_action.sh"), site, action, *args], target_arg(site, data)), HARBOR_DIR
+    if kind == "delete_user_made":
+        # What a deleted user made, deleted with them when the administrator chose so: each site whole, each database
+        # with its own login, as their Delete buttons do; a step each
+        steps = []
+        for site in data.get("sites") or []:
+            if site not in site_dirs() or site == ADMIN_SITE:
+                abort(400, "Unknown site")
+            steps.append({"title": f"Delete {site}", "argv": [*harbor_argv("delete_site.sh"), site, "n", "all"]})
+        databases = data.get("databases") or {}
+        if not isinstance(databases, dict):
+            abort(400, "Expected databases by connection")
+        for connection, names in databases.items():
+            try:
+                with SQL_LOCK:
+                    _sql_module.connection(SQL_CONNECTIONS, connection)
+                for name in names:
+                    _sql_module.identifier(name)
+            except (ValueError, TypeError) as exc:
+                abort(400, str(exc))
+            for name in names:
+                payload = {"action": "drop", "database": name, "confirmation": name, "delete_login": True}
+                steps.append({"title": f"Delete the database {name}", "argv": [sys.executable, SQL_HELPER, SQL_CONNECTIONS, connection, json.dumps(payload)]})
+        if not steps:
+            abort(400, "Nothing to delete")
+        return "Delete what the user made", [sys.executable, os.path.join(LIB_DIR, "run_steps.py"), json.dumps(steps)], "/"
     if kind == "delete_site":
         site = site_arg(data)
         if site == ADMIN_SITE:
@@ -5077,7 +5130,7 @@ def sees_session(s):
 
 
 # Tasks that run as root by choice, or open a shell: only for administrators
-ADMIN_TASKS = {"servers", "server_tool", "install_sql_tools", "update_system", "remote_tool", "move_env", "move_site", "adopt_site", "release_site",
+ADMIN_TASKS = {"servers", "server_tool", "delete_user_made", "install_sql_tools", "update_system", "remote_tool", "move_env", "move_site", "adopt_site", "release_site",
                "setup_site", "unit_tool", "apache", "register_env", "windows_import", "windows_refresh", "windows_refresh_all", "windows_take_over",
                "windows_move", "windows_move_refresh", "windows_move_refresh_all", "windows_move_take_over"}
 

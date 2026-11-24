@@ -84,12 +84,13 @@ def site_mb(site, web_root=WEB_ROOT):
         return None
 
 
-def database_sizes(data_dir, connection):
-    """{database: MB} on one of the admin's SQL connections; empty when it cannot be reached"""
+def database_sizes(data_dir, connection, user_only=False):
+    """{database: MB} on one of the admin's SQL connections (user_only: not SQL Server's own); empty when it cannot be
+    reached"""
     sql = _load("vns_usage_sql_admin", "sql_admin.py")
     try:
         settings = sql.connection(str(Path(data_dir) / "sql-connections.json"), connection)
-        return {row["name"]: float(row.get("size_mb") or 0) for row in sql.databases(settings)}
+        return {row["name"]: float(row.get("size_mb") or 0) for row in sql.databases(settings) if not user_only or row.get("id", 5) > 4}
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
         return {}
 
@@ -104,26 +105,26 @@ def check(data_dir, measure_site=site_mb, measure_databases=database_sizes, ever
             continue
         limits, made = user.get("limits") or {}, user.get("made") or {}
         who = user.get("name") or user.get("username") or user.get("id", "")
-        if limits.get("site_mb") is not None or everything is not None:
+        if everything is not None or any(site_limit(user, site) is not None for site in made.get("sites", [])):
             for site in made.get("sites", []):
                 size = measure_site(site)
                 if size is None:
                     continue
-                item = {"key": f"site|{site}", "kind": "site", "name": site, "user": who, "user_id": user.get("id"), "size_mb": size, "limit_mb": limits.get("site_mb")}
+                item = {"key": f"site|{site}", "kind": "site", "name": site, "user": who, "user_id": user.get("id"), "size_mb": size, "limit_mb": site_limit(user, site)}
                 if everything is not None:
                     everything.append(item)
                 if item["limit_mb"] is not None and size > item["limit_mb"]:
                     over.append(item)
         for connection, names in (made.get("databases") or {}).items():
-            # Each connection has its own limits for the databases on it
-            largest = (((user.get("connections") or {}).get(connection) or {}).get("limits") or {}).get("database_mb")
-            if largest is not None or everything is not None:
+            # Each connection has its own limits for the databases on it, and a database its own size
+            if everything is not None or any(database_limit(user, connection, name) is not None for name in names):
                 if connection not in sizes:
                     sizes[connection] = measure_databases(data_dir, connection)
                 for name in names:
                     size = sizes[connection].get(name)
                     if size is None:
                         continue
+                    largest = database_limit(user, connection, name)
                     item = {"key": f"database|{connection}|{name}", "kind": "database", "name": name, "connection": connection,
                             "user": who, "user_id": user.get("id"), "size_mb": round(size, 1), "limit_mb": largest}
                     if everything is not None:
@@ -131,6 +132,19 @@ def check(data_dir, measure_site=site_mb, measure_databases=database_sizes, ever
                     if largest is not None and size > largest:
                         over.append(item)
     return over
+
+
+def site_limit(user, site):
+    """How big a site of the user's may be: its own limit when it has one, else the one their limits give every site"""
+    own = (((user or {}).get("sites") or {}).get(site) or {}).get("size_mb")
+    return own if own is not None else ((user or {}).get("limits") or {}).get("site_mb")
+
+
+def database_limit(user, connection, name):
+    """How big a database of the user's may be: its own size when it has one, else the connection's for every database"""
+    grant = (((user or {}).get("connections") or {}).get(connection) or {})
+    own = (grant.get("sizes") or {}).get(name)
+    return own if own is not None else (grant.get("limits") or {}).get("database_mb")
 
 
 def shows_usage(user):
@@ -146,7 +160,8 @@ def of_user(data_dir, user, names=None, measure_site=site_mb, measure_databases=
     """What one user has made and how big each is now, beside their limits: their sites, and their databases on each
     connection where they may make some or have. names gives each connection's name. Measured now."""
     made, limits = user.get("made") or {}, user.get("limits") or {}
-    sites = [{"name": site, "size_mb": size} for site in made.get("sites", []) for size in [measure_site(site)] if size is not None]
+    # Each site with its own limit: the one set on it, else the user's for every site
+    sites = [{"name": site, "size_mb": size, "limit_mb": site_limit(user, site)} for site in made.get("sites", []) for size in [measure_site(site)] if size is not None]
     result = {"sites": {"may_make": bool(user.get("create_sites")) or bool(sites), "count_limit": limits.get("sites"),
                         "size_limit_mb": limits.get("site_mb"), "items": sites}, "connections": []}
     for connection, grant in (user.get("connections") or {}).items():
@@ -154,12 +169,42 @@ def of_user(data_dir, user, names=None, measure_site=site_mb, measure_databases=
         if not own and not {"create", "copy"} & set(grant.get("actions") or []):
             continue
         sizes = measure_databases(data_dir, connection) if own else {}
-        items = [{"name": name, "size_mb": round(sizes[name], 1)} for name in own if name in sizes]
+        items = [{"name": name, "size_mb": round(sizes[name], 1), "limit_mb": database_limit(user, connection, name)} for name in own if name in sizes]
         result["connections"].append({"id": connection, "name": (names or {}).get(connection) or connection,
                                       "count_limit": (grant.get("limits") or {}).get("databases"),
                                       "size_limit_mb": (grant.get("limits") or {}).get("database_mb"), "items": items,
                                       # Not reached: what they made there is not known now
                                       "unreachable": bool(own) and not sizes})
+    return result
+
+
+def overview(data_dir, sites, connections, measure_site=site_mb, measure_databases=database_sizes):
+    """Every site here and every database on each connection (system databases left out), how big each is now, who
+    made it and the limit that holds for it: for an administrator. sites: the site folders; connections: {id: name}."""
+    config = report.read_json(Path(data_dir) / "config.json", {})
+    users = [user for user in config.get("users", []) if isinstance(user, dict) and user.get("role") != "admin"] if isinstance(config.get("users"), list) else []
+    site_owner = {site: user for user in users for site in (user.get("made") or {}).get("sites", [])}
+    result = {"sites": [], "connections": []}
+    for site in sites:
+        size = measure_site(site)
+        if size is None:
+            continue
+        owner = site_owner.get(site)
+        result["sites"].append({"name": site, "size_mb": size, "user": (owner.get("name") or owner.get("username")) if owner else None,
+                                "user_id": owner.get("id") if owner else None,
+                                "limit_mb": site_limit(owner, site) if owner else None})
+    for connection, label in connections.items():
+        sizes = measure_databases(data_dir, connection, user_only=True)
+        owners = {name: user for user in users for name in ((user.get("made") or {}).get("databases") or {}).get(connection, [])}
+        items = []
+        for name, size in sizes.items():
+            owner = owners.get(name)
+            items.append({"name": name, "size_mb": round(size, 1), "user": (owner.get("name") or owner.get("username")) if owner else None,
+                          "user_id": owner.get("id") if owner else None,
+                          "limit_mb": database_limit(owner, connection, name) if owner else None})
+        result["connections"].append({"id": connection, "name": label, "unreachable": not sizes, "databases": items})
+    for part in [result["sites"]] + [item["databases"] for item in result["connections"]]:
+        part.sort(key=lambda item: -item["size_mb"])
     return result
 
 

@@ -10,10 +10,10 @@ Three kinds of user:
 A user record, as kept in config.json's "users":
   {"id", "username", "password_hash", "role": "admin"|"user", "disabled", "version",
    "web": bool, "create_sites": bool,
-   "sites": {"<site>": {"envs": ["main", "<environment id>", ...], "new_envs": bool, "actions": [...]}},
+   "sites": {"<site>": {"envs": ["main", "<environment id>", ...], "new_envs": bool, "actions": [...], "size_mb": int}},
    "sql": bool, "manage_connections": bool,
    "connections": {"<connection id>": {"databases": ["*"] or [names], "actions": [...], "own": bool,
-                                       "limits": {"databases", "database_mb"}}},
+                                       "limits": {"databases", "database_mb"}, "sizes": {"<database>": mb}}},
    "limits": {"sites", "site_mb"},
    "made": {"sites": [names], "databases": {"<connection id>": [names]}, "logins": {"<connection id>": [names]}}}
 "envs" are the environments of the site the user may see ("main" is the main site); "new_envs" adds environments
@@ -305,6 +305,10 @@ def clean(data, existing=None, sites=None, connections=None):
             actions = sorted(actions + ["files"])
         if envs:
             entry = {"envs": envs, "new_envs": bool(grant.get("new_envs")), "actions": actions}
+            # A site they made can have its own size limit, in place of the one their limits give every site
+            size = clean_limits({"site_mb": grant.get("size_mb")}, ("site_mb",)).get("site_mb")
+            if size is not None:
+                entry["size_mb"] = size
             # The environments there were when it was given: later ones count only with new_envs
             entry["known"] = sorted(sites[site]) if sites is not None else list((existing.get("sites", {}).get(site) or {}).get("known", envs))
             user["sites"][site] = entry
@@ -327,6 +331,15 @@ def clean(data, existing=None, sites=None, connections=None):
             limits = clean_limits(grant.get("limits"), ("databases", "database_mb"))
             if limits and {"create", "copy"} & set(user["connections"][connection]["actions"]):
                 user["connections"][connection]["limits"] = limits
+            # A database they made there can have its own size, in place of the one for every database there
+            sizes = grant.get("sizes") or {}
+            if not isinstance(sizes, dict):
+                raise ValueError("Invalid database sizes.")
+            sizes = {name: clean_limits({"database_mb": size}, ("database_mb",)).get("database_mb") for name, size in sizes.items()
+                     if isinstance(name, str) and 0 < len(name) <= 128}
+            sizes = {name: size for name, size in sizes.items() if size is not None}
+            if sizes:
+                user["connections"][connection]["sizes"] = sizes
             # A connection the user made stays theirs to change
             if ((existing.get("connections") or {}).get(connection) or {}).get("owned"):
                 user["connections"][connection]["owned"] = True

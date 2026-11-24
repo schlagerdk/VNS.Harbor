@@ -54,3 +54,20 @@ class UserMenuIconTests(unittest.TestCase):
         listed = listed[:listed.index("]]) {")]
         for item in ids:
             self.assertIn(f'["{item}", ', listed, f"{item} has no icon")
+
+
+class HeaderPartsTests(unittest.TestCase):
+    def test_each_administrator_chooses_what_the_header_shows(self):
+        """The server's addresses, Files and Terminal in the header: each on unless an administrator took it out, root's
+        kept as the server's and every other's on themselves (1.0.71)"""
+        tree = ast.parse(APP.read_text())
+        nodes = [node for node in tree.body if (isinstance(node, ast.FunctionDef) and node.name == "header_shown")
+                 or (isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "HEADER_PARTS")]
+        cfg = {"header": {"files": False}}
+        ns = {"cfg": cfg, "access": type("access", (), {"ROOT": "root"})}
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), "header", "exec"), ns)
+        self.assertEqual(ns["header_shown"]({"id": "root"}), {"search": True, "addresses": True, "files": False, "terminal": True})
+        self.assertEqual(ns["header_shown"]({"id": "u1", "header": {"terminal": False}}), {"search": True, "addresses": True, "files": True, "terminal": False})
+        self.assertEqual(ns["header_shown"]({"id": "u2"}), {"search": True, "addresses": True, "files": True, "terminal": True})
+        page = (APP.parent / "templates/index.html").read_text()
+        self.assertIn('id="btn-dock" type="button"{% if role != "admin" or not header.terminal %} hidden{% endif %}', page)
