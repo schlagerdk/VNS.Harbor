@@ -2,6 +2,17 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.79] - Unreleased
+
+### Features
+
+- Files shows pictures (JPG, PNG, GIF, WebP, AVIF, BMP, ICO) and PDFs in a window of their own, with Download, also on another server and on Windows. They are sent as they are and nothing of them runs; SVG and HTML, which could, are only downloaded
+
+### Bug fixes
+
+- Publish from your machine never offers a user SSH as root, which they never have: they publish with their publish token, and the dialog shows only their computer to choose
+- Run custom script's menu stays inside the window: placed from its button, it was cut off at the right of a card or a column
+
 ## [1.0.78] - 2026-11-24
 
 ### Bug fixes

@@ -133,5 +133,20 @@ class LocalPublishScriptTests(unittest.TestCase):
         text = self.script(site="shop.example.com", binding="shop.example.com", https="n", environment="Production", access="token", system="windows")
         self.assertIn('set "TOKEN_FILE=%USERPROFILE%\\.config\\vns-harbor\\web-02.example.com.token"', text)
 
+    def test_a_user_is_never_offered_ssh(self):
+        """SSH as root is an administrator's: a user publishes with their token, and the dialog never shows the
+        choice, nor tells of SSH (1.0.79)"""
+        source = (Path(__file__).resolve().parents[2] / "admin/static/app.js").read_text()
+        dialog = source[source.index("function showLocalPublish("):source.index("async function renderPublishToken(")]
+        self.assertIn('form.elements.lp_access.value = currentUser.admin ? saved.access || "ssh" : "token";', dialog)
+        self.assertIn('$("#local-publish-access").hidden = !currentUser.admin;', dialog)
+        self.assertIn('const access = currentUser.admin ? form.elements.lp_access.value : "token";', dialog)
+        token = source[source.index("async function renderPublishToken("):source.index("const prodDialog = ")]
+        for text in ("Without one it uses SSH as root.", ", or publish over SSH.", "Publish without SSH: your publish token"):
+            self.assertIn(f"currentUser.admin ? ", token[token.index(text) - 120:token.index(text)], text)
+        script = self.script(site="shop.example.com", binding="shop.example.com", https="n", environment="Production", access="token")
+        self.assertNotIn("ssh ", script.lower().replace("needs no ssh", ""))
+
+
 if __name__ == "__main__":
     unittest.main()

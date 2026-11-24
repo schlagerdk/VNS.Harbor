@@ -567,8 +567,7 @@ dialog.files-dialog { padding: 18px; }
 .script-menu-trigger .ico { width: 14px; height: 14px; margin: 0; }
 .script-menu-chevron { width: 9px; height: 9px; margin: -4px 2px 0 4px; border-right: 2px solid currentColor; border-bottom: 2px solid currentColor; color: var(--muted); transform: rotate(45deg); transition: transform .15s; }
 .script-menu-trigger[aria-expanded="true"] .script-menu-chevron { margin-top: 5px; transform: rotate(225deg); }
-.script-menu-panel { position: absolute; top: calc(100% + 8px); left: 0; z-index: 30; width: min(360px, calc(100vw - 40px)); max-height: min(460px, 65vh); overflow: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; padding: 8px; border: 1px solid rgba(88, 166, 255, .28); border-radius: 12px; background: linear-gradient(145deg, rgba(88, 166, 255, .08), transparent 48%), var(--panel); box-shadow: 0 18px 48px rgba(0, 0, 0, .55), 0 0 0 1px rgba(255, 255, 255, .025); }
-.script-menu.push-right .script-menu-panel { right: 0; left: auto; }
+.script-menu-panel { position: fixed; top: 0; left: 0; z-index: 30; width: min(360px, calc(100vw - 40px)); max-height: min(460px, 65vh); overflow: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; padding: 8px; border: 1px solid rgba(88, 166, 255, .28); border-radius: 12px; background: linear-gradient(145deg, rgba(88, 166, 255, .08), transparent 48%), var(--panel); box-shadow: 0 18px 48px rgba(0, 0, 0, .55), 0 0 0 1px rgba(255, 255, 255, .025); }
 .script-menu-header { position: sticky; top: -8px; z-index: 1; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 3px 12px; margin: -8px -8px 4px; padding: 13px 14px 11px; border-bottom: 1px solid var(--line); background: color-mix(in srgb, var(--panel) 94%, #20334a); }
 .script-menu-eyebrow { grid-column: 1 / -1; color: var(--blue); font-size: 9px; font-weight: 700; letter-spacing: .13em; }
 .script-menu-header strong { font-size: 13px; }
@@ -2666,6 +2665,8 @@ dialog .windows-field input, dialog .windows-field select { width: 100%; min-hei
 
 /* Publish from your machine: the steps and the script to copy */
 .local-publish-steps { margin: 4px 0 12px; padding-left: 20px; line-height: 1.6; color: var(--text); font-size: 13px; }
+/* The note under the script: room between them */
+#local-publish-note { margin: 12px 0 0; }
 .local-publish-steps code, #local-publish-note code { font-size: 12px; padding: 1px 5px; border-radius: 5px; background: rgba(255,255,255,.06); }
 .local-publish-script { max-height: 320px; margin: 0; padding: 12px 14px; overflow: auto; border: 1px solid var(--line); border-radius: 10px;
 	background: #0b0d12; color: #d6deeb; font: 12px/1.55 ui-monospace, Menlo, Consolas, monospace; white-space: pre; user-select: all; }
@@ -2698,6 +2699,10 @@ dialog .windows-field input, dialog .windows-field select { width: 100%; min-hei
 /* The script wraps its long lines: no sideways scrolling, and the header and footer keep the dialog's full width */
 #dlg-local-publish .local-publish-script { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; overflow-x: hidden; overflow-y: auto; }
 #dlg-local-publish .local-publish-choices { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+/* A user's: only their computer to choose, the publish token is theirs */
+#dlg-local-publish .local-publish-choices.single { grid-template-columns: minmax(0, 1fr); max-width: 50%; }
+@media (max-width: 560px) { #dlg-local-publish .local-publish-choices.single { max-width: none; } }
+#dlg-local-publish .lp-choice[hidden] { display: none; }
 #dlg-local-publish .local-publish-steps code { overflow-wrap: anywhere; }
 /* A password in a dialog: a plain text field holding only dots, the password kept by app.js (secretField), so no browser
    takes it for a password to save. The dots a little apart, as a password field shows them. */
@@ -2717,3 +2722,9 @@ input.masked-password { letter-spacing: .12em; }
 input.made-binding, input.made-binding:focus { border-style: dashed; border-color: rgba(57, 197, 207, .45); background: rgba(57, 197, 207, .05); color: #9fe3e8; cursor: default; }
 /* Set up with HTTPS: only where it can be had, when the binding points here */
 .https-choice[hidden] { display: none; }
+/* A picture or PDF from the file browser: as large as the window allows, on a quiet ground */
+.preview-body { display: grid; flex: 1; min-height: 0; place-items: center; overflow: auto; border: 1px solid var(--line); border-radius: 8px;
+	background: repeating-conic-gradient(rgba(255, 255, 255, .035) 0 25%, transparent 0 50%) 0 0 / 20px 20px, rgba(0, 0, 0, .25); }
+.preview-image { display: block; max-width: 100%; max-height: 100%; object-fit: contain; }
+.preview-pdf { width: 100%; height: 100%; border: 0; background: #fff; }
+#preview-download .ico { width: 14px; height: 14px; margin: 0; }

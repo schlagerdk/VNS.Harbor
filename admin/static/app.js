@@ -1642,12 +1642,22 @@ function scriptSelect(site, env = null, className = "") {
 		panel.append(el("div", { className: "script-menu-footer" }, el("button", { type: "button", className: "small script-menu-new", role: "menuitem",
 			onclick: (event) => { event.stopPropagation(); closeMenu(); run(() => newCustomScript(site, target)); } }, svgIcon("plus"), el("span", { textContent: "New script…" }))));
 	}
+	// Placed in the window from the button, so no card or column cuts it off: under it (over it when there is no room
+	// below), and inside the window at either side
+	panel.place = () => {
+		const button = trigger.getBoundingClientRect();
+		const width = panel.offsetWidth, height = panel.offsetHeight;
+		panel.style.left = Math.max(8, Math.min(button.left, window.innerWidth - width - 8)) + "px";
+		const below = button.bottom + 8;
+		panel.style.top = (below + height > window.innerHeight - 8 && button.top - 8 - height >= 8 ? button.top - 8 - height : below) + "px";
+	};
 	trigger.onclick = (event) => {
 		event.stopPropagation();
 		const open = panel.hidden;
 		document.querySelectorAll(".script-menu-panel:not([hidden])").forEach((other) => { other.hidden = true; });
 		document.querySelectorAll(".script-menu-trigger[aria-expanded=true]").forEach((other) => other.setAttribute("aria-expanded", "false"));
 		panel.hidden = !open;
+		if (open) panel.place();
 		trigger.setAttribute("aria-expanded", String(open));
 		if (open) panel.querySelector('[role="menuitem"]')?.focus();
 	};
@@ -1722,6 +1732,10 @@ async function newCustomScript(site, target) {
 	await editCustomScript(site, target, name, content);
 }
 
+// An open script menu follows its button as the page or a dialog scrolls, and as the window changes size
+for (const type of ["scroll", "resize"]) window.addEventListener(type, () => {
+	document.querySelectorAll(".script-menu-panel:not([hidden])").forEach((panel) => panel.place?.());
+}, { capture: true, passive: true });
 document.addEventListener("click", (event) => {
 	if (event.target.closest?.(".script-menu")) return;
 	document.querySelectorAll(".script-menu-panel:not([hidden])").forEach((panel) => { panel.hidden = true; });
@@ -3772,10 +3786,13 @@ function showLocalPublish(options) {
 	let saved = {};
 	try { saved = JSON.parse(localStorage.getItem("harbor-local-publish") || "{}"); } catch (_) { /* none */ }
 	form.elements.lp_system.value = saved.system || (windows ? "windows" : "unix");
-	form.elements.lp_access.value = saved.access || (currentUser.admin ? "ssh" : "token");
+	// SSH as root is an administrator's: a user publishes with their token, and is never offered SSH
+	form.elements.lp_access.value = currentUser.admin ? saved.access || "ssh" : "token";
+	$("#local-publish-access").hidden = !currentUser.admin;
+	dialog.querySelector(".local-publish-choices").classList.toggle("single", !currentUser.admin);
 	const render = () => {
 		const system = form.elements.lp_system.value;
-		const access = form.elements.lp_access.value;
+		const access = currentUser.admin ? form.elements.lp_access.value : "token";
 		try { localStorage.setItem("harbor-local-publish", JSON.stringify({ system, access })); } catch (_) { /* not kept */ }
 		const file = system === "windows" ? "publish-harbor.cmd" : "publish-harbor.sh";
 		const script = localPublishScript({ ...options, system, access });
@@ -3798,8 +3815,8 @@ function showLocalPublish(options) {
 	form.elements.lp_system.forEach((input) => { input.onchange = render; });
 	form.elements.lp_access.forEach((input) => { input.onchange = render; });
 	render();
-	// SSH by the server's internal IPv4 address, as Harbor knows its own addresses
-	api("/api/server-address").then(({ addresses }) => {
+	// SSH by the server's internal IPv4 address, as Harbor knows its own addresses; an administrator's alone
+	if (currentUser.admin) api("/api/server-address").then(({ addresses }) => {
 		const internal = (addresses || []).find((address) => /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(address));
 		if (internal && dialog.open) {
 			options.sshHost = internal;
@@ -3825,15 +3842,15 @@ async function renderPublishToken(made = null) {
 		renderPublishToken(await api("/api/publish-token", { method: "POST" }));
 	};
 	const remove = async () => {
-		if (!(await ask({ title: "Remove your publish token?", message: "Publishing with it stops: make a new one, or publish over SSH.", input: false, ok: "Remove", danger: true }))) return;
+		if (!(await ask({ title: "Remove your publish token?", message: "Publishing with it stops: make a new one" + (currentUser.admin ? ", or publish over SSH." : " to publish again."), input: false, ok: "Remove", danger: true }))) return;
 		shownPublishToken = null;
 		renderPublishToken(await api("/api/publish-token", { method: "DELETE" }));
 	};
 	const head = el("div", { className: "local-publish-token-head" },
 		el("span", { className: "local-publish-token-icon", "aria-hidden": "true" }, svgIcon("key")),
-		el("div", {}, el("strong", { textContent: "Publish without SSH: your publish token" }),
+		el("div", {}, el("strong", { textContent: currentUser.admin ? "Publish without SSH: your publish token" : "Your publish token" }),
 			el("small", { textContent: info.exists ? `You have one, made ${when(info.made)}, last used ${when(info.used)}. It is shown only when it is made.`
-				: "With a token the script publishes over HTTPS to Harbor, as you, to the sites you may publish. Without one it uses SSH as root." })));
+				: "With a token the script publishes over HTTPS to Harbor, as you, to the sites you may publish." + (currentUser.admin ? " Without one it uses SSH as root." : " Make one to publish.") })));
 	const actions = el("div", { className: "local-publish-token-actions" },
 		button(info.exists ? "Make a new token" : "Make a token", make, info.exists ? "" : "primary"),
 		...(info.exists ? [button("Remove", remove, "tool-danger")] : []));
@@ -4849,6 +4866,29 @@ $("#files-filter").onclick = () => {
 	renderFiles();
 };
 
+// Pictures and PDFs: shown in a window of their own (the server sends them as they are, nothing of them runs)
+const PREVIEW_KINDS = { png: "image", jpg: "image", jpeg: "image", gif: "image", webp: "image", avif: "image", bmp: "image", ico: "image", pdf: "pdf" };
+const previewKind = (name) => PREVIEW_KINDS[name.includes(".") ? name.split(".").pop().toLowerCase() : ""] || "";
+const previewDialog = $("#dlg-preview");
+function previewFile(path, item) {
+	const url = fsUrl("download") + "?path=" + encodeURIComponent(path);
+	$("#preview-title").textContent = item.name;
+	$("#preview-size").textContent = sizeText(item.size);
+	const failed = () => $("#preview-body").replaceChildren(el("p", { className: "empty", textContent: "It could not be shown. Download it instead." }));
+	$("#preview-body").replaceChildren(previewKind(item.name) === "pdf"
+		? el("iframe", { className: "preview-pdf", src: url + "&inline=1", title: item.name })
+		: el("img", { className: "preview-image", src: url + "&inline=1", alt: item.name, onerror: failed }));
+	$("#preview-download").onclick = () => el("a", { href: url, download: item.name }).click();
+	if (!previewDialog.open) previewDialog.showModal();
+	$("#preview-close").focus();
+}
+$("#preview-download").dataset.tone = "blue";
+$("#preview-download").prepend(svgIcon("download"));
+$("#preview-download").classList.add("toned-action");
+$("#preview-close").onclick = () => previewDialog.close();
+// Closed, nothing of it is kept loading
+previewDialog.addEventListener("close", () => $("#preview-body").replaceChildren());
+
 async function loadFiles(path, suffix = "") {
 	const generation = ++filesLoadGeneration;
 	const data = await api(fsUrl("list") + "?path=" + encodeURIComponent(path));
@@ -4877,11 +4917,14 @@ function renderFiles() {
 	}
 	for (const item of items) {
 		const full = join(currentPath, item.name);
-		const canOpen = item.dir || item.editable;
+		// A picture or PDF is shown, though it cannot be edited
+		const shown = !item.dir && !item.editable && previewKind(item.name);
+		const canOpen = item.dir || item.editable || Boolean(shown);
+		const open = () => item.dir ? loadFiles(full) : shown ? previewFile(full, item) : editFile(full);
 		const link = el(canOpen ? "button" : "span", {
 			className: `file-entry ${item.dir ? "file-folder" : "file-document"} ${canOpen ? "file-name" : "file-uneditable"}`,
-			...(canOpen ? { type: "button", onclick: () => run(() => (item.dir ? loadFiles(full) : editFile(full))) } : {}),
-		}, svgIcon(item.dir ? "folder" : "file"), el("span", { textContent: item.name }));
+			...(canOpen ? { type: "button", onclick: () => run(open) } : {}),
+		}, svgIcon(item.dir ? "folder" : shown ? "eye" : "file"), el("span", { textContent: item.name }));
 		const actions = el("div", { className: "file-tools" });
 		const tools = el("td", { className: "tools" }, actions);
 		if (!item.dir) {
@@ -4899,7 +4942,7 @@ function renderFiles() {
 			actions.append(button);
 		}
 		body.append(el("tr", canOpen ? { className: "file-open-row", onclick: (event) => {
-			if (!event.target.closest(".tools, button, a")) run(() => item.dir ? loadFiles(full) : editFile(full));
+			if (!event.target.closest(".tools, button, a")) run(open);
 		} } : {}, el("td", {}, link),
 		el("td", { className: "file-size num muted", textContent: item.dir ? "" : sizeText(item.size) }),
 		el("td", { className: "file-modified muted", textContent: formatDate(item.modified * 1000) }),

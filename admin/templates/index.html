@@ -522,7 +522,7 @@
     <div class="local-publish-choices">
       <div class="lp-choice" role="radiogroup" aria-label="Your computer"><span class="choice-label">Your computer</span>
         <label><input type="radio" name="lp_system" value="unix" checked><span>macOS / Linux</span></label><label><input type="radio" name="lp_system" value="windows"><span>Windows</span></label></div>
-      <div class="lp-choice" role="radiogroup" aria-label="Access"><span class="choice-label">Access to the server</span>
+      <div class="lp-choice" id="local-publish-access" role="radiogroup" aria-label="Access"><span class="choice-label">Access to the server</span>
         <label><input type="radio" name="lp_access" value="token" checked><span>Publish token</span></label><label><input type="radio" name="lp_access" value="ssh"><span>SSH as root</span></label></div>
     </div>
     <ol class="local-publish-steps" id="local-publish-steps"></ol>
@@ -1196,6 +1196,16 @@
     <p class="hint">Verify the decoded characters in the editor. Nothing changes until you save; saving converts the file to UTF-8.</p>
     <menu><button value="cancel" class="cancel-link">Cancel</button><button value="open" class="primary">Open</button></menu>
   </form>
+</dialog>
+
+<!-- A picture or PDF from the file browser, shown as it is: it cannot be edited here -->
+<dialog id="dlg-preview" class="wide editor preview-dialog" aria-labelledby="preview-title">
+  <div class="toolbar editor-toolbar">
+    <div class="editor-file"><div class="editor-file-line"><strong id="preview-title"></strong></div><span id="preview-size" class="muted"></span></div>
+    <button type="button" id="preview-download">Download</button>
+    <button type="button" id="preview-close">Close</button>
+  </div>
+  <div id="preview-body" class="preview-body"></div>
 </dialog>
 
 <dialog id="dlg-editor" class="wide editor">

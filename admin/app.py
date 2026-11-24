@@ -469,9 +469,15 @@ def require_site(site, env, action):
 
 @app.after_request
 def headers(response):
-    response.headers["X-Frame-Options"] = "DENY"
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["Referrer-Policy"] = "no-referrer"
+    if response.headers.pop("X-Harbor-Preview", None):
+        # A picture or PDF shown in the file browser's preview: framed by the admin only, and nothing of it runs
+        response.headers["X-Frame-Options"] = "SAMEORIGIN"
+        response.headers["Content-Security-Policy"] = "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; frame-ancestors 'self'"
+        response.headers["Cache-Control"] = "no-store"
+        return response
+    response.headers["X-Frame-Options"] = "DENY"
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; "
         "worker-src 'self' blob:; connect-src 'self' ws: wss:; frame-ancestors 'none'"
@@ -6071,8 +6077,7 @@ def remote_fs(site, action):
             app.logger.error("Invalid remote file response for %s", site)
             abort(502, "Invalid remote file response")
     if action == "download":
-        return send_file(io.BytesIO(base64.b64decode(response["content"])), as_attachment=True,
-                         download_name=os.path.basename(data["path"]))
+        return file_response(io.BytesIO(base64.b64decode(response["content"])), os.path.basename(data["path"]))
     if action == "list" and isinstance(response.get("items"), list):
         folder = str(data.get("path") or "").replace("\\", "/").strip("/")
         response["items"] = [item for item in response["items"] if not hidden_from_user(folder + "/" + str(item.get("name", "")))]
@@ -6236,7 +6241,24 @@ def fs_download(root=None):
     full = fs_path(request.args.get("path", ""))
     if not os.path.isfile(full):
         return error("Not a file", 404)
-    return send_file(full, as_attachment=True)
+    return file_response(full, os.path.basename(full))
+
+
+# What the file browser shows itself (?inline=1): pictures and PDFs, never SVG or HTML, which could run in the admin
+PREVIEW_TYPES = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp",
+                 ".avif": "image/avif", ".bmp": "image/bmp", ".ico": "image/x-icon", ".pdf": "application/pdf"}
+
+
+def file_response(source, name):
+    """A file to download, or with ?inline=1 one of PREVIEW_TYPES to show; source is a path or a file object"""
+    kind = PREVIEW_TYPES.get(os.path.splitext(name)[1].lower())
+    if request.args.get("inline") != "1":
+        return send_file(source, as_attachment=True, download_name=name)
+    if not kind:
+        abort(400, "Only pictures and PDFs are shown here: download it")
+    response = send_file(source, mimetype=kind, as_attachment=False, download_name=name)
+    response.headers["X-Harbor-Preview"] = "1"
+    return response
 
 
 def configure_sql_startup_on_admin_start():

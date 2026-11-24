@@ -16,10 +16,13 @@ FUNCTIONS = {"fs_full_path", "target_folder", "target_ids", "target_scope", "tar
              "site_migrated", "migrated_site_json", "custom_scripts_dir", "migrated_scripts", "target_scripts",
              # An empty binding: an administrator's, and only one (1.0.77); custom scripts of an environment
              "any_name_site", "env_scripts_dir", "listed_scripts",
+             # A file downloaded, or a picture or PDF shown (1.0.79)
+             "file_response",
              "harbor_script_command", "publish_entry", "save_migrated_setting", "harbor_argv",
              # Publish all goes the way the work goes
              "environment_order"}
-CONSTANTS = {"TARGET_RE", "TARGET_SCRIPTS", "MANAGED_DIR", "HARBOR_SCRIPTS", "HARBOR_TARGET_SCRIPTS", "HARBOR_WRAPPERS", "ENVIRONMENT_ORDER"}
+CONSTANTS = {"TARGET_RE", "TARGET_SCRIPTS", "MANAGED_DIR", "HARBOR_SCRIPTS", "HARBOR_TARGET_SCRIPTS", "HARBOR_WRAPPERS", "ENVIRONMENT_ORDER",
+             "PREVIEW_TYPES"}
 
 
 import importlib.util
