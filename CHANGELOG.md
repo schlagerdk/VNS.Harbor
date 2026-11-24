@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.74]
+
+### Features
+
+- The logo leads from Settings to the start page (Web Server, or SQL Server for one who starts there); elsewhere it does as before
+
 ## [1.0.73] - 2026-11-24
 
 ### Other

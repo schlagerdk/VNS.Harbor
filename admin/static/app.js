@@ -6800,11 +6800,13 @@ function applyStartView() {
 	brand.href = sql ? "#sql" : "#sites";
 	brand.title = "Reload";
 }
-// The logo leads from a site back to the overview, and reloads the overview or SQL Server where you are.
-// Opened in a new tab, its address leads to the start page.
+// The logo leads from a site back to the overview, from Settings to the start page (Web Server, or SQL Server for one
+// who starts there), and reloads the overview or SQL Server where you are. Opened in a new tab, its address leads to the
+// start page.
 document.querySelector(".brand").onclick = (event) => {
 	event.preventDefault();
 	run(async () => {
+		if (currentView === "server") return go(startView === "sql" ? "#sql" : "#sites");
 		if (currentView !== "sql") await loadSites();
 		if (currentView === "site") go("#sites");
 		else await route();
