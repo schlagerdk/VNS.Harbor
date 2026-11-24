@@ -965,6 +965,8 @@ function matches(site) {
 // ------------------------------------------------------------------ button icons
 // Inline SVG (Lucide-style, 24x24 stroke icons); the CSP does not allow external images
 const iconPaths = {
+	plus: "M12 5v14M5 12h14",
+	archive: "M3 4h18v4H3zM5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8M10 12h4",
 	grid: "M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z",
 	database: "M12 3c4.4 0 8 1.3 8 3s-3.6 3-8 3-8-1.3-8-3 3.6-3 8-3zM4 6v6c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12v6c0 1.7 3.6 3 8 3s8-1.3 8-3v-6",
 	hexagon: "M12 2l8.7 5v10L12 22l-8.7-5V7zM12 8v8M8.5 10v4M15.5 10v4",
@@ -6149,10 +6151,17 @@ function sqlCell(label, props, ...children) {
 	return cell;
 }
 
-function sqlBackupRow(backup, allowDelete = true) {
-	return el("tr", {}, sqlCell("Database", { textContent: backup.database_name }),
+// A backup's row: the latest of a database with its icon and, with older ones, Older to fold them out under it
+function sqlBackupRow(backup, allowDelete = true, older = 0) {
+	const name = allowDelete
+		? el("div", { className: "sql-database-name" }, el("span", { className: "sql-name-icon backup" }, svgIcon("archive")), el("span", { textContent: backup.database_name }))
+		: el("span", { className: "sql-older-name", textContent: backup.database_name });
+	const olderButton = older ? [el("button", { type: "button", className: "sql-older-toggle", ariaExpanded: "false",
+		title: `Show the ${older} older backup${older === 1 ? "" : "s"} of ${backup.database_name}` },
+		svgIcon("chevron"), el("span", { textContent: "Older" }), el("span", { className: "sql-older-count", textContent: String(older) }))] : [];
+	return el("tr", {}, sqlCell("Database", {}, name),
 		sqlCell("Finished", { textContent: formatDate(backup.finished) }), sqlCell("Size", { className: "num", textContent: formatSqlSize(backup.size_mb) }),
-		sqlCell("Server path", { textContent: backup.path }), sqlCell("Actions", {}, el("div", { className: "actions" }, ...(!canSql(sqlSelected(), backup.database_name, "restore") ? [] : [el("button", {
+		sqlCell("Server path", { textContent: backup.path }), sqlCell("Actions", {}, el("div", { className: "actions" }, ...olderButton, ...(!canSql(sqlSelected(), backup.database_name, "restore") ? [] : [el("button", {
 			textContent: "Restore", disabled: backup.media_count !== 1,
 			title: backup.error || (backup.media_count !== 1 ? "Striped or damaged backups are not supported" : "Restore this full backup"),
 			onclick: () => run(() => sqlRestore(backup)),
@@ -6245,7 +6254,8 @@ async function refreshSql() {
 			const row = el("tr", { className: "sql-database-row", onclick: (event) => {
 				if (!event.target.closest("button, a, input, select") && !getSelection().toString()) toggle.click();
 			} });
-			row.append(sqlCell("Name", {}, el("div", { className: "sql-database-name" }, toggle, el("span", { textContent: database.name }))),
+			row.append(sqlCell("Name", {}, el("div", { className: "sql-database-name" }, toggle,
+				el("span", { className: "sql-name-icon" + (database.id <= 4 ? " system" : "") }, svgIcon("database")), el("span", { textContent: database.name }))),
 				sqlCell("Size", { className: "num", textContent: formatSqlSize(database.size_mb) }), sqlCell("State", {
 					className: "sql-state-" + database.state.toLowerCase(),
 					textContent: database.state,
@@ -6253,16 +6263,22 @@ async function refreshSql() {
 				sqlCell("Recovery", { textContent: database.recovery }), sqlCell("Actions", {}, actions));
 			$(database.id <= 4 ? "#sql-system-rows" : "#sql-databases").append(row);
 		}
+		// The latest backup of each database, its older ones folded under it behind Older
 		for (const [latest, ...older] of groupSqlBackups(data.backups)) {
-			$("#sql-backups").append(sqlBackupRow(latest));
-			if (older.length) {
-				const history = el("details", { className: "sql-backup-history" },
-					el("summary", { textContent: `${older.length} older backup${older.length === 1 ? "" : "s"} for ${latest.database_name}` }),
-					el("table", {},
-						el("thead", {}, el("tr", {}, ...["Database", "Finished", "Size", "Server path", "Actions"].map((label) => el("th", { textContent: label, className: label === "Size" ? "num" : "" })))),
-						el("tbody", {}, ...older.map((backup) => sqlBackupRow(backup, false)))));
-				$("#sql-backups").append(el("tr", {}, el("td", { colSpan: 5 }, history)));
-			}
+			const row = sqlBackupRow(latest, true, older.length);
+			const rows = older.map((backup) => {
+				const earlier = sqlBackupRow(backup, false);
+				earlier.classList.add("sql-backup-older");
+				earlier.hidden = true;
+				return earlier;
+			});
+			const toggle = row.querySelector(".sql-older-toggle");
+			if (toggle) toggle.onclick = () => {
+				const open = toggle.getAttribute("aria-expanded") !== "true";
+				toggle.setAttribute("aria-expanded", String(open));
+				for (const earlier of rows) earlier.hidden = !open;
+			};
+			$("#sql-backups").append(row, ...rows);
 		}
 		decorateSql();
 	} catch (error) {
@@ -7390,13 +7406,13 @@ function serverToolCards(status) {
 				on: sql.installed && sql.running,
 				action: rowActions(...(sql.installed
 					? [updateButton(sql.newer ?? null, () => confirmServerTool("Update SQL Server?", `Takes the newest update of this version${sql.newer ? ` (${sql.newer})` : ""}. The service restarts, so take a backup first.`, "Update", { tool: "sql_update" })),
-						toolButton("Remove…", () => askServerTool("sql_uninstall"), "ghost tool-row-action tool-danger")]
-					: [toolButton("Install…", () => askServerTool("sql_install", { older: sql.packages_for, ubuntu: status.os.version }), "primary tool-row-action")])),
+						toolButton("Remove…", () => askServerTool("sql_uninstall", { tools: tools.installed }), "ghost tool-row-action tool-danger")]
+					: [toolButton("Install…", () => askServerTool("sql_install", { older: sql.packages_for, ubuntu: status.os.version, tools: tools.installed }), "primary tool-row-action")])),
 			}),
 			toolRow("SQL tools", tools.installed ? "sqlcmd " + (tools.version || "") : "sqlcmd: runs the backups and database scripts, and SQL connections here", {
 				on: tools.installed,
 				action: rowActions(tools.installed
-					? toolButton("Remove", () => confirmServerTool("Remove the SQL tools?", "sqlcmd goes, and the backups stop. SQL Server and its databases stay.", "Remove", { tool: "tools_uninstall" }, true), "ghost tool-row-action tool-danger")
+					? toolButton("Remove", () => confirmServerTool("Remove the SQL tools?", "sqlcmd goes, the backups stop, and the SQL connections on the SQL Server page are removed: none of them works without it. SQL Server and its databases stay.", "Remove", { tool: "tools_uninstall" }, true), "ghost tool-row-action tool-danger")
 					: toolButton("Install", () => runServerTool({ tool: "tools_install" }), "primary tool-row-action")),
 			}),
 			toolRow("sa password", sa.set ? "Set: the backups and database scripts log in with it" : "Not set: the backups and database scripts need it", {
@@ -8144,10 +8160,12 @@ function askServerTool(tool, options = {}) {
 			choiceCards("edition", "Edition", SQL_EDITIONS, "Developer"),
 			...passwordFields(),
 			el("p", { className: "hint", textContent: "At least 8 characters, with three of: upper case, lower case, digits and symbols. The backups and database scripts use it too." }),
-			checkOption("with_tools", "Install the SQL tools (sqlcmd)", "Needed for backups and the database scripts", true, "terminal", "blue"),
+			// Offered only when they are not here already
+			...(options.tools ? [] : [checkOption("with_tools", "Install the SQL tools (sqlcmd)", "Needed for backups and the database scripts", true, "terminal", "blue")]),
 		]],
 		sql_uninstall: ["database", "Remove SQL Server", "The service stops and SQL Server goes from this server.", "Remove SQL Server", () => [
-			checkOption("with_tools", "Remove the SQL tools (sqlcmd) too", "Keep them to reach SQL Servers elsewhere", false, "terminal", "amber"),
+			// Offered only when they are here
+			...(options.tools ? [checkOption("with_tools", "Remove the SQL tools (sqlcmd) too", "Keep them to reach SQL Servers elsewhere", false, "terminal", "amber")] : []),
 			checkOption("delete_data", "Delete the databases, logs and backups", "Everything in /var/opt/mssql. Kept when not chosen.", false, "trash", "red"),
 			el("div", { className: "server-action-danger", hidden: true, id: "server-action-delete" },
 				el("p", { className: "server-action-confirm" }, "Type ", el("button", {
@@ -8330,6 +8348,8 @@ async function openServers() {
 		$("#servers-release").textContent = data.release ? `This server runs Harbor ${data.release}` : "Other servers this Harbor works with";
 		const others = data.servers.filter((item) => !item.this).length;
 		$("#servers-count").textContent = `${others} other server${others === 1 ? "" : "s"}`;
+		// With none yet, a dashed card beside this server's adds the first: Add server comes in the toolbar once there is one
+		$("#servers-list").previousElementSibling.hidden = !others;
 		// Linux and Windows apart, each under a heading with its count: this server first among the Linux ones
 		const windows = data.servers.filter((item) => item.kind === "windows");
 		const linux = data.servers.filter((item) => item.kind !== "windows").sort((a, b) => (b.this ? 1 : 0) - (a.this ? 1 : 0));
@@ -8339,9 +8359,14 @@ async function openServers() {
 			el("span", { className: "servers-group-count", textContent: String(items.length) }),
 			el("span", { className: "servers-group-sub", textContent: sub })),
 			...items.map((item) => serverCard(item, data.release))];
+		const first = el("button", { type: "button", className: "server-add-card", onclick: () => askAddServer() },
+			el("span", { className: "server-add-icon" }, svgIcon("plus")),
+			el("span", { className: "server-add-text" },
+				el("strong", { textContent: "Add your first server" }),
+				el("small", { textContent: "A Linux server Harbor installs and updates from here, or a Windows server to import sites from" })));
 		list.replaceChildren(...group("server", "Linux", "Harbor runs there: it installs and updates it from here", linux),
-			...(windows.length ? group("windows", "Windows", "Shares and their logins, to import and copy sites from", windows) : []),
-			...(data.servers.some((item) => !item.this) ? [] : [el("div", { className: "server-tools-loading", textContent: "No other servers yet. Add one to install and update Harbor there from here." })]));
+			...(others ? [] : [first]),
+			...(windows.length ? group("windows", "Windows", "Shares and their logins, to import and copy sites from", windows) : []));
 	} catch (error) {
 		list.replaceChildren(el("div", { className: "server-tools-loading", textContent: error.message }));
 	} finally {

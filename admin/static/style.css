@@ -105,8 +105,18 @@ dialog.sql-query-dialog[open] { display: flex; flex-direction: column; }
 .sql-query-bar { display: flex; align-items: center; gap: 12px; margin-top: 12px; }
 .sql-query-bar .hint { flex: 1; margin: 0; }
 .sql-query-bar #sql-query-status { font-size: 12px; white-space: nowrap; }
-.sql-backup-history summary { cursor: pointer; color: var(--muted); padding: 6px 0; }
-.sql-backup-history table { margin-top: 8px; }
+/* A database's and a backup's name with a small icon; a backup's older ones fold out under it behind Older */
+.sql-name-icon { display: inline-grid; flex: none; place-items: center; width: 24px; height: 24px; border-radius: 7px; background: rgba(163, 113, 247, .14); color: var(--purple); }
+.sql-name-icon .ico { width: 13px; height: 13px; margin: 0; }
+.sql-name-icon.system { background: rgba(255, 255, 255, .06); color: var(--muted); }
+.sql-name-icon.backup { background: rgba(88, 166, 255, .12); color: var(--blue); }
+.sql-older-toggle { display: inline-flex; align-items: center; gap: 6px; }
+.sql-older-toggle .ico { width: 13px; height: 13px; margin: 0; transition: transform .15s ease; }
+.sql-older-toggle[aria-expanded="true"] .ico { transform: rotate(90deg); }
+.sql-older-count { padding: 0 7px; border-radius: 999px; background: rgba(255, 255, 255, .08); color: var(--muted); font-size: 11.5px; font-weight: 600; line-height: 18px; }
+tr.sql-backup-older > td { background: rgba(255, 255, 255, .015); color: var(--muted); font-size: 13px; }
+tr.sql-backup-older > td:first-child { padding-left: 46px; }
+.sql-older-name { color: var(--muted); }
 .error { color: var(--red); }
 #search { min-width: 260px; }
 
@@ -505,7 +515,9 @@ dialog.files-dialog { padding: 18px; }
 	#view-sql td[data-label]::before { content: attr(data-label); color: var(--muted); font-weight: 400; }
 	#view-sql td[colspan] { display: block; padding: 0; border: 0; }
 	#view-sql .actions { flex-wrap: wrap; justify-content: flex-start; min-width: 0; margin: 0; }
-	#view-sql .sql-backup-history { min-width: 0; overflow-wrap: anywhere; }
+	/* An older backup is a card set in under the latest */
+	#view-sql tbody > tr.sql-backup-older { margin: 6px 0 0 16px; }
+	#view-sql tr.sql-backup-older > td:first-child { padding-left: 0; }
 }
 
 .list { position: relative; overflow-x: auto; }
@@ -739,6 +751,17 @@ a.btn-link .ico { width: 13px; height: 13px; flex: none; }
 .servers-group-count { padding: 1px 8px; border-radius: 999px; background: rgba(255, 255, 255, .07); color: var(--muted); font-size: 12px; font-weight: 600; }
 .servers-group-sub { margin-left: auto; color: var(--muted); font-size: 12px; text-align: right; }
 @media (max-width: 720px) { .servers-group { flex-wrap: wrap; } .servers-group-sub { flex-basis: 100%; margin-left: 36px; text-align: left; } }
+/* Servers with no other server yet: a dashed card beside this server's, as Add environment's card for a server to add */
+.server-add-card { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; min-width: 0; min-height: 180px;
+	padding: 20px; border: 1px dashed var(--line); border-radius: 12px; background: transparent; color: var(--muted); text-align: center; cursor: pointer;
+	transition: border-color .15s, background .15s; }
+.server-add-card:hover:not(:where(:disabled, .disabled, .off)) { border-color: rgba(88, 166, 255, .55); background: rgba(88, 166, 255, .04); }
+.server-add-card:focus-visible { outline: none; border-color: rgba(88, 166, 255, .55); }
+.server-add-icon { display: grid; place-items: center; width: 44px; height: 44px; border-radius: 12px; background: rgba(88, 166, 255, .12); color: var(--blue); }
+.server-add-icon .ico { width: 20px; height: 20px; margin: 0; }
+.server-add-text { display: grid; gap: 4px; max-width: 300px; }
+.server-add-text strong { color: var(--text); font-size: 15px; }
+.server-add-text small { color: var(--blue); font-size: 12.5px; line-height: 1.45; }
 /* The servers to choose from in a dialog: a card each, the chosen one blue with a tick, and a dashed card to add one */
 .server-picker-row { display: grid; gap: 8px; margin-top: 14px; }
 .server-picker-row[hidden] { display: none; }

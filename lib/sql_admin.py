@@ -585,15 +585,51 @@ WHERE sid=SUSER_SID({literal(login["name"])})"""))
     return result
 
 
+def progress(data):
+    """A step for the admin's window (as harbor's System sends it), which a terminal does not show"""
+    if os.environ.get("HARBOR_PROGRESS") == "1":
+        print(f"\x1b]7777;harbor;{json.dumps(data)}\x07", end="", flush=True)
+
+
+def step(text):
+    progress({"type": "step", "text": text})
+    print(text, flush=True)
+
+
+# What each action does, as its step in the admin's window
+ACTION_STEPS = {"backup_all": "Back up every database", "create": "Create {name}", "backup": "Back up {name}", "drop": "Delete {name}",
+                "copy": "Copy {name} to {target}", "restore": "Restore {target}", "delete_backup": "Delete the backup file of {name}"}
+
+
+def connect_error(settings, error):
+    """What a failed first connection means, in place of what sqlcmd says of it"""
+    text = str(error)
+    where = f'{settings["host"]}:{settings["port"]}'
+    if "Login failed" in text:
+        return RuntimeError(f"SQL Server on {where} refused the login of {settings['username']}: the connection's password is not "
+                            "the one SQL Server has. Edit the connection and give it the right one.")
+    if any(sign in text for sign in ("Login timeout expired", "Server is not found", "TCP Provider", "network-related")):
+        return RuntimeError(f"No SQL Server answers on {where}. Install SQL Server in Server tools, start it, or edit the connection "
+                            "to point to a server that runs one.")
+    return error
+
+
 def run_action(settings, data):
     if not isinstance(data, dict):
         raise ValueError("Expected a SQL action object")
     action = data.get("action")
     if action not in ("backup_all", "create", "backup", "drop", "copy", "restore", "delete_backup"):
         raise ValueError("Unknown SQL action")
-    print("SQL operation: " + action, flush=True)
-    rows = databases(settings)
     name = data.get("database", "")
+    connect = f'Connect to {settings["name"]}'
+    work = ACTION_STEPS[action].format(name=name, target=data.get("target", ""))
+    progress({"type": "plan", "steps": [connect, work]})
+    step(connect)
+    try:
+        rows = databases(settings)
+    except RuntimeError as error:
+        raise connect_error(settings, error) from None
+    step(work)
     if action == "backup_all":
         count = 0
         for row in rows:
@@ -692,6 +728,8 @@ def main():
             payload["login_password"] = password
         run_action(connection(args.store, args.connection), payload)
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
+        # The window shows it at the step that failed, as for harbor's own commands
+        progress({"type": "warning", "text": str(exc)})
         print("ERROR: " + str(exc), file=sys.stderr, flush=True)
         return 1
     return 0

@@ -284,6 +284,44 @@ class SqlWithoutQuestionsTests(Server):
         self.assertIn("-P 'Secret-123'", (sql / "drop_db.sh").read_text())
 
 
+class AdminConnectionTests(Server):
+    def test_the_admins_connections_to_sql_server_here_get_the_new_sa_password(self):
+        """A connection held its own copy of the sa password, which failed once SQL Server was installed again with
+        another (1.0.69)"""
+        import json
+        app = self.root / "var/www/admin.example.com/app"
+        app.mkdir(parents=True)
+        (app / "config.json").write_text('{"secret_key": "x"}')
+        connection = {"name": "Here", "host": "localhost", "port": 1433, "username": "sa", "password": "old", "backup_directory": "/b",
+                      "trust_certificate": True, "ssh_enabled": False}
+        stored = [connection | {"id": "1"}, connection | {"id": "2", "host": "web-01"}, connection | {"id": "3", "host": "198.51.100.7"},
+                  connection | {"id": "4", "username": "app"}, connection | {"id": "5", "host": "sql.example.net"},
+                  connection | {"id": "6", "host": "localhost", "port": 1434}]
+        (app / "sql-connections.json").write_text(json.dumps(stored))
+        (app / "sql-connections.json").chmod(0o600)
+        system = self.system(**{"hostname -I": "198.51.100.7 2001:db8::7", "hostname -f": "web-01.example.com", "hostname": "web-01"})
+        with mock.patch.dict(os.environ, {"VNS_WEB_ROOT": "/var/www"}):
+            server.save_sa_password(system, "New-Secret-1")
+        saved = {item["id"]: item["password"] for item in json.loads((app / "sql-connections.json").read_text())}
+        # Here by its names and addresses, as sa on 1433: not another login, server or port
+        self.assertEqual(saved, {"1": "New-Secret-1", "2": "New-Secret-1", "3": "New-Secret-1", "4": "old", "5": "old", "6": "old"})
+        self.assertEqual((app / "sql-connections.json").stat().st_mode & 0o777, 0o600)
+        self.assertIn("The SQL connection of admin.example.com to SQL Server here has the new sa password.", system.said)
+
+
+    def test_the_admins_connections_go_with_the_sql_tools(self):
+        import json
+        app = self.root / "var/www/admin.example.com/app"
+        app.mkdir(parents=True)
+        (app / "config.json").write_text('{"secret_key": "x"}')
+        (app / "sql-connections.json").write_text(json.dumps([{"id": "1", "host": "localhost"}, {"id": "2", "host": "sql.example.net"}]))
+        system = self.system(**{"dpkg -s mssql-tools": Result(1)})
+        with mock.patch.dict(os.environ, {"VNS_WEB_ROOT": "/var/www"}):
+            server.uninstall_sql_tools(system, True)
+        self.assertEqual(json.loads((app / "sql-connections.json").read_text()), [])
+        self.assertIn("The 2 SQL connections of admin.example.com removed.", system.said)
+
+
 class SaSecretTests(Server):
     def test_the_password_moves_into_harbor_and_is_used_from_there(self):
         import stat

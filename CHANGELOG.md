@@ -2,6 +2,20 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.69] - 2026-11-24
+
+### Features
+
+- Servers with no other server yet: a dashed card beside this server's adds the first one, in place of a line of text, and Add server comes in the toolbar once there is one
+- SQL Server: each database and the latest backup of each have a small icon by their name, and a backup's older ones fold out under it with Older (and their count) in its row, in place of a line under each
+- A SQL action (create, back up, delete…) shows its steps, Connect and the work, and when no SQL Server answers or the login is refused, says so in plain words
+
+### Fixes
+
+- The admin's SQL connections to SQL Server here as sa get the new sa password when SQL Server is installed or its sa password changed: they kept their own copy, and SQL Server refused it
+- Removing the SQL tools removes the SQL connections too, as none of them works without sqlcmd (the dialog says so)
+- Install SQL Server offers to install the SQL tools, and Remove SQL Server to remove them, only when that is not already so
+
 ## [1.0.68] - 2026-11-24
 
 ### Features

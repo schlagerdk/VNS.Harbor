@@ -122,6 +122,7 @@ def uninstall_sql_tools(system, assume_yes=None):
     system.run("apt-get", "remove", "--purge", "-y", *packages)
     system.path("/etc/profile.d/mssql-tools.sh").unlink(missing_ok=True)
     system.say("SQL tools removed. SQL Server, shared ODBC packages and Microsoft repositories are unchanged.")
+    remove_admin_connections(system)
     stop_backups(system, "the SQL tools are gone")
 
 
@@ -153,6 +154,73 @@ def save_sa_password(system, password):
     write_json(path, {"sa_password": password}, private=True)
     for place in (system.path("/etc/harbor/secrets"), path.parent):
         place.chmod(0o700)
+    update_admin_connections(system, password)
+
+
+# The names SQL Server here is reached by, besides this server's own names and addresses
+LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1", "."}
+
+
+def admin_connections(system):
+    """(admin site, its file of SQL connections, the connections) for each admin site here that has any"""
+    import json
+    from harbor.install.admin import admin_sites, web_root
+    for site in admin_sites(system):
+        path = system.path(web_root()) / site / "app/sql-connections.json"
+        try:
+            items = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else []
+        except (OSError, ValueError):
+            continue
+        if isinstance(items, list) and items:
+            yield site, path, items
+
+
+def write_admin_connections(path, items):
+    """As the admin writes them: whole or not at all, with the file's owner and mode"""
+    import json
+    import os
+    info = path.stat()
+    descriptor, temporary = tempfile.mkstemp(dir=path.parent, prefix=".sql-connections-")
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+            json.dump(items, stream)
+        os.chmod(temporary, info.st_mode & 0o777)
+        try:
+            os.chown(temporary, info.st_uid, info.st_gid)
+        except PermissionError:
+            pass
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def update_admin_connections(system, password):
+    """The admin's SQL connections that log in as sa to the SQL Server here get its new sa password: each held a copy,
+    which no longer matched once SQL Server was installed again or its password changed (1.0.69)"""
+    names = set(LOCAL_HOSTS)
+    for argv in (("hostname",), ("hostname", "-f"), ("hostname", "-I")):
+        names.update(name.lower() for name in system.output(*argv, check=False).split())
+    for site, path, items in admin_connections(system):
+        changed = False
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            host = str(item.get("host", "")).strip("[]").rstrip(".").lower()
+            if (str(item.get("username", "")).lower() == "sa" and item.get("port", 1433) == 1433 and not item.get("ssh_enabled")
+                    and host in names and item.get("password") != password):
+                item["password"] = password
+                changed = True
+        if changed:
+            write_admin_connections(path, items)
+            system.say(f"The SQL connection of {site} to SQL Server here has the new sa password.")
+
+
+def remove_admin_connections(system):
+    """The admin's SQL connections go with the SQL tools: without sqlcmd none of them can be used (1.0.69)"""
+    for site, path, items in admin_connections(system):
+        write_admin_connections(path, [])
+        system.say(f"The {len(items)} SQL connection{'' if len(items) == 1 else 's'} of {site} removed.")
 
 
 def import_sa_password(system, folder=None):
