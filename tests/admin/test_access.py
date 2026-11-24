@@ -112,6 +112,26 @@ class AccessTests(unittest.TestCase):
         self.assertEqual(self.user(sql=True, connections={"c1": {"databases": [], "actions": ["create"]}})["connections"], {})
         self.assertNotIn("own", self.user(sql=True, connections={"c1": {"databases": ["*"], "own": True}})["connections"]["c1"])
 
+    def test_a_template_keeps_access_and_nothing_of_the_person(self):
+        """A user's access kept under a name to start new users from: never their name, password, lock or what they made
+        (1.0.74)"""
+        template = access.clean_template({"name": "  Web   developer ", "access": {
+            "role": "user", "web": True, "create_sites": True, "sftp": True, "limits": {"sites": 3, "site_mb": 2048},
+            "sites": {"shop.dk": {"envs": ["main"], "actions": ["logs"]}, "gone.dk": {"envs": ["main"], "actions": ["logs"]}},
+            "username": "anna", "password_hash": "x", "disabled": True, "made": {"sites": ["shop.dk"]}}}, sites=SITES, connections=["c1"])
+        self.assertEqual(template["name"], "Web developer")
+        self.assertTrue(template["id"].startswith("t_"))
+        kept = template["access"]
+        self.assertEqual(set(kept), set(access.TEMPLATE_KEYS))
+        self.assertEqual(list(kept["sites"]), ["shop.dk"], "a site that is not here is not kept")
+        self.assertEqual(kept["limits"], {"sites": 3, "site_mb": 2048})
+        self.assertTrue(kept["create_sites"])
+        again = access.clean_template({"name": "Web developer", "access": kept}, sites=SITES, connections=["c1"], existing=template)
+        self.assertEqual(again["id"], template["id"], "saved again under its name, the same template")
+        for bad in ({"name": ""}, {"name": "x" * 61}, "x"):
+            with self.assertRaises(ValueError):
+                access.clean_template(bad, sites=SITES)
+
     def test_an_admin_has_no_grants_and_can_do_everything(self):
         admin = self.user(role="admin", sites={"shop.dk": {"envs": ["main"], "actions": ["logs"]}})
         self.assertEqual(admin["sites"], {})

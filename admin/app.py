@@ -3813,6 +3813,39 @@ def linux_names():
         return {}
 
 
+@app.route("/api/user-templates", methods=["POST"])
+def api_user_templates():
+    """A user's access kept as a template under a name (one of the same name is replaced), to start new users from"""
+    require_admin()
+    with CONFIG_LOCK:
+        templates = cfg.setdefault("user_templates", [])
+        data = request.get_json(silent=True) or {}
+        name = " ".join(str(data.get("name", "")).split())
+        same = next((item for item in templates if item["name"].casefold() == name.casefold()), None)
+        try:
+            template = access.clean_template(data, sites=site_environments(), connections=sql_connection_ids(), existing=same)
+        except ValueError as exc:
+            return error(str(exc))
+        cfg["user_templates"] = [template if item is same else item for item in templates] if same else templates + [template]
+        save_config()
+    audit("Saved the user template " + template["name"])
+    return jsonify(template=template, templates=cfg["user_templates"])
+
+
+@app.route("/api/user-templates/<template_id>", methods=["DELETE"])
+def api_user_template(template_id):
+    require_admin()
+    with CONFIG_LOCK:
+        templates = cfg.get("user_templates", [])
+        gone = next((item for item in templates if item["id"] == template_id), None)
+        if gone is None:
+            abort(404, "No such template")
+        cfg["user_templates"] = [item for item in templates if item is not gone]
+        save_config()
+    audit("Deleted the user template " + gone["name"])
+    return jsonify(templates=cfg["user_templates"])
+
+
 @app.route("/api/users", methods=["GET", "POST"])
 def api_users():
     require_admin()
@@ -3821,7 +3854,7 @@ def api_users():
         names = linux_names()
         listed = [dict(user, linux=names.get(user.get("id"), "")) for user in access.visible_users(cfg, me())]
         return jsonify(users=listed, sites=sites, connections=sql_connections_public(),
-                       site_actions=access.SITE_ACTIONS, sql_actions=access.SQL_ACTIONS)
+                       site_actions=access.SITE_ACTIONS, sql_actions=access.SQL_ACTIONS, templates=cfg.get("user_templates", []))
     data = request.get_json(silent=True) or {}
     password = data.get("password") or ""
     if len(password) < 12:

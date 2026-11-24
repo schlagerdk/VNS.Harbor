@@ -2,6 +2,14 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.76]
+
+### Features
+
+- A card's state (On, Found, Running, Set up) stands level with its buttons wherever the card is
+- A user's access can be saved as a template (Save as template), and a new user starts from one with a click under Start from: their sites, SFTP, SQL Server and limits, never their name or password. A template is deleted from there
+- Usage shows each site's kind beside its name (HTML, Python, C# / .NET, Umbraco), as its card on Web Server does. Each part has its total large and, as Apple shows storage, a stripe in groups (sites by kind, the five biggest databases each, the rest as Other) with what each colour is and its share under it; each line its size, its share in per cent and a stripe of it, lit under the pointer. From 1000 MB a size is shown in GB
+
 ## [1.0.75] - 2026-11-24
 
 ### Features

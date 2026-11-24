@@ -251,6 +251,23 @@ def forget_made(user, kind, name, connection=None):
     return False
 
 
+# A user template: what a user may do, kept under a name to start new users from. Their name, password, lock and what
+# they made are never in it.
+TEMPLATE_KEYS = ("role", "web", "create_sites", "sftp", "sql", "manage_connections", "sites", "connections", "limits")
+
+
+def clean_template(data, sites=None, connections=None, existing=None):
+    """A template from what the user window sent, checked as a user is: {id, name, access}"""
+    if not isinstance(data, dict):
+        raise ValueError("Expected a template.")
+    name = " ".join(str(data.get("name", "")).split())
+    if not name or len(name) > 60:
+        raise ValueError("Give the template a name of at most 60 characters.")
+    given = data.get("access") if isinstance(data.get("access"), dict) else {}
+    user = clean({**{key: given[key] for key in TEMPLATE_KEYS if key in given}, "username": "template"}, sites=sites, connections=connections)
+    return {"id": (existing or {}).get("id") or "t_" + secrets.token_hex(6), "name": name, "access": {key: user[key] for key in TEMPLATE_KEYS if key in user}}
+
+
 def grant_database(user, connection, database):
     if is_admin(user):
         return False

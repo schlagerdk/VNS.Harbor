@@ -768,6 +768,19 @@ a.btn-link .ico { width: 13px; height: 13px; flex: none; }
 #dlg-sql-database label.sql-make-login { margin: 2px 0 14px; }
 #dlg-sql-database label.sql-make-login[hidden] { display: none; }
 #dlg-user textarea[name=sftp_keys] { resize: none; height: 84px; }
+/* Start from: a template each as a chip, the one used lit, with an x that deletes it */
+#dlg-user .user-templates { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin: 0 0 14px; padding: 12px 14px; border: 1px dashed rgba(163, 113, 247, .4); border-radius: 12px; background: rgba(163, 113, 247, .05); }
+#dlg-user .user-templates[hidden] { display: none; }
+.user-templates-label { color: var(--muted); font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.user-template-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.user-template { display: inline-flex; align-items: stretch; border: 1px solid var(--line); border-radius: 999px; background: var(--panel2); overflow: hidden; }
+.user-template.active { border-color: rgba(163, 113, 247, .7); background: rgba(163, 113, 247, .16); }
+.user-template button { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border: 0; border-radius: 0; background: transparent; color: var(--text); font-size: 12.5px; font-weight: 600; }
+.user-template button .ico { width: 13px; height: 13px; margin: 0; }
+.user-template .user-template-use .ico { color: #c9a8ff; }
+.user-template .user-template-delete { padding: 5px 8px 5px 4px; color: var(--muted); }
+.user-template button:hover:not(:where(:disabled, .disabled, .off)) { background: rgba(255, 255, 255, .05); }
+.user-template .user-template-delete:hover:not(:where(:disabled, .disabled, .off)) { color: var(--red); }
 .sql-tables-locked .ico { width: 12px; height: 12px; margin: 0; }
 .sql-table-actions { opacity: 1; }
 .sql-new-table { display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; border: 1px dashed rgba(88, 166, 255, .45); border-radius: 8px; background: transparent; color: var(--blue); font-size: 12.5px; font-weight: 600; }
@@ -1496,7 +1509,8 @@ body[data-role="user"] #settings-menu, body[data-role="user"] #btn-multi, body[d
 .usage-meter.over .usage-bar span { background: var(--red); }
 .usage-meter.over .usage-meter-head span { color: var(--red); }
 .usage-none { margin: 0; font-size: 13px; }
-.usage-overview { display: grid; gap: 14px; }
+.usage-overview { display: grid; gap: 4px; }
+.usage-overview > .usage-section-head { margin-bottom: 6px; }
 .confirm-field { display: grid; gap: 6px; margin-bottom: 12px; }
 /* A dropdown as the page's own (premiumSelect) */
 .pselect { position: relative; min-width: 0; }
@@ -1518,11 +1532,48 @@ body[data-role="user"] #settings-menu, body[data-role="user"] #btn-multi, body[d
 .confirm-field-label { color: var(--muted); font-size: 12.5px; }
 /* Usage under Settings: the alerts, then the sites and each connection's databases, each across the width */
 #server-usage-list > .tool-card { grid-column: 1 / -1; }
-.usage-total { margin-left: auto; color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.usage-total { margin-left: auto; color: var(--text); font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
+/* In the overview a line is lit under the pointer, so its name and its size are seen together; the size larger */
+.usage-overview .usage-meter { margin: 0 -10px; padding: 7px 10px; border-radius: 9px; transition: background .12s; }
+.usage-overview .usage-meter:hover:not(:where(:disabled, .disabled, .off)) { background: rgba(88, 166, 255, .08); }
+/* The overview: a stripe of who takes what, then a line each with its size, its share and a stripe in its kind's colour */
+.usage-overview { --k: #8b949e; }
+.usage-overview .kind-umbraco, .usage-seg.kind-umbraco { --k: #1fa8d8; }
+.usage-overview .kind-csharp, .usage-seg.kind-csharp { --k: #7c5cff; }
+.usage-overview .kind-python, .usage-seg.kind-python { --k: #4b93d1; }
+.usage-overview .kind-html, .usage-seg.kind-html { --k: #e8603c; }
+.usage-overview .kind-database-0, .usage-seg.kind-database-0 { --k: #a371f7; }
+.usage-overview .kind-database-1, .usage-seg.kind-database-1 { --k: #db61a2; }
+.usage-overview .kind-database-2, .usage-seg.kind-database-2 { --k: #39c5bb; }
+.usage-overview .kind-database-3, .usage-seg.kind-database-3 { --k: #d29922; }
+.usage-overview .kind-database-4, .usage-seg.kind-database-4 { --k: #58a6ff; }
+.usage-overview .kind-other, .usage-seg.kind-other { --k: #6e7681; }
+/* Under the stripe, what each colour is and its share, as Apple shows storage */
+.usage-legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: -4px 0 12px; }
+.usage-legend-item { display: inline-flex; align-items: center; gap: 7px; color: var(--text); font-size: 12.5px; cursor: default; }
+.usage-legend-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--k); box-shadow: 0 0 0 2px color-mix(in srgb, var(--k) 25%, transparent); }
+.usage-legend-share { color: var(--muted); font-variant-numeric: tabular-nums; }
+.usage-section-title { display: grid; gap: 1px; min-width: 0; }
+.usage-section-title strong { font-size: 15px; }
+.usage-section-title small { color: var(--muted); font-size: 12px; }
+.usage-overview .usage-section-icon { width: 34px; height: 34px; border-radius: 10px; }
+.usage-overview .usage-total { font-size: 20px; font-weight: 700; letter-spacing: -.01em; }
+.usage-stack { display: flex; gap: 2px; height: 10px; margin: 2px 0 12px; overflow: hidden; border-radius: 999px; background: rgba(255, 255, 255, .06); }
+.usage-seg { --k: #8b949e; min-width: 3px; height: 100%; background: var(--k); transition: filter .15s; }
+.usage-seg:hover:not(:where(:disabled, .disabled, .off)) { filter: brightness(1.25); }
+.usage-size { display: grid; justify-items: end; gap: 1px; flex: none; }
+.usage-size strong { color: var(--text); font-size: 14.5px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.usage-size small { color: var(--muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.usage-overview .usage-meter.over .usage-size strong { color: var(--red); }
+.usage-share-bar { height: 4px; overflow: hidden; border-radius: 999px; background: rgba(255, 255, 255, .05); }
+.usage-share-bar span { display: block; height: 100%; border-radius: inherit; background: var(--k); opacity: .75; }
 .usage-owner { margin-left: 8px; padding: 1px 8px; border-radius: 999px; background: rgba(88, 166, 255, .12); color: var(--blue); font-size: 11px; font-weight: 600; }
 .usage-owner.none { background: rgba(255, 255, 255, .06); color: var(--muted); }
+.usage-meter-head .badge.usage-kind { margin-left: 8px; font-size: 10.5px; }
 .usage-open { padding: 0; border: 0; background: none; color: var(--text); font: inherit; font-weight: 600; cursor: pointer; }
-.usage-open:hover:not(:where(:disabled, .disabled, .off)) { color: var(--blue); text-decoration: underline; text-underline-offset: 3px; }
+/* A name that opens: it turns blue under the pointer, nothing behind it */
+.usage-open:hover:not(:where(:disabled, .disabled, .off)) { background: transparent; border-color: transparent; color: var(--blue); }
+.usage-open:focus-visible { outline: 2px solid rgba(88, 166, 255, .55); outline-offset: 3px; border-radius: 4px; }
 button.usage-owner { border: 1px solid rgba(88, 166, 255, .3); cursor: pointer; font-family: inherit; line-height: 1.5; }
 button.usage-owner:hover:not(:where(:disabled, .disabled, .off)) { background: rgba(88, 166, 255, .22); border-color: rgba(88, 166, 255, .6); }
 /* Over a limit: across the top of every page, not to be missed */
@@ -2443,7 +2494,8 @@ dialog.newsite.crontab-dialog.editing form.crontab-form { margin: 0; padding: 20
 #server-tools-list { grid-template-columns: minmax(0, 1fr); gap: 10px; }
 #server-tools-list .tool-card { gap: 10px; padding: 12px 14px; }
 #server-tools-list .tool-head { flex-wrap: wrap; row-gap: 8px; }
-#server-tools-list .tool-head .tool-actions { flex: none; margin: 0; padding: 0; }
+/* Buttons moved up into a card's head stand level with its state, wherever the card is (not pushed down as at its foot) */
+.tool-head .tool-actions { flex: none; align-items: center; margin: 0; padding: 0; }
 #server-tools-list .tool-text { margin-left: 48px; }
 #server-tools-list .tool-rows { margin-left: 48px; }
 #server-tools-list .tool-row { padding: 8px 12px; }

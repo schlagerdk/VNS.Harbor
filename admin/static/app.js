@@ -1031,6 +1031,7 @@ function matches(site) {
 const iconPaths = {
 	plus: "M12 5v14M5 12h14",
 	search: "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-3.5-3.5",
+	x: "M18 6 6 18M6 6l12 12",
 	alert: "M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01",
 	link: "M10 13a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1.5 1.5M14 11a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07l1.5-1.5",
 	eye: "M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12zM12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z",
@@ -7111,7 +7112,8 @@ function askReport(keepAlive) {
 
 // The usage alerts: a mail when a user's site or database grows past the size their limits allow (the limits are on
 // each user), checked once an hour
-const usageSize = (mb) => mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`;
+// From 1000 MB in GB (1.0 GB, not 1020.6 MB); under it in MB, whole from 10 MB
+const usageSize = (mb) => mb >= 1000 ? `${(mb / 1024).toFixed(1)} GB` : `${mb >= 10 ? Math.round(mb) : Math.round(mb * 10) / 10} MB`;
 function usageLines(over) {
 	return over.length
 		? over.map((item) => el("li", { className: "report-problem" }, el("span", { className: "dot bad" }),
@@ -7188,7 +7190,9 @@ async function openUsageSettings() {
 	const measuring = el("div", { className: "tool-card tool-card-wide usage-overview" }, loadingState("Measuring the sites and databases…"));
 	list.replaceChildren(...(alertsCard ? [alertsCard] : []), measuring);
 	try {
-		const all = await api("/api/usage/all");
+		const [all, known] = await Promise.all([api("/api/usage/all"), sitesLoaded ? Promise.resolve({ sites: allSites }) : api("/api/sites").catch(() => ({ sites: [] }))]);
+		// Each site's kind beside its name, as its card on Web Server has it
+		const kindOf = Object.fromEntries((known.sites || []).map((site) => [site.name, site.kind]));
 		const total = (items) => usageSize(Math.round(items.reduce((sum, item) => sum + item.size_mb, 0) * 10) / 10);
 		// The user opens at the size of what was clicked: that site's, or that database's on its connection
 		const openUser = (id, target) => async () => {
@@ -7201,10 +7205,51 @@ async function openUsageSettings() {
 		const meter = (item, open, target) => usageMeter(item.name, item.size_mb, item.limit_mb,
 			(item.limit_mb == null ? usageSize(item.size_mb) : `${usageSize(item.size_mb)} of ${usageSize(item.limit_mb)}`), item.user, open,
 			item.user_id ? openUser(item.user_id, target) : null);
-		const section = (icon, title, items, empty, open, target) => el("section", { className: "tool-card tool-card-wide usage-overview" },
-			el("div", { className: "usage-section-head" }, el("span", { className: "usage-section-icon" }, svgIcon(icon)), el("strong", { textContent: title }),
-				el("span", { className: "usage-total", textContent: items.length ? `${items.length} · ${total(items)}` : "" })),
-			...(items.length ? items.map((item) => meter(item, () => open(item), target(item))) : [el("p", { className: "muted usage-none", textContent: empty })]));
+		// A part: its total, a stripe of what each takes of it (in its kind's colour), and a line each with its share
+		const section = (icon, title, items, empty, open, target) => {
+			const sum = items.reduce((all, item) => all + item.size_mb, 0);
+			const share = (item) => sum ? item.size_mb / sum * 100 : 0;
+			const shareText = (item) => { const value = share(item); return value >= 10 ? `${Math.round(value)} %` : value >= 1 ? `${value.toFixed(1)} %` : "< 1 %"; };
+			// As Apple shows storage: the stripe in groups, each its colour, and under it what each is with its share. Sites
+			// by their kind; databases each its own, the five biggest, the rest as Other
+			const sorted = [...items].sort((a, b) => b.size_mb - a.size_mb);
+			const databaseKey = (item) => { const at = sorted.indexOf(item); return at < 5 ? "database-" + at : "other"; };
+			const kindOfItem = (item) => icon === "globe" ? kindOf[item.name] || "other" : databaseKey(item);
+			const groups = new Map();
+			for (const item of sorted) {
+				const key = kindOfItem(item);
+				const label = icon === "globe" ? kindLabel[key] || "Other" : key === "other" ? "Other" : item.name;
+				const group = groups.get(key) || { key, label, mb: 0, names: [] };
+				group.mb += item.size_mb;
+				group.names.push(item.name);
+				groups.set(key, group);
+			}
+			const groupShare = (group) => sum ? group.mb / sum * 100 : 0;
+			const percent = (value) => value >= 10 ? `${Math.round(value)} %` : value >= 1 ? `${value.toFixed(1)} %` : "< 1 %";
+			const ordered = [...groups.values()].sort((a, b) => b.mb - a.mb);
+			const stack = el("div", { className: "usage-stack", role: "img", ariaLabel: ordered.map((group) => `${group.label} ${percent(groupShare(group))}`).join(", ") },
+				...ordered.filter((group) => group.mb > 0).map((group) => el("span", { className: "usage-seg kind-" + group.key, style: `width: ${groupShare(group)}%`,
+					title: `${group.label}: ${usageSize(Math.round(group.mb * 10) / 10)} · ${percent(groupShare(group))}` + (icon === "globe" ? `\n${group.names.join(", ")}` : "") })));
+			const legend = el("div", { className: "usage-legend" }, ...ordered.map((group) => el("span", { className: "usage-legend-item kind-" + group.key,
+				title: `${usageSize(Math.round(group.mb * 10) / 10)}` + (icon === "globe" ? ` · ${group.names.join(", ")}` : "") },
+				el("span", { className: "usage-legend-dot" }), el("span", { textContent: group.label }), el("span", { className: "usage-legend-share", textContent: percent(groupShare(group)) }))));
+			return el("section", { className: "tool-card tool-card-wide usage-overview" },
+				el("div", { className: "usage-section-head" }, el("span", { className: "usage-section-icon" }, svgIcon(icon)),
+					el("div", { className: "usage-section-title" }, el("strong", { textContent: title }), el("small", { textContent: items.length ? `${items.length} ${icon === "globe" ? (items.length === 1 ? "site" : "sites") : (items.length === 1 ? "database" : "databases")}` : "" })),
+					el("span", { className: "usage-total", textContent: items.length ? total(items) : "" })),
+				...(items.length && sum ? [stack, legend] : []),
+				...(items.length ? items.map((item, index) => {
+					const line = meter(item, () => open(item), target(item));
+					const kind = kindOfItem(item);
+					line.classList.add("kind-" + kind);
+					if (icon === "globe" && kindOf[item.name]) line.querySelector(".usage-open")?.after(el("span", { className: "badge usage-kind " + kind, textContent: kindLabel[kind] || kind }));
+					// The size, its share of the part under it; without a limit, a stripe of that share in its colour
+					const size = line.querySelector(".usage-meter-head > span");
+					size.replaceWith(el("span", { className: "usage-size" }, el("strong", { textContent: size.textContent }), el("small", { textContent: shareText(item) })));
+					if (!line.querySelector(".usage-bar")) line.append(el("div", { className: "usage-share-bar" }, el("span", { style: `width: ${Math.max(share(item), item.size_mb ? 1 : 0)}%` })));
+					return line;
+				}) : [el("p", { className: "muted usage-none", textContent: empty })]));
+		};
 		// A database opens the SQL page on its connection, its tab Databases
 		const openDatabase = (connection) => () => {
 			try { localStorage.setItem("vns-sql-connection", connection.id); localStorage.setItem("vns-sql-tab", "databases"); } catch (error) { /* none */ }
@@ -8732,16 +8777,20 @@ function databaseLimitFields(limits = {}) {
 	return element;
 }
 
-function openUserEditor(user = null) {
+function openUserEditor(user = null, template = null) {
+	// A user to change has an id; without one it is a new user, maybe from a template's access
+	const editing = Boolean(user?.id);
 	userForm.reset();
 	userForm.dataset.id = user?.id || "";
-	$("#user-title").textContent = user ? user.name || user.username : "Add user";
-	$("#user-description").textContent = user ? "Change what they may do. It counts at once; a new password logs them out." : "They log in with this name and password.";
+	$("#user-title").textContent = editing ? user.name || user.username : "Add user";
+	$("#user-description").textContent = editing ? "Change what they may do. It counts at once; a new password logs them out." : "They log in with this name and password.";
 	$("#user-error").textContent = "";
 	userForm.username.value = user?.username || "";
 	userForm.elements.name.value = user?.name || "";
-	userForm.password.required = !user;
-	userForm.password.placeholder = user ? "Leave empty to keep it" : "At least 12 characters";
+	userForm.password.required = !editing;
+	userForm.password.placeholder = editing ? "Leave empty to keep it" : "At least 12 characters";
+	// Changing a user: no templates; a new one: the templates, the one it started from lit
+	showUserTemplates(editing ? null : template || undefined);
 	userForm.querySelector(`input[name=role][value=${user?.role || "user"}]`).checked = true;
 	userForm.disabled.checked = Boolean(user?.disabled);
 	userForm.web.checked = user ? Boolean(user.web) : true;
@@ -8773,7 +8822,7 @@ function openUserEditor(user = null) {
 		.map(([name, envs]) => siteGrantRow(name, envs, user?.sites?.[name], user)));
 	$("#user-connections").replaceChildren(...(usersData.connections.length ? usersData.connections.map((connection) => connectionGrantRow(connection, user?.connections?.[connection.id], user))
 		: [el("p", { className: "muted", textContent: "There are no SQL connections yet." })]));
-	$("#user-delete").hidden = !user;
+	$("#user-delete").hidden = !editing;
 	showUserScope();
 	userDialog.showModal();
 	userForm.username.focus();
@@ -8788,24 +8837,63 @@ function showUserScope() {
 	$("#user-sftp-part").hidden = !userForm.web.checked;
 }
 userForm.onchange = (event) => { if (["role", "web", "sql", "sftp"].includes(event.target.name)) showUserScope(); };
+// What the user window gives: their role, the Web Server and its sites, SFTP, SQL Server and its connections, and the
+// limits; as saved with the user, and as a template keeps it
+function userAccess() {
+	const sites = {};
+	for (const row of $("#user-sites").children) {
+		const grant = row.collect?.();
+		if (grant) sites[row.dataset.site] = grant;
+	}
+	const connections = {};
+	const rows = [...$("#user-connections").children].filter((row) => row.collect);
+	rows.forEach((row, index) => {
+		const grant = row.collect();
+		if (grant) connections[usersData.connections[index].id] = grant;
+	});
+	return { role: userForm.role.value, web: userForm.web.checked, create_sites: userForm.create_sites.checked, sql: userForm.sql.checked,
+		manage_connections: userForm.manage_connections.checked, sites, connections, sftp: userForm.sftp.checked, limits: userLimits() };
+}
+// A new user starts from a template: a chip each above the fields, the one used lit; a template is deleted from there
+function showUserTemplates(chosen) {
+	const box = $("#user-templates");
+	const templates = usersData?.templates || [];
+	box.hidden = chosen === null || !templates.length;
+	if (box.hidden) return box.replaceChildren();
+	box.replaceChildren(el("span", { className: "user-templates-label", textContent: "Start from" }),
+		el("div", { className: "user-template-chips" }, ...templates.map((template) => el("span", { className: "user-template" + (chosen?.id === template.id ? " active" : "") },
+			el("button", { type: "button", className: "user-template-use", ariaPressed: String(chosen?.id === template.id), title: `Give the new user the access of ${template.name}`,
+				onclick: () => useUserTemplate(template) }, svgIcon("file"), template.name),
+			el("button", { type: "button", className: "user-template-delete", title: `Delete the template ${template.name}`, ariaLabel: `Delete the template ${template.name}`,
+				onclick: () => run(async () => {
+					if (!(await ask({ title: `Delete ${template.name}?`, message: "The template goes. Users made from it keep what they have.", input: false, ok: "Delete", danger: true }))) return;
+					usersData.templates = (await api("/api/user-templates/" + encodeURIComponent(template.id), { method: "DELETE" })).templates;
+					showUserTemplates(chosen?.id === template.id ? undefined : chosen);
+				}) }, svgIcon("x"))))));
+}
+function useUserTemplate(template) {
+	// What is typed already (the username, name and password) stays; the rest is the template's
+	const typed = { username: userForm.username.value, name: userForm.elements.name.value, password: userForm.password.value };
+	openUserEditor({ ...template.access, username: typed.username, name: typed.name }, template);
+	userForm.password.value = typed.password;
+}
+$("#user-template-save").dataset.tone = "purple";
+$("#user-template-save").prepend(svgIcon("file"));
+$("#user-template-save").classList.add("toned-action");
+$("#user-template-save").onclick = () => run(async () => {
+	const name = await ask({ title: "Save as template", message: "Its access (sites, SFTP, SQL Server and the limits) is kept under this name, for new users to start from. A template of the same name is replaced.",
+		placeholder: "Web developer", ok: "Save template" });
+	if (!name) return;
+	const saved = await api("/api/user-templates", { json: { name, access: userAccess() } });
+	usersData.templates = saved.templates;
+	if (!userForm.dataset.id) showUserTemplates(saved.template);
+	toast(`The template ${saved.template.name} is saved.`, "ok");
+});
 userForm.onsubmit = (event) => {
 	event.preventDefault();
 	run(async () => {
 		const id = userForm.dataset.id;
-		const sites = {};
-		for (const row of $("#user-sites").children) {
-			const grant = row.collect?.();
-			if (grant) sites[row.dataset.site] = grant;
-		}
-		const connections = {};
-		const rows = [...$("#user-connections").children].filter((row) => row.collect);
-		rows.forEach((row, index) => {
-			const grant = row.collect();
-			if (grant) connections[usersData.connections[index].id] = grant;
-		});
-		const body = { username: userForm.username.value.trim(), name: userForm.elements.name.value.trim(), role: userForm.role.value, disabled: userForm.disabled.checked,
-			web: userForm.web.checked, create_sites: userForm.create_sites.checked, sql: userForm.sql.checked,
-			manage_connections: userForm.manage_connections.checked, sites, connections, sftp: userForm.sftp.checked, limits: userLimits() };
+		const body = { username: userForm.username.value.trim(), name: userForm.elements.name.value.trim(), disabled: userForm.disabled.checked, ...userAccess() };
 		if (userForm.password.value) body.password = userForm.password.value;
 		const sftp = {};
 		if (userForm.sftp.checked && userForm.sftp_password.value) sftp.password = userForm.sftp_password.value;
