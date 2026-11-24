@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.73] - 2026-11-24
+
+### Other
+
+- Test: the header's addresses test follows the choice to turn them off in Top menu, so CI passes again (1.0.73)
+
 ## [1.0.72] - 2026-11-24
 
 ### Features
