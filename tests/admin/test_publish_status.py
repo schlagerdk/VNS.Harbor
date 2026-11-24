@@ -153,7 +153,7 @@ class PublishStatusTests(unittest.TestCase):
                  or isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "PROJECT_SCRIPTS"]
         from lib import data_sync
         from lib import database_info
-        ns = dict(os=os, glob=glob, re=re, _publish_module=tracking, _data_sync_module=data_sync, _database_module=database_info, default_site_name=lambda: "", setup_kind=lambda root: "html", published_project_info=lambda *args, **kwargs: None, WEB_ROOT=str(self.root.parent),
+        ns = dict(os=os, glob=glob, re=re, _publish_module=tracking, _data_sync_module=data_sync, _database_module=database_info, default_site_name=lambda: "", scripts_safe=lambda folder: True, listed_scripts=lambda folder: [], setup_kind=lambda root: "html", published_project_info=lambda *args, **kwargs: None, WEB_ROOT=str(self.root.parent),
                   APACHE_SITES=str(self.root), APACHE_ENABLED=str(self.root), SERVICE_DIR=str(self.root),
                   SCRIPT_RE=re.compile(r".*\.sh$"), ADMIN_SITE="admin.test",
                   read_text=lambda path: Path(path).read_text() if Path(path).is_file() else "",

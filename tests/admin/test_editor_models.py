@@ -29,6 +29,7 @@ const ask = async options => {prompts.push(options); return confirmation;};
 const toast = message => notices.push(message);
 const loadSites = async () => {};
 const refreshSnippetMenu = () => {};
+const showScriptRename = () => {};
 const api = async (url, options) => {
     calls.push({url, options});
     if (!options) return url.includes("encoding=")

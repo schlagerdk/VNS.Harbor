@@ -2,6 +2,13 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.78] - Unreleased
+
+### Bug fixes
+
+- An administrator saves a custom script also where its scripts folder is not root's yet: the script is root's, and the folder and the other scripts are left as they are until Make them root's… (saving refused before)
+- The tests follow 1.0.77: the frozen remote status, and the helpers the admin tests lift
+
 ## [1.0.77] - 2026-11-24
 
 ### Features

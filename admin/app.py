@@ -5724,18 +5724,18 @@ def custom_script_file(site):
     content = data.get("content", "")
     if not isinstance(content, str):
         abort(400, "Expected the script's text")
-    if os.path.isdir(folder) and not root_only(folder):
-        abort(400, f"{folder} can be changed by someone other than root, and its scripts run as root. Check it, then "
-                   f"chown -R root:root {folder} && chmod -R go-w {folder}")
-    os.makedirs(folder, mode=0o755, exist_ok=True)
-    os.chown(folder, 0, 0)
-    os.chmod(folder, 0o755)
+    # The script is saved as root's also in a folder someone else can change: the folder and the scripts not checked
+    # are left as they are, and run only once an administrator makes them root's (Make them root's… in the menu)
+    if not os.path.isdir(folder):
+        os.makedirs(folder, mode=0o755)
+        os.chown(folder, 0, 0)
+        os.chmod(folder, 0o755)
     with open(path, "w", encoding="utf-8", newline="") as handle:
         handle.write(content)
     os.chown(path, 0, 0)
     os.chmod(path, 0o755)
     audit("Saved the script %s of %s · %s" % (script, site, target))
-    return jsonify(ok=True)
+    return jsonify(ok=True, safe=scripts_safe(folder))
 
 
 @app.route("/api/sites/<site>/data-sync", methods=["POST"])

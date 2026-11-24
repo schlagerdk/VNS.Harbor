@@ -130,10 +130,11 @@ action = request.get("action")
 if action == "read":
     print(json.dumps({"content": path.read_text(encoding="utf-8") if path.is_file() else ""}))
 elif action == "save":
+    # Root's, also in a folder someone else can change: that folder is made root's only by Make them root's
     if not folder.is_dir():
         folder.mkdir(mode=0o755)
-    os.chown(folder, 0, 0)
-    os.chmod(folder, 0o755)
+        os.chown(folder, 0, 0)
+        os.chmod(folder, 0o755)
     path.write_text(str(request.get("content", "")), encoding="utf-8")
     os.chown(path, 0, 0)
     os.chmod(path, 0o755)

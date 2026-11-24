@@ -92,6 +92,12 @@ print(json.dumps({
     "binding": binding.group(1) if binding else "",
     "aliases": aliases,
     "port": port.group(1) if port else "",
+    # Its own custom scripts, in the scripts folder of its site folder, and whether they are root's alone (else not run)
+    "custom_scripts": sorted(path.name for path in Path("/var/www", site, "scripts").glob("*.sh") if path.is_file())
+        if Path("/var/www", site, "scripts").is_dir() else [],
+    "custom_scripts_safe": not Path("/var/www", site, "scripts").is_dir() or all(
+        item.lstat().st_uid == 0 and not item.lstat().st_mode & 0o022
+        for item in [Path("/var/www", site, "scripts"), *Path("/var/www", site, "scripts").glob("*.sh")]),
 }))
 PY
 REMOTE
