@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.72] - 2026-11-24
+
+### Features
+
+- Settings has Usage with every site and database, who made it and its limit (each site and database its own), deleting a user can take their sites and databases with them, the header's parts can be turned off, and the README shows SQL Server and Usage (1.0.71)
+
 ## [1.0.71] - 2026-11-24
 
 ### Features
