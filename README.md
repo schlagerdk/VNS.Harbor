@@ -25,7 +25,12 @@ sandbox of its own, and builds run as the unprivileged user `vns-build`.
 
 <p align="center">
   <img src="assets/screenshots/scheduled-jobs.jpg" alt="Scheduled jobs: root's crontab, a job at a time" width="49%" />
-  <img src="assets/screenshots/user.jpg" alt="A user: the sites, environments and actions they may use, SFTP and SQL Server" width="49%" />
+  <img src="assets/screenshots/user.jpg" alt="A user: Web Server, SFTP and SQL Server each a part, with the sites they may use, what they may do and how big a site of theirs may grow" width="49%" />
+</p>
+
+<p align="center">
+  <img src="assets/screenshots/sql.jpg" alt="SQL Server: a connection, its databases, backups and logins under tabs" width="49%" />
+  <img src="assets/screenshots/usage.jpg" alt="Usage: every site and database, who made it and its limit, with a mail when one grows past it" width="49%" />
 </p>
 
 ## Installation
