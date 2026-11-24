@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.75] - 2026-11-24
+
+### Features
+
+- The logo leads from Settings to the start page, and Settings has no Refresh button: the part open is read again when clicked in the menu (1.0.74)
+
 ## [1.0.74] - 2026-11-24
 
 ### Features
