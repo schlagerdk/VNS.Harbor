@@ -1,8 +1,8 @@
 """SFTP for the users of the admin (phase 8d of dev/HARBOR.md).
 
 A Harbor user only ever gets SFTP over SSH, never a shell, locked in /srv/harbor-sftp/<user>: root's folder, with a
-folder per site they have Files on, a bind mount of the site's folder. The site's group and its ACLs (8b) decide what
-they may do in it. Only users with SFTP turned on (the group harbor-sftp) may log in at all, with the password or the
+folder per site (or environment of a site here) they have Files on, a bind mount of its folder. Its group and its ACLs
+(8b) decide what they may do in it. Only users with SFTP turned on (the group harbor-sftp) may log in at all, with the password or the
 public keys set in the admin. Harbor stores neither: the password goes to chpasswd, the keys to ~/.ssh/authorized_keys.
 
 The SSH server's config is a file of Harbor's own in sshd_config.d, there only while a user has SFTP. It is checked
@@ -106,9 +106,11 @@ def mount_service(system, wanted):
 
 
 def make_mounts(system, plan):
-    """{user: [sites]}: each site a bind mount in the user's folder, and nothing else mounted there"""
+    """{user: {name: folder}}: each folder a bind mount under its name in the user's folder, and nothing else mounted
+    there. A plan saved before environments had folders of their own is {user: [sites]}."""
     now = mounted(system)
-    want = {f"{ROOT}/{user}/{site}": site for user, sites in plan.items() for site in sites}
+    plan = {user: mounts if isinstance(mounts, dict) else {site: f"/var/www/{site}" for site in mounts} for user, mounts in plan.items()}
+    want = {f"{ROOT}/{user}/{name}": folder for user, mounts in plan.items() for name, folder in mounts.items()}
     for folder in sorted(now - set(want), reverse=True):
         system.run("umount", folder, check=False, capture=True)
         try:
@@ -124,10 +126,10 @@ def make_mounts(system, plan):
         # The chroot is root's and not writable by others, or sshd refuses it; the user writes only in their sites
         system.run("chown", "root:root", f"{ROOT}/{user}", capture=True)
         home.chmod(0o755)
-    for folder, site in sorted(want.items()):
+    for folder, source in sorted(want.items()):
         if folder not in now:
             system.path(folder).mkdir(exist_ok=True)
-            system.run("mount", "--bind", f"/var/www/{site}", folder)
+            system.run("mount", "--bind", source, folder)
     # A user who no longer has SFTP: their folder goes (empty once its mounts are gone)
     root = system.path(ROOT)
     for home in root.iterdir() if root.is_dir() else []:
@@ -148,7 +150,7 @@ def remount(system):
 
 
 def sync(system, users, names, sites):
-    """users: the admin's users; names: {user id: Linux user}; sites: {site: Linux users with Files}"""
+    """users: the admin's users; names: {user id: Linux user}; sites: {mount name: (folder, Linux users with Files)}"""
     from harbor.server.users import group_exists, members
     on = {names[user["id"]] for user in users if user.get("sftp") and not user.get("disabled") and user.get("role") != "admin"
           and names.get(user["id"])}
@@ -163,7 +165,7 @@ def sync(system, users, names, sites):
     for name in sorted(on - current):
         system.run("gpasswd", "-a", name, GROUP, capture=True)
         system.run("usermod", "--unlock", name, check=False, capture=True)
-    plan = {name: sorted(site for site, users_with in sites.items() if name in users_with) for name in sorted(on)}
+    plan = {name: {mount: folder for mount, (folder, users_with) in sorted(sites.items()) if name in users_with} for name in sorted(on)}
     write_json(system.path(MOUNTS), plan)
     make_mounts(system, plan)
     mount_service(system, bool(on))

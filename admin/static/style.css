@@ -77,7 +77,8 @@ main { padding: 20px 24px; max-width: 1600px; margin: 0 auto; }
 .panel-empty .sites-empty-icon { width: 88px; height: 88px; margin-bottom: 18px; border-radius: 26px; }
 .panel-empty .sites-empty-icon .ico { width: 44px; height: 44px; }
 .panel-empty h2 { font-size: 22px; }
-.panel-empty p { margin-bottom: 20px; }
+/* Room for two lines of text, so the panels on the SQL page's tabs are as tall whatever each says (one line or two) */
+.sites-empty.panel-empty p { display: flex; align-items: center; justify-content: center; min-height: calc(2 * 1.7em); text-align: center; }
 .sites-empty h2 { margin: 0 0 12px; font-size: clamp(24px, 4vw, 32px); letter-spacing: -.03em; }
 .sites-empty p { max-width: 400px; margin: 0 0 28px; color: var(--muted); font-size: 15px; line-height: 1.7; }
 #btn-empty-new-site, #btn-empty-add-environment { display: inline-flex; align-items: center; gap: 10px; padding: 13px 28px; font-size: 16px; border-radius: 10px; box-shadow: 0 4px 24px rgba(63, 185, 80, .2); }
@@ -90,16 +91,48 @@ dialog.sql-query-dialog[open] { display: flex; flex-direction: column; }
 .sql-query-dialog .sql-query-output { flex: 1; min-height: 0; overflow: auto; margin: 12px 0 0; display: flex; flex-direction: column; gap: 14px; }
 .sql-query-output:empty { display: none; }
 .sql-result { flex: none; display: flex; flex-direction: column; min-height: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--panel); }
-.sql-result-count { padding: 8px 12px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px; background: linear-gradient(110deg, rgba(163, 113, 247, .08), transparent); }
+.sql-result-count { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px; background: linear-gradient(110deg, rgba(163, 113, 247, .08), transparent); }
 .sql-result-scroll { overflow: auto; max-height: 52vh; }
 /* One result fills the space there is and scrolls under its fixed header, without a second scroll bar */
 .sql-result:only-of-type { flex: 1 1 0; }
 .sql-result:only-of-type .sql-result-scroll { flex: 1 1 0; max-height: none; min-height: 0; }
 .sql-result-table { width: 100%; border-collapse: collapse; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+/* A table's rows: Add row in the bar over them, each row's pencil at its left and its trash can at its right */
+.sql-add-row { padding: 4px 10px; font-size: 12px; }
+.sql-add-row .ico { width: 13px; height: 13px; margin: 0; }
+.sql-result-table .sql-row-tools { width: 1%; padding: 3px 6px; }
+/* Pencil and trash can stay in sight while a wide table scrolls sideways: the first column held at the left, the
+   last at the right, on the table's own colour */
+.sql-result-table .sql-row-tools { position: sticky; z-index: 1; background: var(--panel); }
+.sql-result-table tr > .sql-row-tools:first-child { left: 0; box-shadow: 1px 0 0 var(--line); }
+.sql-result-table tr > .sql-row-tools:last-child { right: 0; box-shadow: -1px 0 0 var(--line); }
+.sql-result-table thead .sql-row-tools { z-index: 2; background: var(--panel2, #1c2129); }
+.sql-result-table td.sql-row-tools { overflow: visible; }
+.sql-row-action { display: inline-grid; place-items: center; width: 26px; height: 26px; padding: 0; border-radius: 7px;
+	border: 1px solid color-mix(in srgb, var(--tone) 35%, var(--line)); background: color-mix(in srgb, var(--tone) 9%, var(--panel2)); color: var(--tone); }
+.sql-row-action .ico { width: 13px; height: 13px; margin: 0; }
+/* Full strength always, as the tables' pencil and trash can: never a shadow of a button */
+/* A table's rows: each heading sorts them (ORDER BY, run again), its arrow up or down while it does */
+.sql-result-table th:has(> .sql-sort) { padding: 0; }
+.sql-sort { display: inline-flex; align-items: center; gap: 6px; width: 100%; padding: 7px 12px; border: 0; border-radius: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; white-space: nowrap; }
+.sql-result-table th.num .sql-sort { justify-content: flex-end; }
+.sql-sort:hover:not(:where(:disabled, .disabled, .off)) { background: rgba(255, 255, 255, .04); color: var(--text); }
+.sql-sort .ico { width: 12px; height: 12px; margin: 0; opacity: 0; transform: rotate(90deg); transition: transform .15s, opacity .15s; }
+.sql-sort:hover:not(:where(:disabled, .disabled, .off)) .ico { opacity: .45; }
+.sql-result-table th.sorted .sql-sort { color: var(--text); }
+.sql-result-table th.sorted .sql-sort .ico { opacity: 1; transform: rotate(-90deg); }
+.sql-result-table th.sorted .sql-sort.descending .ico { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .sql-sort .ico { transition: none; } }
 .sql-result-table th { position: sticky; top: 0; z-index: 1; padding: 7px 12px; background: var(--panel2, #1c2129); color: var(--muted); font-weight: 600; text-transform: none; letter-spacing: 0; text-align: left; white-space: nowrap; border-bottom: 1px solid var(--line); }
 .sql-result-table td { max-width: 420px; padding: 6px 12px; border-bottom: 1px solid rgba(255, 255, 255, .05); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .sql-result-table tbody tr:nth-child(even) td { background: rgba(255, 255, 255, .02); }
 .sql-result-table tbody tr:hover:not(:where(:disabled, .disabled, .off)) td { background: rgba(88, 166, 255, .08); }
+/* The pencil's and trash can's cells, held at the ends: as the row's colour, but solid, so what scrolls under them is
+   not seen through them */
+.sql-result-table tbody td.sql-row-tools { background: var(--panel); }
+.sql-result-table tbody tr:nth-child(even) td.sql-row-tools { background: linear-gradient(rgba(255, 255, 255, .02), rgba(255, 255, 255, .02)), var(--panel); }
+.sql-result-table tbody tr:hover:not(:where(:disabled, .disabled, .off)) td.sql-row-tools { background: linear-gradient(rgba(88, 166, 255, .08), rgba(88, 166, 255, .08)), var(--panel); }
+
 .sql-result-table .num { text-align: right; }
 .sql-result-table th.sql-fit { width: 1%; }
 .sql-result-table th.sql-grow { min-width: 18ch; }
@@ -179,6 +212,74 @@ tr.sql-backup-older > td:first-child { padding-left: 46px; }
 .badge.python { background: #3776ab; color: #fff; }
 .badge.html { background: #e34f26; color: #fff; }
 .badge.admin { background: var(--purple); color: #fff; }
+/* Who made something and who it is given to (an administrator's view): small muted chips, each with its icon */
+.who-chips { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; vertical-align: middle; }
+.who-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 280px; padding: 2px 8px; border: 1px solid var(--line); border-radius: 999px;
+	background: rgba(255, 255, 255, .03); color: var(--muted); font: 500 11.5px/1.5 var(--font, inherit); white-space: nowrap; }
+.who-chip > span { overflow: hidden; text-overflow: ellipsis; }
+.who-chip .ico { flex: none; width: 11px; height: 11px; margin: 0; }
+.who-chip .who-label { flex: none; opacity: .7; }
+.who-chip .who-label::after { content: ":"; }
+.who-chip.who-made .who-label::after { content: ""; }
+.who-chip.who-given { color: #a5c8ff; border-color: rgba(88, 166, 255, .3); background: rgba(88, 166, 255, .07); }
+.who-chip.who-owner { color: #c9a8ff; border-color: rgba(163, 113, 247, .35); background: rgba(163, 113, 247, .08); }
+.sql-database-name .who-chips { margin-left: 10px; }
+.sql-database-name .sql-database-kind { flex: none; margin-left: 10px; font-size: 10px; padding: 2px 7px; }
+.login-name-row { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-width: 0; }
+.detail-title .who-chips { margin-left: 4px; }
+/* A connection's engine: Microsoft SQL Server in its red, PostgreSQL in its blue */
+.badge.engine-badge { flex: none; text-transform: none; letter-spacing: 0; }
+.badge.engine-mssql { background: rgba(204, 41, 39, .18); color: #ff7b72; box-shadow: 0 0 0 1px rgba(204, 41, 39, .35) inset; }
+.badge.engine-postgres { background: rgba(51, 103, 145, .28); color: #79b8ff; box-shadow: 0 0 0 1px rgba(51, 103, 145, .55) inset; }
+.grant-connection-where { display: inline-flex; flex: none; align-items: center; gap: 8px; white-space: nowrap; }
+/* The one connection by the heading, its engine beside it */
+.sql-only-connection:not([hidden]) { display: inline-flex; align-items: center; gap: 12px; }
+/* A connection's name in Usage with its engine beside it */
+.usage-title-row { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; min-width: 0; }
+/* One connection alone: its name where the list would be, the label, the name and where it goes close together */
+.sql-connection-name { display: flex; align-items: center; gap: 10px; color: var(--text); font-size: 16px; font-weight: 600; line-height: 1.3; }
+.sql-connection-pick { display: inline-flex; align-items: center; gap: 12px; }
+.sql-connection-choice:has(.sql-connection-name:not([hidden])) { gap: 2px; }
+.sql-connection-choice:has(.sql-connection-name:not([hidden])) label { gap: 2px; }
+.sql-connection-name[hidden] { display: none; }
+/* May add SQL connections: to which SQL Servers, under it as the rows hanging on it are */
+#dlg-user .user-connection-engines { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; margin: -2px 0 6px 26px; padding: 10px 14px; border: 1px dashed var(--line); border-radius: 10px; }
+#dlg-user .user-connection-engines[hidden] { display: none; }
+#dlg-user .user-connection-engines .grant-label { margin: 0; }
+@media (max-width: 640px) { #dlg-user .user-connection-engines { margin-left: 0; } }
+/* The SQL page's tabs with the filter at their right; a row the filter leaves out is not shown */
+.sql-tabs-row { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 16px; }
+.sql-tabs-row .sql-tabs { margin: 0; }
+.sql-tabs-row .sql-filter { height: 46px; border-radius: 12px; }
+.sql-tabs-row .sql-filter-box { flex: 0 1 360px; margin-left: auto; }
+.sql-tabs-row .sql-filter-box[hidden] { display: none; }
+.sql-filter { width: 100%; min-width: 0; height: 38px; padding: 0 38px 0 36px; border: 1px solid var(--line); border-radius: 10px; background: rgba(0, 0, 0, .22); font-size: 13.5px; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .03); transition: background .15s, border-color .15s, box-shadow .15s; }
+.sql-filter:hover:not(:where(:disabled, .disabled, .off)) { border-color: rgba(255, 255, 255, .16); }
+.sql-filter:focus { outline: none; background: rgba(0, 0, 0, .3); border-color: rgba(88, 166, 255, .55); box-shadow: 0 0 0 3px rgba(88, 166, 255, .14); }
+.sql-filter::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; display: none; }
+.sql-filter-box:has(.sql-filter:not(:placeholder-shown)) .search-clear { display: grid; }
+.sql-filtered { display: none !important; }
+@media (max-width: 800px) { .sql-tabs-row .sql-filter-box { flex: 1 1 100%; margin-left: 0; } }
+/* Two ways on from an empty page, side by side */
+.sites-empty-actions { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; }
+/* PostgreSQL has no recovery model: no column for it */
+#view-sql[data-engine=postgres] .sql-recovery { display: none; }
+#sql-connection-host:empty { display: none; }
+#sql-connection-host { display: inline-flex; align-items: center; gap: 8px; }
+/* Microsoft SQL Server | PostgreSQL on the SQL page: a tab each above its connections, in its own colour, with how many */
+.sql-engine-switch { display: flex; gap: 8px; margin: 0 0 14px; }
+.sql-engine-switch[hidden] { display: none; }
+.sql-engine-option { --engine: #ff7b72; display: inline-flex; flex: 0 1 auto; align-items: center; gap: 10px; padding: 10px 16px; border: 1px solid var(--line);
+	border-radius: 12px; background: var(--panel); color: var(--muted); font-size: 14px; font-weight: 600; white-space: nowrap; }
+.sql-engine-option.engine-postgres { --engine: #79b8ff; }
+.sql-engine-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--engine); opacity: .55; }
+.sql-engine-option:hover:not(:where(:disabled, .disabled, .off, .active)) { color: var(--text); border-color: color-mix(in srgb, var(--engine) 45%, var(--line)); }
+.sql-engine-option.active { color: var(--text); border-color: color-mix(in srgb, var(--engine) 60%, var(--line)); background: color-mix(in srgb, var(--engine) 10%, var(--panel)); }
+.sql-engine-option.active .sql-engine-dot { opacity: 1; box-shadow: 0 0 0 3px color-mix(in srgb, var(--engine) 22%, transparent); }
+/* The connection bar in the colour of its engine */
+.sql-connection-bar[data-engine=mssql] { --tone: #ff7b72; }
+.sql-connection-bar[data-engine=postgres] { --tone: #79b8ff; }
+@media (max-width: 800px) { .sql-engine-option { flex: 1; justify-content: center; padding: 10px 12px; } }
 .badge.state-active { background: rgba(63, 185, 80, .2); color: var(--green); }
 .badge.env-missing { background: rgba(248, 81, 73, .18); color: #f85149; }
 .badge.publish-pending { background: rgba(210, 153, 34, .2); color: #d29922; }
@@ -200,6 +301,13 @@ a.link:hover:not(:where(:disabled, .disabled, .off)) { text-decoration: underlin
 .sql-connection-bar { --tone: var(--purple); display: flex; gap: 14px; align-items: center; flex-wrap: wrap; padding: 16px 18px;
 	background: linear-gradient(135deg, color-mix(in srgb, var(--tone) 10%, transparent), transparent 55%), var(--panel2); }
 .sql-connection-bar > button { min-height: 42px; }
+/* One line, one height: the icon, the connection (no label over it: the list says what it is) and the buttons, 42px each */
+.sql-connection-bar { align-items: center; }
+.sql-connection-bar .sql-connection-icon { width: 42px; height: 42px; }
+.sql-connection-bar > button, .sql-connection-select .pselect-trigger { box-sizing: border-box; height: 42px; }
+.sql-connection-bar .sql-connection-choice, .sql-connection-bar .sql-connection-choice label { gap: 0; }
+/* A name alone takes the room it needs: Edit connection follows it, not the width a list would have */
+.sql-connection-bar label:has(.sql-connection-name:not([hidden])) { min-width: 0; }
 .sql-connection-icon { width: 44px; height: 44px; border-radius: 12px; }
 .sql-connection-icon .ico { width: 22px; height: 22px; }
 .sql-connection-choice { display: grid; gap: 5px; min-width: 0; }
@@ -272,6 +380,16 @@ a.link:hover:not(:where(:disabled, .disabled, .off)) { text-decoration: underlin
 .package-version { max-width: 100%; padding: 5px 12px; border: 1px solid rgba(88, 166, 255, .5); border-radius: 6px; background: rgba(88, 166, 255, .15); color: var(--blue); font: 600 14px ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; }
 .package-error { margin: 12px 20px; color: var(--orange); font-size: 12px; }
 #files th:first-child, #files td:first-child { width: 100%; white-space: nowrap; }
+#files th[data-sort] { padding: 0; }
+#files .file-sort { display: flex; width: 100%; box-sizing: border-box; align-items: center; gap: 6px; height: 36px; padding: 0 14px; margin: 0; border-radius: 0; border: 0; background: transparent; color: inherit; font: inherit; text-transform: inherit; letter-spacing: inherit; cursor: pointer; white-space: nowrap; }
+#files .file-sort:hover:not(:where(:disabled, .disabled, .off)) { background: transparent; color: var(--text); }
+#files .file-sort .ico { width: 12px; height: 12px; margin: 0; opacity: 0; transform: rotate(90deg); transition: transform .15s, opacity .15s; }
+#files .file-sort:hover:not(:where(:disabled, .disabled, .off)) .ico { opacity: .45; }
+#files th.sorted .file-sort { color: var(--text); }
+#files th.sorted .file-sort .ico { opacity: 1; transform: rotate(-90deg); }
+#files th.sorted.descending .file-sort .ico { transform: rotate(90deg); }
+#files th.file-size .file-sort, #files th.file-modified .file-sort { justify-content: flex-end; }
+@media (prefers-reduced-motion: reduce) { #files .file-sort .ico { transition: none; } }
 #files .file-size, #files .file-modified { text-align: right; white-space: nowrap; }
 #files .file-permissions, #files .file-owner { white-space: nowrap; }
 #files .file-permissions { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; }
@@ -434,7 +552,7 @@ body.login { display: grid; place-items: center; min-height: 100vh; min-height: 
 .detail-title .detail-title-action ~ .detail-title-action { margin-left: 0; }
 .sql-heading { margin-bottom: 16px; }
 .sql-only-connection { margin-left: 8px; color: var(--muted); font-size: .7em; font-weight: 600; }
-.sql-only-connection::before { content: "· "; }
+.sql-only-connection > span:first-child::before { content: "· "; }
 .sql-heading .sql-loading { margin-left: 12px; }
 #site-head > .detail-title:last-child { margin-bottom: 16px; }
 #site-head > .actions { display: flex; gap: 8px; flex-wrap: wrap; padding-top: 20px; margin-bottom: 20px; }
@@ -466,6 +584,8 @@ dialog.newsite .copy-connection-toggle + .hint { margin-top: 12px; }
 #prod-move-options, #prod-copy-options { margin-top: 12px; }
 .prod-dest-path { color: var(--text, inherit); }
 .site-targets { margin-top: 32px; }
+/* No main site shown (a user given only environments): the environments follow the title without the gap below a card */
+.site-layout:not(.with-packages):has(> #envs:empty) + .site-targets { margin-top: 8px; }
 .site-targets-head .actions.site-targets-right { margin-left: auto; }
 /* In the middle of the bar: the free space is shared with the buttons on the right */
 /* The environment filter, shaped like the site search in the header: the same corners, icon and clear button */
@@ -595,6 +715,17 @@ dialog.files-dialog { padding: 18px; }
 .script-menu-edit.danger:hover:not(:where(:disabled, .disabled, .off)), .script-menu-edit.danger:focus-visible { border-color: rgba(248, 81, 73, .4); background: rgba(248, 81, 73, .12); color: var(--red); }
 .script-menu-empty { margin: 0; padding: 12px 8px 8px; color: var(--muted); font-size: 12.5px; }
 /* Scripts someone other than root can change: not run until an administrator makes them root's */
+/* Deleting what a dialog is about (a user, a template, a connection): at its foot, away from Save, in red with what it does */
+.danger-zone { display: flex; align-items: center; gap: 12px; margin-top: 22px; padding: 12px 14px; border: 1px solid rgba(248, 81, 73, .35); border-radius: 12px; background: rgba(248, 81, 73, .06); }
+.danger-zone[hidden] { display: none; }
+.danger-zone-icon { display: grid; flex: none; place-items: center; width: 32px; height: 32px; border-radius: 9px; background: rgba(248, 81, 73, .14); color: var(--red); }
+.danger-zone-icon .ico { width: 16px; height: 16px; margin: 0; }
+.danger-zone-text { display: grid; flex: 1; gap: 2px; min-width: 0; }
+.danger-zone-text strong { color: var(--red); font-size: 13.5px; }
+.danger-zone-text small { color: var(--muted); font-size: 12px; line-height: 1.4; }
+.danger-zone > button { flex: none; }
+.danger-zone > button .ico { width: 14px; height: 14px; margin: 0; }
+@media (max-width: 560px) { .danger-zone { flex-wrap: wrap; } .danger-zone > button { flex: 1 1 100%; justify-content: center; } }
 .script-menu-warning { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 10px; margin: 6px 4px 4px; padding: 10px; border: 1px solid rgba(210, 153, 34, .35); border-radius: 10px; background: rgba(210, 153, 34, .08); }
 .script-menu-warning-icon { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 7px; background: rgba(210, 153, 34, .15); color: #d29922; }
 .script-menu-warning-icon .ico { width: 14px; height: 14px; margin: 0; }
@@ -765,6 +896,8 @@ a.btn-link .ico { width: 13px; height: 13px; flex: none; }
 .sql-tables ul { list-style: none; margin: 0; padding: 0 0 0 10px; border-left: 1px solid var(--line); display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); column-gap: 16px; }
 .sql-tables li button { display: flex; width: 100%; align-items: baseline; justify-content: space-between; gap: 12px; padding: 5px 8px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .sql-tables li button:hover:not(:where(:disabled, .disabled, .off)) { background: rgba(88, 166, 255, .08); }
+/* A table one may not query: the same line, not a button */
+.sql-tables li .sql-table-still { display: flex; flex: 1; min-width: 0; align-items: baseline; justify-content: space-between; gap: 12px; padding: 5px 8px; border: 1px solid transparent; }
 .sql-table-name { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sql-table-meta { font-size: 11px; white-space: nowrap; }
 .sql-tables p { margin: 0; }
@@ -846,6 +979,26 @@ dialog#dlg-form.wide { width: min(1180px, 96vw); }
 .design-chip:has(input:checked) { border-color: rgba(163, 113, 247, .6); background: rgba(163, 113, 247, .14); color: var(--text); }
 .design-chip:has(input:disabled) { opacity: .55; cursor: default; }
 .design-chip:has(input:focus-visible) { border-color: rgba(88, 166, 255, .7); }
+/* Connect…: .NET or Python as two compact choices, the login and a password to put in side by side, and the string as
+   code with its Copy beside it */
+.connect-kinds { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0 0 14px; }
+.connect-kind { position: relative; display: grid; gap: 1px; margin: 0; padding: 9px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel2); cursor: pointer; }
+.connect-kind input { position: absolute; opacity: 0; pointer-events: none; }
+.connect-kind strong { color: var(--text); font-size: 13.5px; }
+.connect-kind small { color: var(--muted); font-size: 12px; }
+.connect-kind:has(input:checked) { border-color: rgba(88, 166, 255, .6); background: rgba(88, 166, 255, .1); }
+.connect-kind:has(input:focus-visible) { box-shadow: 0 0 0 3px rgba(88, 166, 255, .25); }
+.connect-who { margin-bottom: 14px; }
+.connect-field { display: grid; gap: 6px; margin: 0; min-width: 0; }
+.connect-label { color: var(--muted); font-size: 12.5px; }
+.connect-string { display: flex; align-items: flex-start; gap: 12px; padding: 14px 14px 14px 16px; border: 1px solid var(--line); border-radius: 12px; background: rgba(0, 0, 0, .3); }
+.connect-code { flex: 1; min-width: 0; padding-top: 6px; color: var(--text); font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.connect-code .cs-key { color: var(--muted); }
+.connect-code .cs-fill { padding: 1px 5px; border-radius: 5px; background: rgba(210, 153, 34, .16); color: #e3b341; font-weight: 600; }
+.connect-copy { flex: none; }
+.connect-copy .ico { width: 14px; height: 14px; margin: 0; }
+.connect-hint { margin: 10px 0 0; }
+@media (max-width: 560px) { .connect-string { flex-direction: column; } .connect-copy { align-self: stretch; justify-content: center; } }
 .design-sql { max-height: 460px; margin: 0; padding: 14px 16px; overflow: auto; border: 1px solid var(--line); border-radius: 10px; background: rgba(0, 0, 0, .3);
 	font-size: 12.5px; line-height: 1.6; white-space: pre-wrap; }
 /* Logins: a line each, and a dashed line that adds one */
@@ -1489,10 +1642,10 @@ body[data-role="user"] #settings-menu, body[data-role="user"] #btn-multi, body[d
 .grant-section { display: flex; align-items: center; }
 .grant-switch { display: inline-flex; align-items: center; gap: 8px; color: var(--text); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; cursor: pointer; }
 .grant-switch input, .grant-flag input, .grant-chip input, .grant-head input { width: 16px; height: 16px; margin: 0; accent-color: var(--blue); }
-.grant-area { display: grid; gap: 10px; margin-bottom: 8px; }
+.grant-area { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; margin-bottom: 8px; }
 .grant-flag { display: flex; align-items: center; gap: 9px; color: var(--text); font-size: 13px; cursor: pointer; }
 .grant-flag.small { font-size: 12.5px; color: var(--muted); }
-.grant-list { display: grid; gap: 6px; }
+.grant-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; }
 .grant-site { border: 1px solid var(--line); border-radius: 10px; background: var(--panel2); transition: border-color .15s; }
 .grant-site.granted { border-color: rgba(88, 166, 255, .45); background: linear-gradient(135deg, rgba(88, 166, 255, .06), transparent 60%), var(--panel2); }
 .grant-head { display: flex; align-items: center; gap: 10px; padding: 9px 10px 9px 12px; }
@@ -1558,6 +1711,14 @@ body[data-role="user"] #settings-menu, body[data-role="user"] #btn-multi, body[d
 .pselect-option { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 7px 10px; border-radius: 7px; color: var(--text); font-size: 13.5px; cursor: pointer; white-space: nowrap; }
 .pselect-option .ico { width: 14px; height: 14px; margin: 0; color: #c9a8ff; visibility: hidden; }
 .pselect-option[aria-selected="true"] { color: #e6dcff; font-weight: 600; }
+/* Grouped options: a heading over each group, and an option's line under its name */
+.pselect-group { margin: 6px 4px 2px; padding: 8px 6px 4px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; cursor: default; }
+.pselect-text { display: grid; gap: 1px; min-width: 0; }
+.pselect-text small { color: var(--muted); font-size: 11.5px; font-weight: 500; }
+/* The SQL page's connection: as large as the list it replaced */
+.sql-connection-select { width: min(320px, 100%); }
+.sql-connection-select .pselect-trigger { height: 42px; padding: 0 12px 0 14px; border-color: rgba(163, 113, 247, .45); border-radius: 10px; font-size: 14px; font-weight: 600; }
+.sql-connection-pick[hidden] { display: none; }
 .pselect-option[aria-selected="true"] .ico { visibility: visible; }
 .pselect-option.active { background: rgba(163, 113, 247, .16); }
 .confirm-field-label { color: var(--muted); font-size: 12.5px; }
@@ -1831,6 +1992,7 @@ button.primary.danger-primary:disabled { opacity: .5; }
 
 /* ---- Phone: the header's controls on one line with the search below, and only the everyday buttons.
    Placed last, so it wins over the desktop sizes above (the search's min-width made the page wider than the screen). */
+@media (min-width: 801px) { .phone-only { display: none !important; } }
 @media (max-width: 800px) {
 	.desktop-only { display: none !important; }
 	.page-header { flex-wrap: wrap; gap: 8px; padding: 8px 12px; }
@@ -1856,6 +2018,31 @@ button.primary.danger-primary:disabled { opacity: .5; }
 	.site { padding: 14px; gap: 14px; }
 	/* The name on a line of its own, so every site's badges and Publish all stand on the line below it, however long the name */
 	.detail-title h2 { font-size: 21px; flex-basis: 100%; }
+	/* No files or shell on a phone: the header's group shows only while something runs */
+	#header-files, #btn-dock { display: none !important; }
+	.page-header .header-tools:not(:has(#btn-processes:not([hidden]))) { display: none; }
+	/* A table is read on a phone, not opened in a query */
+	.sql-tables li.sql-table-line button.sql-table-open { pointer-events: none; }
+	/* The tables in one column inside their card, without the desk's indent: name left, rows and size right */
+	#sql-databases-panel table tr.sql-tables-row > td { padding: 4px 6px 6px; }
+	.sql-tables ul, .sql-tables ul.sql-table-list, .sql-tables ul:has(> .sql-table-line) { grid-template-columns: minmax(0, 1fr); padding-left: 8px; }
+	/* A login: its icon, name and state on the first line, its buttons on the line below */
+	.sql-login { flex-wrap: wrap; row-gap: 8px; }
+	.sql-login .access-line-text { flex: 1 1 0; }
+	.sql-login .access-line-text strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.sql-login .access-line-actions { flex: 1 1 100%; justify-content: flex-end; }
+	.sql-login .access-line-actions:empty { display: none; }
+	/* A card with its buttons in its head: the icon, the name and the state on the first line, the buttons on a line
+	   of their own below, sharing its width */
+	.tool-head:has(> .tool-actions) { flex-wrap: wrap; row-gap: 10px; }
+	.tool-head:has(> .tool-actions) .tool-title { flex: 1 1 0; }
+	.tool-head:has(> .tool-actions) .tool-title small { white-space: normal; }
+	.tool-head > .tool-actions { flex: 1 1 100%; }
+	.tool-head > .tool-actions > :is(button, a) { flex: 1 1 auto; justify-content: center; }
+	/* The user editor: its parts as wide as the dialog, never wider */
+	#dlg-user .user-part { min-width: 0; padding: 0 12px; }
+	#dlg-user .grant-area > .option-row { margin-left: 0; }
+	#dlg-user .grant-area > .option-row::before { content: none; }
 }
 /* Several names: the rows stay visible when all point here, so each name shows its tick */
 .dns-card.several.here .dns-records, .dns-card.several.here .dns-check-rows { display: grid; }
@@ -2321,7 +2508,6 @@ body:not([data-role="user"]) .header-tools { display: inline-flex; }
 .server-action-fields .type-card { cursor: pointer; }
 .server-editions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 0 0 8px; padding: 0; border: 0; }
 .server-editions legend { margin-bottom: 8px; color: var(--muted); font-size: 13px; }
-.server-action-danger { margin-top: 10px; padding: 12px 14px; border: 1px solid rgba(248, 81, 73, .35); border-radius: 10px; background: rgba(248, 81, 73, .06); font-size: 13px; }
 @media (max-width: 720px) { .server-tools, .server-editions { grid-template-columns: 1fr; } }
 /* SFTP in the user editor: where to connect, the password and the keys */
 .sftp-area { display: grid; gap: 4px; margin: -4px 0 4px 26px; padding: 12px 14px; border: 1px solid var(--line); border-left: 2px solid rgba(88, 166, 255, .45); border-radius: 0 10px 10px 0; background: var(--panel2); }
@@ -2532,8 +2718,6 @@ dialog.newsite.crontab-dialog.editing form.crontab-form { margin: 0; padding: 20
 /* A tool that cannot be used yet (the backups without SQL Server and the SQL tools): dimmed, its buttons still there */
 .tool-card.unavailable .tool-head, .tool-card.unavailable .tool-rows { opacity: .5; }
 .tool-card.unavailable .tool-text { color: var(--muted); }
-.server-action-confirm { margin: 0 0 8px; color: var(--muted); font-size: 13px; }
-.server-action-confirm .confirmation-copy { color: var(--text); font-weight: 700; text-decoration: underline dotted; cursor: pointer; }
 
 /* Server tools: one column of groups, each with its buttons beside its state and its rows the full width */
 #server-tools-list { grid-template-columns: minmax(0, 1fr); gap: 10px; }
@@ -2706,8 +2890,12 @@ dialog .windows-field input, dialog .windows-field select { width: 100%; min-hei
 #dlg-local-publish .local-publish-script { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; overflow-x: hidden; overflow-y: auto; }
 #dlg-local-publish .local-publish-choices { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 /* A user's: only their computer to choose, the publish token is theirs */
-#dlg-local-publish .local-publish-choices.single { grid-template-columns: minmax(0, 1fr); max-width: 50%; }
-@media (max-width: 560px) { #dlg-local-publish .local-publish-choices.single { max-width: none; } }
+/* A user has one choice, their computer: on one line with its label, as wide as its two buttons, no empty half beside it */
+#dlg-local-publish .local-publish-choices.single { grid-template-columns: minmax(0, 1fr); }
+#dlg-local-publish .local-publish-choices.single .lp-choice { gap: 6px 8px; }
+#dlg-local-publish .local-publish-choices.single .choice-label { flex: none; margin-right: 6px; font-size: 13px; }
+#dlg-local-publish .local-publish-choices.single .lp-choice label { flex: 0 0 auto; }
+#dlg-local-publish .local-publish-choices.single .lp-choice span:not(.choice-label) { min-width: 120px; padding: 6px 16px; }
 #dlg-local-publish .lp-choice[hidden] { display: none; }
 #dlg-local-publish .local-publish-steps code { overflow-wrap: anywhere; }
 /* A password in a dialog: a plain text field holding only dots, the password kept by app.js (secretField), so no browser

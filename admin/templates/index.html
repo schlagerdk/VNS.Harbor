@@ -38,8 +38,8 @@
   </a>
   <a id="system-update-badge" class="header-update" href="#server/updates" hidden>Update available</a>
   <nav class="view-switch" aria-label="Section">
-    <button type="button" id="switch-sites" data-view="sites"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20ZM2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg><span>Web Server</span></button>
-    <button type="button" id="switch-sql" data-view="sql"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zM4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg><span>SQL Server</span></button>
+    <button type="button" id="switch-sites" data-view="sites"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20ZM2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg><span>Web<span class="desktop-only"> Server</span></span></button>
+    <button type="button" id="switch-sql" data-view="sql"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zM4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg><span>SQL<span class="desktop-only"> Server</span></span></button>
     <button type="button" id="switch-server" data-view="server" hidden><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span>Settings</span></button>
   </nav>
   <div class="search-box">
@@ -182,10 +182,12 @@
     <div id="sql-heading" class="detail-title sql-heading" hidden>
       <h2>SQL Server <span id="sql-only-connection" class="sql-only-connection" hidden></span></h2>
     </div>
+    <!-- With the tools of both here: which one is worked with, Microsoft SQL Server or PostgreSQL, each with its connections -->
+    <nav id="sql-engine" class="sql-engine-switch" role="tablist" aria-label="Which SQL Server" hidden></nav>
     <div id="sql-connection-bar" class="panel sql-connection-bar" hidden>
       <span class="tool-icon sql-connection-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v6H4zM4 14h16v6H4zM8 7h.01M8 17h.01"/></svg></span>
       <div class="sql-connection-choice">
-        <label>Connection <select id="sql-connection"><option value="">Choose a connection...</option></select></label>
+        <label aria-label="Connection"><select id="sql-connection" hidden><option value="">Choose a connection...</option></select><span id="sql-connection-pick" class="sql-connection-pick"></span><strong id="sql-connection-name" class="sql-connection-name" hidden></strong></label>
         <small id="sql-connection-host" class="sql-connection-host"></small>
       </div>
       <button id="sql-edit-connection" type="button" hidden>Edit connection</button>
@@ -197,25 +199,32 @@
       <div class="sites-empty-icon" aria-hidden="true">
         <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v6H4zM4 14h16v6H4zM8 7h.01M8 17h.01M12 7h5M12 17h5"/></svg>
       </div>
-      <h2>Install SQL tools first</h2>
-      <p>SQL administration requires sqlcmd on this admin server, even for remote connections. Install the Microsoft command-line tools before adding a connection.</p>
-      <button id="sql-install-tools" class="primary" type="button">Install SQL tools</button>
+      <h2>Install the SQL Server tools first</h2>
+      <p>A connection needs its tools on this admin server, also to a server elsewhere: sqlcmd for Microsoft SQL Server, psql and pg_dump for PostgreSQL.</p>
+      <div class="sites-empty-actions">
+        <button id="sql-install-tools" class="primary" type="button">Microsoft SQL Server tools</button>
+        <button id="sql-install-pg-tools" class="primary" type="button">PostgreSQL tools</button>
+      </div>
     </div>
     <div id="sql-no-connections" class="sites-empty" hidden>
       <div class="sites-empty-icon" aria-hidden="true">
         <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16v6H4zM4 14h16v6H4zM8 7h.01M8 17h.01M12 7h5M12 17h5"/></svg>
       </div>
-      <h2>Your first SQL connection starts here</h2>
-      <p>Connect to a local or remote SQL Server to manage databases and backups.</p>
+      <h2 id="sql-no-connections-title">Your first SQL connection starts here</h2>
+      <p id="sql-no-connections-text">Connect to a Microsoft SQL Server, here or on another server, to manage its databases and backups.</p>
       <button id="sql-empty-add-connection" class="primary" type="button">Add connection</button>
     </div>
     <p id="sql-status" role="status" hidden></p>
     <!-- What the page shows: its databases, their backups or the server's logins, one at a time -->
+    <div class="sql-tabs-row">
     <nav id="sql-tabs" class="sql-tabs" role="tablist" aria-label="SQL Server" hidden>
       <button type="button" role="tab" data-tab="databases" data-icon="database">Databases <span id="sql-databases-count" class="sql-tab-count"></span></button>
       <button type="button" role="tab" data-tab="backups" data-icon="archive">Backups <span id="sql-backups-count" class="sql-tab-count"></span></button>
       <button type="button" role="tab" data-tab="logins" data-icon="user">Logins <span id="sql-logins-count" class="sql-tab-count"></span></button>
     </nav>
+    <!-- One filter for the three: a database, a backup, a login, or whose they are -->
+    <div id="sql-filter-box" class="targets-search-box sql-filter-box" hidden><svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="sql-filter" class="sql-filter" type="search" placeholder="Filter databases, backups, logins, owners…" autocomplete="off" spellcheck="false" aria-label="Filter databases, backups and logins"><button type="button" id="sql-filter-clear" class="search-clear" aria-label="Clear filter" title="Clear filter"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button></div>
+    </div>
     <div id="sql-databases-panel" class="panel sql-table" hidden>
       <div class="sql-databases-header">
         <h3>Databases</h3>
@@ -225,22 +234,27 @@
         </div>
       </div>
       <div id="sql-databases-empty" hidden></div>
-      <table id="sql-user-databases-table" hidden><thead><tr><th>Name</th><th class="num">Size</th><th>State</th><th>Recovery</th><th>Actions</th></tr></thead><tbody id="sql-databases"></tbody></table>
+      <table id="sql-user-databases-table" hidden><thead><tr><th>Name</th><th class="num">Size</th><th>State</th><th class="sql-recovery">Recovery</th><th>Actions</th></tr></thead><tbody id="sql-databases"></tbody></table>
+      <!-- The databases users made: apart, folded until opened (an administrator's view) -->
+      <details id="sql-users-databases" class="sql-system-databases sql-users-databases" hidden>
+        <summary id="sql-users-summary">Users' databases</summary>
+        <table><thead><tr><th>Name</th><th class="num">Size</th><th>State</th><th class="sql-recovery">Recovery</th><th>Actions</th></tr></thead><tbody id="sql-users-rows"></tbody></table>
+      </details>
       <details id="sql-system-databases" class="sql-system-databases">
         <summary id="sql-system-summary">System databases</summary>
-        <table><thead><tr><th>Name</th><th class="num">Size</th><th>State</th><th>Recovery</th></tr></thead><tbody id="sql-system-rows"></tbody></table>
+        <table><thead><tr><th>Name</th><th class="num">Size</th><th>State</th><th class="sql-recovery">Recovery</th></tr></thead><tbody id="sql-system-rows"></tbody></table>
       </details>
     </div>
     <div id="sql-backups-panel" class="panel sql-table" hidden><h3>Full backups</h3>
-      <p class="hint">Latest 200 full disk backups from SQL Server history, plus .bak files in the connection's backup directory that are not in that history. The latest of each database first; Older shows the ones before it. Paths are on the SQL server; historical files may have been overwritten, moved or deleted.</p>
-      <table><thead><tr><th>Database</th><th>Finished</th><th class="num">Size</th><th>Server path</th><th>Actions</th></tr></thead><tbody id="sql-backups"></tbody></table>
+      <p class="hint" id="sql-backups-hint">Latest 200 full disk backups from Microsoft SQL Server's history, plus .bak files in the connection's backup directory that are not in that history. The latest of each database first; Older shows the ones before it. Paths are on the SQL server; historical files may have been overwritten, moved or deleted.</p>
+      <table><thead><tr><th>Database</th><th>Finished</th><th class="num">Size</th><th id="sql-backups-path">Server path</th><th>Actions</th></tr></thead><tbody id="sql-backups"></tbody></table>
     </div>
     <!-- The server's SQL logins and the databases each reaches: an administrator's -->
     <div id="sql-logins-panel" class="panel sql-table" hidden>
       <div class="sql-databases-header"><h3>Logins</h3>
         <div class="sql-databases-actions"><button id="sql-add-login" type="button">Add login</button></div>
       </div>
-      <p id="sql-logins-hint" class="hint">SQL Server's own logins, and the databases each may use with its roles there. sa and this connection's login are changed elsewhere.</p>
+      <p id="sql-logins-hint" class="hint">Microsoft SQL Server's own logins, and the databases each may use with its roles there. sa and this connection's login are changed elsewhere.</p>
       <div id="sql-logins" class="sql-logins"></div>
     </div>
   </section>
@@ -248,9 +262,9 @@
     <form id="form-sql-connection">
       <header class="ns-head">
         <span class="ns-icon" data-header-icon="server" aria-hidden="true"></span>
-        <div><h2 id="sql-connection-title">Add SQL connection</h2><p>Configure SQL Server access and optional backup file access.</p></div>
+        <div><h2 id="sql-connection-title">Add SQL connection</h2><p id="sql-connection-intro">Configure Microsoft SQL Server access and optional backup file access.</p></div>
       </header>
-      <div class="ns-section">SQL Server</div>
+      <div class="ns-section" id="sql-engine-section">Microsoft SQL Server</div>
       <label>Connection name <input name="name" required maxlength="100" placeholder="Local SQL Server"></label>
       <div class="ns-grid">
         <label>Hostname / IP <input name="host" required value="localhost"></label>
@@ -260,16 +274,16 @@
       <div class="ns-grid">
         <label>SQL username <input name="username" required autocomplete="off" value="sa"></label>
         <label id="sql-password-row">Password <input name="password" type="password" autocomplete="new-password" data-lpignore="true" data-1p-ignore aria-describedby="sql-password-help"><span id="sql-password-help" class="hint"></span></label>
-        <p id="sql-password-harbor" class="sql-password-harbor" hidden>Harbor's own sa password is used: it set SQL Server up here, and keeps it.</p>
+        <p id="sql-password-harbor" class="sql-password-harbor" hidden>Harbor's own sa password is used: it set Microsoft SQL Server up here, and keeps it.</p>
       </div>
       <div class="ns-section">Backups</div>
-      <label>Backup directory on SQL server <input name="backup_directory" required value="/var/opt/mssql/backup"></label>
+      <label><span id="sql-backup-label">Backup directory on SQL server</span> <input name="backup_directory" required value="/var/opt/mssql/backup"></label>
       <div class="ns-section">Connection options</div>
       <label class="sql-option">
         <input name="trust_certificate" type="checkbox" checked aria-describedby="sql-trust-help">
         <span><strong>Trust server certificate</strong><span id="sql-trust-help" class="hint">Skip certificate validation only for a trusted server using a self-signed certificate.</span></span>
       </label>
-      <label class="sql-option">
+      <label class="sql-option" id="sql-ssh-option">
         <input name="ssh_enabled" type="checkbox" aria-controls="sql-ssh-fields" aria-describedby="sql-ssh-help">
         <span><strong>Linux SSH access for backup files</strong><span id="sql-ssh-help" class="hint">Manage backup files on the SQL host through SSH. Configure server access below.</span></span>
       </label>
@@ -284,9 +298,15 @@
         </div>
         <p class="hint">Like production setup: an empty password uses the admin server's SSH key. During editing, leave blank to keep a saved password; disable SSH access and save to remove its credentials. First connection accepts a new host key; changed keys are rejected.</p>
       </fieldset>
-      <p class="hint sql-connection-note">Credentials are stored in a root-only file on the admin server. The SQL login needs database and backup administration privileges; sqlcmd must be installed.</p>
+      <p class="hint sql-connection-note" id="sql-connection-note">Credentials are stored in a root-only file on the admin server. The SQL login needs database and backup administration privileges; sqlcmd must be installed.</p>
+      <!-- Removing it: at the foot of the dialog, away from Save, under what it means -->
+      <section id="sql-connection-danger" class="danger-zone" hidden>
+        <span class="danger-zone-icon" data-header-icon="alert" aria-hidden="true"></span>
+        <div class="danger-zone-text"><strong>Remove connection</strong><small>The connection and its password go from this admin. Its databases and backups stay on the server.</small></div>
+        <button id="sql-remove-connection" type="button" class="danger toned-action"><span data-header-icon="trash" aria-hidden="true"></span>Remove connection</button>
+      </section>
       <p id="sql-connection-said" class="sql-connection-said" role="status" hidden></p>
-      <menu><button id="sql-connection-cancel" type="button" class="cancel-link">Cancel</button><button id="sql-remove-connection" type="button" tabindex="-1" hidden>Remove</button><button id="sql-connection-test" type="button">Test connection</button><button id="sql-connection-save" type="submit" class="primary">Save connection</button></menu>
+      <menu><button id="sql-connection-cancel" type="button" class="cancel-link">Cancel</button><button id="sql-connection-test" type="button">Test connection</button><button id="sql-connection-save" type="submit" class="primary">Save connection</button></menu>
     </form>
   </dialog>
   <dialog id="dlg-snippet" class="newsite">
@@ -310,7 +330,7 @@
       <label>Restore as<input name="database" required maxlength="128" autocomplete="off"></label>
       <fieldset id="sql-restore-login">
         <legend>New SQL login</legend>
-        <p class="hint">Creates a new login with db_owner access. Existing logins cannot be reused. Password policy and expiration are disabled.</p>
+        <p class="hint sql-new-login-hint">Creates a new login with db_owner access. Existing logins cannot be reused. Password policy and expiration are disabled.</p>
         <label>Username<input name="login" required maxlength="128" autocomplete="off"></label>
         <div class="ns-grid">
           <label>Password<input name="password" type="password" required minlength="8" maxlength="128" autocomplete="new-password"></label>
@@ -452,7 +472,7 @@
       <input type="file" id="upload-input" multiple hidden>
     </div>
     <div class="panel list" id="drop">
-      <table id="files"><thead><tr><th>Name</th><th class="file-size num">Size</th><th class="file-modified">Modified</th><th>Rights</th><th>Owner</th><th></th></tr></thead><tbody></tbody></table>
+      <table id="files"><thead><tr><th data-sort="name">Name</th><th class="file-size num" data-sort="size">Size</th><th class="file-modified" data-sort="modified">Modified</th><th data-sort="permissions">Rights</th><th data-sort="owner">Owner</th><th></th></tr></thead><tbody></tbody></table>
       <div class="drop-hint">Drop files here to upload</div>
     </div>
   </section>
@@ -560,7 +580,7 @@
       <span class="sync-option-text"><span class="sync-option-title">Also make a login for it</span><span class="sync-option-sub">Its own login, owner of the database: what a site uses to reach it</span></span></label>
     <fieldset id="sql-database-login" hidden disabled>
       <legend>New SQL login</legend>
-      <p class="hint">Creates a new login with db_owner access. Existing logins cannot be reused. Password policy and expiration are disabled.</p>
+      <p class="hint sql-new-login-hint">Creates a new login with db_owner access. Existing logins cannot be reused. Password policy and expiration are disabled.</p>
       <label>Username<input name="login" required maxlength="128" autocomplete="off"></label>
       <div class="ns-grid">
         <label>Password<input name="password" type="password" required minlength="6" maxlength="128" autocomplete="new-password"></label>
@@ -598,7 +618,7 @@
       <p class="hint copy-no-environments" id="copy-no-environments" hidden>The copy is a site of its own: its environments are not copied, and you can add environments to it afterwards.</p>
       <p class="hint copy-dns-hint">For HTTPS, the new binding must point to this server.</p>
       <div class="copy-options">
-        <label class="sync-option copy-option sql" aria-controls="copy-sql-fields"><input name="change_connection" type="checkbox"><span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg></span><span class="sync-option-text"><span class="sync-option-title">Change SQL connection strings</span><span class="sync-option-sub">Point the copy at another database. Nothing is created in SQL Server</span></span></label>
+        <label class="sync-option copy-option sql" aria-controls="copy-sql-fields"><input name="change_connection" type="checkbox"><span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg></span><span class="sync-option-text"><span class="sync-option-title">Change SQL connection strings</span><span class="sync-option-sub">Point the copy at another database. Nothing is created on the database server</span></span></label>
       </div>
       <fieldset id="copy-sql-fields" hidden disabled>
         <legend>SQL connection</legend>
@@ -759,7 +779,7 @@
     </div>
     <div id="prod-copy-options" hidden>
       <label class="sync-option copy-option stop" id="prod-stop-row"><input name="stop_source" type="checkbox"><span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="5" width="4" height="14" rx="1"/><rect x="14" y="5" width="4" height="14" rx="1"/></svg></span><span class="sync-option-text"><span class="sync-option-title">Stop the source while copying</span><span class="sync-option-sub">So its SQLite database stays consistent. It starts again afterwards</span></span></label>
-      <label class="sync-option copy-option sql" id="prod-connection-row"><input name="change_connection" type="checkbox"><span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg></span><span class="sync-option-text"><span class="sync-option-title">Use another SQL connection in the copy</span><span class="sync-option-sub">Point the copy at another database. Nothing is created in SQL Server</span></span></label>
+      <label class="sync-option copy-option sql" id="prod-connection-row"><input name="change_connection" type="checkbox"><span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg></span><span class="sync-option-text"><span class="sync-option-title">Use another SQL connection in the copy</span><span class="sync-option-sub">Point the copy at another database. Nothing is created on the database server</span></span></label>
       <fieldset id="prod-sql-fields" class="copy-server-fields" hidden disabled>
         <legend>SQL connection</legend>
         <p class="hint">The database and login must already exist. No SQL database or login is created.</p>
@@ -772,7 +792,7 @@
       </fieldset>
     </div>
     <div id="prod-move-options" hidden>
-      <p class="hint" id="prod-move-hint">The site is stopped while the whole folder is copied, including its build, media, logs and a SQLite database, so it runs the same version afterwards. To Windows only settings and content are copied, and it is built there. A SQLite database goes with the files. A database in SQL Server stays where it is: a connection to the old server's own SQL Server is changed to that server's IP, and it must accept connections from the new server. On another server it is set up with HTTP, as DNS may not point there yet. If a step fails, the site keeps running where it is.</p>
+      <p class="hint" id="prod-move-hint">The site is stopped while the whole folder is copied, including its build, media, logs and a SQLite database, so it runs the same version afterwards. To Windows only settings and content are copied, and it is built there. A SQLite database goes with the files. A database in Microsoft SQL Server stays where it is: a connection to the old server's own SQL Server is changed to that server's IP, and it must accept connections from the new server. On another server it is set up with HTTP, as DNS may not point there yet. If a step fails, the site keeps running where it is.</p>
     </div>
     <menu><button type="button" id="prod-cancel" class="cancel-link">Cancel</button><button type="submit" value="ok" class="primary" id="prod-submit">Add environment</button></menu>
   </form>
@@ -1040,19 +1060,33 @@
       </section>
       <section class="user-part tone-sql">
       <label class="grant-card"><span class="grant-card-icon sql" data-header-icon="server" aria-hidden="true"></span>
-        <span class="grant-card-text"><strong>SQL Server</strong><small>Connections and their databases</small></span>
+        <span class="grant-card-text"><strong>SQL Server</strong><small>Microsoft SQL Server and PostgreSQL: connections and their databases</small></span>
         <input name="sql" type="checkbox" class="switch" aria-label="SQL Server"></label>
       <div id="user-sql" class="grant-area">
         <label class="option-row"><span class="option-icon sql" data-header-icon="server" aria-hidden="true"></span>
           <span class="option-text"><strong>May add SQL connections</strong><small>One they add is theirs to change; the others stay locked</small></span>
           <input name="manage_connections" type="checkbox" class="switch small" aria-label="May add SQL connections"></label>
+        <!-- To which SQL Servers: shown while they may add connections -->
+        <div id="user-connection-engines" class="user-connection-engines" role="group" aria-label="May add connections to" hidden>
+          <span class="grant-label">To</span>
+          <div class="grant-chips">
+            <label class="grant-chip"><input type="checkbox" name="connection_engine" value="mssql"><span>Microsoft SQL Server</span></label>
+            <label class="grant-chip"><input type="checkbox" name="connection_engine" value="postgres"><span>PostgreSQL</span></label>
+          </div>
+        </div>
         <div id="user-connections" class="grant-list"></div>
         <div id="template-sql-rules" hidden></div>
       </div>
       </section>
     </div>
+    <!-- Deleting: at the bottom of the dialog, away from Save, under a warning of what it does -->
+    <section id="user-danger" class="danger-zone" hidden>
+      <span class="danger-zone-icon" data-header-icon="alert" aria-hidden="true"></span>
+      <div class="danger-zone-text"><strong id="user-danger-title">Delete user</strong><small id="user-danger-text"></small></div>
+      <button type="button" id="user-delete" class="danger toned-action"><span data-header-icon="trash" aria-hidden="true"></span><span id="user-delete-label">Delete user</span></button>
+    </section>
     <p id="user-error" class="error" role="alert"></p>
-    <menu><li class="cancel-action"><button type="button" id="user-cancel" class="cancel-link">Cancel</button></li><li><button type="button" id="user-delete" class="danger" hidden>Delete user</button></li><li><button type="button" id="user-save-stay">Save</button></li><li><button type="submit" class="primary" id="user-save">Save and close</button></li></menu>
+    <menu><li class="cancel-action"><button type="button" id="user-cancel" class="cancel-link">Cancel</button></li><li><button type="button" id="user-save-stay">Save</button></li><li><button type="submit" class="primary" id="user-save">Save and close</button></li></menu>
   </form>
 </dialog>
 

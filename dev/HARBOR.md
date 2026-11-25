@@ -48,6 +48,36 @@ Where the work stands, so it can go on from here after any interruption.
      signs that user in with Umbraco's own sign-in and opens /umbraco. Only users with access to the site in Harbor get
      the button, and each login is logged (who, when).
 
+## Phase 10: PostgreSQL beside Microsoft SQL Server (asked 2026-11-25)
+Everything the admin does with Microsoft SQL Server, also with PostgreSQL, for C# and Python sites (Umbraco does not
+support PostgreSQL). A server may have either, both or none; connections to either here or on another server.
+- **A connection has an engine**: `engine` in sql-connections.json, `mssql` (also when absent: every connection made
+  before) or `postgres`. One store, one SQL databases page; each connection shows its engine. The users' grants per
+  connection and database, the limits and the usage are the same for both.
+- **lib/pg_admin.py** does for PostgreSQL what lib/sql_admin.py does (databases, tables, backups, backup, restore, copy,
+  create with a login of its own, drop, queries), with psql, pg_dump and pg_restore (postgresql-client). Backups are
+  pg_dump files (custom format) in the connection's backup folder **on the admin server**: pg_dump runs here, so a
+  remote PostgreSQL needs no SSH. A user's query runs as a role made for it that reaches only that database.
+- **lib/pg_design.py** does what lib/sql_design.py does: the table designer (PostgreSQL's types, identity, defaults,
+  primary key) and the logins (roles with LOGIN; per database: owner, read, write; superuser as sysadmin).
+- **The admin** picks the module by the connection's engine (`sql_engine()`); routes, tasks and the page stay one.
+- **Server tools**: PostgreSQL installed from Ubuntu's packages, its postgres password kept by Harbor
+  (/etc/harbor/secrets/postgres.json), a connection to it added (and to Microsoft SQL Server when it is installed, alike), its databases in /var/opt/postgresql/<version>/main (Ubuntu's createcluster.conf, set before the packages) and its backups in /var/opt/postgresql/backup; the client tools alone for one elsewhere; backups as a
+  scheduled job, as for Microsoft SQL Server.
+- **Sites**: a connection string for Npgsql (C#) or a DATABASE_URL (Python) where the admin changes them (copy, move).
+
+Steps (each deployed to linux-01 and tried with a real PostgreSQL there):
+1. [x] Names: the menu, the SQL page, its Settings tab and the users' part stay "SQL Server" (asked 2026-11-25); within
+   them each connection, card and text says Microsoft SQL Server or PostgreSQL. With both, the SQL page chooses which
+   one is worked with; Settings, SQL Server chooses which is installed.
+2. [x] lib/pg_admin.py and lib/pg_design.py, with tests; tried against PostgreSQL 18 on linux-01 (create, design, query, sandbox, backup, copy, restore, logins, drop).
+3. [x] The admin: engine on connections, the connection dialog's choice, the routes and tasks by engine, the page's
+   texts, types, roles and query presets by engine.
+4. [x] Server tools (Settings, SQL Server: choose Microsoft SQL Server or PostgreSQL to install): install, update,
+   remove PostgreSQL and its tools; the postgres password; backups as a job of its own, named for its engine ("Back up
+   the Microsoft SQL Server databases", "Back up the PostgreSQL databases"), each suggested while its engine is here.
+5. [x] Usage and limits; a user's query sandbox; the sites' connection strings (Npgsql in appsettings; Python sites' DATABASE_URL is not changed, as for Microsoft SQL Server).
+
 ## Phase 8 steps (users on the server)
 Harbor only ever touches the Linux users in its group `harbor-users`; other users of the server are left alone. Which
 admin user has which Linux user is kept in /var/lib/harbor/users.json. Passwords stay locked until SFTP (8d).

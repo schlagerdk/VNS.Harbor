@@ -61,9 +61,9 @@ class StatusTests(Server):
         self.assertEqual(found["sql_server"], {"installed": True, "version": "16.0.4185.3-1", "newer": "", "running": True, "packages_for": ""})
         self.assertEqual(found["sql_tools"], {"installed": True, "version": "18.4.1.1-1", "newer": ""})
         self.assertEqual(found["sa_password"], {"scripts": 2, "set": True})
-        self.assertEqual(found["cron"], {"jobs": {"shrink_logs": False, "backup_everything": True}, "others": [CUSTOM],
-                                         "schedules": {"shrink_logs": "0 */4 * * *", "backup_everything": "15 */4 * * *"},
-                                         "labels": {"shrink_logs": "", "backup_everything": ""}})
+        self.assertEqual(found["cron"], {"jobs": {"shrink_logs": False, "backup_everything": True, "postgres_backup": False}, "others": [CUSTOM],
+                                         "schedules": {"shrink_logs": "0 */4 * * *", "backup_everything": "15 */4 * * *", "postgres_backup": "30 */4 * * *"},
+                                         "labels": {"shrink_logs": "", "backup_everything": "", "postgres_backup": ""}})
         # Changed in Scheduled jobs: its schedule and label as root's crontab has them now
         self.crontab = "# Harbor label: Shrink Logs\n" + tools.JOBS["shrink_logs"].replace("0 */4", "0 */2", 1) + "\n"
         found = tools.status(system, sql)
@@ -172,7 +172,13 @@ class CronTests(Server):
 
     def test_on_with_no_crontab(self):
         main(["server", "cron", "on"], self.system())
-        self.assertEqual(self.crontab, "".join(line + "\n" for line in tools.JOBS.values()))
+        # Microsoft SQL Server's jobs: PostgreSQL's is turned on by itself (1.0.82)
+        self.assertEqual(self.crontab, "".join(tools.JOBS[name] + "\n" for name in tools.MSSQL_JOBS))
+        main(["server", "cron", "on", "--job", "postgres_backup"], self.system())
+        self.assertIn("harbor postgres backup-everything", self.crontab)
+        # Each added is noted as saved now: cron has not missed it (it said it should have run 14 days before)
+        saved = tools.cron_state(self.system())["saved"]
+        self.assertEqual(len(saved), 3)
 
 
 class DotnetTests(Server):

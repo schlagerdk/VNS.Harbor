@@ -244,7 +244,7 @@ console.log(JSON.stringify([first, firstNone, none.hidden]));
         source = (APP / "static/app.js").read_text()
         self.assertLess(source.index("let startView"), source.index("async function route()"))
         self.assertIn('} else if (!view && startView === "sql") {', source)
-        self.assertIn('actions.prepend(el("button", { textContent: "Query", onclick: () => openSqlQuery(database) }));', source)
+        self.assertIn('actions.prepend(el("button", { textContent: "Query", className: "desktop-only", onclick: () => openSqlQuery(database) }));', source)
         page = (APP / "templates/index.html").read_text()
         self.assertIn('<meta name="start-view" content="{{ start_view }}">', page)
         # Sites | SQL Server is a switch in the header; start page and keep-alive are Preferences
@@ -269,7 +269,7 @@ console.log(JSON.stringify([first, firstNone, none.hidden]));
 const nodes = {};
 const $ = (selector) => nodes[selector] ||= {value: "", textContent: "", focus() {}, classList: {remove() {}}, replaceChildren() { this.textContent = ""; }};
 nodes["#sql-connection"] = {value: "server-1"};
-const sqlQueryDialog = {dataset: {}, open: true, showModal() {}};
+const sqlQueryDialog = {dataset: {}, open: true, showModal() {}, addEventListener() {}};\nconst loadSnippetColumns = () => {};
 """ + code + """
 openSqlQuery({name: "one"}); nodes["#sql-query-text"].value = "DELETE FROM x"; nodes["#sql-query-output"].textContent = "done";
 openSqlQuery({name: "one"}); const same = nodes["#sql-query-text"].value;
@@ -305,6 +305,34 @@ console.log(JSON.stringify([same, other, server]));
             self.assertNotIn("Create production site", text)
         self.assertIn("Add environment", page)
 
+
+    def test_phone_has_no_files_shell_query_or_table_work(self):
+        page = (APP / "templates/index.html").read_text()
+        source = (APP / "static/app.js").read_text()
+        css = (APP / "static/style.css").read_text()
+        phone = css[css.index("/* ---- Phone:"):]
+        phone = phone[:phone.index("\n}\n")]
+        # Web, SQL and Settings in the header; the word Server only at a desk
+        self.assertEqual(page.count('<span class="desktop-only"> Server</span>'), 2)
+        self.assertIn("#header-files, #btn-dock { display: none !important; }", phone)
+        self.assertIn('className: "sql-table-actions desktop-only"', source)
+        self.assertIn('className: "access-add sql-add-table desktop-only"', source)
+        self.assertIn("button.sql-table-open { pointer-events: none; }", phone)
+        # Buttons in a card's head go on a line of their own, so nothing is wider than the screen
+        self.assertIn(".tool-head > .tool-actions { flex: 1 1 100%; }", phone)
+
+    def test_save_keeps_the_user_window_where_it_was(self):
+        source = (APP / "static/app.js").read_text()
+        save = source[source.index("function saveUserForm(close) {"):source.index("function saveTemplateForm(close) {")]
+        # Where it is scrolled and what is unfolded, taken before anything is saved or drawn again
+        self.assertLess(save.index("const view = userView();"), save.index("run(async () => {"))
+        self.assertIn("restoreUserView(view);", save)
+        self.assertIn("userSitesSearch.reset(!asTemplate, keepUserFilter);", source)
+        # Drawn again after Save, the name is not focused: that scrolled the window to the top
+        self.assertIn("""	if (!userDialog.open) {
+		userDialog.showModal();
+		(asTemplate ? userForm.template_name : userForm.username).focus();
+	}""", source)
 
     def test_nothing_disabled_has_a_hover_effect(self):
         css = re.sub(r"/\*.*?\*/", "", (APP / "static/style.css").read_text(), flags=re.S)

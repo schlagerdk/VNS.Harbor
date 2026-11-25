@@ -28,8 +28,95 @@ class AccessTests(unittest.TestCase):
     def test_terminal_gives_files(self):
         user = access.clean({"username": "anna", "web": True, "sites": {"shop.dk": {"envs": ["main"], "actions": ["terminal", "logs"]}}},
                             sites={"shop.dk": ["main"]})
-        self.assertEqual(user["sites"]["shop.dk"]["actions"], ["files", "logs", "terminal"])
+        self.assertEqual(user["sites"]["shop.dk"]["actions"], ["appsettings", "delete", "files", "logs", "packages", "packages_view", "terminal"])
         self.assertTrue(access.can(user, "shop.dk", "main", "terminal"))
+
+    def test_files_gives_the_nuget_packages(self):
+        """Files can edit the .csproj, and with it the packages: Change and See NuGet packages, also on a grant saved before"""
+        self.assertEqual(access.site_actions(["files"]), ["appsettings", "delete", "files", "packages", "packages_view"])
+        saved = {"id": "u1", "role": "user", "web": True, "sites": {"shop.dk": {"envs": ["main"], "actions": ["files"]}}}
+        self.assertTrue(access.can(saved, "shop.dk", "main", "packages"))
+        self.assertTrue(access.can(saved, "shop.dk", "main", "packages_view"))
+
+    def test_bindings_certificate_and_environment_are_three_actions(self):
+        """One action gave all three before 1.0.82: those who had it keep them, once, and after that each is its own"""
+        config = {"users": [{"id": "u1", "sites": {"shop.dk": {"envs": ["main"], "actions": ["bindings", "logs"]},
+                                                   "blog.dk": {"envs": ["main"], "actions": ["logs"]}}}],
+                  "user_templates": [{"name": "New", "access": {"site_rules": {"actions": ["bindings"]}}},
+                                     {"name": "Old", "access": {"sites": {"shop.dk": {"actions": ["bindings"]}}}}]}
+        self.assertTrue(access.split_bindings(config))
+        self.assertEqual(config["users"][0]["sites"]["shop.dk"]["actions"], ["bindings", "certificate", "environment", "logs"])
+        self.assertEqual(config["users"][0]["sites"]["blog.dk"]["actions"], ["logs"])
+        self.assertEqual(config["user_templates"][0]["access"]["site_rules"]["actions"], ["bindings", "certificate", "environment"])
+        self.assertEqual(config["user_templates"][1]["access"]["sites"]["shop.dk"]["actions"], ["bindings", "certificate", "environment"])
+        # Once: a user given only Change bindings afterwards keeps only that
+        config["users"][0]["sites"]["blog.dk"]["actions"] = ["bindings"]
+        self.assertFalse(access.split_bindings(config))
+        self.assertEqual(config["users"][0]["sites"]["blog.dk"]["actions"], ["bindings"])
+        user = access.clean({"username": "anna", "web": True, "sites": {"shop.dk": {"envs": ["main"], "actions": ["certificate"]}}},
+                            sites={"shop.dk": ["main"]})
+        self.assertTrue(access.can(user, "shop.dk", "main", "certificate"))
+        self.assertFalse(access.can(user, "shop.dk", "main", "bindings"))
+        self.assertFalse(access.can(user, "shop.dk", "main", "environment"))
+
+    def test_nuget_packages_are_seen_or_changed(self):
+        """Everyone who saw a main site saw its packages before 1.0.82: they keep seeing them, once; changing is seeing"""
+        config = {"users": [{"id": "u1", "sites": {"shop.dk": {"envs": ["main", "prod"], "actions": ["logs"]},
+                                                   "blog.dk": {"envs": ["prod"], "actions": ["logs"]}}}],
+                  "user_templates": [{"name": "New", "access": {"site_rules": {"actions": ["logs"]}}}]}
+        self.assertTrue(access.split_packages(config))
+        self.assertEqual(config["users"][0]["sites"]["shop.dk"]["actions"], ["logs", "packages_view"])
+        self.assertEqual(config["users"][0]["sites"]["blog.dk"]["actions"], ["logs"], "no main site: no packages")
+        self.assertEqual(config["user_templates"][0]["access"]["site_rules"]["actions"], ["logs", "packages_view"])
+        config["users"][0]["sites"]["shop.dk"]["actions"] = ["logs"]
+        self.assertFalse(access.split_packages(config))
+        self.assertEqual(config["users"][0]["sites"]["shop.dk"]["actions"], ["logs"])
+        self.assertEqual(access.site_actions(["packages"]), ["packages", "packages_view"])
+        user = access.clean({"username": "anna", "web": True, "sites": {"shop.dk": {"envs": ["main"], "actions": ["packages_view"]}}},
+                            sites={"shop.dk": ["main"]})
+        self.assertTrue(access.can(user, "shop.dk", "main", "packages_view"))
+        self.assertFalse(access.can(user, "shop.dk", "main", "packages"))
+
+    def test_which_sql_servers_a_user_may_add_connections_to(self):
+        """May add SQL connections, to Microsoft SQL Server, PostgreSQL or both; one given it before 1.0.82 has both"""
+        user = access.clean({"username": "anna", "sql": True, "manage_connections": True, "connection_engines": ["postgres", "oracle"]})
+        self.assertEqual(user["connection_engines"], ["postgres"])
+        self.assertEqual(access.connection_engines(user), ["postgres"])
+        self.assertEqual(access.connection_engines({**user, "manage_connections": False}), [])
+        self.assertEqual(access.connection_engines({**user, "sql": False}), [])
+        before = {"id": "u1", "role": "user", "sql": True, "manage_connections": True}
+        self.assertEqual(access.connection_engines(before), ["mssql", "postgres"])
+        self.assertEqual(access.connection_engines({"role": "admin"}), ["mssql", "postgres"])
+        self.assertEqual(access.template_rules({"connection_engines": ["mssql"]})["connection_engines"], ["mssql"])
+
+    def test_a_part_with_nothing_in_it_is_no_access(self):
+        """SQL Server on, with no connection and nothing they may add, is not theirs; nor the Web Server with no site"""
+        user = {"id": "u1", "role": "user", "sql": True, "manage_connections": False, "connections": {}, "web": True, "sites": {}}
+        self.assertFalse(access.has_sql(user))
+        self.assertFalse(access.has_web(user))
+        self.assertTrue(access.has_sql({**user, "connections": {"c1": {"databases": ["*"]}}}))
+        self.assertTrue(access.has_sql({**user, "manage_connections": True}))
+        self.assertFalse(access.has_sql({**user, "manage_connections": True, "connection_engines": []}))
+        self.assertTrue(access.has_web({**user, "create_sites": True}))
+        self.assertTrue(access.has_web({**user, "sites": {"shop.dk": {"envs": ["main"]}}}))
+        self.assertFalse(access.has_sql({**user, "sql": False, "connections": {"c1": {}}}))
+        self.assertTrue(access.has_sql({"role": "admin"}))
+
+    def test_a_part_with_nothing_in_it_is_turned_off_as_it_is_saved(self):
+        user = access.clean({"username": "anna", "sql": True, "manage_connections": False, "web": True}, sites=SITES, connections=["c1"])
+        self.assertFalse(user["sql"])
+        self.assertFalse(user["web"])
+        user = access.clean({"username": "anna", "sql": True, "manage_connections": True, "connection_engines": ["postgres"],
+                             "web": True, "create_sites": True}, sites=SITES, connections=["c1"])
+        self.assertTrue(user["sql"])
+        self.assertTrue(user["web"])
+        # To no SQL Server at all: nothing in it either
+        user = access.clean({"username": "anna", "sql": True, "manage_connections": True, "connection_engines": []}, sites=SITES, connections=["c1"])
+        self.assertFalse(user["sql"])
+        user = access.clean({"username": "anna", "sql": True, "connections": {"c1": {"databases": ["*"], "actions": ["query"]}},
+                             "web": True, "sites": {"shop.dk": {"envs": ["main"], "actions": ["logs"]}}}, sites=SITES, connections=["c1"])
+        self.assertTrue(user["sql"])
+        self.assertTrue(user["web"])
 
     def user(self, **data):
         base = {"username": "anna", "role": "user", "web": True}
@@ -88,7 +175,8 @@ class AccessTests(unittest.TestCase):
         self.assertFalse(access.can_sql(dict(user, sql=False), "c1", "Shop", "query"))
 
     def test_what_a_user_makes_becomes_theirs(self):
-        user = self.user(sql=True, connections={"c1": {"databases": ["Shop"], "actions": ["create"]}})
+        # They may make sites: a site they make is theirs (on with nothing in it, the Web Server would be turned off)
+        user = self.user(sql=True, create_sites=True, connections={"c1": {"databases": ["Shop"], "actions": ["create"]}})
         self.assertTrue(access.grant_database(user, "c1", "NewDb"))
         self.assertTrue(access.can_sql(user, "c1", "NewDb", "create"))
         self.assertTrue(access.grant_site(user, "new.dk"))
@@ -125,7 +213,8 @@ class AccessTests(unittest.TestCase):
         self.assertTrue(template["id"].startswith("t_"))
         kept = template["access"]
         self.assertEqual(set(kept), set(access.TEMPLATE_KEYS), "no sites, connections or anything of the person")
-        self.assertEqual(kept["site_rules"], {"actions": ["files", "logs", "terminal"], "new_envs": False}, "a terminal gives Files")
+        self.assertEqual(kept["site_rules"], {"actions": ["appsettings", "delete", "files", "logs", "packages", "packages_view", "terminal"], "new_envs": False},
+                         "a terminal gives Files, and Files the NuGet packages")
         self.assertEqual(kept["sql_rules"], {"own": True, "actions": ["create", "query"], "limits": {"databases": 2}})
         self.assertEqual(kept["limits"], {"sites": 3, "site_mb": 2048})
         self.assertTrue(kept["create_sites"])

@@ -18,6 +18,23 @@ def use(module):
     sql = module
 
 
+DEFAULT_SCHEMA = "dbo"
+_pg_design = None
+
+
+def for_connection(settings):
+    """pg_design.py for a PostgreSQL connection, which designs its tables and logins; None for Microsoft SQL Server, whose
+    are this module's (the admin loads it under a name of its own, so it is not looked up here)"""
+    global _pg_design
+    if not (isinstance(settings, dict) and settings.get("engine") == "postgres"):
+        return None
+    if _pg_design is None:
+        spec = importlib.util.spec_from_file_location("vns_pg_design", Path(__file__).with_name("pg_design.py"))
+        _pg_design = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_pg_design)
+    return _pg_design
+
+
 def helper():
     global sql
     if sql is None:
@@ -389,5 +406,6 @@ def apply(settings, sql_text, database="master"):
 
 def readable(error):
     """What SQL Server said, without its Msg 33064, Level 16, State 2, Server … lines"""
-    lines = [line for line in str(error).splitlines() if line.strip() and not re.match(r"Msg \d+, Level \d+", line.strip())]
+    lines = [re.sub(r"^psql:[^:]*:\d+: ", "", line) for line in str(error).splitlines()
+             if line.strip() and not re.match(r"Msg \d+, Level \d+", line.strip())]
     return "\n".join(lines) or str(error)

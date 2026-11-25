@@ -250,6 +250,17 @@ class CopySiteTests(unittest.TestCase):
                               self.web, self.configs, self.services, database="bad;name")
         self.assertFalse((self.web / "target.test").exists())
 
+    def test_a_postgresql_connection_keeps_its_own_words(self):
+        """Npgsql's Host, Port and Username: never Server or User ID written into it (1.0.82)"""
+        original = "Host=localhost;Port=5432;Database=shop;Username=old;Password=old;SSL Mode=Prefer"
+        settings = {"server": "db.example.com,5433", "database": "shop_copy", "username": "shop", "password": 'semi;quote"value'}
+        updated = copy_site.change_connection(original, settings)
+        self.assertEqual(updated, 'Host="db.example.com";Port=5433;Database="shop_copy";Username="shop";Password="semi;quote""value";SSL Mode=Prefer')
+        self.assertNotIn("Server", updated)
+        # Without a port given, its own stays
+        updated = copy_site.change_connection(original, dict(settings, server="db.example.com"))
+        self.assertIn("Port=5432", updated)
+
     def test_full_connection_change_quotes_values_and_preserves_options(self):
         original = 'Data Source=old;Initial Catalog=old;UID=old;PWD=old;Integrated Security=True;Encrypt=True'
         settings = {"server": "tcp:sql.test,1433", "database": "new.test",

@@ -58,7 +58,7 @@ function canSql(connection, database, action) {
 const buttonPermission = {
 	"Publish": "publish", "Publish all": "publish", "Publish environments": "publish",
 	"Clear logs": "clear_logs", "Sync data…": "sync_data", "Sync settings…": "sync_settings", "Sync setup…": "sync_setup",
-	"Fix permissions": "files", "Change bindings": "bindings", "Issue certificate": "bindings", "Change environment": "bindings",
+	"Fix permissions": "files", "Change bindings": "bindings", "Issue certificate": "certificate", "Change environment": "environment",
 	"Check service": "admin", "Edit service": "admin", "Edit config": "admin", "Edit web.config": "files", "Edit appsettings.json": "appsettings",
 	"Stop": "service", "Start": "service", "Restart": "service", "Logs": "logs", "Shell": "terminal", "Files": "files",
 	"Copy site": "copy_site", "Delete site": "delete", "Remove environment": "delete", "Delete everything": "delete_all",
@@ -1812,6 +1812,7 @@ function renderSite(name) {
 		}) });
 		// A phone says Publish: it stands beside the syncs there. Its words are the same, so it keeps its icon.
 		publishEnvironments.replaceChildren("Publish", el("span", { className: "desktop-only", textContent: " environments" }));
+		publishEnvironments.classList.add("publish-environments");
 		targetsActions.append(publishEnvironments);
 		publishAll = el("button", { type: "button", textContent: "Publish all", className: "small env-head-action", title: "Publish the main site, then every environment", onclick: () => run(async () => {
 			if (await ask({ title: "Publish all?", message: `Publish the main site, then every environment, one at a time. The services are restarted. If one fails, the rest are not published.${skipped}`, input: false, ok: "Publish all" })) {
@@ -1852,9 +1853,13 @@ function renderSite(name) {
 	}
 	const danger = $("#site-danger");
 	danger.replaceChildren();
-	danger.hidden = site.admin || !hasProd(site);
+	// The main site and every environment: only for those who have all of it (an administrator always does)
+	danger.hidden = site.admin || !hasProd(site) || (!currentUser.admin && !site.has_all);
 	if (!danger.hidden) danger.append(el("button", { textContent: "Delete everything", className: "danger desktop-only", onclick: () => run(() => deleteSite(site, "all")) }));
 	const title = el("div", { className: "detail-title" }, el("h2", { textContent: siteTitle(site) }), kindBadges(site));
+	// An administrator sees who made the site and who it is given to
+	const who = currentUser.admin ? whoChips(site.made_by, site.given_to || []) : null;
+	if (who) title.append(who);
 	// Set up site… and Move under main site: at the right of the site's card head, as Publish all
 	const headActions = [];
 	if (site.not_set_up && site.setup_kind !== "python") {
@@ -1889,7 +1894,11 @@ function renderSite(name) {
 		targetsAdd.append(el("button", { textContent: "Add environment", className: "desktop-only", onclick: () => run(() => openCreateProdDialog(site)) }));
 	}
 	$("#btn-empty-add-environment").onclick = () => run(() => openCreateProdDialog(site));
-	$("#site-targets-head").hidden = noEnvironments;
+	// One environment has its own Publish: Publish environments only for more than one
+	if (targets.childElementCount < 2) targetsActions.querySelector(".publish-environments")?.remove();
+	// A user given only environments, not the main site: one alone needs no heading over it
+	const seesMain = site.environments.some((env) => !isTarget(env));
+	$("#site-targets-head").hidden = noEnvironments || (!seesMain && targets.childElementCount === 1 && !canAddEnvironment);
 	$("#site-targets-count").textContent = String(targets.childElementCount);
 	applyEnvLayout();
 	// The filter is kept for the same site when the page is drawn again, and cleared for another site
@@ -1904,7 +1913,8 @@ function renderSite(name) {
 	filterTargets();
 	$("#targets-empty").hidden = !(noEnvironments && canAddEnvironment);
 	targetsSection.hidden = noEnvironments && !canAddEnvironment;
-	if (site.has_project && (site.kind === "csharp" || site.kind === "umbraco")) {
+	// The packages are the main site's: shown only to those who see it
+	if (site.has_project && (site.kind === "csharp" || site.kind === "umbraco") && seesMain && !site.packages_hidden) {
 		$("#site-layout").classList.add("with-packages");
 		packagesPanel.hidden = false;
 		const updates = new Map((site.package_updates || []).map((item) => [item.name.toLowerCase(), item]));
@@ -2848,7 +2858,7 @@ async function copySite(site, main) {
 			: removing ? `Move ${siteLabel(site)} to another server. It no longer runs here.` : `Copy ${siteLabel(site)} to another server. It stays here as it is.`;
 		$("#copy-site-submit").textContent = removing ? "Migrate site" : movingHere ? "Move site" : "Copy site";
 		for (const item of $("#copy-server-list").querySelectorAll(".goes .move-site-where")) item.textContent = removing ? "Moves" : "Copied";
-		$("#copy-server-hint").textContent = "The whole folders go, including builds, media, logs and SQLite databases, so the sites run the same version and nothing is built. A database in SQL Server stays where it is: connections to this server's own SQL Server are pointed at its address, which must accept connections from the new server."
+		$("#copy-server-hint").textContent = "The whole folders go, including builds, media, logs and SQLite databases, so the sites run the same version and nothing is built. A database in Microsoft SQL Server stays where it is: connections to this server's own SQL Server are pointed at its address, which must accept connections from the new server."
 			+ (kept ? ` Environments on other servers are not touched, and are published to${removing ? " from the new server" : " from both servers"}.` : "")
 			+ " The new server needs the same Harbor version and CPU architecture, and none of the sites. If a step fails, the sites here run as before.";
 	};
@@ -3355,7 +3365,7 @@ function usageSection(title, icon, counted, noun, part) {
 	const limitOf = (item) => item.limit_mb !== undefined ? item.limit_mb : part.size_limit_mb;
 	const each = items.length ? items.map((item) => usageMeter(item.name, item.size_mb, limitOf(item),
 		limitOf(item) == null ? usageSize(item.size_mb) : `${usageSize(item.size_mb)} of ${usageSize(limitOf(item))}`))
-		: [el("p", { className: "muted usage-none", textContent: part.unreachable ? `The ${noun}s could not be measured now: the SQL Server did not answer.` : `No ${noun}s of their own yet.` })];
+		: [el("p", { className: "muted usage-none", textContent: part.unreachable ? `The ${noun}s could not be measured now: the database server did not answer.` : `No ${noun}s of their own yet.` })];
 	return el("section", { className: "usage-section" }, head, ...(counted ? [made] : []), ...each);
 }
 async function showUsage(url, title) {
@@ -3943,10 +3953,10 @@ function syncProdForm() {
 		: "Migrate: it keeps its name and binding, and is removed where it is once it runs at the destination";
 	$("#prod-delete-row").hidden = copying || sameServerMove;
 	$("#prod-move-hint").textContent = windows
-		? "Settings and content are copied, and the project is built for Windows. A connection to the source's own SQL Server is changed to its address, which must accept connections from the new server. With a Windows target, the IIS site and its folder must already exist."
+		? "Settings and content are copied, and the project is built for Windows. A connection to the source's own Microsoft SQL Server is changed to its address, which must accept connections from the new server. With a Windows target, the IIS site and its folder must already exist."
 		: fromWindows
-			? "Settings and content are copied from Windows while its site runs, and the project is built for the destination. A connection to the Windows server's own SQL Server is changed to its address."
-			: `${copying ? "The whole folder is copied" : "The site is stopped while the whole folder is copied"}, including its build, media, logs and a SQLite database, so it runs the same version. A connection to the source's own SQL Server is changed to its address, which must accept connections from the new server.`;
+			? "Settings and content are copied from Windows while its site runs, and the project is built for the destination. A connection to the Windows server's own Microsoft SQL Server is changed to its address."
+			: `${copying ? "The whole folder is copied" : "The site is stopped while the whole folder is copied"}, including its build, media, logs and a SQLite database, so it runs the same version. A connection to the source's own Microsoft SQL Server is changed to its address, which must accept connections from the new server.`;
 	const destinationServer = same ? prodForm.dataset.moveHost : target === "remote" ? prodForm.host.value.trim() || "…" : "";
 	const destinationPath = windows ? prodForm.smb_share.value.trim() || "…"
 		: local ? prodForm.local_path.value.trim() || "…"
@@ -4743,6 +4753,11 @@ async function discardOk() {
 
 let hideNonEditableFiles = true;
 let listedFiles = [];
+// The column the files are sorted by, kept between visits; a folder keeps its place among the files only by name
+let filesSort = { key: "name", descending: false };
+try { filesSort = { ...filesSort, ...JSON.parse(localStorage.getItem("vns-files-sort") || "{}") }; } catch (error) {}
+const FILES_SORT_KEYS = ["name", "size", "modified", "permissions", "owner"];
+if (!FILES_SORT_KEYS.includes(filesSort.key)) filesSort = { key: "name", descending: false };
 let filesLoadGeneration = 0;
 function filesPathPrefix() {
 	return remoteFilesSite || serverFiles ? "/" : "/var/www/" + localFilesRoot + "/";
@@ -4857,6 +4872,40 @@ $("#files-search").onkeydown = (event) => {
 		run(() => navigateFilesInput(true));
 	}
 };
+// Each column heading sorts by it; a second click turns the order round
+for (const th of document.querySelectorAll("#files th[data-sort]")) {
+	const key = th.dataset.sort;
+	const button = el("button", { type: "button", className: "file-sort", onclick: () => {
+		filesSort = { key, descending: filesSort.key === key ? !filesSort.descending : key === "size" || key === "modified" };
+		try { localStorage.setItem("vns-files-sort", JSON.stringify(filesSort)); } catch (error) {}
+		renderFiles();
+	} }, el("span", { textContent: th.textContent }), svgIcon("chevron"));
+	th.replaceChildren(button);
+}
+function sortedFiles(items) {
+	const { key, descending } = filesSort;
+	const byName = (a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: "base" }) || a.name.localeCompare(b.name);
+	const value = (item) => key === "size" ? item.size || 0 : key === "modified" ? item.modified || 0 : String(item[key] || "");
+	const compare = (a, b) => {
+		if (key === "name") return byName(a, b);
+		const x = value(a), y = value(b);
+		return typeof x === "number" ? x - y : x.localeCompare(y);
+	};
+	return [...items].sort((a, b) => {
+		// Folders before files when sorting by size: a folder has none
+		if (key === "size" && a.dir !== b.dir) return a.dir ? -1 : 1;
+		return (descending ? compare(b, a) : compare(a, b)) || byName(a, b);
+	});
+}
+function markFilesSort() {
+	for (const th of document.querySelectorAll("#files th[data-sort]")) {
+		const active = th.dataset.sort === filesSort.key;
+		th.classList.toggle("sorted", active);
+		th.classList.toggle("descending", active && filesSort.descending);
+		if (active) th.setAttribute("aria-sort", filesSort.descending ? "descending" : "ascending");
+		else th.removeAttribute("aria-sort");
+	}
+}
 $("#files-filter").onclick = () => {
 	hideNonEditableFiles = !hideNonEditableFiles;
 	$("#files-filter").textContent = hideNonEditableFiles ? "Show all files" : "Hide non-editable files";
@@ -4903,8 +4952,10 @@ async function loadFiles(path, suffix = "") {
 
 function renderFiles() {
 	const query = filesSearchName().trim().toLocaleLowerCase();
-	const items = listedFiles.filter((item) => (!hideNonEditableFiles || (item.dir ? item.has_editable_files : item.editable))
-		&& item.name.toLocaleLowerCase().includes(query));
+	// Hidden are only the files that can neither be edited nor shown
+	const items = sortedFiles(listedFiles.filter((item) => (!hideNonEditableFiles || (item.dir ? item.has_editable_files : item.editable || previewKind(item.name)))
+		&& item.name.toLocaleLowerCase().includes(query)));
+	markFilesSort();
 	const body = $("#files tbody");
 	body.replaceChildren();
 	if (currentPath) {
@@ -4947,7 +4998,7 @@ function renderFiles() {
 		el("td", { className: "file-permissions muted", textContent: item.permissions }),
 		el("td", { className: "file-owner muted", textContent: item.owner }), tools));
 	}
-	if (!items.length) body.append(el("tr", { className: "file-empty-row" }, el("td", { colSpan: 6, className: "empty", textContent: query ? "No matching files or folders." : listedFiles.length ? "No editable files in this folder." : "This folder is empty." })));
+	if (!items.length) body.append(el("tr", { className: "file-empty-row" }, el("td", { colSpan: 6, className: "empty", textContent: query ? "No matching files or folders." : listedFiles.length ? "No files to edit or show in this folder." : "This folder is empty." })));
 }
 
 async function openFiles(path, remoteSite = "", server = false) {
@@ -6638,19 +6689,22 @@ function sqlBackupRow(backup, allowDelete = true, older = 0) {
 	const olderButton = older ? [el("button", { type: "button", className: "sql-older-toggle", ariaExpanded: "false",
 		title: `Show the ${older} older backup${older === 1 ? "" : "s"} of ${backup.database_name}` },
 		svgIcon("chevron"), el("span", { textContent: "Older" }), el("span", { className: "sql-older-count", textContent: String(older) }))] : [];
-	return el("tr", {}, sqlCell("Database", {}, name),
+	// Found by its database and that database's owner
+	const line = el("tr", {}, sqlCell("Database", {}, name),
 		sqlCell("Finished", { textContent: formatDate(backup.finished) }), sqlCell("Size", { className: "num", textContent: formatSqlSize(backup.size_mb) }),
-		sqlCell("Server path", { textContent: backup.path }), sqlCell("Actions", {}, el("div", { className: "actions" }, ...olderButton, ...(!canSql(sqlSelected(), backup.database_name, "restore") ? [] : [el("button", {
+		...(backup.path ? [sqlCell("Server path", { textContent: backup.path })] : []), sqlCell("Actions", {}, el("div", { className: "actions" }, ...olderButton, ...(!canSql(sqlSelected(), backup.database_name, "restore") ? [] : [el("button", {
 			textContent: "Restore", disabled: backup.media_count !== 1,
 			title: backup.error || (backup.media_count !== 1 ? "Striped or damaged backups are not supported" : "Restore this full backup"),
 			onclick: () => run(() => sqlRestore(backup)),
 		})]), ...(allowDelete && sqlSnapshot.backup_file_access && canSql(sqlSelected(), backup.database_name, "backup") ? [el("button", {
 			textContent: "Delete", onclick: () => run(async () => {
-				if (!(await ask({ title: "Delete backup file?", message: `Delete the entire file ${backup.path}? All backup sets in this file will be removed. Type ${backup.database_name} to confirm.`, match: backup.database_name, danger: true, ok: "Delete" }))) return;
+				if (!(await ask({ title: "Delete backup file?", message: `Delete the entire ${backup.path ? "file " + backup.path : "backup file"}? All backup sets in this file will be removed. Type ${backup.database_name} to confirm.`, match: backup.database_name, danger: true, ok: "Delete" }))) return;
 				await openTask({ kind: "sql_action", action: "delete_backup", connection: sqlSelected(),
 					database: backup.database_name, backup_id: backup.id, confirmation: backup.database_name });
 			}),
 		})] : []))));
+	line.dataset.search = [backup.database_name, sqlSnapshot.made_by?.[backup.database_name]].filter(Boolean).join(" ").toLowerCase();
+	return line;
 }
 
 function sqlSelected() {
@@ -6684,6 +6738,25 @@ for (const button of document.querySelectorAll("#sql-tabs [data-tab]")) {
 		applySqlTab();
 	};
 }
+// The filter over the three tabs: each word in a row's name, owner (or, for a login, its databases); a database's
+// tables go with it, and Users' databases opens when one of them is found
+function applySqlFilter() {
+	const words = $("#sql-filter").value.toLowerCase().split(/\s+/).filter(Boolean);
+	const found = (item) => words.every((word) => (item.dataset.search || "").includes(word));
+	for (const item of document.querySelectorAll("#view-sql tr[data-search], #sql-logins .sql-login[data-search]")) {
+		const hide = words.length > 0 && !found(item);
+		item.classList.toggle("sql-filtered", hide);
+		if (item.classList.contains("sql-database-row") && item.nextElementSibling?.classList.contains("sql-tables-row")) {
+			item.nextElementSibling.classList.toggle("sql-filtered", hide);
+		}
+	}
+	if (words.length && document.querySelector("#sql-users-rows tr[data-search]:not(.sql-filtered)")) $("#sql-users-databases").open = true;
+}
+$("#sql-filter").addEventListener("input", applySqlFilter);
+$("#sql-filter").addEventListener("keydown", (event) => {
+	if (event.key === "Escape" && event.target.value) { event.preventDefault(); event.stopPropagation(); event.target.value = ""; applySqlFilter(); }
+});
+$("#sql-filter-clear").onclick = () => { $("#sql-filter").value = ""; applySqlFilter(); $("#sql-filter").focus(); };
 function applySqlTab() {
 	const ready = Object.fromEntries(Object.entries(SQL_TABS).map(([tab, panel]) => [tab, !$(panel).hidden]));
 	const shown = ready[sqlTab] ? sqlTab : "databases";
@@ -6692,7 +6765,11 @@ function applySqlTab() {
 		button.setAttribute("aria-selected", String(button.dataset.tab === shown));
 	}
 	$("#sql-tabs").hidden = !ready.databases;
+	// The filter is an administrator's: a user has their own few
+	$("#sql-filter-box").hidden = !ready.databases || !currentUser.admin;
 	for (const [tab, panel] of Object.entries(SQL_TABS)) $(panel).classList.toggle("tab-off", tab !== shown);
+	// Rows drawn again keep to the filter
+	applySqlFilter();
 }
 // The connection chosen last, also after a reload: the page opened on the first one and left the one being worked on
 function savedSqlConnection() {
@@ -6701,18 +6778,121 @@ function savedSqlConnection() {
 function saveSqlConnection(id) {
 	try { if (id) localStorage.setItem("vns-sql-connection", id); } catch (error) { /* none */ }
 }
+// Who made something and who it is given to, for an administrator, in words: Made by …, Users: … (three at most, with
+// how many more; all of them in its title). One who made it and alone has it: Owner: …, one chip.
+// Who owns a database or a login (made it): one chip
+function ownerChip(name) {
+	return el("span", { className: "who-chips" }, el("span", { className: "who-chip who-owner", title: `Made by ${name}, who owns it` },
+		svgIcon("user"), el("span", { className: "who-label", textContent: "Owner" }), el("span", { textContent: name })));
+}
+function whoChips(madeBy, givenTo = []) {
+	const chip = (className, icon, label, text, title) => el("span", { className: "who-chip " + className, title },
+		svgIcon(icon), el("span", { className: "who-label", textContent: label }), el("span", { textContent: text }));
+	if (madeBy && givenTo.length === 1 && givenTo[0] === madeBy) {
+		return el("span", { className: "who-chips" }, chip("who-owner", "user", "Owner", madeBy, `${madeBy} made it, and has it alone`));
+	}
+	const chips = [];
+	if (madeBy) chips.push(chip("who-made", "user", "Made by", madeBy, `Made by ${madeBy}`));
+	if (givenTo.length) {
+		const shown = givenTo.slice(0, 3).join(", ") + (givenTo.length > 3 ? ` +${givenTo.length - 3}` : "");
+		chips.push(chip("who-given", "users", "Users", shown, `Given to ${givenTo.join(", ")}`));
+	}
+	return chips.length ? el("span", { className: "who-chips" }, ...chips) : null;
+}
+
+// Microsoft SQL Server or PostgreSQL: a connection's engine, said wherever a connection is shown
+const ENGINE_LABELS = { mssql: "MS SQL", postgres: "PostgreSQL" };
+const ENGINE_NAMES = { mssql: "Microsoft SQL Server", postgres: "PostgreSQL" };
+const engineOf = (connection) => connection?.engine === "postgres" ? "postgres" : "mssql";
+// The engine of the connection chosen on the SQL page, and how its SQL names a table and takes its first rows
+const sqlPageEngine = () => engineOf(sqlConnections.find((item) => item.id === $("#sql-connection").value));
+const sqlQuote = (name, engine = sqlPageEngine()) => engine === "postgres" ? '"' + name.replaceAll('"', '""') + '"' : "[" + name.replaceAll("]", "]]") + "]";
+const firstRowsSql = (schema, name, engine = sqlPageEngine()) => engine === "postgres"
+	? `SELECT * FROM ${sqlQuote(schema, engine)}.${sqlQuote(name, engine)} LIMIT 1000;`
+	: `SELECT TOP 1000 * FROM ${sqlQuote(schema, engine)}.${sqlQuote(name, engine)};`;
+function engineBadge(connection) {
+	const engine = engineOf(connection);
+	return el("span", { className: "badge engine-badge engine-" + engine, textContent: ENGINE_LABELS[engine], title: ENGINE_NAMES[engine] });
+}
+// The engine worked with on the SQL page, when there are connections to both; kept after a reload
+let sqlEngine = "";
+// The connections of the engine worked with: all of them, when there is one engine
+let sqlShownConnections = [];
+try { sqlEngine = localStorage.getItem("vns-sql-engine") || ""; } catch (error) { /* none */ }
 async function loadSqlConnections(selected = $("#sql-connection").value || savedSqlConnection()) {
 	const data = await api("/api/sql/connections");
 	sqlConnections = data.connections;
 	sqlToolsAvailable = data.tools_available === true;
+	sqlTools = data.tools || { mssql: sqlToolsAvailable, postgres: false };
+	// The engines worked with here: an administrator's, those whose tools this server has or that have connections; a
+	// user's, those of the connections they were given (with none yet, those they may add one to)
+	const given = ["mssql", "postgres"].filter((engine) => sqlConnections.some((item) => engineOf(item) === engine));
+	const engines = currentUser.admin ? ["mssql", "postgres"].filter((engine) => sqlTools[engine] || given.includes(engine))
+		: ["mssql", "postgres"].filter((engine) => given.includes(engine) || (sqlTools[engine] && (currentUser.connection_engines || []).includes(engine)));
+	const chosen = sqlConnections.find((item) => item.id === selected);
+	sqlEngine = chosen ? engineOf(chosen) : engines.includes(sqlEngine) ? sqlEngine : engines[0] || "mssql";
+	try { localStorage.setItem("vns-sql-engine", sqlEngine); } catch (error) { /* none */ }
+	// Both: a choice of which one, each with how many connections it has, and the connections of that one
+	const switcher = $("#sql-engine");
+	switcher.hidden = engines.length < 2;
+	// No count on them: under them, Databases and Logins say what a connection holds, and a number here read as those
+	switcher.replaceChildren(...(engines.length < 2 ? [] : engines.map((engine) => {
+		return el("button", {
+			type: "button", role: "tab", ariaSelected: String(engine === sqlEngine), className: `sql-engine-option engine-${engine}` + (engine === sqlEngine ? " active" : ""),
+			onclick: () => {
+				if (engine === sqlEngine) return;
+				sqlEngine = engine;
+				try { localStorage.setItem("vns-sql-engine", engine); } catch (error) { /* none */ }
+				run(() => loadSqlConnections(sqlConnections.find((item) => engineOf(item) === engine)?.id || ""));
+			} }, el("span", { className: "sql-engine-dot", ariaHidden: "true" }), el("span", { textContent: ENGINE_NAMES[engine] }));
+	})));
+	sqlShownConnections = sqlConnections.filter((item) => engines.length < 2 || engineOf(item) === sqlEngine);
+	const shown = sqlShownConnections;
 	const select = $("#sql-connection");
 	select.replaceChildren(el("option", { value: "", textContent: "Choose a connection..." }),
-		...sqlConnections.map((item) => el("option", { value: item.id, textContent: item.name })));
-	select.value = sqlConnections.some((item) => item.id === selected) ? selected : sqlConnections[0]?.id || "";
+		...shown.map((item) => el("option", { value: item.id, textContent: item.name })));
+	select.value = shown.some((item) => item.id === selected) ? selected : shown[0]?.id || "";
+	// The page's own dropdown in place of the browser's: an administrator's connections first, then those users added,
+	// apart, each with who added it (the select under it keeps the value the page reads)
+	const ordered = [...shown.filter((item) => !item.added_by_user), ...shown.filter((item) => item.added_by_user)];
+	const pick = premiumSelect({ label: "Connection", className: "sql-connection-select", value: select.value,
+		options: ordered.map((item) => ({ value: item.id, label: item.name, ...(item.added_by_user ? { group: "Added by users", sub: item.added_by } : {}) })) });
+	pick.addEventListener("change", () => {
+		select.value = pick.value;
+		select.dispatchEvent(new Event("change"));
+	});
+	$("#sql-connection-pick").replaceChildren(pick);
+	// One alone: nothing to choose, its name as text in place of the list
+	const single = shown.length === 1;
+	$("#sql-connection-pick").hidden = single;
+	$("#sql-connection-name").hidden = !single;
+	$("#sql-connection-name").textContent = single ? shown[0].name : "";
+	$("#sql-connection-name").title = single ? shown[0].name : "";
 	saveSqlConnection(select.value);
 	await refreshSql();
 }
 
+// What the page says of the connection's engine: PostgreSQL has no recovery model, keeps its dumps here, and its
+// logins own, read and write
+const SQL_ENGINE_TEXTS = {
+	mssql: {
+		backups: "Latest 200 full disk backups from Microsoft SQL Server's history, plus .bak files in the connection's backup directory that are not in that history. The latest of each database first; Older shows the ones before it. Paths are on the SQL server; historical files may have been overwritten, moved or deleted.",
+		logins: "Microsoft SQL Server's own logins, and the databases each may use with its roles there. sa and this connection's login are changed elsewhere.",
+		newLogin: "Creates a new login with db_owner access. Existing logins cannot be reused. Password policy and expiration are disabled.",
+	},
+	postgres: {
+		backups: "The pg_dump files in the connection's backup folder on this server, the newest first: one per database, made again by each backup. The latest of each database first; Older shows the ones before it.",
+		logins: "PostgreSQL's logins (roles that may log in), and what each may do in the databases it is given: own them, read or write their tables. postgres and this connection's login are changed elsewhere.",
+		newLogin: "Creates a new login that owns the database. Existing logins cannot be reused.",
+	},
+};
+function sqlEngineTexts(engine) {
+	const texts = SQL_ENGINE_TEXTS[engine];
+	$("#view-sql").dataset.engine = engine;
+	$("#sql-backups-hint").textContent = texts.backups;
+	$("#sql-logins-hint").textContent = texts.logins;
+	for (const hint of document.querySelectorAll(".sql-new-login-hint")) hint.textContent = texts.newLogin;
+}
 async function refreshSql() {
 	// What a user may do here can have changed by what they just did (as many databases made as they may): read again
 	if (!currentUser.admin) {
@@ -6720,21 +6900,43 @@ async function refreshSql() {
 	}
 	const id = sqlToolsAvailable ? $("#sql-connection").value : "";
 	const selectedConnection = sqlConnections.find((item) => item.id === id);
-	$("#sql-connection").title = selectedConnection ? `${selectedConnection.host}:${selectedConnection.port}` : "";
+	$("#sql-connection").title = selectedConnection?.host ? `${selectedConnection.host}:${selectedConnection.port}` : "";
 	// Where it goes, under the choice
-	$("#sql-connection-host").textContent = selectedConnection ? `${selectedConnection.username || ""}${selectedConnection.username ? " @ " : ""}${selectedConnection.host}:${selectedConnection.port}` : "";
+	// Where it goes, under the connection; which SQL Server it is beside its name when it stands alone and the tabs above
+	// do not say so (beside a list the bar's colour says it)
+	// No line of where it goes under the connection: Edit connection and Connect… say it
+	$("#sql-connection-host").replaceChildren();
+	// The bar's colour says which SQL Server it is: no badge beside the name
+	$("#sql-connection-name").replaceChildren(...(selectedConnection ? [el("span", { textContent: selectedConnection.name })] : []));
+
+	sqlEngineTexts(engineOf(selectedConnection));
 	const generation = ++sqlLoadGeneration;
-	const hasConnections = sqlToolsAvailable && sqlConnections.length > 0;
+	const hasConnections = sqlToolsAvailable && sqlShownConnections.length > 0;
+	$("#sql-connection-bar").dataset.engine = sqlEngine;
+	// None yet of the engine worked with: its own words, and Add connection makes one of it
+	// One who may not add a connection is told who gives them one, with no button to add it
+	const mayAdd = Boolean(currentUser.manage_connections) && (currentUser.admin || (currentUser.connection_engines || []).includes(sqlEngine));
+	$("#sql-empty-add-connection").hidden = !mayAdd;
+	$("#sql-add-connection").hidden = !mayAdd;
+	$("#sql-no-connections-title").textContent = !mayAdd ? "No SQL connections yet"
+		: $("#sql-engine").hidden ? "Your first SQL connection starts here" : `Your first ${ENGINE_NAMES[sqlEngine]} connection starts here`;
+	$("#sql-no-connections-text").textContent = !mayAdd ? "An administrator gives you the connections and databases you may work with. They show here once you have them."
+		: sqlEngine === "postgres"
+		? "Connect to a PostgreSQL, here or on another server, to manage its databases, logins and backups."
+		: "Connect to a Microsoft SQL Server, here or on another server, to manage its databases and backups.";
 	$("#sql-tools-required").hidden = sqlToolsAvailable;
 	$("#sql-no-connections").hidden = !sqlToolsAvailable || hasConnections;
-	$("#sql-heading").hidden = !hasConnections;
+	$("#sql-heading").hidden = !hasConnections && $("#sql-engine").hidden;
 	// One connection they can neither change nor add to: no box to choose in, its name by the heading, and the spinner
 	// there while it loads
-	const nothingToChoose = sqlConnections.length === 1 && $("#sql-add-connection").hidden && Boolean(selectedConnection?.locked);
+	const nothingToChoose = sqlConnections.length === 1 && $("#sql-engine").hidden && $("#sql-add-connection").hidden && Boolean(selectedConnection?.locked);
 	$("#sql-connection-bar").hidden = !hasConnections || nothingToChoose;
 	$("#sql-only-connection").hidden = !nothingToChoose;
-	$("#sql-only-connection").textContent = nothingToChoose ? selectedConnection.name : "";
-	(nothingToChoose ? $("#sql-heading") : $("#sql-edit-connection").parentElement).append($("#sql-loading"));
+	// Its name by the heading, with which SQL Server it is: the bar that says so is not there
+	$("#sql-only-connection").replaceChildren(...(nothingToChoose ? [el("span", { textContent: selectedConnection.name }), engineBadge(selectedConnection)] : []));
+	// The spinner by what it loads: beside the connection (after Edit connection), not at the end of the bar after Add
+	if (nothingToChoose) $("#sql-heading").append($("#sql-loading"));
+	else $("#sql-edit-connection").after($("#sql-loading"));
 	$("#sql-status").hidden = true;
 	$("#sql-databases-panel").hidden = !id;
 	// Each button as it will be, from the start: Edit connection by whether the connection is locked for them (known
@@ -6754,6 +6956,9 @@ async function refreshSql() {
 	$("#sql-system-rows").replaceChildren();
 	$("#sql-system-databases").hidden = true;
 	$("#sql-system-databases").open = false;
+	$("#sql-users-rows").replaceChildren();
+	$("#sql-users-databases").hidden = true;
+	$("#sql-users-databases").open = false;
 	$("#sql-backups").replaceChildren();
 	sqlSnapshot = { databases: [], backups: [] };
 	applySqlTab();
@@ -6778,7 +6983,11 @@ async function refreshSql() {
 		$("#sql-create").hidden = !canSql(id, null, "create") || !hasUserDatabases;
 		// A connection the user did not make is locked for them
 		$("#sql-edit-connection").hidden = Boolean(sqlConnections.find((item) => item.id === id)?.locked);
-		$("#sql-user-databases-table").hidden = !hasUserDatabases;
+		// The administrators' own in the table; those users made folded apart under it
+		const usersMade = data.databases.filter((database) => database.id > 4 && (data.user_made || []).includes(database.name)).length;
+		$("#sql-user-databases-table").hidden = !hasUserDatabases || data.databases.filter((database) => database.id > 4).length === usersMade;
+		$("#sql-users-databases").hidden = !usersMade;
+		$("#sql-users-summary").textContent = `Users' databases (${usersMade})`;
 		// None yet: a big empty state with the button that makes the first, or a word that there are none
 		const mayCreate = canSql(id, null, "create");
 		$("#sql-databases-empty").hidden = hasUserDatabases;
@@ -6789,7 +6998,7 @@ async function refreshSql() {
 		// The counts are on the tabs: the line under the connection says only what went wrong with backup files
 		// Their own databases: SQL Server's are under System databases
 		$("#sql-databases-count").textContent = String(data.databases.filter((database) => database.id > 4).length);
-		$("#sql-status").textContent = fileErrors.map((backup) => `${backup.path}: ${backup.error}`).join(" · ");
+		$("#sql-status").textContent = fileErrors.map((backup) => `${backup.path || backup.database_name}: ${backup.error}`).join(" · ");
 		$("#sql-status").hidden = !fileErrors.length;
 		applySqlTab();
 		const systemCount = data.databases.filter((database) => database.id <= 4).length;
@@ -6802,7 +7011,10 @@ async function refreshSql() {
 					if (canSql(id, database.name, need)) actions.append(el("button", { textContent: label, onclick: () => run(() => sqlDatabaseAction(action, database)) }));
 				}
 			}
-			if (canSql(id, database.name, "query")) actions.prepend(el("button", { textContent: "Query", onclick: () => openSqlQuery(database) }));
+			// Queries and tables are worked with at a desk: a phone shows them, it does not change them
+			if (canSql(id, database.name, "query")) actions.prepend(el("button", { textContent: "Query", className: "desktop-only", onclick: () => openSqlQuery(database) }));
+			// How a site reaches it: its connection string, for anyone who sees the database
+			if (database.id > 4) actions.prepend(el("button", { textContent: "Connect…", title: "The connection string a site uses for this database", onclick: () => run(() => openConnectionString(database)) }));
 			const toggle = el("button", { type: "button", className: "sql-tables-toggle", title: "Show tables", ariaExpanded: "false",
 				ariaLabel: `Show the tables of ${database.name}`, innerHTML: '<svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M6 3.5 10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>' });
 			toggle.onclick = () => toggleSqlTables(toggle, database);
@@ -6810,17 +7022,25 @@ async function refreshSql() {
 			const row = el("tr", { className: "sql-database-row", onclick: (event) => {
 				if (!event.target.closest("button, a, input, select") && !getSelection().toString()) toggle.click();
 			} });
+			// Found by its name and its owner
+			row.dataset.search = [database.name, data.made_by?.[database.name]].filter(Boolean).join(" ").toLowerCase();
 			row.append(sqlCell("Name", {}, el("div", { className: "sql-database-name" }, toggle,
-				el("span", { className: "sql-name-icon" + (database.id <= 4 ? " system" : "") }, svgIcon("database")), el("span", { textContent: database.name }))),
+				el("span", { className: "sql-name-icon" + (database.id <= 4 ? " system" : "") }, svgIcon("database")), el("span", { className: "sql-database-label", textContent: database.name }),
+				// An Umbraco site's database (it has Umbraco's tables): Umbraco's badge, as its site has
+				...(database.umbraco ? [el("span", { className: "badge umbraco sql-database-kind", textContent: "Umbraco", title: "An Umbraco site's database" })] : []),
+				...(data.made_by?.[database.name] ? [ownerChip(data.made_by[database.name])] : []))),
 				sqlCell("Size", { className: "num", textContent: formatSqlSize(database.size_mb) }), sqlCell("State", {
 					className: "sql-state-" + database.state.toLowerCase(),
 					textContent: database.state,
 				}),
-				sqlCell("Recovery", { textContent: database.recovery }), sqlCell("Actions", {}, actions));
-			$(database.id <= 4 ? "#sql-system-rows" : "#sql-databases").append(row);
+				sqlCell("Recovery", { className: "sql-recovery", textContent: database.recovery }), sqlCell("Actions", {}, actions));
+			// SQL Server's own apart, and those users made apart (an administrator's view), each folded
+			$(database.id <= 4 ? "#sql-system-rows" : (data.user_made || []).includes(database.name) ? "#sql-users-rows" : "#sql-databases").append(row);
 		}
 		// The latest backup of each database, its older ones folded under it behind Older
 		$("#sql-backups-count").textContent = String(data.backups.length);
+		// The server sends a backup's path only to an administrator
+		$("#sql-backups-path").hidden = !data.backups.some((backup) => backup.path);
 		for (const [latest, ...older] of groupSqlBackups(data.backups)) {
 			const row = sqlBackupRow(latest, true, older.length);
 			const rows = older.map((backup) => {
@@ -6866,17 +7086,26 @@ async function sqlDatabaseAction(action, database) {
 
 // A dropdown as the page's own: a button that shows the choice, and a list under it with the one chosen ticked. Arrows,
 // Enter and Escape as a select has them; a click outside closes it. Its value and change event are a select's.
+// A dropdown as the page's own. Options are texts (the value is the text), or {value, label, sub, group}: the value
+// apart from what it shows, a line under it, and a heading over each group (the options of one group together)
 function premiumSelect({ options, value, label = "", className = "" }) {
-	let current = value ?? options[0];
-	const shown = el("span", { className: "pselect-value", textContent: current });
+	const items_ = options.map((option) => typeof option === "string" ? { value: option, label: option } : { label: String(option.value), ...option });
+	const values = items_.map((item) => item.value);
+	const textOf = (wanted) => items_.find((item) => item.value === wanted)?.label ?? "";
+	let current = value ?? values[0];
+	const shown = el("span", { className: "pselect-value", textContent: textOf(current) });
 	const trigger = el("button", { type: "button", className: "pselect-trigger", ariaLabel: label, ariaHaspopup: "listbox", ariaExpanded: "false" },
 		shown, svgIcon("chevron"));
 	const list = el("ul", { className: "pselect-list", role: "listbox", ariaLabel: label, hidden: true });
 	const box = el("div", { className: "pselect " + className }, trigger);
 	let active = -1;
-	const items = options.map((option, index) => {
-		const item = el("li", { role: "option", className: "pselect-option", textContent: option, ariaSelected: String(option === current),
+	let group;
+	const items = items_.map((option, index) => {
+		if (option.group && option.group !== group) list.append(el("li", { className: "pselect-group", role: "presentation", textContent: option.group }));
+		group = option.group;
+		const item = el("li", { role: "option", className: "pselect-option" + (option.sub ? " with-sub" : ""), ariaSelected: String(option.value === current),
 			onmousedown: (event) => event.preventDefault(), onclick: () => choose(index), onmouseenter: () => mark(index) },
+			el("span", { className: "pselect-text" }, el("span", { textContent: option.label }), ...(option.sub ? [el("small", { textContent: option.sub })] : [])),
 			svgIcon("check"));
 		list.append(item);
 		return item;
@@ -6914,18 +7143,18 @@ function premiumSelect({ options, value, label = "", className = "" }) {
 		list.hidden = false;
 		trigger.setAttribute("aria-expanded", "true");
 		place();
-		mark(Math.max(0, options.indexOf(current)));
+		mark(Math.max(0, values.indexOf(current)));
 		document.addEventListener("mousedown", outside, true);
 		window.addEventListener("resize", close);
 		document.addEventListener("scroll", onScroll, true);
 	};
 	const choose = (index) => {
-		const next = options[index];
+		const next = values[index];
 		close();
 		trigger.focus();
 		if (next === current) return;
 		current = next;
-		shown.textContent = next;
+		shown.textContent = textOf(next);
 		items.forEach((item, at) => item.setAttribute("aria-selected", String(at === index)));
 		box.dispatchEvent(new Event("change", { bubbles: true }));
 	};
@@ -6936,24 +7165,113 @@ function premiumSelect({ options, value, label = "", className = "" }) {
 			return;
 		}
 		if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); }
-		else if (event.key === "ArrowDown") { event.preventDefault(); mark(Math.min(options.length - 1, active + 1)); }
+		else if (event.key === "ArrowDown") { event.preventDefault(); mark(Math.min(values.length - 1, active + 1)); }
 		else if (event.key === "ArrowUp") { event.preventDefault(); mark(Math.max(0, active - 1)); }
 		else if (event.key === "Enter" || event.key === " ") { event.preventDefault(); choose(active); }
 		else if (event.key === "Tab") close();
 		else if (event.key.length === 1) {
 			// A letter goes to the next option that starts with it
-			const start = (active + 1) % options.length;
-			const found = [...options.keys()].map((at) => (start + at) % options.length).find((at) => options[at].toLowerCase().startsWith(event.key.toLowerCase()));
+			const start = (active + 1) % values.length;
+			const found = [...values.keys()].map((at) => (start + at) % values.length).find((at) => items_[at].label.toLowerCase().startsWith(event.key.toLowerCase()));
 			if (found !== undefined) mark(found);
 		}
 	};
-	Object.defineProperty(box, "value", { get: () => current, set: (next) => { if (options.includes(next)) { current = next; shown.textContent = next; } } });
+	Object.defineProperty(box, "value", { get: () => current, set: (next) => { if (values.includes(next)) { current = next; shown.textContent = textOf(next); items.forEach((item, at) => item.setAttribute("aria-selected", String(values[at] === next))); } } });
 	// Closed with the dialog it is in
 	box.closeList = close;
 	return box;
 }
 
 // Type <name> to confirm, in a form dialog: the name is a button that copies it, as the confirmations elsewhere have
+// A database's connection string, as a site uses it: for .NET (Microsoft.Data.SqlClient or Npgsql) or Python (SQLAlchemy),
+// with one of its logins. The password is never shown here: it is the login's, given when the login was made.
+function connectionStrings(connection, database, login) {
+	// A user not told where the server is: SERVER, which an administrator fills in
+	const host = !connection.host ? "SERVER" : connection.host === "." ? "localhost" : connection.host;
+	connection = { ...connection, port: connection.port || (engineOf(connection) === "postgres" ? 5432 : 1433) };
+	const user = login || "LOGIN";
+	const password = "PASSWORD";
+	const url = (text) => encodeURIComponent(text);
+	if (engineOf(connection) === "postgres") {
+		return {
+			dotnet: `Host=${host};Port=${connection.port};Database=${database};Username=${user};Password=${password}`,
+			python: `postgresql://${url(user)}:${password}@${host}:${connection.port}/${url(database)}`,
+		};
+	}
+	return {
+		dotnet: `Server=${host},${connection.port};Database=${database};User Id=${user};Password=${password};TrustServerCertificate=True;`,
+		python: `mssql+pyodbc://${url(user)}:${password}@${host}:${connection.port}/${url(database)}?driver=ODBC+Driver+18+for+SQL+Server&TrustServerCertificate=yes`,
+	};
+}
+// A connection string shown as code: its keys muted, its values plain, LOGIN and PASSWORD (to put in) marked
+function connectionStringView(text) {
+	const parts = [];
+	const mark = (value) => value.split(/(LOGIN|PASSWORD|SERVER)/).filter(Boolean).map((piece) =>
+		piece === "LOGIN" || piece === "PASSWORD" || piece === "SERVER" ? el("span", { className: "cs-fill", textContent: piece }) : document.createTextNode(piece));
+	if (text.includes("://")) {
+		const [scheme, rest] = text.split("://");
+		parts.push(el("span", { className: "cs-key", textContent: scheme + "://" }), ...mark(rest));
+	} else {
+		text.split(";").filter(Boolean).forEach((pair, index) => {
+			const at = pair.indexOf("=");
+			if (index) parts.push(el("span", { className: "cs-key", textContent: ";" }));
+			parts.push(el("span", { className: "cs-key", textContent: pair.slice(0, at + 1) }), ...mark(pair.slice(at + 1)));
+		});
+		if (text.endsWith(";")) parts.push(el("span", { className: "cs-key", textContent: ";" }));
+	}
+	return parts;
+}
+function openConnectionString(database) {
+	const connection = sqlConnections.find((item) => item.id === sqlSelected());
+	if (!connection) throw new Error("Choose a connection.");
+	const engine = engineOf(connection);
+	// Its own logins, as far as they are known here (Logins); without, one is typed
+	const logins = (sqlLogins?.logins || []).filter((login) => !login.sysadmin && login.databases.some((item) => item.database === database.name)).map((login) => login.name);
+	const kinds = el("div", { className: "connect-kinds", role: "radiogroup", ariaLabel: "For" },
+		...[["dotnet", ".NET (C#)", engine === "postgres" ? "Npgsql" : "SqlClient"], ["python", "Python", engine === "postgres" ? "psycopg, SQLAlchemy" : "SQLAlchemy, pyodbc"]]
+			.map(([value, title, line], index) => el("label", { className: "connect-kind" }, el("input", { type: "radio", name: "connection_kind", value, checked: index === 0 }),
+				el("strong", { textContent: title }), el("small", { textContent: line }))));
+	const loginField = logins.length > 1
+		? el("div", { className: "connect-field" }, el("span", { className: "connect-label", textContent: "Login" }),
+			el("div", { className: "design-chips" }, ...logins.map((name, index) => el("label", { className: "design-chip" },
+				el("input", { type: "radio", name: "connection_login", value: name, checked: index === 0 }), el("span", { textContent: name })))))
+		: el("label", { className: "connect-field" }, el("span", { className: "connect-label", textContent: "Login" }),
+			el("input", { name: "connection_login_typed", value: logins[0] || "", placeholder: "The database's own login", autocomplete: "off", spellcheck: false }));
+	const passwordField = el("label", { className: "connect-field" }, el("span", { className: "connect-label", textContent: "Password" }),
+		el("input", { name: "connection_password", type: "password", placeholder: "Put in here, never kept", autocomplete: "new-password", "data-1p-ignore": "", "data-lpignore": "true" }));
+	const code = el("code", { className: "connect-code" });
+	let current = "";
+	const copy = el("button", { type: "button", className: "connect-copy toned-action", title: "Copy the connection string" }, svgIcon("copy"), "Copy");
+	copy.dataset.tone = "blue";
+	copy.onclick = () => run(async () => {
+		await copyText(current, formDialog);
+		toast("Copied to clipboard.", "ok");
+	});
+	const update = () => {
+		const form = $("#form-dialog");
+		const chosen = form.querySelector("input[name=connection_kind]:checked")?.value || "dotnet";
+		const login = (form.querySelector("input[name=connection_login]:checked")?.value || form.elements.connection_login_typed?.value || "").trim();
+		const password = form.elements.connection_password?.value || "";
+		current = connectionStrings(connection, database.name, login)[chosen];
+		// A password put in goes into the string here, as the driver reads it; it is never sent or kept
+		if (password) current = chosen === "python" ? current.replace("PASSWORD", encodeURIComponent(password))
+			: current.replace("Password=PASSWORD", "Password=" + (/[;"']/.test(password) ? '"' + password.replaceAll('"', '""') + '"' : password));
+		code.replaceChildren(...connectionStringView(current));
+	};
+	const local = ["localhost", "127.0.0.1", "::1", "."].includes(connection.host);
+	const hiddenServer = !connection.host;
+	openFormDialog({ icon: "link", title: `Connect to ${database.name}`, closeOnly: true,
+		text: `${ENGINE_NAMES[engine]} · ${connection.name}`,
+		fields: [kinds, el("div", { className: "ns-grid connect-who" }, loginField, passwordField),
+			el("div", { className: "connect-string" }, code, copy),
+			el("p", { className: "hint connect-hint", textContent: (hiddenServer ? "Put the server's address in place of SERVER: an administrator gives it. " : "")
+				+ (local ? "localhost is for a site on this server; from another, use this server's address. " : "")
+				+ "The password is the login's own: it is not kept here." })] });
+	for (const input of $("#form-dialog").querySelectorAll("input")) input.addEventListener("input", update);
+	for (const input of $("#form-dialog").querySelectorAll("input[type=radio]")) input.addEventListener("change", update);
+	update();
+}
+
 function confirmField(match) {
 	// The dialog's button waits for it, as the other confirmations' do (openFormDialog reads data-match)
 	const field = el("input", { name: "confirmation", required: true, autocomplete: "off", spellcheck: false });
@@ -7008,7 +7326,9 @@ function askSqlRestore(backup) {
 	const error = $("#sql-restore-error");
 	form.reset();
 	error.textContent = "";
-	$("#sql-restore-description").textContent = `From ${backup.path}. SQL Server must still be able to read this file.`;
+	$("#sql-restore-description").textContent = sqlPageEngine() === "postgres"
+		? (backup.path ? `From ${backup.path}, made with pg_dump.` : "From its pg_dump file.")
+		: backup.path ? `From ${backup.path}. Microsoft SQL Server must still be able to read this file.` : "Microsoft SQL Server must still be able to read the backup file.";
 	form.elements.database.value = backup.database_name;
 	let loginEdited = false;
 	const existing = () => {
@@ -7110,11 +7430,11 @@ function askSqlDatabase(source = null) {
 function decorateSql() {
 	const styles = {
 		"Add connection": ["plus", "green"], "Remove connection": ["trash", "red"],
-		"Install SQL tools": ["download", "blue"],
+		"Install SQL tools": ["download", "blue"], "Microsoft SQL Server tools": ["download", "blue"], "PostgreSQL tools": ["download", "teal"],
 		"Edit connection": ["pencil", "amber"],
 		"Create database": ["server", "green"], "Add login": ["user", "green"], "Backup": ["download", "blue"],
 		"Backup all": ["download", "blue"], "Copy": ["sync", "purple"],
-		"Restore": ["upload", "amber"], "Refresh": ["sync", "blue"],
+		"Restore": ["upload", "amber"], "Refresh": ["sync", "blue"], "Connect…": ["link", "teal"], "Query": ["terminal", "pink"],
 	};
 	for (const button of $("#view-sql").querySelectorAll("button:not([data-tone])")) {
 		const style = styles[button.textContent.trim()];
@@ -7446,7 +7766,7 @@ function menuCard() {
 // A dialog of fields for a setting saved straight away (not a task): submit(form) saves, and closes it when it went well.
 // Without ok it only shows (a log): its one button closes it.
 const formDialog = $("#dlg-form");
-function openFormDialog({ icon, title, text = "", fields, ok = "", submit = null, extra = [], wide = false, danger = false }) {
+function openFormDialog({ icon, title, text = "", fields, ok = "", submit = null, extra = [], wide = false, danger = false, closeOnly = false }) {
 	formDialog.classList.toggle("wide", wide);
 	// A delete looks as every other confirmation that deletes (ask with danger): no banner or icon at the top, its title
 	// red, its button the plain one made red, without an icon; any other has the banner and a green button with a check
@@ -7460,8 +7780,11 @@ function openFormDialog({ icon, title, text = "", fields, ok = "", submit = null
 	$("#form-dialog-fields").replaceChildren(...fields);
 	// Buttons beside the dialog's own, such as a test of what is typed
 	$("#form-dialog-extra").replaceChildren(...extra);
-	$("#form-dialog-ok").hidden = !ok;
-	$("#form-dialog-ok").replaceChildren(...(ok ? [...(danger ? [] : [svgIcon("check")]), ok] : []));
+	// Only to look at and copy from: one Close button, where the dialog's button stands, and no Cancel
+	$("#form-dialog-ok").hidden = !ok && !closeOnly;
+	$("#form-dialog-ok").classList.toggle("primary", !closeOnly);
+	$("#form-dialog-ok").replaceChildren(...(closeOnly ? ["Close"] : ok ? [...(danger ? [] : [svgIcon("check")]), ok] : []));
+	$("#form-dialog-cancel").hidden = closeOnly;
 	$("#form-dialog-cancel").textContent = ok ? "Cancel" : "Close";
 	form.onsubmit = (event) => {
 		event.preventDefault();
@@ -7676,9 +7999,15 @@ async function openUsageSettings() {
 			go("#sql");
 		};
 		measuring.replaceWith(section("globe", "Sites", all.sites, "No sites on this server yet.", (item) => go(siteLink(item.name)), (item) => ({ site: item.name })),
-			...all.connections.map((connection) => section("database", `Databases · ${connection.name}`, connection.databases,
-				connection.unreachable ? "The SQL Server did not answer, or has no databases of its own." : "No databases yet.", openDatabase(connection),
-				(item) => ({ connection: connection.id, database: item.name }))));
+			// A connection with no databases of its own (or none that answered) has nothing to show; each says its engine
+			...all.connections.filter((connection) => connection.databases.length).map((connection) => {
+				const part = section("database", `Databases · ${connection.name}`, connection.databases, "No databases yet.", openDatabase(connection),
+					(item) => ({ connection: connection.id, database: item.name }));
+				// The engine beside the name, a little apart from it
+				const name = part.querySelector(".usage-section-title strong");
+				if (name) name.replaceWith(el("span", { className: "usage-title-row" }, name.cloneNode(true), engineBadge(connection)));
+				return part;
+			}));
 	} catch (error) {
 		measuring.replaceChildren(el("p", { className: "error", textContent: error.message }));
 	} finally {
@@ -7909,29 +8238,29 @@ async function toggleSqlTables(toggle, database) {
 		// SQL Server's own databases (master, model, msdb, tempdb): their tables are read here, never changed
 		const system = database.id <= 4;
 		const mayEdit = !system && canSql(connection, database.name, "tables");
+		const mayQuery = canSql($("#sql-connection").value, database.name, "query");
 		// A dashed line under the tables that makes another, as the other lists add theirs
-		const newTable = mayEdit ? [el("button", { type: "button", className: "access-add sql-add-table", onclick: () => run(() => openTableDesigner(database)) }, svgIcon("plus"), "New table")] : [];
+		const newTable = mayEdit ? [el("button", { type: "button", className: "access-add sql-add-table desktop-only", onclick: () => run(() => openTableDesigner(database)) }, svgIcon("plus"), "New table")] : [];
 		if (!data.tables.length) {
 			// None yet: a dashed line across that makes the first, as Servers and Samba add theirs
-			body.replaceChildren(mayEdit
-				? el("button", { type: "button", className: "access-add sql-first-table", onclick: () => run(() => openTableDesigner(database)) },
-					svgIcon("plus"), `Create the first table in ${database.name}`)
-				: el("p", { className: "muted", textContent: "No tables yet." }));
+			// A phone, where tables are not made, says there are none
+			body.replaceChildren(el("p", { className: "muted" + (mayEdit ? " phone-only" : ""), textContent: "No tables yet." }),
+				...(mayEdit ? [el("button", { type: "button", className: "access-add sql-first-table desktop-only", onclick: () => run(() => openTableDesigner(database)) },
+					svgIcon("plus"), `Create the first table in ${database.name}`)] : []));
 			return;
 		}
-		const quote = (name) => "[" + name.replaceAll("]", "]]") + "]";
+		const quote = (name) => sqlQuote(name);
 		const action = (icon, tone, title, onclick) => Object.assign(tonedButton("", icon, tone, onclick), { title, ariaLabel: title, className: "icon-action" });
 		body.replaceChildren(el("div", { className: "sql-tables-head" },
 			el("span", { className: "sql-tables-count muted", textContent: `${data.tables.length} table${data.tables.length === 1 ? "" : "s"}` }),
 			...(system ? [el("span", { className: "sql-tables-locked", title: "SQL Server's own tables: they can be read, not designed or dropped here" }, svgIcon("lock"), "Read only")] : [])),
 			el("ul", {}, ...data.tables.map((table) => el("li", { className: "sql-table-line" },
-				el("button", { type: "button", className: "sql-table-open", title: "Select the first 1000 rows",
-					onclick: () => openSqlQuery(database, `SELECT TOP 1000 * FROM ${quote(table.schema)}.${quote(table.name)};`) },
-					el("span", { className: "sql-table-name" }, ...(table.schema === "dbo" ? [] : [el("span", { className: "muted", textContent: table.schema + "." })]), table.name),
+				// The line opens its rows, for one who may run queries; for another it only says what the table is
+				el(mayQuery ? "button" : "span", { className: "sql-table-open" + (mayQuery ? "" : " sql-table-still"),
+					...(mayQuery ? { type: "button", title: "Select the first 1000 rows", onclick: () => openSqlQuery(database, firstRowsSql(table.schema, table.name)) } : {}) },
+					el("span", { className: "sql-table-name" }, ...(table.schema === "dbo" || table.schema === "public" ? [] : [el("span", { className: "muted", textContent: table.schema + "." })]), table.name),
 					el("span", { className: "sql-table-meta muted", textContent: `${Number(table.rows).toLocaleString()} rows · ${formatSqlSize(table.size_mb)}` })),
-				el("span", { className: "sql-table-actions" },
-					...(canSql(connection, database.name, "query") ? [action("rows", "blue", `Select the first 1000 rows of ${table.name}`,
-						() => openSqlQuery(database, `SELECT TOP 1000 * FROM ${quote(table.schema)}.${quote(table.name)};`))] : []),
+				el("span", { className: "sql-table-actions desktop-only" },
 					...(mayEdit ? [action("pencil", "amber", `Design ${table.name}`, () => openTableDesigner(database, table)),
 						action("trash", "red", `Drop ${table.name}`, () => dropSqlTable(database, table, toggle))] : []))))), ...newTable);
 	} catch (error) {
@@ -7948,17 +8277,21 @@ async function openTableDesigner(database, table = null) {
 	const data = await api(`/api/sql/${encodeURIComponent(connection)}/table?${query}`);
 	tableTypes = data;
 	const params = TYPE_PARAMS(data);
-	const columns = data.table ? data.table.columns : [
-		{ name: "Id", type: "int", identity: true, primary: true, nullable: false, default: "" },
-		{ name: "Name", type: "nvarchar", length: 100, nullable: false, default: "" },
-		{ name: "Created", type: "datetime2", scale: 7, nullable: false, default: "SYSUTCDATETIME()" }];
+	const postgres = data.engine === "postgres";
+	const columns = data.table ? data.table.columns : postgres ? [
+		{ name: "id", type: "integer", identity: true, primary: true, nullable: false, default: "" },
+		{ name: "name", type: "varchar", length: 100, nullable: false, default: "" },
+		{ name: "created", type: "timestamptz", scale: 6, nullable: false, default: "now()" }] : [
+		{ name: "id", type: "int", identity: true, primary: true, nullable: false, default: "" },
+		{ name: "name", type: "nvarchar", length: 100, nullable: false, default: "" },
+		{ name: "created", type: "datetime2", scale: 7, nullable: false, default: "SYSUTCDATETIME()" }];
 	const list = el("div", { className: "design-columns" });
 	const functions = el("datalist", { id: "design-functions" }, ...data.functions.map((item) => el("option", { value: item })));
 	const row = (column) => {
 		const type = premiumSelect({ options: data.types.includes(column.type) ? data.types : [column.type, ...data.types], value: column.type, label: "Type", className: "design-type" });
 		const length = el("input", { className: "design-size", ariaLabel: "Length", value: column.length ?? "", placeholder: "length" });
 		const precision = el("input", { className: "design-size", type: "number", min: 1, max: 38, ariaLabel: "Precision", value: column.precision ?? 18, title: "Precision" });
-		const scale = el("input", { className: "design-size", type: "number", min: 0, max: 38, ariaLabel: "Scale", value: column.scale ?? (params.scale.has(column.type) ? 7 : 2), title: "Scale" });
+		const scale = el("input", { className: "design-size", type: "number", min: 0, max: 38, ariaLabel: "Scale", value: column.scale ?? (params.scale.has(column.type) ? (postgres ? 6 : 7) : 2), title: "Scale" });
 		const size = el("span", { className: "design-size-cell" });
 		const showSize = () => {
 			const kind = type.value;
@@ -7977,7 +8310,7 @@ async function openTableDesigner(database, table = null) {
 			return [el("label", { className: "design-chip", title }, box, el("span", { textContent: label })), box];
 		};
 		const [nullChip, nullable] = chip("Null", column.nullable, "May be empty (NULL)");
-		const [idChip, identity] = chip("Identity", column.identity, "Numbered by SQL Server, from 1: only when a column is added");
+		const [idChip, identity] = chip("Identity", column.identity, `Numbered by ${postgres ? "PostgreSQL" : "SQL Server"}, from 1: only when a column is added`);
 		const [keyChip, primary] = chip("Key", column.primary, "Part of the primary key");
 		if (column.id) identity.disabled = true;
 		const name = el("input", { className: "design-name", value: column.name || "", placeholder: "Column", ariaLabel: "Column name", required: true, spellcheck: false });
@@ -8003,15 +8336,16 @@ async function openTableDesigner(database, table = null) {
 	// A new table's schema: a chip each of the database's schemas, dbo first and chosen. A table that is there keeps its
 	// own, which its title shows
 	const schemaChoices = (data.schemas || []).map((name) => el("label", { className: "design-chip" },
-		el("input", { type: "radio", name: "schema", value: name, checked: name === "dbo" || name === data.schemas[0] }), el("span", { textContent: name })));
-	const schemaValue = () => table ? table.schema : editor.querySelector("input[name=schema]:checked")?.value || "dbo";
+		el("input", { type: "radio", name: "schema", value: name, checked: name === (postgres ? "public" : "dbo") || name === data.schemas[0] }), el("span", { textContent: name })));
+	const schemaValue = () => table ? table.schema : editor.querySelector("input[name=schema]:checked")?.value || (postgres ? "public" : "dbo");
 	const sqlView = el("pre", { className: "design-sql", hidden: true });
 	const editor = el("div", { className: "design-editor" },
 		el("div", { className: "ns-grid design-names" + (table ? " single" : "") }, el("label", {}, "Table", tableName),
 			...(table ? [] : [el("div", { className: "design-schema" }, el("span", { className: "design-schema-label", textContent: "Schema" }),
 				el("div", { className: "design-schemas", role: "radiogroup", ariaLabel: "Schema" }, ...schemaChoices))])),
 		el("div", { className: "design-grid" }, head, list), add, functions,
-		el("p", { className: "hint", textContent: "A default is a value, or one of SQL Server's functions from the list (GETDATE(), NEWID() …). The SQL is shown before it is run." }));
+		el("p", { className: "hint", textContent: postgres ? "A default is a value, or one of PostgreSQL's functions from the list (now(), gen_random_uuid() …). The SQL is shown before it is run."
+			: "A default is a value, or one of SQL Server's functions from the list (GETDATE(), NEWID() …). The SQL is shown before it is run." }));
 	let reviewed = "";
 	const body = () => ({ database: database.name, schema: schemaValue(), table: table ? table.name : tableName.value.trim(),
 		action: table ? "alter" : "create", columns: [...list.children].map((line) => line.read()) });
@@ -8058,7 +8392,7 @@ async function dropSqlTable(database, table) {
 
 // The database's tables shown again, folded out as they were
 async function refreshSqlTables(database) {
-	const toggle = [...document.querySelectorAll(".sql-database-row")].find((row) => row.querySelector(".sql-database-name span:last-child")?.textContent === database.name)?.querySelector(".sql-tables-toggle");
+	const toggle = [...document.querySelectorAll(".sql-database-row")].find((row) => row.querySelector(".sql-database-label")?.textContent === database.name)?.querySelector(".sql-tables-toggle");
 	if (!toggle) return;
 	if (toggle.getAttribute("aria-expanded") === "true") await toggleSqlTables(toggle, database);
 	await toggleSqlTables(toggle, database);
@@ -8106,10 +8440,11 @@ async function loadSqlLogins(connection) {
 		const where = login.sysadmin ? "Sysadmin: every database on the server" : login.databases.length ? listed(login.databases) : "No database";
 		const unlinked = login.unlinked || [];
 		// The whole line opens its databases and roles, as its pencil does; its own buttons do their own thing
-		return el("div", { className: "sql-login" + (login.disabled ? " locked" : "") + (login.protected ? "" : " editable"),
+		// Found by its name, its owner and the databases it reaches
+		const item = el("div", { className: "sql-login" + (login.disabled ? " locked" : "") + (login.protected ? "" : " editable"),
 			onclick: login.protected ? null : (event) => { if (!event.target.closest("button, a, input") && !getSelection().toString()) askSqlLogin(connection, login); } },
 			el("span", { className: "sql-name-icon" }, svgIcon("user")),
-			el("span", { className: "access-line-text" }, el("strong", { textContent: login.name }), el("small", { textContent: where }),
+			el("span", { className: "access-line-text" }, el("span", { className: "login-name-row" }, el("strong", { textContent: login.name }), ...(login.made_by ? [ownerChip(login.made_by)] : [])), el("small", { textContent: where }),
 				...(unlinked.length ? [el("small", { className: "sql-login-unlinked", textContent: `A user of its name in ${listed(unlinked)} is not linked to it` })] : [])),
 			...(login.sysadmin && !login.protected ? [el("span", { className: "tool-state warn", title: "It may do anything on the server, in every database", textContent: "Sysadmin" })] : []),
 			el("span", { className: "tool-state " + (login.disabled ? "bad" : login.protected ? "role admin" : "ok"), textContent: login.disabled ? "Locked" : login.protected ? "Kept elsewhere" : "Can log in" }),
@@ -8125,6 +8460,9 @@ async function loadSqlLogins(connection) {
 				iconAction(login.disabled ? "unlock" : "lock", "purple", login.disabled ? `Let ${login.name} log in again` : `Lock ${login.name}`,
 					() => changeSqlLogin(connection, { action: login.disabled ? "enable" : "disable", name: login.name }, login.disabled ? "It can log in again." : "It is locked.")),
 				iconAction("trash", "red", `Delete ${login.name}`, () => deleteSqlLogin(connection, login))])));
+		// Found by its name, its owner and the databases it reaches
+		item.dataset.search = [login.name, login.made_by, ...login.databases.map((entry) => entry.database)].filter(Boolean).join(" ").toLowerCase();
+		return item;
 	}));
 	// Add login sits in the panel's header, as Create database does in theirs
 	$("#sql-add-login").onclick = () => askSqlLogin(connection);
@@ -8203,7 +8541,9 @@ function openSqlQuery(database, script) {
 	sqlQueryDialog.dataset.database = database.name;
 	sqlQueryDialog.dataset.connection = connection;
 	// Opened on a table's rows: a change made in it shows the rows again, as they are after it
-	sqlQueryDialog.dataset.view = /^SELECT TOP \d+ \* FROM \[/i.test(script || "") ? script : "";
+	// A table's first rows (in T-SQL or PostgreSQL's): the table the snippets are for
+	sqlQueryDialog.dataset.view = /^SELECT (?:TOP \d+ )?\* FROM [\["]/i.test(script || "") ? script : "";
+	loadSnippetColumns(database.name, sqlQueryDialog.dataset.view);
 	$("#sql-query-title").textContent = `Query ${database.name}`;
 	$("#sql-query-status").textContent = "";
 	if (!sqlQueryDialog.open) sqlQueryDialog.showModal();
@@ -8231,24 +8571,118 @@ function sqlColumnFits(column, values, numeric) {
 	return shown.length > 0 && shown.every((value) => value.length <= 12 && !/\s/.test(value));
 }
 // Each result set as a table, with messages such as PRINT as text in between
+// A table's rows as the window opens them (T-SQL's TOP, PostgreSQL's LIMIT), and the ORDER BY a column heading gives it
+const VIEW_FORMS = {
+	mssql: /^SELECT TOP (\d+) \* FROM (\[(?:[^\]]|\]\])*\]\.\[(?:[^\]]|\]\])*\])(?: ORDER BY ((?:\[(?:[^\]]|\]\])*\])) (ASC|DESC))?;\s*$/i,
+	postgres: /^SELECT \* FROM ("(?:[^"]|"")*"\."(?:[^"]|"")*")(?: ORDER BY ("(?:[^"]|"")*") (ASC|DESC))? LIMIT (\d+);\s*$/i,
+};
+function parseView(script, engine = sqlPageEngine()) {
+	const match = (script || "").trim().match(VIEW_FORMS[engine]);
+	if (!match) return null;
+	return engine === "postgres" ? { table: match[1], column: match[2] || "", direction: (match[3] || "").toUpperCase(), limit: match[4] }
+		: { limit: match[1], table: match[2], column: match[3] || "", direction: (match[4] || "").toUpperCase() };
+}
+function sortedView(view, column, engine = sqlPageEngine()) {
+	const quoted = sqlQuote(column, engine);
+	const direction = view.column === quoted && view.direction === "ASC" ? "DESC" : "ASC";
+	return engine === "postgres" ? `SELECT * FROM ${view.table} ORDER BY ${quoted} ${direction} LIMIT ${view.limit};`
+		: `SELECT TOP ${view.limit} * FROM ${view.table} ORDER BY ${quoted} ${direction};`;
+}
+// A value of a row as SQL for its column's type: NULL, a number as it is, true or false, else quoted text (N'…' for
+// Microsoft SQL Server's n-types); a column not known is quoted
+function rowValue(value, column, engine = sqlPageEngine()) {
+	if (value === "NULL") return "NULL";
+	const type = String(column?.type || "").toLowerCase();
+	if (/^(integer|bigint|smallint|numeric|decimal|real|double precision|int|tinyint|float|money|smallmoney|bit)$/.test(type) && sqlNumber.test(value)) return value;
+	if (engine === "postgres" && type === "boolean") return value === "t" || value === "true" ? "true" : "false";
+	const text = "'" + value.replaceAll("'", "''") + "'";
+	return engine === "mssql" && /^n(var)?char$|^ntext$/.test(type) ? "N" + text : text;
+}
+// The scripts a table's rows give, ready in the window to look at and run: a new row, one row changed, one row deleted
+function rowScripts(table, columns, result, engine = sqlPageEngine()) {
+	// The table's columns as they are when the script is made (columns may be a function: they come after the rows)
+	const shaped = () => {
+		const list = (typeof columns === "function" ? columns() : columns) || [];
+		const known = Object.fromEntries(list.map((column) => [column.name, column]));
+		const shape = snippetShape(list, engine);
+		const keyName = shape?.keyColumn?.name ?? result.columns[0];
+		const where = (row) => `WHERE ${snippetName(keyName, engine)} = ${rowValue(row[result.columns.indexOf(keyName)], known[keyName], engine)};`;
+		return { known, shape, keyName, where };
+	};
+	return {
+		// What must be given: never what the server numbers or gives by default
+		insert: () => {
+			const { shape } = shaped();
+			return snippetInsert(table, shape, engine) || `INSERT INTO ${table} (column1, column2)\nVALUES (${engine === "postgres" ? "'value'" : "N'value'"}, 0);`;
+		},
+		// Every column but the key and those the server numbers, as it is now: change what is to change
+		update: (row) => {
+			const { known, keyName, where } = shaped();
+			const set = result.columns.map((name, index) => [name, index]).filter(([name]) => name !== keyName && !known[name]?.identity);
+			return `UPDATE ${table}\nSET ${set.map(([name, index]) => `${snippetName(name, engine)} = ${rowValue(row[index], known[name], engine)}`).join(",\n    ")}\n${where(row)}`;
+		},
+		remove: (row) => `DELETE FROM ${table}\n${shaped().where(row)}`,
+	};
+}
+// Put a script in the window, ready to run: nothing runs until Run (or Ctrl+Enter)
+function prepareSqlScript(script) {
+	const area = $("#sql-query-text");
+	area.value = script;
+	area.focus();
+	area.setSelectionRange(script.length, script.length);
+	area.scrollIntoView({ block: "nearest" });
+	$("#sql-query-status").textContent = "Ready: check it, then Run";
+}
 function showSqlResults(output, data) {
+	// A table's rows (what the window opened, or read again after a change): a heading sorts them by its column
+	const viewScript = data.refreshed ? sqlQueryDialog.dataset.view : $("#sql-query-text").value;
+	const view = (data.results || []).length === 1 ? parseView(viewScript) : null;
 	const parts = [];
 	for (const result of data.results || []) {
 		const shown = result.rows.slice(0, maxShownRows);
-		const numeric = result.columns.map((_, index) => shown.length > 0 && shown.every((row) => row[index] === "NULL" || sqlNumber.test(row[index])));
+		// A column of numbers: one number at least, the rest numbers or NULL (a column of NULLs alone is not one)
+		const numeric = result.columns.map((_, index) => shown.some((row) => sqlNumber.test(row[index])) && shown.every((row) => row[index] === "NULL" || sqlNumber.test(row[index])));
 		const fits = result.columns.map((column, index) => sqlColumnFits(column, shown.map((row) => row[index]), numeric[index]));
 		// With no text column the last one takes the rest, so the others stay as wide as their values
 		if (!fits.includes(false)) fits[fits.length - 1] = false;
-		const table = el("table", { className: "sql-result-table" },
-			el("thead", {}, el("tr", {}, ...result.columns.map((column, index) => el("th", { textContent: column || "(no name)",
-				className: [numeric[index] ? "num" : "", fits[index] ? "sql-fit" : "sql-grow"].join(" ").trim() })))),
-			el("tbody", {}, ...shown.map((row) => el("tr", {}, ...row.map((value, index) => el("td", {
-				textContent: value, title: value.length > 60 ? value : "",
-				className: (value === "NULL" ? "sql-null " : "") + (numeric[index] ? "num" : ""),
-			}))))));
+		// A table's rows: a new one, and each row changed or deleted, as a script in the window
+		const rows = view && parseView(viewScript) ? rowScripts(view.table, () => snippetColumns, result) : null;
+		const rowButton = (icon, tone, title, onclick) => {
+			const button = el("button", { type: "button", className: "icon-action sql-row-action", title, ariaLabel: title, onclick }, svgIcon(icon));
+			button.dataset.tone = tone;
+			return button;
+		};
+		const table = el("table", { className: "sql-result-table" + (rows ? " with-row-actions" : "") },
+			el("thead", {}, el("tr", {}, ...(rows ? [el("th", { className: "sql-row-tools", ariaLabel: "Edit" })] : []), ...result.columns.map((column, index) => {
+				const className = [numeric[index] ? "num" : "", fits[index] ? "sql-fit" : "sql-grow"].join(" ").trim();
+				if (!view || !column) return el("th", { textContent: column || "(no name)", className });
+				const sorted = view.column === sqlQuote(column) ? view.direction : "";
+				const heading = el("th", { className: className + (sorted ? " sorted" : ""), ariaSort: sorted === "ASC" ? "ascending" : sorted === "DESC" ? "descending" : "none" },
+					el("button", { type: "button", className: "sql-sort" + (sorted === "DESC" ? " descending" : ""), title: `Sort by ${column}`,
+						onclick: () => {
+							// The query in the window with its ORDER BY, run again; a change made later reads the rows so too
+							const script = sortedView(view, column);
+							$("#sql-query-text").value = script;
+							sqlQueryDialog.dataset.view = script;
+							runSqlQuery();
+						} }, el("span", { textContent: column }), svgIcon("chevron")));
+				return heading;
+			}), ...(rows ? [el("th", { className: "sql-row-tools", ariaLabel: "Delete" })] : []))),
+			el("tbody", {}, ...shown.map((row) => el("tr", {},
+				...(rows ? [el("td", { className: "sql-row-tools" }, rowButton("pencil", "amber", "Edit this row: an UPDATE to run", () => run(async () => { await snippetColumnsReady; prepareSqlScript(rows.update(row)); })))] : []),
+				...row.map((value, index) => el("td", {
+					textContent: value, title: value.length > 60 ? value : "",
+					className: (value === "NULL" ? "sql-null " : "") + (numeric[index] ? "num" : ""),
+				})),
+				...(rows ? [el("td", { className: "sql-row-tools" }, rowButton("trash", "red", "Delete this row: a DELETE to run", () => run(async () => { await snippetColumnsReady; prepareSqlScript(rows.remove(row)); })))] : [])))));
 		const count = result.rows.length === shown.length ? `${result.rows.length} row${result.rows.length === 1 ? "" : "s"}`
 			: `First ${shown.length} of ${result.rows.length} rows`;
-		parts.push(el("section", { className: "sql-result" }, el("div", { className: "sql-result-count", textContent: count }),
+		const addRow = rows ? (() => {
+			const button = el("button", { type: "button", className: "toned-action sql-add-row", onclick: () => run(async () => { await snippetColumnsReady; prepareSqlScript(rows.insert()); }) }, svgIcon("plus"), "Add row");
+			button.dataset.tone = "green";
+			return button;
+		})() : null;
+		parts.push(el("section", { className: "sql-result" }, el("div", { className: "sql-result-count" }, el("span", { textContent: count }), ...(addRow ? [addRow] : [])),
 			el("div", { className: "sql-result-scroll" }, table)));
 	}
 	for (const message of data.messages || []) parts.push(el("pre", { className: "sql-result-message", textContent: message }));
@@ -8257,6 +8691,16 @@ function showSqlResults(output, data) {
 	output.scrollTop = 0;
 }
 
+// Whether a script ran in the window since it opened: closed, the database's tables (rows, size) are read again
+let sqlQueryRan = false;
+sqlQueryDialog.addEventListener("close", () => {
+	if (!sqlQueryRan) return;
+	sqlQueryRan = false;
+	const name = sqlQueryDialog.dataset.database;
+	const toggle = [...document.querySelectorAll(".sql-database-row")].find((row) => row.querySelector(".sql-database-label")?.textContent === name)?.querySelector(".sql-tables-toggle");
+	// Only one folded out: one folded in stays so
+	if (toggle?.getAttribute("aria-expanded") === "true") run(() => refreshSqlTables({ ...(sqlSnapshot?.databases || []).find((item) => item.name === name), name }));
+});
 async function runSqlQuery() {
 	const button = $("#sql-query-run");
 	if (button.disabled) return;
@@ -8283,6 +8727,7 @@ async function runSqlQuery() {
 			}
 		}
 		const output = $("#sql-query-output");
+		if (response.ok) sqlQueryRan = true;
 		output.classList.toggle("sql-query-error", !response.ok);
 		if (response.ok) showSqlResults(output, data);
 		else output.replaceChildren(el("pre", { textContent: data.error || data.message || "The script failed." }));
@@ -8299,18 +8744,105 @@ $("#sql-query-run").onclick = runSqlQuery;
 
 // T-SQL snippets: the commands most often written, put in at the cursor. The table the dialog was opened on is in them;
 // else TableName, selected so it is typed over.
+// The columns of the table the query window is on, for the snippets: read once when it opens on a table's rows
+let snippetColumns = null;
+// Until they have come (or could not): a click on a row waits for them, so its script knows the table
+let snippetColumnsReady = Promise.resolve();
+function viewTable(view, engine = sqlPageEngine()) {
+	const match = engine === "postgres" ? view.match(/FROM "((?:[^"]|"")*)"\."((?:[^"]|"")*)"/) : view.match(/FROM \[((?:[^\]]|\]\])*)\]\.\[((?:[^\]]|\]\])*)\]/);
+	return match ? { schema: match[1].replace(engine === "postgres" ? /""/g : /\]\]/g, engine === "postgres" ? '"' : "]"), name: match[2].replace(engine === "postgres" ? /""/g : /\]\]/g, engine === "postgres" ? '"' : "]") } : null;
+}
+function loadSnippetColumns(database, view) {
+	snippetColumns = null;
+	const table = view && viewTable(view);
+	if (!table) return;
+	// Still the same table when they come (sorting changes the query, not the table)
+	const key = JSON.stringify(table);
+	snippetColumnsReady = api(`/api/sql/${encodeURIComponent($("#sql-connection").value)}/table?${new URLSearchParams({ database, schema: table.schema, table: table.name })}`)
+		.then((data) => { if (JSON.stringify(viewTable(sqlQueryDialog.dataset.view || "")) === key) snippetColumns = data.table?.columns || null; })
+		.catch(() => { /* the snippets keep their placeholders */ });
+}
+// A column's name as the snippet writes it: as it is when it is a plain word, quoted when it is not or is a reserved one
+const SNIPPET_RESERVED = new Set(["user", "order", "group", "select", "from", "where", "table", "default", "key", "check", "column", "end", "primary", "references", "desc", "asc", "limit", "offset", "all", "and", "or", "not", "null", "true", "false", "to", "as", "on", "in", "is", "by", "case", "when", "then", "else", "index", "view", "file", "public", "session_user", "current_user"]);
+function snippetName(name, engine = sqlPageEngine()) {
+	const plain = engine === "postgres" ? /^[a-z_][a-z0-9_]*$/ : /^[A-Za-z_][A-Za-z0-9_]*$/;
+	return plain.test(name) && !SNIPPET_RESERVED.has(name.toLowerCase()) ? name : sqlQuote(name, engine);
+}
+// A value that fits a column's type: text, a number, true or false, now, a new uuid, an empty JSON object
+function snippetValue(column, engine = sqlPageEngine()) {
+	const type = String(column.type || "").toLowerCase();
+	if (engine === "postgres") {
+		if (/^(integer|bigint|smallint|numeric|decimal|real|double precision|money)$/.test(type)) return "0";
+		if (type === "boolean") return "false";
+		if (type === "uuid") return "gen_random_uuid()";
+		if (type === "date") return "CURRENT_DATE";
+		if (/^(timestamp|timestamptz)$/.test(type)) return "now()";
+		if (/^(time|timetz)$/.test(type)) return "CURRENT_TIME";
+		if (/^jsonb?$/.test(type)) return "'{}'";
+		return "'value'";
+	}
+	if (/^(int|bigint|smallint|tinyint|decimal|numeric|float|real|money|smallmoney|bit)$/.test(type)) return "0";
+	if (type === "uniqueidentifier") return "NEWID()";
+	if (/^(date|datetime|datetime2|smalldatetime|datetimeoffset)$/.test(type)) return "SYSUTCDATETIME()";
+	if (type === "time") return "CAST(SYSUTCDATETIME() AS time)";
+	return /^n(var)?char$|^ntext$/.test(type) ? "N'value'" : "'value'";
+}
+// What a row of the table needs: the columns without a default that are not numbered by the server (those that must be
+// given first, else the others), and its key to find one row by
+function snippetShape(columns, engine = sqlPageEngine()) {
+	if (!columns?.length) return null;
+	const free = columns.filter((column) => !column.identity && !String(column.default || "").trim());
+	const given = free.filter((column) => !column.nullable);
+	const insert = given.length ? given : free;
+	const key = columns.find((column) => column.primary) || columns[0];
+	const keyValue = /uuid|uniqueidentifier/i.test(key.type) ? "'00000000-0000-0000-0000-000000000000'" : /int|numeric|decimal/i.test(key.type) ? "1" : "'value'";
+	const set = insert.find((column) => !column.primary) || columns.find((column) => !column.primary && !column.identity);
+	return { insert, key: snippetName(key.name, engine), keyValue, set, keyColumn: key };
+}
+const snippetInsert = (t, shape, engine) => shape?.insert.length
+	? `INSERT INTO ${t} (${shape.insert.map((column) => snippetName(column.name, engine)).join(", ")})\nVALUES (${shape.insert.map((column) => snippetValue(column, engine)).join(", ")});`
+	: null;
+const snippetUpdate = (t, shape, engine) => shape?.set
+	? `UPDATE ${t}\nSET ${snippetName(shape.set.name, engine)} = ${snippetValue(shape.set, engine)}\nWHERE ${shape.key} = ${shape.keyValue};`
+	: null;
+const snippetDelete = (t, shape) => shape ? `DELETE FROM ${t}\nWHERE ${shape.key} = ${shape.keyValue};` : null;
+
+// PostgreSQL's: the same help, in its SQL
+const PG_SNIPPETS = [
+	["Rows", [
+		["Select rows", "rows", "The first rows, sorted", (t) => `SELECT *\nFROM ${t}\nORDER BY 1 DESC\nLIMIT 100;`],
+		["Insert a row", "plus", "New values into the columns", (t, shape) => snippetInsert(t, shape, "postgres") || `INSERT INTO ${t} (column1, column2)\nVALUES ('value', 0);`],
+		["Update rows", "pencil", "With a WHERE, so not every row changes", (t, shape) => snippetUpdate(t, shape, "postgres") || `UPDATE ${t}\nSET column1 = 'value'\nWHERE id = 1;`],
+		["Delete rows", "trash", "With a WHERE, so not every row goes", (t, shape) => snippetDelete(t, shape) || `DELETE FROM ${t}\nWHERE id = 1;`],
+		["Count rows", "activity", "How many, and grouped", (t) => `SELECT count(*) AS rows\nFROM ${t};`],
+		["Find text", "search", "Rows whose column holds a word", (t) => `SELECT *\nFROM ${t}\nWHERE column1 ILIKE '%word%'\nLIMIT 100;`],
+		["In a transaction", "shield", "Change, look, then COMMIT or ROLLBACK", () => `BEGIN;\n\n-- the change\n\n-- COMMIT;\nROLLBACK;`],
+	]],
+	["Tables", [
+		["Create a table", "rows", "Id, a name and when it was made", () => `CREATE TABLE public.table_name (\n    id integer GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,\n    name varchar(100) NOT NULL,\n    created timestamptz NOT NULL DEFAULT now()\n);`],
+		["Add a column", "plus", "To a table that has rows", (t) => `ALTER TABLE ${t}\nADD COLUMN new_column varchar(100) NULL;`],
+		["Create an index", "sliders", "For a column that is searched", (t) => `CREATE INDEX ix_table_name_column1\nON ${t} (column1);`],
+		["Columns of a table", "file", "Their types and NULL", (t) => `SELECT column_name, data_type, character_maximum_length, is_nullable\nFROM information_schema.columns\nWHERE table_schema || '.' || table_name = '${t.replace(/"/g, "").replace(/'/g, "''")}'\nORDER BY ordinal_position;`],
+		["Table sizes", "database", "Rows and space, the biggest first", () => `SELECT schemaname || '.' || relname AS table, n_live_tup AS rows,\n  pg_size_pretty(pg_total_relation_size(relid)) AS size\nFROM pg_stat_user_tables\nORDER BY pg_total_relation_size(relid) DESC;`],
+	]],
+	["Server", [
+		["Who is connected", "users", "Sessions on this database", () => `SELECT pid, usename, client_addr, application_name, state, query_start\nFROM pg_stat_activity\nWHERE datname = current_database();`],
+		["Running now", "clock", "Queries and what they wait for", () => `SELECT pid, state, wait_event_type, wait_event, now() - query_start AS running, query\nFROM pg_stat_activity\nWHERE state <> 'idle' AND pid <> pg_backend_pid();`],
+		["Version", "package", "PostgreSQL's version", () => `SELECT version();`],
+	]],
+];
 const SQL_SNIPPETS = [
 	["Rows", [
 		["Select rows", "rows", "The first rows, sorted", (t) => `SELECT TOP 100 *\nFROM ${t}\nORDER BY 1 DESC;`],
-		["Insert a row", "plus", "New values into the columns", (t) => `INSERT INTO ${t} (Column1, Column2)\nVALUES (N'value', 0);`],
-		["Update rows", "pencil", "With a WHERE, so not every row changes", (t) => `UPDATE ${t}\nSET Column1 = N'value'\nWHERE Id = 1;`],
-		["Delete rows", "trash", "With a WHERE, so not every row goes", (t) => `DELETE FROM ${t}\nWHERE Id = 1;`],
+		["Insert a row", "plus", "New values into the columns", (t, shape) => snippetInsert(t, shape, "mssql") || `INSERT INTO ${t} (Column1, Column2)\nVALUES (N'value', 0);`],
+		["Update rows", "pencil", "With a WHERE, so not every row changes", (t, shape) => snippetUpdate(t, shape, "mssql") || `UPDATE ${t}\nSET Column1 = N'value'\nWHERE Id = 1;`],
+		["Delete rows", "trash", "With a WHERE, so not every row goes", (t, shape) => snippetDelete(t, shape) || `DELETE FROM ${t}\nWHERE Id = 1;`],
 		["Count rows", "activity", "How many, and grouped", (t) => `SELECT COUNT(*) AS Rows\nFROM ${t};`],
 		["Find text", "search", "Rows whose column holds a word", (t) => `SELECT TOP 100 *\nFROM ${t}\nWHERE Column1 LIKE N'%word%';`],
 		["In a transaction", "shield", "Change, look, then COMMIT or ROLLBACK", () => `BEGIN TRANSACTION;\n\n-- the change\n\nSELECT @@ROWCOUNT AS Changed;\n-- COMMIT;\nROLLBACK;`],
 	]],
 	["Tables", [
-		["Create a table", "rows", "Id, a name and when it was made", () => `CREATE TABLE dbo.TableName (\n    Id int IDENTITY(1,1) NOT NULL CONSTRAINT PK_TableName PRIMARY KEY,\n    Name nvarchar(100) NOT NULL,\n    Created datetime2 NOT NULL CONSTRAINT DF_TableName_Created DEFAULT SYSUTCDATETIME()\n);`],
+		["Create a table", "rows", "Id, a name and when it was made", () => `CREATE TABLE dbo.TableName (\n    id int IDENTITY(1,1) NOT NULL CONSTRAINT PK_TableName PRIMARY KEY,\n    name nvarchar(100) NOT NULL,\n    created datetime2 NOT NULL CONSTRAINT DF_TableName_created DEFAULT SYSUTCDATETIME()\n);`],
 		["Add a column", "plus", "To a table that has rows", (t) => `ALTER TABLE ${t}\nADD NewColumn nvarchar(100) NULL;`],
 		["Create an index", "sliders", "For a column that is searched", (t) => `CREATE INDEX IX_TableName_Column1\nON ${t} (Column1);`],
 		["Columns of a table", "file", "Their types and NULL", (t) => `SELECT c.name, t.name AS type, c.max_length, c.is_nullable\nFROM sys.columns c JOIN sys.types t ON t.user_type_id = c.user_type_id\nWHERE c.object_id = OBJECT_ID(N'${t.replace(/'/g, "''")}')\nORDER BY c.column_id;`],
@@ -8324,6 +8856,10 @@ const SQL_SNIPPETS = [
 ];
 function sqlSnippetTable() {
 	const view = sqlQueryDialog.dataset.view || "";
+	if (sqlPageEngine() === "postgres") {
+		const found = view.match(/FROM ("[^"]*(?:""[^"]*)*"\."[^"]*(?:""[^"]*)*")/);
+		return found ? found[1] : "public.table_name";
+	}
 	const match = view.match(/FROM (\[[^\]]*(?:\]\][^\]]*)*\]\.\[[^\]]*(?:\]\][^\]]*)*\])/);
 	return match ? match[1] : "dbo.TableName";
 }
@@ -8335,9 +8871,11 @@ function insertSqlSnippet(text) {
 	area.value = before + gap + text + after;
 	const at = before.length + gap;
 	// The placeholder to type over, when there is one
-	const name = text.indexOf("TableName");
+	// The placeholder: TableName in T-SQL, table_name in PostgreSQL's
+	const placeholder = text.includes("TableName") ? "TableName" : "table_name";
+	const name = text.indexOf(placeholder);
 	area.focus();
-	if (name >= 0) area.setSelectionRange(at.length + name, at.length + name + "TableName".length);
+	if (name >= 0) area.setSelectionRange(at.length + name, at.length + name + placeholder.length);
 	else area.setSelectionRange(at.length + text.length, at.length + text.length);
 }
 $("#sql-snippets-trigger").prepend(svgIcon("file"));
@@ -8346,12 +8884,13 @@ $("#sql-snippets-trigger").onclick = (event) => {
 	const panel = $("#sql-snippets-panel");
 	const open = panel.hidden;
 	const table = sqlSnippetTable();
-	panel.replaceChildren(el("div", { className: "snippet-panel-head" }, el("span", { textContent: "T-SQL" }), el("strong", { textContent: table === "dbo.TableName" ? "The commands most often written" : `For ${table}` })),
-		...SQL_SNIPPETS.flatMap(([group, items]) => [el("div", { className: "menu-group-title", textContent: group }),
+	panel.replaceChildren(el("div", { className: "snippet-panel-head" }, el("span", { textContent: sqlPageEngine() === "postgres" ? "PostgreSQL" : "T-SQL" }), el("strong", { textContent: table === "dbo.TableName" || table === "public.table_name" ? "The commands most often written" : `For ${table}` })),
+		...(sqlPageEngine() === "postgres" ? PG_SNIPPETS : SQL_SNIPPETS).flatMap(([group, items]) => [el("div", { className: "menu-group-title", textContent: group }),
 			...items.map(([title, icon, text, make]) => el("button", { type: "button", className: "snippet-item", role: "menuitem", onclick: () => {
 				panel.hidden = true;
 				$("#sql-snippets-trigger").setAttribute("aria-expanded", "false");
-				insertSqlSnippet(make(table));
+				// On a table: its own columns and key, with values that fit their types
+				run(async () => { await snippetColumnsReady; insertSqlSnippet(make(table, snippetShape(snippetColumns))); });
 			} }, el("span", { className: "snippet-item-icon" }, svgIcon(icon)), el("span", { className: "snippet-item-text" }, el("strong", { textContent: title }), el("small", { textContent: text }))))]));
 	panel.hidden = !open;
 	$("#sql-snippets-trigger").setAttribute("aria-expanded", String(open));
@@ -8383,16 +8922,58 @@ let editingSqlConnection = null;
 $("#sql-remove-connection").onclick = () => run(async () => {
 	const id = editingSqlConnection;
 	if (!id) throw new Error("Select a SQL connection to remove.");
-	if (!(await ask({ title: "Remove connection?", message: "Remove the saved connection and credentials from this admin server. Databases and backups are not deleted.", input: false, ok: "Remove", danger: true }))) return;
+	const name = sqlConnections.find((item) => item.id === id)?.name || "the connection";
+	if (!(await ask({ title: `Remove ${name}?`, message: "Remove the saved connection and credentials from this admin server. Databases and backups are not deleted.", input: false, ok: "Remove", danger: true }))) return;
 	await api("/api/sql/connections", { method: "DELETE", json: { id } });
 	$("#dlg-sql-connection").close();
 	await loadSqlConnections();
 });
+// What each engine's connection starts with, and what its dialog says
+const ENGINE_DEFAULTS = {
+	mssql: { port: 1433, username: "sa", backup: "/var/opt/mssql/backup", backupLabel: "Backup directory on SQL server",
+		intro: "Configure Microsoft SQL Server access and optional backup file access.",
+		note: "Credentials are stored in a root-only file on the admin server. The SQL login needs database and backup administration privileges; sqlcmd must be installed." },
+	postgres: { port: 5432, username: "postgres", backup: "/var/opt/postgresql/backup", backupLabel: "Backup folder on this server",
+		intro: "Configure PostgreSQL access. Its backups are made here with pg_dump, so no access to its server's files is needed.",
+		note: "Credentials are stored in a root-only file on the admin server. The login needs to create databases and roles (a superuser such as postgres); psql, pg_dump and pg_restore must be installed." },
+};
+let sqlTools = { mssql: false, postgres: false };
+// The engine of the connection in the dialog: the one being changed, or the one worked with on the page
+let sqlDialogEngine = "mssql";
+const typedEngine = () => sqlDialogEngine;
+// The fields as the engine has them: its port, login and backup folder while they are the other one's defaults
+function showSqlEngine() {
+	const form = $("#form-sql-connection");
+	const engine = typedEngine();
+	const defaults = ENGINE_DEFAULTS[engine];
+	$("#sql-engine-section").textContent = ENGINE_NAMES[engine];
+	$("#sql-backup-label").textContent = defaults.backupLabel;
+	$("#sql-connection-intro").textContent = defaults.intro;
+	$("#sql-connection-note").textContent = defaults.note;
+	// SSH reaches Microsoft SQL Server's backup files on its server; PostgreSQL's are here
+	$("#sql-ssh-option").hidden = engine === "postgres";
+	if (engine === "postgres") form.elements.ssh_enabled.checked = false;
+	updateSqlSshFields();
+	syncSqlPassword();
+}
 function openSqlConnection(connection = null) {
-	if (!sqlToolsAvailable) throw new Error("Install SQL command-line tools on the admin server first.");
+	if (!sqlToolsAvailable) throw new Error("Install the SQL Server tools on the admin server first.");
 	editingSqlConnection = connection?.id || null;
 	const form = $("#form-sql-connection");
 	form.reset();
+	// One being changed keeps its engine; a new one is of the engine worked with on the page
+	const engine = connection ? engineOf(connection) : sqlTools[sqlEngine] ? sqlEngine : ["mssql", "postgres"].find((item) => sqlTools[item]) || "mssql";
+	sqlDialogEngine = engine;
+	const defaults = ENGINE_DEFAULTS[engine];
+	form.elements.port.value = defaults.port;
+	// The server's own login (sa, postgres) and this server are an administrator's to start from: a user types the
+	// server and the login they were given
+	const own = currentUser.admin;
+	form.elements.username.value = own ? defaults.username : "";
+	form.elements.host.value = own ? "localhost" : "";
+	form.elements.username.placeholder = own ? "" : "The login you were given";
+	form.elements.host.placeholder = own ? "" : "sql.example.com";
+	form.elements.backup_directory.value = defaults.backup;
 	if (connection) {
 		for (const key of ["name", "host", "port", "username", "backup_directory"]) form.elements[key].value = connection[key];
 		form.elements.trust_certificate.checked = connection.trust_certificate;
@@ -8401,12 +8982,11 @@ function openSqlConnection(connection = null) {
 	for (const key of ["ssh_port", "ssh_username"]) {
 		form.elements[key].value = connection?.[key] || (key === "ssh_port" ? 22 : "");
 	}
-	updateSqlSshFields();
+	showSqlEngine();
 	$("#sql-password-help").textContent = connection ? "Leave blank to keep the saved password. The connection is tried before it is saved."
 		: "The connection is tried before it is saved.";
-	syncSqlPassword();
-	$("#sql-remove-connection").hidden = !connection;
-	$("#sql-connection-title").textContent = connection ? "Edit SQL connection" : "Add SQL connection";
+	$("#sql-connection-danger").hidden = !connection;
+	$("#sql-connection-title").textContent = `${connection ? "Edit" : "Add"} ${ENGINE_NAMES[engine]} connection`;
 	sqlConnectionSaid(null);
 	sqlConnectionBusy(false);
 	$("#dlg-sql-connection").showModal();
@@ -8415,14 +8995,20 @@ function openSqlConnection(connection = null) {
 // saved password made the login fail)
 const LOCAL_SQL_HOSTS = ["localhost", "127.0.0.1", "::1", "."];
 function sqlUsesHarborPassword() {
+	// An administrator's alone: a user types the password of the login they use
+	if (!currentUser.admin) return false;
 	const form = $("#form-sql-connection");
-	return form.elements.username.value.trim().toLowerCase() === "sa"
+	// sa on Microsoft SQL Server here, postgres on PostgreSQL here: Harbor keeps their passwords
+	return form.elements.username.value.trim().toLowerCase() === ENGINE_DEFAULTS[typedEngine()].username
 		&& LOCAL_SQL_HOSTS.includes(form.elements.host.value.trim().replace(/^\[|\]$/g, "").toLowerCase());
 }
 function syncSqlPassword() {
 	const harbor = sqlUsesHarborPassword();
 	$("#sql-password-row").hidden = harbor;
 	$("#sql-password-harbor").hidden = !harbor;
+	$("#sql-password-harbor").textContent = typedEngine() === "postgres"
+		? "Harbor's own postgres password is used: it set PostgreSQL up here, and keeps it."
+		: "Harbor's own sa password is used: it set Microsoft SQL Server up here, and keeps it.";
 	if (harbor) $("#form-sql-connection").elements.password.value = "";
 }
 for (const name of ["host", "username"]) $("#form-sql-connection").elements[name].addEventListener("input", syncSqlPassword);
@@ -8455,6 +9041,10 @@ $("#form-sql-connection").elements.host.oninput = updateSqlSshFields;
 $("#sql-add-connection").onclick = () => openSqlConnection();
 $("#sql-empty-add-connection").onclick = () => openSqlConnection();
 $("#sql-install-tools").onclick = () => run(() => openTask({ kind: "install_sql_tools" }));
+$("#sql-install-pg-tools").onclick = () => run(async () => {
+	const t = await openTask({ kind: "server_tool", tool: "pg_tools_install" });
+	if (t) t.afterTask = () => loadSqlConnections();
+});
 $("#sql-edit-connection").onclick = () => run(() => {
 	const connection = sqlConnections.find((item) => item.id === sqlSelected());
 	if (!connection) throw new Error("SQL connection no longer exists.");
@@ -8470,7 +9060,8 @@ function typedSqlConnection(form) {
 	const data = formValues(form);
 	data.port = Number(data.port);
 	data.trust_certificate = form.elements.trust_certificate.checked;
-	data.ssh_enabled = form.elements.ssh_enabled.checked;
+	data.engine = typedEngine();
+	data.ssh_enabled = data.engine === "mssql" && form.elements.ssh_enabled.checked;
 	if (data.ssh_enabled) data.ssh_port = Number(data.ssh_port);
 	if (editingSqlConnection) data.id = editingSqlConnection;
 	if (sqlUsesHarborPassword()) {
@@ -8490,9 +9081,6 @@ function sqlConnectionBusy(busy, label = "") {
 	for (const id of ["sql-connection-test", "sql-connection-save"]) $("#" + id).disabled = busy;
 	$("#sql-connection-save").replaceChildren(svgIcon("check"), busy && label ? label : "Save connection");
 }
-$("#sql-remove-connection").dataset.tone = "red";
-$("#sql-remove-connection").prepend(svgIcon("trash"));
-$("#sql-remove-connection").classList.add("toned-action");
 $("#sql-remove-connection").title = "Remove the connection from this admin: its databases stay";
 $("#sql-connection-save").prepend(svgIcon("check"));
 $("#sql-connection-test").dataset.tone = "blue";
@@ -8932,11 +9520,12 @@ function userCard(user) {
 	if (user.linux) rows.push(toolRow("Linux user", user.linux, { code: true }));
 	const card = toolCard({ icon: "user", tone: admin ? "purple" : "blue", title: user.name || user.username, detail: user.name ? user.username : admin ? "Administrator" : "User",
 		state: user.disabled ? "Locked" : admin ? "Administrator" : "User", stateClass: user.disabled ? "bad" : admin ? "role admin" : "role",
-		rows, actions: [toolButton("Edit…", () => openUserEditor(user), "ghost"),
-			// Their usage, when they may make sites or databases or have made some
+		rows, actions: [
+			// Their usage, when they may make sites or databases or have made some; Edit… last, at the right
 			...(!admin && (user.create_sites || user.made?.sites?.length || Object.values(user.made?.databases || {}).some((names) => names.length)
 				|| Object.values(user.connections || {}).some((grant) => (grant.actions || []).some((action) => action === "create" || action === "copy")))
-				? [tonedButton("Usage", "archive", "teal", () => showUsage(`/api/users/${encodeURIComponent(user.id)}/usage`, `Usage of ${user.name || user.username}`))] : [])] });
+				? [tonedButton("Usage", "archive", "teal", () => showUsage(`/api/users/${encodeURIComponent(user.id)}/usage`, `Usage of ${user.name || user.username}`))] : []),
+			toolButton("Edit…", () => openUserEditor(user), "ghost")] });
 	card.classList.toggle("user-locked", Boolean(user.disabled));
 	const initial = card.querySelector(".tool-icon");
 	initial.classList.add("user-initial");
@@ -9023,17 +9612,28 @@ function siteActionChips(chosen) {
 		if (value === "terminal") chip.title = "A shell in the site's folder as their own Linux user: everything that user may do there, Files and deleting too";
 		return chip;
 	});
-	// A terminal reaches the folder as the user's Linux user: it gives Files as well
+	// What one choice gives as well, ticked and locked while it is: Terminal gives Files (the folder as the user's Linux
+	// user), Files gives what it can do in the folder anyway (the .csproj and with it the packages, appsettings.json,
+	// deleting), and changing the packages is seeing them
 	const actionBox = (value) => chips.map((chip) => chip.querySelector("input")).find((box) => box.value === value);
-	const terminalBox = actionBox("terminal"), filesBox = actionBox("files");
-	const terminalGivesFiles = () => {
-		if (!terminalBox || !filesBox) return;
-		if (terminalBox.checked) filesBox.checked = true;
-		filesBox.disabled = terminalBox.checked;
-		filesBox.closest("label").title = terminalBox.checked ? "Given by Terminal" : "";
+	const gives = [["terminal", "files", "Terminal"], ["files", "packages", "Files"], ["files", "appsettings", "Files"], ["files", "delete", "Files"],
+		["packages", "packages_view", "Change NuGet packages"]];
+	const applyGives = () => {
+		// A box given by one choice stays locked while any choice that gives it is ticked
+		const givenBy = new Map();
+		for (const [from, to, label] of gives) {
+			const fromBox = actionBox(from), toBox = actionBox(to);
+			if (!fromBox || !toBox) continue;
+			if (fromBox.checked) {
+				toBox.checked = true;
+				givenBy.set(to, label);
+			}
+			toBox.disabled = givenBy.has(to);
+			toBox.closest("label").title = givenBy.has(to) ? `Given by ${givenBy.get(to)}` : "";
+		}
 	};
-	if (terminalBox) terminalBox.addEventListener("change", terminalGivesFiles);
-	terminalGivesFiles();
+	for (const [from] of gives) actionBox(from)?.addEventListener("change", applyGives);
+	applyGives();
 	chips.read = () => chips.map((chip) => chip.querySelector("input")).filter((box) => box.checked).map((box) => box.value);
 	return chips;
 }
@@ -9195,7 +9795,8 @@ function connectionGrantRow(connection, grant, user = null) {
 	};
 	const row = el("div", { className: "grant-site" + (grant ? " granted" : "") },
 		el("div", { className: "grant-head" }, el("label", {}, box, el("strong", { textContent: connection.name || connection.host })),
-			el("span", { className: "muted", textContent: connection.host + (connection.port ? ":" + connection.port : "") })), body);
+			el("span", { className: "grant-connection-where" }, engineBadge(connection),
+				el("span", { className: "muted", textContent: connection.host + (connection.port ? ":" + connection.port : "") }))), body);
 	showList();
 	if (grant && initial === "chosen") load();
 	row.dataset.connection = connection.id;
@@ -9284,6 +9885,8 @@ function databaseLimitFields(limits = {}) {
 
 // The sites in a user's access get a filter above them when there are many
 const userSitesSearch = grantSearch($("#user-sites"), "Filter sites…");
+// Saved with the window still open: the sites filter stays as it was
+let keepUserFilter = false;
 $("#user-sites").before(userSitesSearch);
 $("#user-sites").after(userSitesSearch.empty);
 // A template in the same window as a user: its name and rules in place of who they are and which sites and connections
@@ -9342,21 +9945,29 @@ function openUserEditor(user = null, template = null, editTemplate = undefined) 
 	}
 	userForm.sql.checked = Boolean(user?.sql);
 	userForm.manage_connections.checked = Boolean(user?.manage_connections);
+	// To which SQL Servers: both for one given it before there was a choice
+	const engines = Array.isArray(user?.connection_engines) ? user.connection_engines : ["mssql", "postgres"];
+	for (const box of userForm.querySelectorAll("input[name=connection_engine]")) box.checked = engines.includes(box.value);
 	// A user: the sites and connections, each ticked or not; a template: what each one given to a user gives
 	$("#user-sites").replaceChildren(...(asTemplate ? [] : Object.entries(usersData.sites).sort(([a], [b]) => a.localeCompare(b))
 		.map(([name, envs]) => siteGrantRow(name, envs, user?.sites?.[name], user))));
-	userSitesSearch.reset(!asTemplate);
+	userSitesSearch.reset(!asTemplate, keepUserFilter);
 	$("#user-sites-hint").hidden = asTemplate;
 	$("#user-connections").replaceChildren(...(asTemplate ? [] : usersData.connections.length ? usersData.connections.map((connection) => connectionGrantRow(connection, user?.connections?.[connection.id], user))
 		: [el("p", { className: "muted", textContent: "There are no SQL connections yet." })]));
 	$("#template-site-rules").replaceChildren(...(asTemplate ? [templateSiteRules(user.site_rules || {})] : []));
 	$("#template-sql-rules").replaceChildren(...(asTemplate ? [templateSqlRules(user.sql_rules || {})] : []));
 	$("#template-site-rules").hidden = $("#template-sql-rules").hidden = !asTemplate;
-	$("#user-delete").hidden = asTemplate ? !editTemplate.id : !editing;
-	$("#user-delete").textContent = asTemplate ? "Delete template" : "Delete user";
+	$("#user-danger").hidden = asTemplate ? !editTemplate.id : !editing;
+	$("#user-danger-title").textContent = $("#user-delete-label").textContent = asTemplate ? "Delete template" : "Delete user";
+	$("#user-danger-text").textContent = asTemplate ? "The template goes. Users made from it keep what they have."
+		: "They can no longer log in. What they made can go with them or stay; you choose before anything is deleted.";
 	showUserScope();
-	if (!userDialog.open) userDialog.showModal();
-	(asTemplate ? userForm.template_name : userForm.username).focus();
+	// The name has focus when the window opens; drawn again after Save, the focus (and with it the scroll) stays
+	if (!userDialog.open) {
+		userDialog.showModal();
+		(asTemplate ? userForm.template_name : userForm.username).focus();
+	}
 }
 // A template's rules for each site a user is given: what they may do there, and whether environments added later follow
 function templateSiteRules(rules) {
@@ -9395,7 +10006,7 @@ function templateSqlRules(rules) {
 // What the template window gives: the parts, the limits and the rules for each site and connection
 function templateAccess() {
 	return { web: userForm.web.checked, create_sites: userForm.create_sites.checked, sftp: userForm.sftp.checked, sql: userForm.sql.checked,
-		manage_connections: userForm.manage_connections.checked, limits: userLimits(),
+		manage_connections: userForm.manage_connections.checked, connection_engines: connectionEngines(), limits: userLimits(),
 		site_rules: $("#template-site-rules").firstChild.read(), sql_rules: $("#template-sql-rules").firstChild.read() };
 }
 function showUserScope() {
@@ -9403,12 +10014,15 @@ function showUserScope() {
 	$("#user-scope").hidden = admin;
 	$("#user-web").hidden = !userForm.web.checked;
 	$("#user-sql").hidden = !userForm.sql.checked;
+	$("#user-connection-engines").hidden = !userForm.manage_connections.checked;
 	// A template has no password or keys: they are each user's own
 	$("#user-sftp").hidden = !userForm.sftp.checked || userForm.dataset.mode === "template";
 	// SFTP reaches their sites' folders: a part of its own while the Web Server is theirs
 	$("#user-sftp-part").hidden = !userForm.web.checked;
 }
-userForm.onchange = (event) => { if (["role", "web", "sql", "sftp"].includes(event.target.name)) showUserScope(); };
+userForm.onchange = (event) => { if (["role", "web", "sql", "sftp", "manage_connections"].includes(event.target.name)) showUserScope(); };
+// The SQL Servers ticked under May add SQL connections
+const connectionEngines = () => [...userForm.querySelectorAll("input[name=connection_engine]:checked")].map((box) => box.value);
 // What the user window gives: their role, the Web Server and its sites, SFTP, SQL Server and its connections, and the
 // limits; as saved with the user, and as a template keeps it
 function userAccess() {
@@ -9424,7 +10038,7 @@ function userAccess() {
 		if (grant) connections[usersData.connections[index].id] = grant;
 	});
 	return { role: userForm.role.value, web: userForm.web.checked, create_sites: userForm.create_sites.checked, sql: userForm.sql.checked,
-		manage_connections: userForm.manage_connections.checked, sites, connections, sftp: userForm.sftp.checked, limits: userLimits() };
+		manage_connections: userForm.manage_connections.checked, connection_engines: connectionEngines(), sites, connections, sftp: userForm.sftp.checked, limits: userLimits() };
 }
 // A new user starts from a template: a chip each above the fields, the one used lit; templates are made under Users
 function showUserTemplates(chosen) {
@@ -9454,8 +10068,27 @@ userForm.onsubmit = (event) => {
 	event.preventDefault();
 	saveUserForm(true);
 };
+// The user window as it is seen: where it is scrolled, the sites filter, and which sites and connections are unfolded
+function userView() {
+	const rows = [...$("#user-sites").children, ...$("#user-connections").children];
+	return { scroll: userDialog.scrollTop, open: rows.map((row) => row.querySelector(":scope > .grant-body")?.hidden === false) };
+}
+function restoreUserView(view) {
+	const rows = [...$("#user-sites").children, ...$("#user-connections").children];
+	rows.forEach((row, index) => {
+		const body = row.querySelector(":scope > .grant-body");
+		if (!body || view.open[index] === undefined) return;
+		body.hidden = !view.open[index];
+		row.querySelector(".grant-toggle")?.setAttribute("aria-expanded", String(view.open[index]));
+	});
+	// Again when it has been laid out, so the height it gets after drawing does not cut the scroll short
+	userDialog.scrollTop = view.scroll;
+	requestAnimationFrame(() => { userDialog.scrollTop = view.scroll; });
+}
 function saveUserForm(close) {
 	if (userForm.dataset.mode === "template") return saveTemplateForm(close);
+	// Where the window is, before anything is saved or drawn again
+	const view = userView();
 	run(async () => {
 		const id = userForm.dataset.id;
 		const body = { username: userForm.username.value.trim(), name: userForm.elements.name.value.trim(), disabled: userForm.disabled.checked, ...userAccess() };
@@ -9474,14 +10107,18 @@ function saveUserForm(close) {
 			return;
 		}
 		toast(id ? "User saved" : "User added", "ok");
+		// A part sent on with nothing in it was turned off: said, so the switch that moved is understood
+		const off = [body.web && !saved.user.web && "Web Server (no site, and they may not make one)", body.sql && !saved.user.sql && "SQL Server (no connection, and they may not add one)"].filter(Boolean);
+		if (off.length) toast(`Turned off, as nothing is given in it: ${off.join("; ")}.`);
 		await openUsers();
 		// Opened from Usage: it shows the limits just saved
 		if (serverTabOpen("usage")) await openUsageSettings();
 		if (close) return userDialog.close();
-		// Still open: the user as saved, where the window was
-		const scroll = userDialog.scrollTop;
+		// Still open: the user as saved, where the window was, with the same filter and the same unfolded
+		keepUserFilter = true;
 		openUserEditor(usersData.users.find((user) => user.id === saved.user.id) || saved.user);
-		userDialog.scrollTop = scroll;
+		keepUserFilter = false;
+		restoreUserView(view);
 	});
 }
 function saveTemplateForm(close) {
@@ -9499,7 +10136,7 @@ function saveTemplateForm(close) {
 		if (close) return userDialog.close();
 		userForm.dataset.template = saved.template.id;
 		$("#user-title").textContent = saved.template.name;
-		$("#user-delete").hidden = false;
+		$("#user-danger").hidden = false;
 		$("#user-error").textContent = "";
 	});
 }
@@ -9591,7 +10228,7 @@ $("#audit-clear").onclick = () => run(async () => {
 // SSH and Samba are one part, Access: how the server itself is reached
 const TOOL_TABS = ["sql", "dotnet", "node", "access"];
 const SERVER_TABS = [...TOOL_TABS, "apache", "jobs", "settings", "servers", "users", "usage", "windows", "updates", "menu"];
-const TOOL_OF_CARD = { "SQL Server": "sql", "SQL tools": "sql", "sa password": "sql", Backups: "sql", "Node.js": "node", SSH: "access", Samba: "access" };
+const TOOL_OF_CARD = { "Microsoft SQL Server": "sql", "Microsoft SQL Server tools": "sql", "sa password": "sql", PostgreSQL: "sql", "PostgreSQL tools": "sql", "postgres password": "sql", Backups: "sql", "Node.js": "node", SSH: "access", Samba: "access" };
 // Settings opens on General: what most often is looked for
 let serverTab = "settings";
 const paneOf = (tab) => TOOL_TABS.includes(tab) ? "tools" : tab;
@@ -9712,29 +10349,59 @@ function toolRow(name, detail, { on = null, action = null, code = false } = {}) 
 function serverToolCards(status) {
 	const sql = status.sql_server, tools = status.sql_tools, sa = status.sa_password;
 	const cards = [];
-	// SQL Server, its tools and its sa password: a card each, beside the backups
+	// SQL Server: Microsoft SQL Server and PostgreSQL, a group each with its server, its tools and its password, the
+	// password only while the server is here
+	const sqlGroup = (title) => el("div", { className: "tool-group-head" }, el("span", { className: "tool-group-icon" }, svgIcon("database")),
+		el("span", { className: "tool-group-title", textContent: title }));
+	cards.push(sqlGroup("Microsoft SQL Server"));
 	cards.push(toolCard({
-		icon: "database", tone: "purple", title: "SQL Server", detail: sql.installed ? `Version ${sql.version}` : "For the sites' databases",
+		icon: "database", tone: "purple", title: "Microsoft SQL Server", detail: sql.installed ? `Version ${sql.version}` : "For the sites' databases",
 		state: sql.installed ? (sql.running ? "Running" : "Stopped") : "Not installed", stateClass: sql.installed ? (sql.running ? "ok" : "bad") : "",
-		text: sql.installed ? "" : "Not needed when the sites use a SQL Server elsewhere.",
+		text: sql.installed ? "" : "Not needed when the sites use a Microsoft SQL Server elsewhere.",
 		actions: sql.installed
-			? [updateButton(sql.newer ?? null, () => confirmServerTool("Update SQL Server?", `Takes the newest update of this version${sql.newer ? ` (${sql.newer})` : ""}. The service restarts, so take a backup first.`, "Update", { tool: "sql_update" })),
+			? [updateButton(sql.newer ?? null, () => confirmServerTool("Update Microsoft SQL Server?", `Takes the newest update of this version${sql.newer ? ` (${sql.newer})` : ""}. The service restarts, so take a backup first.`, "Update", { tool: "sql_update" })),
 				toolButton("Remove…", () => askServerTool("sql_uninstall", { tools: tools.installed }), "ghost tool-danger")]
 			: [toolButton("Install…", () => askServerTool("sql_install", { older: sql.packages_for, ubuntu: status.os.version, tools: tools.installed }), "primary")],
 	}));
 	cards.push(toolCard({
-		icon: "terminal", tone: "blue", title: "SQL tools", detail: tools.installed ? `sqlcmd ${tools.version || ""}`.trim() : "sqlcmd",
+		icon: "terminal", tone: "blue", title: "Microsoft SQL Server tools", detail: tools.installed ? `sqlcmd ${tools.version || ""}`.trim() : "sqlcmd",
 		state: tools.installed ? "Installed" : "Not installed", stateClass: tools.installed ? "ok" : "",
-		text: "Runs the backups and the database scripts, and the SQL connections of this admin.",
+		text: "Runs the backups and the database scripts, and this admin's connections to Microsoft SQL Server.",
 		actions: [tools.installed
-			? toolButton("Remove", () => confirmServerTool("Remove the SQL tools?", "sqlcmd goes, the backups stop, and the SQL connections on the SQL Server page are removed: none of them works without it. SQL Server and its databases stay.", "Remove", { tool: "tools_uninstall" }, true), "ghost tool-danger")
+			? toolButton("Remove", () => confirmServerTool("Remove the Microsoft SQL Server tools?", "sqlcmd goes, the backups stop, and the Microsoft SQL Server connections on the SQL Server page are removed: none of them works without it. Microsoft SQL Server and its databases stay.", "Remove", { tool: "tools_uninstall" }, true), "ghost tool-danger")
 			: toolButton("Install", () => runServerTool({ tool: "tools_install" }), "primary")],
 	}));
-	cards.push(toolCard({
-		icon: "key", tone: "amber", title: "sa password", detail: "SQL Server's own login",
+	if (sql.installed) cards.push(toolCard({
+		icon: "key", tone: "amber", title: "sa password", detail: "Microsoft SQL Server's own login",
 		state: sa.set ? "Set" : "Not set", stateClass: sa.set ? "ok" : "warn",
 		text: sa.set ? "The backups (in Scheduled jobs) and the database scripts log in with it." : "The backups and the database scripts need it.",
 		actions: [toolButton(sa.set ? "Change…" : "Set…", () => askServerTool("sa_password"), sa.set ? "ghost" : "primary")],
+	}));
+	const pg = status.postgres || {}, pgTools = status.postgres_tools || {}, pgPassword = status.postgres_password || {};
+	cards.push(sqlGroup("PostgreSQL"));
+	cards.push(toolCard({
+		icon: "database", tone: "blue", title: "PostgreSQL", detail: pg.installed ? `Version ${pg.version}` : "For C# and Python sites' databases",
+		state: pg.installed ? (pg.running ? "Running" : "Stopped") : "Not installed", stateClass: pg.installed ? (pg.running ? "ok" : "bad") : "",
+		text: pg.installed ? "" : "Not needed when the sites use a PostgreSQL elsewhere. Umbraco does not run on PostgreSQL.",
+		actions: pg.installed
+			? [updateButton(pg.newer ?? null, () => confirmServerTool("Update PostgreSQL?", `Takes the newest update of this version${pg.newer ? ` (${pg.newer})` : ""}. The service restarts, so take a backup first.`, "Update", { tool: "pg_update" })),
+				toolButton("Remove…", () => askServerTool("pg_uninstall"), "ghost tool-danger")]
+			: [toolButton("Install…", () => askServerTool("pg_install"), "primary")],
+	}));
+	cards.push(toolCard({
+		icon: "terminal", tone: "teal", title: "PostgreSQL tools", detail: pgTools.installed ? `psql ${pgTools.version || ""}`.trim() : "psql, pg_dump, pg_restore",
+		state: pgTools.installed ? "Installed" : "Not installed", stateClass: pgTools.installed ? "ok" : "",
+		text: pg.installed ? "Come with PostgreSQL here, and reach a PostgreSQL elsewhere too." : "Run the backups, and this admin's connections to PostgreSQL.",
+		// With PostgreSQL here they are its own: they go with it
+		actions: pg.installed ? [] : [pgTools.installed
+			? toolButton("Remove", () => confirmServerTool("Remove the PostgreSQL tools?", "psql, pg_dump and pg_restore go, and the PostgreSQL connections on the SQL Server page are removed: none of them works without them.", "Remove", { tool: "pg_tools_uninstall" }, true), "ghost tool-danger")
+			: toolButton("Install", () => runServerTool({ tool: "pg_tools_install" }), "primary")],
+	}));
+	if (pg.installed) cards.push(toolCard({
+		icon: "key", tone: "amber", title: "postgres password", detail: "PostgreSQL's own login",
+		state: pgPassword.set ? "Set" : "Not set", stateClass: pgPassword.set ? "ok" : "warn",
+		text: pgPassword.set ? "The backups (in Scheduled jobs) and the connection here log in with it." : "The backups and the connection here need it.",
+		actions: [toolButton(pgPassword.set ? "Change…" : "Set…", () => askServerTool("pg_password"), pgPassword.set ? "ghost" : "primary")],
 	}));
 	// The backups are jobs of Scheduled jobs, suggested there once SQL Server and its tools are here
 	// Scheduled jobs is a tab of its own
@@ -9891,6 +10558,19 @@ function sambaPasswordFields(required, label = "Samba password") {
 		el("label", {}, "Repeat password", el("input", { name: "samba_repeat", type: "password", required, minLength: 6, maxLength: 128, autocomplete: "new-password" })))];
 }
 
+// Type DELETE to delete the data too: the confirmation field the other confirmations have, shown once it is chosen
+function deleteConfirmation() {
+	const field = confirmField("DELETE");
+	field.id = "server-action-delete";
+	field.hidden = true;
+	return field;
+}
+function postgresPasswordFields() {
+	return [el("div", { className: "ns-grid" },
+		el("label", {}, "postgres password", el("input", { name: "postgres_password", type: "password", required: true, minLength: 8, maxLength: 128, autocomplete: "new-password" })),
+		el("label", {}, "Repeat password", el("input", { name: "postgres_repeat", type: "password", required: true, minLength: 8, maxLength: 128, autocomplete: "new-password" })))];
+}
+
 function passwordFields() {
 	return [el("div", { className: "ns-grid" },
 		el("label", {}, "sa password", el("input", { name: "sa_password", type: "password", required: true, minLength: 8, maxLength: 128, autocomplete: "new-password" })),
@@ -9978,7 +10658,7 @@ let crontabEntries = [];
 const CRON_PRESETS = [["Hourly", "0 * * * *"], ["Every 4 hours", "0 */4 * * *"], ["Daily 03:00", "0 3 * * *"],
 	["Sundays 03:00", "0 3 * * 0"], ["Monthly", "0 3 1 * *"], ["At startup", "@reboot"]];
 const CRON_DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-const HARBOR_JOBS = { backup_everything: "Backup", shrink_logs: "Log shrink" };
+const HARBOR_JOBS = { backup_everything: "Microsoft SQL Server backup", shrink_logs: "Microsoft SQL Server log shrink", postgres_backup: "PostgreSQL backup" };
 
 // A schedule in words, for the common ones; nothing for one of its own
 function describeCron(expression) {
@@ -10207,11 +10887,12 @@ function cronTitle(entry) {
 // The name a job is shown by: its label, Harbor's name for its own, else its schedule in words
 const cronName = (entry) => entry.label || HARBOR_JOBS[entry.harbor] || describeCron(entry.schedule) || entry.schedule;
 
-// Harbor's backup and log shrink jobs, each suggested while SQL Server and its tools are here and it is not in cron
+// Harbor's jobs, each suggested while its engine is here (Microsoft SQL Server and its tools, or PostgreSQL) and it is not in cron
 let cronSuggestions = [];
 const CRON_SUGGESTIONS = {
-	backup_everything: ["Back up the databases", "SQL Server is here: every database backed up every 4 hours at :15"],
-	shrink_logs: ["Shrink the logs", "SQL Server is here: every database's log shrunk every 4 hours, so it does not fill the disk"],
+	backup_everything: ["Back up the Microsoft SQL Server databases", "Microsoft SQL Server is here: every database backed up every 4 hours at :15"],
+	shrink_logs: ["Shrink the Microsoft SQL Server logs", "Microsoft SQL Server is here: every database's log shrunk every 4 hours, so it does not fill the disk"],
+	postgres_backup: ["Back up the PostgreSQL databases", "PostgreSQL is here: every database dumped every 4 hours at :30, into /var/opt/postgresql/backup"],
 };
 function cronSuggestion(job) {
 	const [title, text] = CRON_SUGGESTIONS[job];
@@ -10518,7 +11199,7 @@ function askServerTool(tool, options = {}) {
 	const form = $("#form-server-action");
 	const fields = $("#server-action-fields");
 	const setup = {
-		sql_install: ["database", "Install SQL Server", "The newest SQL Server for this Ubuntu, set up without questions.", "Install", () => [
+		sql_install: ["database", "Install Microsoft SQL Server", "The newest Microsoft SQL Server for this Ubuntu, set up without questions, and a connection to it, Local, on the SQL Server page.", "Install", () => [
 			...(options.older ? [el("p", { className: "server-action-note", textContent: `Microsoft has no SQL Server for Ubuntu ${options.ubuntu || "this version"} yet. `
 				+ `It is installed from the packages for Ubuntu ${options.older}: SQL Server runs on this Ubuntu that way, but Microsoft does not support it.` })] : []),
 			choiceCards("edition", "Edition", SQL_EDITIONS, "Developer"),
@@ -10527,19 +11208,21 @@ function askServerTool(tool, options = {}) {
 			// Offered only when they are not here already
 			...(options.tools ? [] : [checkOption("with_tools", "Install the SQL tools (sqlcmd)", "Needed for backups and the database scripts", true, "terminal", "blue")]),
 		]],
-		sql_uninstall: ["database", "Remove SQL Server", "The service stops and SQL Server goes from this server.", "Remove SQL Server", () => [
+		sql_uninstall: ["database", "Remove Microsoft SQL Server", "The service stops and Microsoft SQL Server goes from this server.", "Remove Microsoft SQL Server", () => [
 			// Offered only when they are here
 			...(options.tools ? [checkOption("with_tools", "Remove the SQL tools (sqlcmd) too", "Keep them to reach SQL Servers elsewhere", false, "terminal", "amber")] : []),
 			checkOption("delete_data", "Delete the databases, logs and backups", "Everything in /var/opt/mssql. Kept when not chosen.", false, "trash", "red"),
-			el("div", { className: "server-action-danger", hidden: true, id: "server-action-delete" },
-				el("p", { className: "server-action-confirm" }, "Type ", el("button", {
-					type: "button", className: "confirmation-copy", textContent: "DELETE", title: "Copy confirmation text", ariaLabel: "Copy confirmation text: DELETE",
-					onclick: async () => {
-						try { await copyText("DELETE", serverActionDialog); toast("Copied to clipboard."); } catch (error) { toast(error.message, "error"); }
-						form.elements.confirmation.focus({ preventScroll: true });
-					},
-				}), " to delete the databases, logs and backups"),
-				el("input", { name: "confirmation", autocomplete: "off", spellcheck: false, "aria-label": "Type DELETE to delete the databases" })),
+			deleteConfirmation(),
+		]],
+		pg_install: ["database", "Install PostgreSQL", "PostgreSQL from this Ubuntu's own packages, reached with a password, and a connection to it, Local, on the SQL Server page.", "Install", () => [
+			...postgresPasswordFields(),
+			el("p", { className: "hint", textContent: "The password of its postgres login: at least 8 characters. Harbor keeps it for the backups and the connection here." }),
+		]],
+		pg_password: ["key", "postgres password", "The password of the postgres login of PostgreSQL here, for the backups and the connection here.", "Save password", postgresPasswordFields],
+		pg_uninstall: ["database", "Remove PostgreSQL", "The service stops and PostgreSQL goes from this server, with the connections to it on the SQL Server page.", "Remove PostgreSQL", () => [
+			checkOption("with_tools", "Remove the PostgreSQL tools (psql, pg_dump) too", "Keep them to reach a PostgreSQL elsewhere", false, "terminal", "amber"),
+			checkOption("delete_data", "Delete the databases and backups", "Everything in /var/opt/postgresql. Kept when not chosen.", false, "trash", "red"),
+			deleteConfirmation(),
 		]],
 		ssh_root: ["terminal", "Root login over SSH", "How root may log in to this server over SSH. Connections open now stay.", "Save", () => {
 			const choice = choiceCards("mode", "Root may log in", [["yes", "With a password or a key"], ["prohibit-password", "With a key only (recommended)"], ["no", "Not at all"]], options.current || "prohibit-password");
@@ -10591,7 +11274,7 @@ function askServerTool(tool, options = {}) {
 			...sambaPasswordFields(true)]],
 		samba_user_password: ["key", `${options.name}'s Samba password`, "The password it reaches the shares with.", "Save password", () => sambaPasswordFields(true)],
 		samba_password: ["key", "Root's Samba password", "The password root reaches the share with. It is not root's password on the server.", "Save password", () => sambaPasswordFields(true, "Samba password for root")],
-		sa_password: ["key", "sa password", "The password of the sa login on this SQL Server, for the backups and database scripts. It is checked against the server first.", "Save password", passwordFields],
+		sa_password: ["key", "sa password", "The password of the sa login on this Microsoft SQL Server, for the backups and database scripts. It is checked against the server first.", "Save password", passwordFields],
 		dotnet_install: ["dotnet", "Add .NET", "Its SDK and ASP.NET Core runtime, beside the versions there.", "Install", () => [
 			choiceCards("channel", "Version", (options.channels || []).map((channel) => [channel, channel === "8.0" || channel === "10.0" ? "Long-term support" : "Standard-term support"]), (options.channels || [])[0]),
 		]],
@@ -10627,8 +11310,9 @@ function askServerTool(tool, options = {}) {
 	const button = $("#server-action-ok");
 	button.textContent = ok;
 	// A dangerous action is red, never also the green primary
-	button.classList.toggle("danger", tool === "sql_uninstall");
-	button.classList.toggle("primary", tool !== "sql_uninstall");
+	const dangerous = tool === "sql_uninstall" || tool === "pg_uninstall";
+	button.classList.toggle("danger", dangerous);
+	button.classList.toggle("primary", !dangerous);
 	fields.replaceChildren(...build());
 	const deleting = form.elements.delete_data;
 	// As the other confirmations: the button stays off until the word is typed exactly
@@ -10650,6 +11334,12 @@ function askServerTool(tool, options = {}) {
 			values.samba_repeat.setCustomValidity("The passwords are not the same");
 			values.samba_repeat.reportValidity();
 			values.samba_repeat.oninput = () => values.samba_repeat.setCustomValidity("");
+			return;
+		}
+		if (values.postgres_repeat && values.postgres_password.value !== values.postgres_repeat.value) {
+			values.postgres_repeat.setCustomValidity("The passwords are not the same");
+			values.postgres_repeat.reportValidity();
+			values.postgres_repeat.oninput = () => values.postgres_repeat.setCustomValidity("");
 			return;
 		}
 		if (values.sa_repeat && values.sa_password.value !== values.sa_repeat.value) {
@@ -10676,7 +11366,7 @@ function askServerTool(tool, options = {}) {
 					? [...form.querySelectorAll("[name=share_user]:checked")].map((box) => box.value).join(" ")
 					: options.share?.valid_users || "" };
 		}
-		for (const name of ["edition", "channel", "major", "mode", "sa_password", "samba_password", "confirmation"]) if (values[name]?.value) payload[name] = values[name].value;
+		for (const name of ["edition", "channel", "major", "mode", "sa_password", "postgres_password", "samba_password", "confirmation"]) if (values[name]?.value) payload[name] = values[name].value;
 		for (const name of ["with_tools", "delete_data"]) if (values[name]) payload[name] = values[name].checked;
 		if (tool === "sql_install" && options.older) payload.older_ubuntu = true;
 		serverActionDialog.close();

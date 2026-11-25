@@ -33,6 +33,10 @@ def editable_file(path, size):
     return b"\0" not in sample
 
 
+# Pictures and PDFs the admin shows in a window of its own (its PREVIEW_KINDS): a folder holding them is worth showing
+PREVIEWABLE = (".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".bmp", ".ico", ".pdf")
+
+
 def contains_editable_files(path):
     pending = [path]
     while pending:
@@ -43,8 +47,9 @@ def contains_editable_files(path):
                     continue
                 if entry.is_dir(follow_symlinks=False):
                     pending.append(Path(entry.path))
-                elif entry.is_file(follow_symlinks=False) and editable_file(
-                        Path(entry.path), entry.stat(follow_symlinks=False).st_size):
+                elif entry.is_file(follow_symlinks=False) and (
+                        os.path.splitext(entry.name)[1].lower() in PREVIEWABLE
+                        or editable_file(Path(entry.path), entry.stat(follow_symlinks=False).st_size)):
                     return True
     return False
 

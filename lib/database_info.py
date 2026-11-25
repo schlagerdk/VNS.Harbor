@@ -89,9 +89,14 @@ def connection_fields(connection):
 def connection_type(connection, provider):
     if "sqlite" in provider:
         return "SQLite"
+    if "npgsql" in provider or "postgres" in provider:
+        return "PostgreSQL"
     if provider and not any(name in provider for name in ("sqlclient", "sqlserver")):
         return "Unknown"
     fields = {key: value.lower() for key, value in connection_fields(connection).items()}
+    # Npgsql's words: Host and Username (SQL Server has neither)
+    if "host" in fields or "username" in fields:
+        return "PostgreSQL"
     server = next((fields[key] for key in ("server", "data source", "datasource", "filename", "address", "addr", "network address")
                    if key in fields), "")
     if not provider and (server.endswith((".db", ".sqlite", ".sqlite3")) or server == ":memory:"):

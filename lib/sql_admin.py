@@ -1,4 +1,5 @@
-"""SQL Server admin operations using sqlcmd and server-side backup paths."""
+"""SQL Server admin operations using sqlcmd and server-side backup paths. A connection whose engine is postgres is
+handed to pg_admin.py, which does the same for PostgreSQL: the admin, its tasks and the usage call this module alone."""
 import argparse
 import hashlib
 import importlib.util
@@ -18,6 +19,35 @@ import uuid
 _file_spec = importlib.util.spec_from_file_location("vns_backup_files", Path(__file__).with_name("backup_files.py"))
 _file_module = importlib.util.module_from_spec(_file_spec)
 _file_spec.loader.exec_module(_file_module)
+
+
+ENGINES = ("mssql", "postgres")
+DEFAULT_PORTS = {"mssql": 1433, "postgres": 5432}
+_pg = None
+
+
+def pg():
+    """pg_admin.py, beside this file"""
+    global _pg
+    if _pg is None:
+        spec = importlib.util.spec_from_file_location("vns_pg_admin", Path(__file__).with_name("pg_admin.py"))
+        _pg = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(_pg)
+    return _pg
+
+
+def engine(settings):
+    """A connection's engine: postgres, or mssql (every connection made before PostgreSQL came)"""
+    return "postgres" if isinstance(settings, dict) and settings.get("engine") == "postgres" else "mssql"
+
+
+def postgres(settings):
+    return engine(settings) == "postgres"
+
+
+def tools_path(kind="mssql"):
+    """The engine's command-line tool on the admin server, or None"""
+    return pg().tools_path() if kind == "postgres" else sqlcmd_path()
 
 
 def ssh_settings(data, existing=None):
@@ -56,6 +86,7 @@ def connections(path):
                                          for key in ("id", "name", "host", "username", "password", "backup_directory"))
         or isinstance(item.get("port"), bool) or not isinstance(item.get("port"), int)
         or not 1 <= item["port"] <= 65535 or not isinstance(item.get("trust_certificate"), bool)
+        or item.get("engine", "mssql") not in ENGINES
         for item in data
     ):
         raise ValueError("Invalid SQL connection store")
@@ -68,7 +99,7 @@ def public_connections(path):
     return [{key: item[key] for key in (
         "id", "name", "host", "port", "username", "backup_directory", "trust_certificate",
         "ssh_enabled", "ssh_host", "ssh_username", "ssh_port"
-    ) if key in item} for item in connections(path)]
+    ) if key in item} | {"engine": engine(item)} for item in connections(path)]
 
 
 def save_connections(path, items):
@@ -96,6 +127,10 @@ def edit_connection(path, data, connection_id=None, check=None):
         raise ValueError("Unknown SQL connection")
     if existing and data.get("password", "") == "":
         data = data | {"password": existing["password"]}
+    # The engine is chosen when the connection is made; it stays what it is
+    kind = engine(existing) if existing else data.get("engine", "mssql")
+    if kind not in ENGINES:
+        raise ValueError("Choose Microsoft SQL Server or PostgreSQL")
     fields = {}
     for key in ("name", "host", "username", "password", "backup_directory"):
         value = data.get(key)
@@ -108,18 +143,25 @@ def edit_connection(path, data, connection_id=None, check=None):
             raise ValueError("Missing connection field: " + key)
     if not re.fullmatch(r"[A-Za-z0-9_.:\[\]-]+", fields["host"]):
         raise ValueError("Enter a hostname or IP address without scheme or port")
-    port = data.get("port", 1433)
+    port = data.get("port", DEFAULT_PORTS[kind])
     if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
         raise ValueError("Invalid SQL port")
     trust = data.get("trust_certificate", False)
     if not isinstance(trust, bool):
         raise ValueError("Invalid certificate setting")
     fields.update(id=connection_id or uuid.uuid4().hex, port=port, trust_certificate=trust)
-    fields.update(ssh_settings(data | {"ssh_host": fields["host"] if fields["host"] != "." else "localhost"}, existing))
+    if kind == "postgres":
+        # pg_dump runs here: its files are in a folder on this server, and SSH is never needed
+        fields.update(engine="postgres", ssh_enabled=False)
+        if not fields["backup_directory"].startswith("/") or ".." in fields["backup_directory"].split("/"):
+            raise ValueError("The backup folder is a full path on this server, such as /var/opt/postgresql/backup")
+    else:
+        fields.update(ssh_settings(data | {"ssh_host": fields["host"] if fields["host"] != "." else "localhost"}, existing))
     if fields["ssh_enabled"] and (not fields["backup_directory"].startswith("/") or "\\" in fields["backup_directory"]):
         raise ValueError("Linux SSH backup access requires an absolute Linux backup directory")
     host = fields["host"].strip("[]").rstrip(".").casefold()
-    if any(item["id"] != connection_id and item["host"].strip("[]").rstrip(".").casefold() == host and item["port"] == port for item in items):
+    if any(item["id"] != connection_id and item["host"].strip("[]").rstrip(".").casefold() == host and item["port"] == port
+           and engine(item) == kind for item in items):
         raise ValueError("A connection to this SQL host and port already exists")
     if check:
         check(fields)
@@ -133,6 +175,8 @@ def edit_connection(path, data, connection_id=None, check=None):
 
 def check_login(settings, source="saved"):
     """Whether the connection logs in: a ValueError that says why, in plain words, when it does not"""
+    if postgres(settings):
+        return pg().check_login(settings, source)
     try:
         databases(settings)
     except (RuntimeError, OSError, subprocess.SubprocessError) as error:
@@ -232,6 +276,8 @@ def sealed_script(script, sandbox=False):
 def run_query(settings, database, query, sandbox=False):
     """A script typed in the admin, run against one database. Returns what sqlcmd prints. A sandbox (a user who is not
     an administrator) keeps it to that database."""
+    if postgres(settings):
+        return pg().run_query(settings, database, query, sandbox=sandbox)
     if not isinstance(database, str) or not database or len(database) > 128 or any(char in database for char in "\0\r\n"):
         raise ValueError("Choose a database")
     if not isinstance(query, str) or not query.strip() or len(query) > 1024 * 1024:
@@ -317,27 +363,38 @@ def query_json(settings, query, *, preamble="", database="master"):
 
 
 def databases(settings):
+    if postgres(settings):
+        return pg().databases(settings)
+    # umbraco: an Umbraco site's database, which has Umbraco's own table umbracoNode (looked up by its three-part name,
+    # so no database is opened for it; one offline or not readable is not one)
     return query_json(settings, """
+SELECT x.*, CAST(CASE WHEN x.state = N'ONLINE' AND x.id > 4 AND HAS_DBACCESS(x.name) = 1
+ AND OBJECT_ID(QUOTENAME(x.name) + N'.dbo.umbracoNode', N'U') IS NOT NULL THEN 1 ELSE 0 END AS bit) AS umbraco FROM (
 SELECT d.name, d.database_id AS id, d.state_desc AS state, d.recovery_model_desc AS recovery, d.is_in_standby,
  CAST(COALESCE(SUM(CAST(f.size AS bigint)),0)*8.0/1024 AS decimal(18,1)) AS size_mb
 FROM sys.databases d LEFT JOIN sys.master_files f ON f.database_id=d.database_id
-GROUP BY d.name,d.database_id,d.state_desc,d.recovery_model_desc,d.is_in_standby ORDER BY d.name""")
+GROUP BY d.name,d.database_id,d.state_desc,d.recovery_model_desc,d.is_in_standby) x ORDER BY x.name""")
 
 
 def tables(settings, database):
     """The tables of one database with their row count and size, for unfolding a database in the admin."""
+    if postgres(settings):
+        return pg().tables(settings, database)
     identifier(database)
+    # The rows from the partitions alone: joined with the allocation units (in-row, LOB, row-overflow), each partition's
+    # rows were counted once per unit, three times for a table with text (1.0.82)
     return query_json(settings, """
 SELECT s.name AS [schema], t.name AS name,
- COALESCE(SUM(CASE WHEN p.index_id IN (0,1) THEN p.rows END),0) AS [rows],
- CAST(COALESCE(SUM(a.total_pages),0)*8.0/1024 AS decimal(18,1)) AS size_mb
+ COALESCE((SELECT SUM(p.rows) FROM sys.partitions p WHERE p.object_id=t.object_id AND p.index_id IN (0,1)),0) AS [rows],
+ CAST(COALESCE((SELECT SUM(a.total_pages) FROM sys.partitions p JOIN sys.allocation_units a ON a.container_id=p.partition_id
+  WHERE p.object_id=t.object_id),0)*8.0/1024 AS decimal(18,1)) AS size_mb
 FROM sys.tables t JOIN sys.schemas s ON s.schema_id=t.schema_id
-LEFT JOIN sys.partitions p ON p.object_id=t.object_id
-LEFT JOIN sys.allocation_units a ON a.container_id=p.partition_id
-GROUP BY s.name,t.name ORDER BY s.name,t.name""", database=database)
+ORDER BY s.name,t.name""", database=database)
 
 
 def backups(settings):
+    if postgres(settings):
+        return pg().backups(settings)
     history = query_json(settings, """
 SELECT TOP (200) b.backup_set_id AS id, b.database_name AS database_name,
  CONVERT(varchar(30),b.backup_finish_date,126) AS finished,
@@ -428,7 +485,8 @@ def backup(settings, name):
     path = settings["backup_directory"].rstrip("/\\") + separator + name + ".bak"
     prepare_backup_access(settings, path, write=True)
     execute(settings, f"BACKUP DATABASE {identifier(name)} TO DISK={literal(path)} WITH INIT;")
-    print(f"Backup complete: {name} -> {path}", flush=True)
+    # Where it lies is on the Backups tab for an administrator; a user running this is not told
+    print(f"Backup complete: {name}", flush=True)
     return path
 
 
@@ -487,6 +545,8 @@ def validate_restore_login(data):
 
 
 def local_backup_access(settings):
+    if postgres(settings):
+        return pg().local_backup_access(settings)
     if settings["host"].strip() == ".":
         return True
     host = settings["host"].strip("[]").rstrip(".").casefold()
@@ -494,6 +554,8 @@ def local_backup_access(settings):
 
 
 def backup_file_access(settings):
+    if postgres(settings):
+        return pg().backup_file_access(settings)
     return local_backup_access(settings) or settings.get("ssh_enabled", False)
 
 
@@ -666,6 +728,8 @@ def tried_password(password, source="saved"):
 
 def connect_error(settings, error, source="saved"):
     """What a failed first connection means, in place of what sqlcmd says of it"""
+    if postgres(settings):
+        return pg().connect_error(settings, error, source)
     text = str(error)
     where = f'{settings["host"]}:{settings["port"]}'
     if "Login failed" in text:
@@ -678,7 +742,15 @@ def connect_error(settings, error, source="saved"):
     return error
 
 
+def taken(data, said):
+    """Why a name cannot be used, for an administrator; for a user, the same words whatever the reason: that a database
+    or login of that name is there (one not theirs) is not theirs to learn"""
+    return "That name cannot be used. Choose another." if data.get("private_names") else said
+
+
 def run_action(settings, data):
+    if postgres(settings):
+        return pg().run_action(settings, data)
     if not isinstance(data, dict):
         raise ValueError("Expected a SQL action object")
     action = data.get("action")
@@ -692,7 +764,11 @@ def run_action(settings, data):
     try:
         rows = databases(settings)
     except RuntimeError as error:
-        raise connect_error(settings, error) from None
+        found = connect_error(settings, error)
+        # A user who did not add the connection is not told where its server is
+        if data.get("private_names"):
+            found = type(found)(str(found).replace(f'{settings["host"]}:{settings.get("port")}', "the server").replace(str(settings["host"]), "the server"))
+        raise found from None
     step(work)
     if action == "backup_all":
         count = 0
@@ -715,11 +791,11 @@ def run_action(settings, data):
         raise ValueError("Database no longer exists")
     if action == "create":
         if current:
-            raise ValueError("Database already exists")
+            raise ValueError(taken(data, "Database already exists"))
         # With a login of its own, db_owner in it, as harbor sql create makes one (create_db.sh did)
         login = validate_restore_login(data) if data.get("login") is not None else None
         if login and query_json(settings, "SELECT name FROM sys.server_principals WHERE name=" + literal(login[0])):
-            raise ValueError(f"There is a SQL login {login[0]} already. Choose another name for the new one.")
+            raise ValueError(taken(data, f"There is a SQL login {login[0]} already. Choose another name for the new one."))
         execute(settings, f"CREATE DATABASE {identifier(name)};")
         if login:
             create_restore_login(settings, name, *login)
@@ -757,12 +833,12 @@ END CATCH;""")
             raise ValueError("Cannot overwrite a system database")
         overwrite = existing is not None
         if overwrite and (action == "copy" or data.get("confirmation") != target or data.get("overwrite") is not True):
-            raise ValueError("Destination exists. Explicit overwrite confirmation is required for restore.")
+            raise ValueError(taken(data, "Destination exists. Explicit overwrite confirmation is required for restore."))
         login = None
         if action == "copy":
             login = validate_restore_login(data)
             if query_json(settings, "SELECT name FROM sys.server_principals WHERE name=" + literal(login[0])):
-                raise ValueError("SQL login already exists. Choose another username before copying/restoring.")
+                raise ValueError(taken(data, "SQL login already exists. Choose another username before copying/restoring."))
         if action == "copy":
             path, position = backup(settings, name), 1
         else:
@@ -778,7 +854,7 @@ END CATCH;""")
         if action == "restore" and not overwrite:
             login = validate_restore_login(data)
             if query_json(settings, "SELECT name FROM sys.server_principals WHERE name=" + literal(login[0])):
-                raise ValueError("SQL login already exists. Choose another username before restoring.")
+                raise ValueError(taken(data, "SQL login already exists. Choose another username before restoring."))
         restore(settings, target, path, position, overwrite)
         if login:
             create_restore_login(settings, target, *login)

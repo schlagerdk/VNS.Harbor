@@ -255,6 +255,18 @@ class ServerFilesTests(unittest.TestCase):
         self.assertEqual(file_metadata(Mock(st_mode=stat.S_IFDIR | 0o1777, st_uid=os.getuid(),
                                             st_gid=os.getgid()))["permissions"], "drwxrwxrwt")
 
+    def test_folder_with_only_pictures_and_pdfs_is_shown_as_holding_files(self):
+        uploads = self.root / "uploads" / "report"
+        uploads.mkdir(parents=True)
+        (uploads / "IMG_0513.PNG").write_bytes(b"\x89PNG\r\n\x1a\n\0")
+        self.assertTrue(contains_editable_files(self.root / "uploads"))
+        (uploads / "IMG_0513.PNG").unlink()
+        (uploads / "invoice.pdf").write_bytes(b"%PDF-1.7\0")
+        self.assertTrue(contains_editable_files(self.root / "uploads"))
+        (uploads / "invoice.pdf").unlink()
+        (uploads / "library.dll").write_bytes(b"MZ\0")
+        self.assertFalse(contains_editable_files(self.root / "uploads"))
+
     def test_create_upload_rename_delete_outside_web_root(self):
         self.assertEqual(self.post("mkdir", path=str(self.outside), name="new").status_code, 200)
         folder = self.outside / "new"

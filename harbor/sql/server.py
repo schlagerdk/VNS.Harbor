@@ -216,6 +216,42 @@ def update_admin_connections(system, password):
             system.say(f"The SQL connection of {site} to SQL Server here has the new sa password.")
 
 
+def add_admin_connection(system, engine, name, port, username, password, backup_directory):
+    """A connection to the server installed here in each admin site's connections, as its own login (sa, postgres): or
+    the one there given the password, when there is one already. Microsoft SQL Server's and PostgreSQL's alike."""
+    import json
+    import uuid
+    from harbor.install.admin import admin_sites, web_root
+    names = set(LOCAL_HOSTS)
+    for argv in (("hostname",), ("hostname", "-f"), ("hostname", "-I")):
+        names.update(item.lower() for item in system.output(*argv, check=False).split())
+    for site in admin_sites(system):
+        path = system.path(web_root()) / site / "app/sql-connections.json"
+        if not path.parent.is_dir():
+            continue
+        try:
+            items = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else []
+        except (OSError, ValueError):
+            continue
+        if not isinstance(items, list):
+            continue
+        local = [item for item in items if isinstance(item, dict) and (item.get("engine") or "mssql") == engine
+                 and str(item.get("host", "")).strip("[]").rstrip(".").lower() in names and item.get("port", port) == port
+                 and str(item.get("username", "")).lower() == username]
+        if local:
+            for item in local:
+                item["password"] = password
+        else:
+            items.append({"id": uuid.uuid4().hex, **({"engine": engine} if engine != "mssql" else {}), "name": name, "host": "localhost",
+                          "port": port, "username": username, "password": password, "backup_directory": backup_directory,
+                          "trust_certificate": True, "ssh_enabled": False})
+        if not path.is_file():
+            path.write_text("[]")
+            path.chmod(0o600)
+        write_admin_connections(path, items)
+        system.say(f"The connection {name} of {site} to {'PostgreSQL' if engine == 'postgres' else 'Microsoft SQL Server'} here is {'updated' if local else 'added'}.")
+
+
 def remove_admin_connections(system):
     """The admin's SQL connections go with the SQL tools: without sqlcmd none of them can be used (1.0.69)"""
     for site, path, items in admin_connections(system):
@@ -384,6 +420,10 @@ def install_server(system, edition="", with_tools=None, assume_yes=None, older_u
             install_tools(system, version_id)
     else:
         system.say("SQL tools installation skipped")
+    # A connection to it in the admin, as sa, once its tools are here (none works without sqlcmd)
+    from harbor.sql.databases import sa_password
+    if server_installed and system.path(SQLCMD).is_file() and sa_password(system):
+        add_admin_connection(system, "mssql", "Local", 1433, "sa", sa_password(system), BACKUPS)
 
 
 def wait_for_logins(system, seconds=900):

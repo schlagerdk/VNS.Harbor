@@ -105,7 +105,9 @@ def sync(system, users):
     sync_sites(system, users, names)
     keep_sites_closed(system, bool(members(system, GROUP)))
     from harbor.server import sftp
-    sftp.sync(system, users, names, wanted_sites(system, users, names))
+    # Each folder a user may reach, mounted under a name of its own: the site's, or site-environment
+    units = {key: (unit_folder(system, key), linux) for key, linux in wanted_units(system, users, names).items()}
+    sftp.sync(system, users, names, {key.replace("/", "-"): (folder, linux) for key, (folder, linux) in units.items() if folder})
     return names
 
 
@@ -150,7 +152,9 @@ def apply(system, users, known, accounts, ours):
     return {user_id: entry["linux"] for user_id, entry in known.items()}
 
 
-# ---- a group per site (8b)
+# ---- a group per folder a user may reach: the site's own, and each environment of it on this server (8b)
+# A unit is a folder with a group of its own: the main site's (its key the site's name, its folder the site's folder,
+# without the environments in it) or an environment's here (its key site/environment, its own folder)
 def site_group(site):
     """site-<name> as a valid group name (at most 32 characters): dots become -, a long name ends in a hash of it"""
     name = "site-" + re.sub(r"[^a-z0-9-]+", "-", site.lower()).strip("-")
@@ -159,16 +163,69 @@ def site_group(site):
     return name
 
 
-def wanted_sites(system, users, names):
-    """{site: Linux users} of the users who are not administrators, not disabled, with the Files grant on the site"""
+def unit_group(key):
+    """The main site's group as before (site-<name>), an environment's from site and environment"""
+    return site_group(key.replace("/", "-"))
+
+
+def local_environments(system, site):
+    """{environment: its folder} of the site's environments on this server, in /var/www and never a link"""
+    from harbor.environments import settings
+    root = f"{WEB_ROOT}/{site}"
     found = {}
+    try:
+        targets = settings.target_ids(system, root)
+    except (OSError, ValueError, Stop):
+        return found
+    for target in targets:
+        try:
+            environment = settings.load(system, root, target)
+        except (OSError, ValueError, Stop):
+            continue
+        folder = environment.root.rstrip("/") if environment.local else ""
+        path = system.path(folder) if folder else None
+        if (folder.startswith(WEB_ROOT + "/") and ".." not in folder.split("/") and path.is_dir() and not path.is_symlink()
+                and folder != root):
+            found[target] = folder
+    return found
+
+
+def unit_folder(system, key):
+    """The folder of a unit, or None when it is gone"""
+    site, _, target = key.partition("/")
+    if not target:
+        path = system.path(f"{WEB_ROOT}/{site}")
+        return f"{WEB_ROOT}/{site}" if path.is_dir() and not path.is_symlink() else None
+    return local_environments(system, site).get(target)
+
+
+def sees(grant, env):
+    """As the admin's access.sees_env: an environment given, or one added later when the grant takes those"""
+    envs = set(grant.get("envs") or [])
+    if env in envs:
+        return True
+    return bool(grant.get("new_envs")) and env != "main" and env not in set(grant.get("known") or [])
+
+
+def wanted_units(system, users, names):
+    """{unit key: Linux users} of the users who are not administrators, not disabled, with Files (or Terminal) on the
+    site: the main site's folder for those given the main site, an environment's for those given it"""
+    found = {}
+    environments = {}
     for user in users:
         if user.get("role") == "admin" or user.get("disabled") or not names.get(user["id"]):
             continue
         for site, grant in (user.get("sites") or {}).items():
-            if (isinstance(grant, dict) and {"files", "terminal"} & set(grant.get("actions") or []) and SITE_NAME.fullmatch(site)
+            if not (isinstance(grant, dict) and {"files", "terminal"} & set(grant.get("actions") or []) and SITE_NAME.fullmatch(site)
                     and system.path(f"{WEB_ROOT}/{site}").is_dir() and not system.path(f"{WEB_ROOT}/{site}").is_symlink()):
+                continue
+            if sees(grant, "main"):
                 found.setdefault(site, set()).add(names[user["id"]])
+            if site not in environments:
+                environments[site] = local_environments(system, site)
+            for target in environments[site]:
+                if sees(grant, target):
+                    found.setdefault(f"{site}/{target}", set()).add(names[user["id"]])
     return found
 
 
@@ -179,29 +236,57 @@ def acl_tools(system):
         system.run("apt-get", "install", "-y", "-q", "acl", capture=True, env={"DEBIAN_FRONTEND": "noninteractive"})
 
 
-def grant_folder(system, site, group):
-    """rwX for the site's group on the site's folder, and on what is made in it later; never on EXCLUDED"""
+def grant_folder(system, key, group):
+    """rwX for the unit's group on its folder, and on what is made in it later; never on EXCLUDED, and for the main
+    site never on its environments' folders. An environment's group may pass through the folders above its own."""
+    site, _, target = key.partition("/")
     root = f"{WEB_ROOT}/{site}"
+    folder = unit_folder(system, key)
+    if not folder:
+        return
     entry = f"g:{group}:rwX,m::rwX"
     # In a folder with the sticky bit only a file's owner may delete or rename it: the site's group could only add
-    if system.path(root).stat().st_mode & 0o1000:
+    if not target and system.path(root).stat().st_mode & 0o1000:
         sticky = read_json(system.path(STICKY)) or []
         system.run("chmod", "-t", root)
         write_json(system.path(STICKY), sorted(set(sticky) | {site}))
-    system.run("setfacl", "-R", "-P", "-m", entry, root)
-    system.run("find", "-P", root, "-type", "d", "-exec", "setfacl", "-d", "-m", entry, "{}", "+")
-    for name in EXCLUDED:
-        if system.path(f"{root}/{name}").exists():
-            revoke_folder(system, f"{root}/{name}", group)
-    close_files(system, site, group)
+    system.run("setfacl", "-R", "-P", "-m", entry, folder)
+    system.run("find", "-P", folder, "-type", "d", "-exec", "setfacl", "-d", "-m", entry, "{}", "+")
+    if target:
+        for parent in passes(folder):
+            system.run("setfacl", "-m", f"g:{group}:--x", parent)
+    else:
+        for name in EXCLUDED:
+            if system.path(f"{root}/{name}").exists():
+                revoke_folder(system, f"{root}/{name}", group)
+        # Just given the whole folder: the environments' folders in it are taken back at once
+        close_environments(system, site, group, given=True)
+    close_files(system, folder, group)
 
 
-def close_files(system, site, group):
-    """EXCLUDED_FILES wherever they are in the site's folder: not the group's, also when it was given them before"""
-    if not system.which("setfacl") or not system.path(f"{WEB_ROOT}/{site}").is_dir():
+def passes(folder):
+    """The folders between /var/www and an environment's folder, which its group only passes through"""
+    parts = folder[len(WEB_ROOT) + 1:].split("/")[:-1]
+    return [f"{WEB_ROOT}/" + "/".join(parts[:index + 1]) for index in range(len(parts))]
+
+
+def close_environments(system, site, group, given=False):
+    """The main site's group off its environments' folders in its folder: those are each environment's own. Also one
+    added later, which takes the site folder's default ACL; looked at first, so a folder already closed is left."""
+    root = f"{WEB_ROOT}/{site}"
+    for folder in local_environments(system, site).values():
+        if not folder.startswith(root + "/"):
+            continue
+        if given or f"group:{group}:" in system.run("getfacl", "--omit-header", "-p", folder, check=False, capture=True).stdout:
+            revoke_folder(system, folder, group)
+
+
+def close_files(system, folder, group):
+    """EXCLUDED_FILES wherever they are in the unit's folder: not the group's, also when it was given them before"""
+    if not system.which("setfacl") or not system.path(folder).is_dir():
         return
     for name in EXCLUDED_FILES:
-        system.run("find", "-P", f"{WEB_ROOT}/{site}", "-type", "f", "-name", name, "-exec", "setfacl", "-x", f"g:{group}", "{}", "+",
+        system.run("find", "-P", folder, "-type", "f", "-name", name, "-exec", "setfacl", "-x", f"g:{group}", "{}", "+",
                    check=False, capture=True)
 
 
@@ -216,41 +301,52 @@ def revoke_folder(system, folder, group):
 
 
 def site_groups(system):
+    """{unit key: group}; one kept before environments had groups is a site's, as its key is"""
     found = read_json(system.path(SITE_GROUPS))
     return found if isinstance(found, dict) else {}
 
 
 def sync_sites(system, users, names):
-    """The site groups equal to the Files grants: made with their ACLs on the first user, members set, and gone with
-    their ACLs when nobody has the grant any more"""
+    """The groups equal to the Files grants: made with their ACLs on the first user, members set, and gone with their
+    ACLs when nobody has the grant any more"""
     groups = site_groups(system)
-    wanted = wanted_sites(system, users, names)
+    wanted = wanted_units(system, users, names)
     try:
-        for site in [site for site in groups if site not in wanted]:
-            group = groups.pop(site)
-            system.plan([f"Take the group {group} off {site}"])
-            system.step(f"Take the group {group} off {site}")
-            if system.path(f"{WEB_ROOT}/{site}").is_dir() and system.which("setfacl"):
-                revoke_folder(system, f"{WEB_ROOT}/{site}", group)
+        for key in [key for key in groups if key not in wanted]:
+            group = groups.pop(key)
+            system.plan([f"Take the group {group} off {key}"])
+            system.step(f"Take the group {group} off {key}")
+            folder = unit_folder(system, key)
+            if system.which("setfacl"):
+                if folder:
+                    revoke_folder(system, folder, group)
+                    for parent in passes(folder) if "/" in key else []:
+                        system.run("setfacl", "-x", f"g:{group}", parent, check=False, capture=True)
             system.run("groupdel", group, check=False, capture=True)
-        for site, names_here in sorted(wanted.items()):
-            group = groups.get(site) or site_group(site)
-            if site not in groups:
+        for key, names_here in sorted(wanted.items()):
+            group = groups.get(key) or unit_group(key)
+            site, _, target = key.partition("/")
+            if key not in groups:
                 acl_tools(system)
                 if not group_exists(system, group):
                     system.run("groupadd", group)
-                system.plan([f"Give the group {group} the folder of {site}"])
-                system.step(f"Give the group {group} the folder of {site}")
-                grant_folder(system, site, group)
-                groups[site] = group
-            elif system.path(f"{WEB_ROOT}/{site}").stat().st_mode & 0o1000:
-                # Given before the sticky bit was taken off, or set again by hand
-                sticky = read_json(system.path(STICKY)) or []
-                system.run("chmod", "-t", f"{WEB_ROOT}/{site}")
-                write_json(system.path(STICKY), sorted(set(sticky) | {site}))
-                close_files(system, site, group)
+                system.plan([f"Give the group {group} the folder of {key}"])
+                system.step(f"Give the group {group} the folder of {key}")
+                grant_folder(system, key, group)
+                groups[key] = group
             else:
-                close_files(system, site, group)
+                if not target and system.path(f"{WEB_ROOT}/{site}").stat().st_mode & 0o1000:
+                    # Given before the sticky bit was taken off, or set again by hand
+                    sticky = read_json(system.path(STICKY)) or []
+                    system.run("chmod", "-t", f"{WEB_ROOT}/{site}")
+                    write_json(system.path(STICKY), sorted(set(sticky) | {site}))
+                if not target:
+                    # Given the whole folder before environments had groups of their own (1.0.82), or an environment
+                    # added since: its folder is not the main site's group's
+                    close_environments(system, site, group)
+                folder = unit_folder(system, key)
+                if folder:
+                    close_files(system, folder, group)
             if names_here != members(system, group):
                 system.run("gpasswd", "-M", ",".join(sorted(names_here)), group, capture=True)
     finally:
@@ -258,11 +354,13 @@ def sync_sites(system, users, names):
 
 
 def keep_site(system, site):
-    """The site's group has its rights again after something set the folder's modes (fix permissions, a publish): a
-    chmod narrows the ACL mask"""
-    group = site_groups(system).get(site)
-    if group and system.path(f"{WEB_ROOT}/{site}").is_dir() and system.which("setfacl"):
-        grant_folder(system, site, group)
+    """The site's groups have their rights again after something set the folders' modes (fix permissions, a publish):
+    a chmod narrows the ACL mask"""
+    if not system.which("setfacl"):
+        return
+    for key, group in site_groups(system).items():
+        if key == site or key.startswith(site + "/"):
+            grant_folder(system, key, group)
 
 
 # ---- the site folders closed to others while the server has users (8b2)

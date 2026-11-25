@@ -11,7 +11,7 @@ A user record, as kept in config.json's "users":
   {"id", "username", "password_hash", "role": "admin"|"user", "disabled", "version",
    "web": bool, "create_sites": bool,
    "sites": {"<site>": {"envs": ["main", "<environment id>", ...], "new_envs": bool, "actions": [...], "size_mb": int}},
-   "sql": bool, "manage_connections": bool,
+   "sql": bool, "manage_connections": bool, "connection_engines": ["mssql", "postgres"] (which they may add),
    "connections": {"<connection id>": {"databases": ["*"] or [names], "actions": [...], "own": bool,
                                        "limits": {"databases", "database_mb"}, "sizes": {"<database>": mb}}},
    "limits": {"sites", "site_mb"},
@@ -41,13 +41,18 @@ SITE_ACTIONS = [
     ("sync_settings", "Sync settings"),
     ("sync_setup", "Change Sync setup"),
     # Its files and what runs in them
+    ("scripts", "Run custom scripts"),
+    # Each gives the ones before it: Terminal gives Files, Files Edit appsettings.json and the packages (it can edit
+    # the .csproj), and changing them is seeing them. Files gives Delete too
     ("appsettings", "Edit appsettings.json"),
+    ("packages_view", "See NuGet packages"),
+    ("packages", "Change NuGet packages"),
     ("files", "Files"),
     ("terminal", "Terminal"),
-    ("scripts", "Run custom scripts"),
-    ("packages", "NuGet packages"),
     # Its setup
-    ("bindings", "Bindings and certificates"),
+    ("bindings", "Change bindings"),
+    ("certificate", "Issue certificate"),
+    ("environment", "Change environment"),
     ("create_env", "Add environments"),
     ("delete", "Delete"),
 ]
@@ -127,7 +132,7 @@ def site_access(user, site):
     grant = (user.get("sites") or {}).get(site)
     if not isinstance(grant, dict):
         return None
-    return {"envs": set(grant.get("envs") or []), "new_envs": bool(grant.get("new_envs")), "actions": set(grant.get("actions") or [])}
+    return {"envs": set(grant.get("envs") or []), "new_envs": bool(grant.get("new_envs")), "actions": set(site_actions(grant.get("actions") or []))}
 
 
 def sees_env(user, site, env):
@@ -261,16 +266,93 @@ def forget_made(user, kind, name, connection=None):
 # A user template: rules under a name to start new users from. Which sites and SQL connections a user gets is chosen
 # for each user; the template says what they may do on each one they are given (1.0.77). A name, password, lock or
 # what they made is never in it.
-TEMPLATE_KEYS = ("web", "create_sites", "sftp", "sql", "manage_connections", "limits", "site_rules", "sql_rules")
+TEMPLATE_KEYS = ("web", "create_sites", "sftp", "sql", "manage_connections", "connection_engines", "limits", "site_rules", "sql_rules")
+# The SQL Servers a connection can be to: Microsoft SQL Server and PostgreSQL
+ENGINES = ("mssql", "postgres")
+
+
+def clean_engines(given):
+    """The engines given, checked; every one when none were ever given (a user or template saved before 1.0.82)"""
+    if not isinstance(given, list):
+        return list(ENGINES)
+    return [engine for engine in ENGINES if engine in given]
+
+
+def has_web(user):
+    """Whether the Web Server is a user's: on, and a site given (or the right to make one). On with nothing in it is
+    no access: it is not shown."""
+    if is_admin(user):
+        return True
+    return bool(user and user.get("web") and ((user.get("sites") or {}) or user.get("create_sites")))
+
+
+def has_sql(user):
+    """Whether SQL Server is a user's: on, and a connection given (or the right to add one to a SQL Server). On with
+    nothing in it is no access: it is not shown."""
+    if is_admin(user):
+        return True
+    return bool(user and user.get("sql") and ((user.get("connections") or {}) or connection_engines(user)))
+
+
+def connection_engines(user):
+    """The engines a user may add connections to: every one for an administrator, none without May add SQL connections"""
+    if is_admin(user):
+        return list(ENGINES)
+    if not user or not user.get("sql") or not user.get("manage_connections"):
+        return []
+    return clean_engines(user.get("connection_engines"))
 # What a site or SQL connection gives when nothing else says (as the user window ticks them)
 DEFAULT_SITE_ACTIONS = ["clear_logs", "logs", "publish", "service", "sync_data", "sync_settings"]
 DEFAULT_SQL_ACTIONS = ["backup", "query"]
 
 
 def site_actions(given):
-    actions = sorted({action for action in given if action in SITE_ACTION_NAMES})
+    actions = {action for action in given if action in SITE_ACTION_NAMES}
     # A terminal reaches the site's folder as the user's Linux user: it is Files as well
-    return sorted(actions + ["files"]) if "terminal" in actions and "files" not in actions else actions
+    if "terminal" in actions:
+        actions.add("files")
+    # Files can change and delete anything in the folder: the .csproj (and with it the NuGet packages), appsettings.json,
+    # the site itself. It is Change NuGet packages, Edit appsettings.json and Delete as well
+    if "files" in actions:
+        actions.update(("packages", "appsettings", "delete"))
+    # Changing the NuGet packages is seeing them as well
+    if "packages" in actions:
+        actions.add("packages_view")
+    return sorted(actions)
+
+
+def split_bindings(config):
+    """Before 1.0.82 one action, bindings, gave Change bindings, Issue certificate and Change environment: those who
+    had it keep all three, once (the config then says so). True when the config changed."""
+    return split_actions(config, "bindings_split", lambda actions: "bindings" in actions, ("certificate", "environment"))
+
+
+def split_packages(config):
+    """Before 1.0.82 everyone who saw a main site saw its NuGet packages: they keep See NuGet packages on each site
+    given with its main site, once. True when the config changed."""
+    return split_actions(config, "packages_split", lambda actions: True, ("packages_view",), main_only=True)
+
+
+def split_actions(config, flag, when, added, main_only=False):
+    """Adds actions to the site grants (and templates' rules) that had what one action gave before it was split, once"""
+    if config.get(flag):
+        return False
+    def widen(actions, envs=None):
+        if isinstance(actions, list) and when(actions) and (not main_only or envs is None or "main" in envs):
+            actions.extend(action for action in added if action not in actions)
+            actions.sort()
+    for user in config.get("users") or []:
+        for grant in ((user.get("sites") or {}) if isinstance(user, dict) else {}).values():
+            if isinstance(grant, dict):
+                widen(grant.get("actions"), grant.get("envs") or [])
+    for template in config.get("user_templates") or []:
+        rules = (template.get("access") or {}) if isinstance(template, dict) else {}
+        widen((rules.get("site_rules") or {}).get("actions"))
+        for grant in (rules.get("sites") or {}).values() if isinstance(rules.get("sites"), dict) else []:
+            if isinstance(grant, dict):
+                widen(grant.get("actions"))
+    config[flag] = True
+    return True
 
 
 def template_rules(given):
@@ -289,6 +371,7 @@ def template_rules(given):
                "own": bool(grants) and all(grant.get("own") for grant in grants),
                "limits": next((grant["limits"] for grant in grants if isinstance(grant.get("limits"), dict)), None)}
     rules = {key: bool(given.get(key, key == "web")) for key in ("web", "create_sites", "sftp", "sql", "manage_connections")}
+    rules["connection_engines"] = clean_engines(given.get("connection_engines"))
     rules["limits"] = clean_limits(given.get("limits"))
     rules["site_rules"] = {"actions": site_actions(site.get("actions") or []), "new_envs": bool(site.get("new_envs", True))}
     sql_rules = {"own": sql.get("own") is True, "actions": sorted({action for action in sql.get("actions") or [] if action in SQL_ACTION_NAMES})}
@@ -354,6 +437,8 @@ def clean(data, existing=None, sites=None, connections=None):
     user["sftp"] = bool(data.get("sftp", existing.get("sftp", False)))
     user["sql"] = bool(data.get("sql", existing.get("sql", False)))
     user["manage_connections"] = bool(data.get("manage_connections", existing.get("manage_connections", False)))
+    # Which SQL Servers they may add connections to (with May add SQL connections)
+    user["connection_engines"] = clean_engines(data.get("connection_engines", existing.get("connection_engines")))
     granted = data.get("sites", existing.get("sites", {})) or {}
     if not isinstance(granted, dict):
         raise ValueError("Invalid sites.")
@@ -404,6 +489,12 @@ def clean(data, existing=None, sites=None, connections=None):
             # A connection the user made stays theirs to change
             if ((existing.get("connections") or {}).get(connection) or {}).get("owned"):
                 user["connections"][connection]["owned"] = True
+    # A part with nothing in it is turned off as it is saved: SQL Server without a connection or a SQL Server they may add
+    # one to, the Web Server without a site or the right to make one. On with nothing in it would be no access.
+    if user["sql"] and not user["connections"] and not (user["manage_connections"] and user["connection_engines"]):
+        user["sql"] = False
+    if user["web"] and not user["sites"] and not user["create_sites"]:
+        user["web"] = False
     user["limits"] = clean_limits(data.get("limits", existing.get("limits")))
     # What they made is kept by the admin as they make it, never sent by a form
     user["made"] = existing.get("made") or {}

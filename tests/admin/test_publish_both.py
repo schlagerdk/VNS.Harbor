@@ -112,6 +112,8 @@ function el(tag, props = {}, ...children) {
 const $ = selector => nodes[selector] ||= el("div");
 let allSites = [], sitesLoaded = true, confirmed = false, tasks = [], prompts = [];
 const buttonScripts = new Set(["publish_local.sh", "publish.sh", "publish_prod.sh"]);
+const currentUser = {admin: true};
+const whoChips = () => null;
 const hasProd = site => site.prod;
 const isTarget = env => env.key !== "main";
 const isMissingEnv = () => false;
@@ -143,7 +145,7 @@ const openTask = async payload => tasks.push(payload);
     for (const mode of ["local", "remote"]) {
         for (const local of ["publish_local.sh", "publish.sh"]) {
             const site = {name: "example.test", kind: "csharp", prod: true, has_project: true,
-                scripts: [local, "publish_prod.sh"], environments: [{key: "prod", mode}]};
+                scripts: [local, "publish_prod.sh"], environments: [{key: "prod", mode}, {key: "staging", mode}]};
             allSites = [site];
             renderSite(site.name);
             const actions = $("#site-targets-actions").children;

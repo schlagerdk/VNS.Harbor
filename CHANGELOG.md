@@ -2,6 +2,48 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.82] - 2026-11-25
+
+### Features
+
+- A Microsoft SQL Server database that is an Umbraco site's (it has Umbraco's own tables) has Umbraco's badge beside its name on the SQL Server page
+- A filter beside the SQL Server page's tabs (an administrator's) finds databases, backups and logins by name or by whose they are (their owner; a login also by its databases), on all three tabs at once
+- An administrator sees who owns each database and login (made it), and by a site's name who made it and the users it is given to. The SQL Server page's connection is chosen in the page's own dropdown, the connections users added apart under their own heading with who added each; the databases users made stand apart under Users' databases, folded as System databases. Kept for what anyone makes from now on (an administrator too); for before, what users made
+- PostgreSQL beside Microsoft SQL Server, for C# and Python sites (Umbraco does not run on it). Settings, SQL Server installs it from Ubuntu's own packages (in UTF-8, reached with a password, its databases and backups in /var/opt/postgresql as Microsoft SQL Server's are in /var/opt/mssql), keeps its postgres password, and updates and removes it; its tools (psql, pg_dump) alone reach one elsewhere. The SQL Server page does with it what it does with Microsoft SQL Server: databases with a login of their own, tables and the table designer, queries, backups (pg_dump files on this server), restore and copy, logins (own, read, write), and the users' access, limits and usage. A user's query runs as a role that reaches only that database, and a script is never read by psql itself (its \! would run a shell). With both here, the page has a tab for each (a user only those of the connections they were given), and Add connection makes one of the one chosen. Installing either adds a connection to it
+- Each connection says whether it is Microsoft SQL Server or PostgreSQL, on the SQL Server page, in the user window and in Usage; the menu, the page and Settings still say SQL Server
+- Connect… on a database: its connection string for .NET or Python, with its logins, to copy
+- In the query window on a table, a column's heading sorts its rows: ORDER BY it, ascending and then descending, put in the query and run again. Add row over them, a pencil at the left of each row and a trash can at its right put an INSERT, an UPDATE with the row's values, or a DELETE by its key in the window, ready to run. Insert, Update and Delete snippets are written for it: its columns that must be given (not those numbered by the server or with a default), values that fit their types, and its key in the WHERE
+- Backups as scheduled jobs of their own for each: Microsoft SQL Server backup and log shrink, and PostgreSQL backup, each suggested while its server is here; PostgreSQL's log as Microsoft SQL Server's, a table of the databases with their size, time and speed
+- A copied or moved site's PostgreSQL connection string (Npgsql) is changed in its own words, and a site's datasource says PostgreSQL
+
+- The file browser sorts by any column (name, size, modified, rights, owner): click a heading, click again to turn the order round. The choice is kept
+- On a phone the header is one line: Web, SQL and Settings (without the word Server), and no Files or Shell. Query and the tables' buttons (open, design, drop, new table) are left out there too: a phone shows the databases and their tables, it does not work with them
+
+- A user's site access has Change bindings, Issue certificate and Change environment as three choices, in place of one Bindings and certificates. Users and templates that had it keep all three
+- NuGet packages on a user's site access are two choices: See NuGet packages (the list on the main site's page) and Change NuGet packages (Check, Update, Add, Remove), which gives See as well. Files gives Change NuGet packages, Edit appsettings.json and Delete, as it can change or delete anything in the folder anyway. Without See the server does not send the packages. Users who saw a main site keep seeing its packages
+- Delete user (and Delete template) is no longer beside Save at the foot of the user editor: it stands at the bottom of the dialog, in a red box that says what it does
+
+### Bug fixes
+
+- A user was told the login, backup folder and SSH of the SQL connections they were given: only an administrator, and the user who added the connection, are. Connect… gives a user the address their connection string needs. The line of where a connection goes under it is gone, for all: Edit connection and Connect… say it
+- A Microsoft SQL Server table's rows were counted once per storage part it has (in-row, text, overflow): a table of 5 rows with text said 15. In the query window a column of NULLs alone stands at the left, as text does, and a wide table's pencil and trash can stay in sight as it scrolls sideways
+- A user who made a database or login of a name already there (one not theirs) was told so, and learned it was there: they are now told only that the name cannot be used, whatever the reason; an administrator is told why
+- A user who may add SQL connections, not an administrator, was given Harbor's own sa (or postgres) password when they added a connection to the server here as sa or postgres without typing one, and with it the whole server. Harbor's password is an administrator's alone: a user types the password of the login they use. A user who adds a server there is a connection to already is told an administrator can give it to them
+- A user given only environments of a site, not its main site, no longer sees an empty NuGet panel (a blue line at the top right): the packages are the main site's. With one environment it has no Environments heading over it, and Publish environments shows only for more than one environment, as one has its own Publish
+- Save in the user window keeps it where it was: scrolled as far down, with the sites filter and the sites and connections unfolded as they were
+- A user given only some environments of a site, with Files or Terminal, reached the whole site's folder on the server (its main site and every environment in it): each folder now has a group of its own. The main site's group no longer reaches the environments' folders in it, an environment's group reaches only its own and passes through the site's folder, and SFTP mounts only the folders they were given. Groups given before are put right at the next sync. A user's shell holds only those folders too: with an environment alone, the site's folder in it holds only that environment's, so ls works there and shows nothing else, and a main site's shell hides the environments in it they were not given
+- Delete everything shows a user only when they have the main site and every environment of it
+- Settings, SQL Server: the sa password shows only while Microsoft SQL Server is here, the tools are called Microsoft SQL Server tools, and removing a server asks for DELETE as the other confirmations do. Remove connection stands at the bottom of its window, away from Save
+- Usage leaves out a connection with no databases of its own
+- A database's tables, folded out, show their rows and size as they are after a script ran in the query window, once it is closed (they did only after the page was loaded again)
+- May add SQL connections says to which SQL Servers: Microsoft SQL Server, PostgreSQL or both, for a user and a template. The server refuses a connection to another, and the SQL Server page shows a user only the SQL Servers of their connections and those they may add to. Users given it before keep both
+- A part a user has nothing in is not theirs: SQL Server with no connection and none they may add, or the Web Server with no site and none they may make, is turned off as the user is saved (the window says so), is not in their menu, and they do not start on it
+- A job Harbor adds to Scheduled jobs (a backup, the log shrink) no longer says cron should have run it two weeks before it was added
+- The file browser no longer hides a folder that holds only pictures or PDFs (an uploads folder) until Show all files is on, nor the pictures and PDFs in it: they can be shown, so they count
+- On a phone nothing is wider than the screen any more: a card with buttons in its head (Usage alerts and others) puts them on a line of their own, a SQL login its buttons below its name and state, and the user editor's site list stays inside its frame
+- A user, not an administrator, is never shown where a SQL backup lies on the server, whatever else they may: the Backups tab has no Server path for them, the server does not send it, and a backup's output does not name it
+- Publish from your machine, for a user: Your computer and its two buttons on one line, without an empty half beside them
+
 ## [1.0.81] - 2026-11-24
 
 ### Bug fixes

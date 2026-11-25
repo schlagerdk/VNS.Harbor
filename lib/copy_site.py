@@ -29,14 +29,17 @@ def change_database(connection, name):
 
 
 def change_connection(connection, settings):
+    pattern = r'''(?:^|;)\s*([^=;]+)\s*=\s*("(?:[^"]|"")*"|'(?:[^']|'')*'|[^;]*)'''
+    matches = list(re.finditer(pattern, connection))
+    # PostgreSQL's (Npgsql: Host, Port, Username) is kept in its own words, its port apart from its host
+    if any(match[1].strip().lower() in ("host", "username") for match in matches):
+        return change_npgsql(connection, settings, matches)
     aliases = {
         "server": {"server", "data source", "datasource", "address", "addr", "network address"},
         "database": {"database", "initial catalog"},
         "username": {"user id", "uid", "user"},
         "password": {"password", "pwd"},
     }
-    pattern = r'''(?:^|;)\s*([^=;]+)\s*=\s*("(?:[^"]|"")*"|'(?:[^']|'')*'|[^;]*)'''
-    matches = list(re.finditer(pattern, connection))
     replaced = set()
     for match in reversed(matches):
         key = match[1].strip().lower()
@@ -51,6 +54,33 @@ def change_connection(connection, settings):
     for field in aliases:
         if field not in replaced:
             connection = connection.rstrip(";") + ";" + labels[field] + '="' + settings[field].replace('"', '""') + '"'
+    return connection
+
+
+def change_npgsql(connection, settings, matches):
+    """A PostgreSQL connection string (Npgsql) given the server (host, or host,port or host:port), database, login and
+    password, in its own keys"""
+    server = settings["server"].strip()
+    host, port = server, ""
+    found = re.fullmatch(r"(.+?)[,:](\d{1,5})", server)
+    if found and not server.startswith("["):
+        host, port = found[1], found[2]
+    values = {"host": host, "port": port, "database": settings["database"], "username": settings["username"], "password": settings["password"]}
+    aliases = {"host": {"host", "server"}, "port": {"port"}, "database": {"database"}, "username": {"username", "user id", "user"},
+               "password": {"password"}}
+    replaced = set()
+    for match in reversed(matches):
+        key = match[1].strip().lower()
+        field = next((name for name, names in aliases.items() if key in names), None)
+        if field and values[field]:
+            quoted = '"' + values[field].replace('"', '""') + '"' if field != "port" else values[field]
+            connection = connection[:match.start(2)] + quoted + connection[match.end(2):]
+            replaced.add(field)
+    labels = {"host": "Host", "port": "Port", "database": "Database", "username": "Username", "password": "Password"}
+    for field in labels:
+        if field not in replaced and values[field]:
+            value = values[field] if field == "port" else '"' + values[field].replace('"', '""') + '"'
+            connection = connection.rstrip(";") + ";" + labels[field] + "=" + value
     return connection
 
 

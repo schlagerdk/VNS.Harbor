@@ -84,6 +84,15 @@ def site_mb(site, web_root=WEB_ROOT):
         return None
 
 
+def connection_engine(data_dir, connection):
+    """mssql or postgres: what the admin shows beside the connection's name"""
+    sql = _load("vns_usage_sql_admin", "sql_admin.py")
+    try:
+        return sql.engine(sql.connection(str(Path(data_dir) / "sql-connections.json"), connection))
+    except (OSError, ValueError):
+        return "mssql"
+
+
 def database_sizes(data_dir, connection, user_only=False):
     """{database: MB} on one of the admin's SQL connections (user_only: not SQL Server's own); empty when it cannot be
     reached"""
@@ -202,7 +211,8 @@ def overview(data_dir, sites, connections, measure_site=site_mb, measure_databas
             items.append({"name": name, "size_mb": round(size, 1), "user": (owner.get("name") or owner.get("username")) if owner else None,
                           "user_id": owner.get("id") if owner else None,
                           "limit_mb": database_limit(owner, connection, name) if owner else None})
-        result["connections"].append({"id": connection, "name": label, "unreachable": not sizes, "databases": items})
+        result["connections"].append({"id": connection, "name": label, "unreachable": not sizes, "databases": items,
+                                      "engine": connection_engine(data_dir, connection)})
     for part in [result["sites"]] + [item["databases"] for item in result["connections"]]:
         part.sort(key=lambda item: -item["size_mb"])
     return result

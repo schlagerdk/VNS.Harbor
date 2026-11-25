@@ -539,7 +539,7 @@ def index():
     start = cfg.get("start_view", "sites") if user.get("id") == access.ROOT else user.get("start_view", cfg.get("start_view", "sites"))
     # A user without the Web Server starts on SQL Server, and the other way round
     if not access.is_admin(user):
-        start = "sql" if (start == "sql" and user.get("sql")) or not user.get("web") else "sites"
+        start = "sql" if (start == "sql" and access.has_sql(user)) or not access.has_web(user) else "sites"
     else:
         # An administrator starts where the top menu leads: on SQL Server when Web Server is not in it, and the other way
         shown = menu_shown()
@@ -1973,8 +1973,20 @@ def own_like_parent(path):
 # ----------------------------------------------------------------- sites API
 
 def local_sa_password(data, adding=False):
-    """sa on SQL Server here, without a password typed: the sa password Harbor keeps (it set SQL Server up)"""
+    """sa on SQL Server here (or postgres on PostgreSQL here), without a password typed: the password Harbor keeps (it
+    set the server up). An administrator's alone: it may do anything on the server, so a user types the password of
+    the login they use (1.0.82: anyone who could add connections was given it)"""
+    if not is_admin():
+        return
     local = str(data.get("host", "")).strip().strip("[]").lower() in ("localhost", "127.0.0.1", "::1", ".", socket.gethostname().lower())
+    if data.get("engine") == "postgres":
+        if (adding or data.get("harbor_password")) and not data.get("password") and str(data.get("username", "")).strip().lower() == "postgres" and local:
+            try:
+                with open("/etc/harbor/secrets/postgres.json", encoding="utf-8") as stream:
+                    data["password"] = json.load(stream).get("postgres_password", "")
+            except (OSError, ValueError):
+                abort(400, "Harbor has no postgres password for PostgreSQL here: type it.")
+        return
     if (adding or data.get("harbor_password")) and not data.get("password") and str(data.get("username", "")).strip().lower() == "sa" and local:
         try:
             with open("/etc/harbor/secrets/sql.json", encoding="utf-8") as stream:
@@ -1989,12 +2001,21 @@ def api_sql_connection_test():
     user = me()
     if not (access.is_admin(user) or user.get("manage_connections")):
         abort(403, "The SQL connections are locked for you.")
-    if not _sql_module.sqlcmd_path():
-        return error("Install SQL command-line tools on the admin server first.", 409)
     data = request.get_json(silent=True)
     if not isinstance(data, dict):
         abort(400, "Expected a connection object")
-    source = "Harbor's own sa" if data.get("harbor_password") else "typed" if data.get("password") else "saved"
+    # Editing one: its engine is the saved one's
+    if data.get("id"):
+        try:
+            data["engine"] = _sql_module.engine(_sql_module.connection(SQL_CONNECTIONS, data["id"]))
+        except ValueError:
+            pass
+    kind = "postgres" if data.get("engine") == "postgres" else "mssql"
+    if not data.get("id") and kind not in access.connection_engines(user):
+        abort(403, f"You may not add connections to {'PostgreSQL' if kind == 'postgres' else 'Microsoft SQL Server'}.")
+    if not _sql_module.tools_path(kind):
+        return error(f"Install the {'PostgreSQL' if kind == 'postgres' else 'Microsoft SQL Server'} tools on the admin server first.", 409)
+    source = "Harbor's own " + ("postgres" if kind == "postgres" else "sa") if data.get("harbor_password") else "typed" if data.get("password") else "saved"
     local_sa_password(data, True)
     # Editing one with the password left blank: the saved one
     if data.get("id") and not data.get("password"):
@@ -2003,7 +2024,8 @@ def api_sql_connection_test():
         except ValueError:
             pass
     settings = {key: data.get(key) for key in ("name", "host", "username", "password")} | {
-        "name": data.get("name") or "Test", "port": int(data.get("port") or 1433), "trust_certificate": data.get("trust_certificate") is True}
+        "name": data.get("name") or "Test", "port": int(data.get("port") or _sql_module.DEFAULT_PORTS[kind]),
+        "trust_certificate": data.get("trust_certificate") is True, "engine": kind}
     try:
         rows = _sql_module.databases(settings)
     except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
@@ -2015,11 +2037,25 @@ def api_sql_connection_test():
 @app.route("/api/sql/connections", methods=["GET", "POST", "PUT", "DELETE"])
 def api_sql_connections():
     try:
-        tools_available = bool(_sql_module.sqlcmd_path())
-        if request.method in ("POST", "PUT") and not tools_available:
-            return error("Install SQL command-line tools on the admin server first.", 409)
+        # Which engines' tools the admin server has: a connection needs its own
+        tools = {kind: bool(_sql_module.tools_path(kind)) for kind in _sql_module.ENGINES}
+        tools_available = any(tools.values())
+        if request.method in ("POST", "PUT"):
+            sent = request.get_json(silent=True) or {}
+            kind = sent.get("engine") if request.method == "POST" else None
+            if request.method == "PUT" and isinstance(sent.get("id"), str):
+                try:
+                    kind = _sql_module.engine(_sql_module.connection(SQL_CONNECTIONS, sent["id"]))
+                except ValueError:
+                    kind = None
+            kind = "postgres" if kind == "postgres" else "mssql"
+            # A user adds connections only to the SQL Servers they were given (May add SQL connections)
+            if request.method == "POST" and kind not in access.connection_engines(me()):
+                abort(403, f"You may not add connections to {'PostgreSQL' if kind == 'postgres' else 'Microsoft SQL Server'}.")
+            if not tools[kind]:
+                return error(f"Install the {'PostgreSQL' if kind == 'postgres' else 'Microsoft SQL Server'} tools on the admin server first.", 409)
         user = me()
-        if not access.is_admin(user) and not user.get("sql"):
+        if not access.has_sql(user):
             abort(403, "You do not have access to SQL Server.")
         if request.method != "GET" and not (access.is_admin(user) or user.get("manage_connections")):
             abort(403, "The SQL connections are locked for you.")
@@ -2028,7 +2064,17 @@ def api_sql_connections():
             items = _sql_module.public_connections(SQL_CONNECTIONS)
             if not access.is_admin(user):
                 items = [item for item in items if item["id"] in (user.get("connections") or {})]
-            return [dict(item, locked=not owns_connection(item["id"])) for item in items]
+            # An administrator sees who added each one
+            # An administrator sees who added each one, and those users added apart from the others
+            def who(item):
+                found = maker("connections", item["id"]) or {}
+                return {"added_by": found.get("name", ""), "added_by_user": bool(found.get("user"))}
+            # The login, backup folder and SSH only to an administrator and to the user who added the connection; the
+            # address and port go to all who have it, for its connection string (Connect…)
+            hidden = ("username", "backup_directory", "ssh_enabled", "ssh_host", "ssh_username", "ssh_port")
+            return [dict({key: value for key, value in item.items() if access.is_admin(user) or owns_connection(item["id"]) or key not in hidden},
+                         locked=not owns_connection(item["id"]), **(who(item) if access.is_admin(user) else {}))
+                    for item in items]
         with SQL_LOCK:
             if request.method in ("POST", "PUT"):
                 data = request.get_json(silent=True)
@@ -2046,15 +2092,24 @@ def api_sql_connections():
                     identifier = _sql_module.edit_connection(SQL_CONNECTIONS, data, data["id"], check=check)
                     audit("Changed SQL connection " + str(data.get("name") or identifier))
                 else:
+                    if not access.is_admin(user):
+                        # One to a server there is a connection to already (an administrator's, not given to them)
+                        host = str(data.get("host", "")).strip().strip("[]").rstrip(".").casefold()
+                        port = data.get("port") or _sql_module.DEFAULT_PORTS["postgres" if data.get("engine") == "postgres" else "mssql"]
+                        if any(_sql_module.engine(item) == ("postgres" if data.get("engine") == "postgres" else "mssql")
+                               and item["host"].strip("[]").rstrip(".").casefold() == host and item["port"] == port
+                               for item in _sql_module.connections(SQL_CONNECTIONS)):
+                            return error("There is a connection to this server already. An administrator can give it to you, with the databases you may use.")
                     identifier = _sql_module.add_connection(SQL_CONNECTIONS, data, check=check)
                     audit("Added SQL connection " + str(data.get("name") or identifier))
+                    note_made("connections", identifier)
                     # What a user makes is theirs: every database on it, and every action
                     if not access.is_admin(user):
                         with CONFIG_LOCK:
                             user.setdefault("connections", {})[identifier] = {
                                 "databases": ["*"], "actions": sorted(access.SQL_ACTION_NAMES), "owned": True}
                             save_config()
-                return jsonify(connections=listed(), id=identifier, tools_available=tools_available)
+                return jsonify(connections=listed(), id=identifier, tools_available=tools_available, tools=tools)
             elif request.method == "DELETE":
                 data = request.get_json(silent=True)
                 if not isinstance(data, dict):
@@ -2063,7 +2118,8 @@ def api_sql_connections():
                     abort(403, "This connection is locked for you.")
                 _sql_module.remove_connection(SQL_CONNECTIONS, data.get("id"))
                 audit("Removed SQL connection " + str(data.get("id")))
-            return jsonify(connections=listed(), tools_available=tools_available)
+                forget_made_by("connections", data.get("id"))
+            return jsonify(connections=listed(), tools_available=tools_available, tools=tools)
     except (OSError, ValueError) as exc:
         app.logger.error("SQL connection operation failed: %s", exc)
         return error(str(exc))
@@ -2086,7 +2142,7 @@ def api_sql_query(connection_id):
         return error(str(exc))
     except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
         # SQL errors are shown in the dialog, as they are what the person needs to fix the script
-        return jsonify(error=str(exc)[-20000:]), 422
+        return jsonify(error=unplaced(str(exc), locals().get("settings"))[-20000:]), 422
 
 
 @app.route("/api/sql/<connection_id>/tables")
@@ -2109,13 +2165,26 @@ def sql_settings(connection_id):
 
 
 SQL_SYSTEM_DATABASES = {"master", "model", "msdb", "tempdb"}
+PG_SYSTEM_DATABASES = {"postgres", "template0", "template1"}
 
 
-def sql_failure(exc):
+def unplaced(text, settings=None):
+    """What a server said, for a user who is not told where the server is: its address as "the server" (an
+    administrator, and the user who added the connection, are told)"""
+    if not settings or is_admin() or owns_connection(settings.get("id")):
+        return text
+    host, port = str(settings.get("host", "")), str(settings.get("port", ""))
+    for place in (f"{host}:{port}", f"{host},{port}", host):
+        if place and place not in (":", ","):
+            text = text.replace(place, "the server")
+    return text
+
+
+def sql_failure(exc, settings=None):
     """What SQL Server said, for the dialog that sent it: it is what the person needs to put right"""
     if isinstance(exc, ValueError):
-        return error(str(exc))
-    return jsonify(error=_sql_design.readable(exc)[-20000:]), 422
+        return error(unplaced(str(exc), settings))
+    return jsonify(error=unplaced(_sql_design.readable(exc), settings)[-20000:]), 422
 
 
 @app.route("/api/sql/<connection_id>/table", methods=["GET", "POST"])
@@ -2127,35 +2196,39 @@ def api_sql_table(connection_id):
     require_sql(connection_id, database, "view" if request.method == "GET" else "tables")
     try:
         settings = sql_settings(connection_id)
+        # Microsoft SQL Server's designer, or PostgreSQL's
+        design = _sql_design.for_connection(settings) or _sql_design
+        engine = "PostgreSQL" if _sql_module.postgres(settings) else "SQL Server"
         if request.method == "GET":
-            table = _sql_design.read_table(settings, database, data.get("schema") or "dbo", data.get("table", "")) if data.get("table") else None
+            table = design.read_table(settings, database, data.get("schema") or design.DEFAULT_SCHEMA, data.get("table", "")) if data.get("table") else None
             # A new table is made in one of the database's schemas
-            schemas = [] if table else _sql_design.schemas(settings, database)
-            return jsonify(table=table, schemas=schemas, types=_sql_design.OFFERED, functions=_sql_design.FUNCTIONS,
-                           length_types=_sql_design.LENGTH_TYPES, max_types=sorted(_sql_design.MAX_TYPES),
-                           decimal_types=sorted(_sql_design.DECIMAL_TYPES), scale_types=sorted(_sql_design.SCALE_TYPES))
-        action, schema, table = data.get("action"), data.get("schema") or "dbo", data.get("table", "")
-        # SQL Server's own databases are not designed here: a table changed in them can break the server
-        if str(database).strip().lower() in SQL_SYSTEM_DATABASES:
-            return error(f"{database} is one of SQL Server's own databases: its tables are not changed here.", 403)
+            schemas = [] if table else design.schemas(settings, database)
+            return jsonify(table=table, schemas=schemas, types=design.OFFERED, functions=design.FUNCTIONS,
+                           length_types=design.LENGTH_TYPES, max_types=sorted(design.MAX_TYPES),
+                           decimal_types=sorted(design.DECIMAL_TYPES), scale_types=sorted(design.SCALE_TYPES),
+                           engine=_sql_module.engine(settings))
+        action, schema, table = data.get("action"), data.get("schema") or design.DEFAULT_SCHEMA, data.get("table", "")
+        # The server's own databases are not designed here: a table changed in them can break the server
+        if str(database).strip().lower() in (PG_SYSTEM_DATABASES if _sql_module.postgres(settings) else SQL_SYSTEM_DATABASES):
+            return error(f"{database} is one of {engine}'s own databases: its tables are not changed here.", 403)
         if action == "create":
-            sql = _sql_design.plan_create(schema, table, data.get("columns"))
+            sql = design.plan_create(schema, table, data.get("columns"))
         elif action == "alter":
-            sql = _sql_design.plan_alter(_sql_design.read_table(settings, database, schema, table), data.get("columns"))
+            sql = design.plan_alter(design.read_table(settings, database, schema, table), data.get("columns"))
         elif action == "rename":
-            sql = _sql_design.plan_rename(schema, table, data.get("new_name", ""))
+            sql = design.plan_rename(schema, table, data.get("new_name", ""))
         elif action == "drop":
             if data.get("confirmation") != table:
                 return error("Type the table's name to drop it.")
-            sql = _sql_design.plan_drop(schema, table)
+            sql = design.plan_drop(schema, table)
         else:
             return error("Unknown table action")
         if data.get("run") is True:
-            _sql_design.apply(settings, sql, database)
+            design.apply(settings, sql, database)
             audit(f"SQL table {action}: {database}.{schema}.{table}")
         return jsonify(sql=sql, ran=data.get("run") is True)
     except (ValueError, OSError, RuntimeError, subprocess.SubprocessError) as exc:
-        return sql_failure(exc)
+        return sql_failure(exc, locals().get("settings"))
 
 
 @app.route("/api/sql/<connection_id>/logins", methods=["GET", "POST"])
@@ -2166,8 +2239,15 @@ def api_sql_logins(connection_id):
     require_sql(connection_id, None, "logins")
     try:
         settings = sql_settings(connection_id)
-        found = scoped_logins(me(), connection_id, _sql_design.logins(settings))
+        # Microsoft SQL Server's logins, or PostgreSQL's roles
+        design = _sql_design.for_connection(settings) or _sql_design
+        every = design.logins(settings)
+        found = scoped_logins(me(), connection_id, every)
         if request.method == "GET":
+            # An administrator sees who made each login
+            if access.is_admin(me()):
+                for login in found["logins"]:
+                    login["made_by"] = made_by("logins", login["name"], connection_id)
             return jsonify(**found)
         data = request.get_json(silent=True) or {}
         current = next((item for item in found["logins"] if item["name"] == data.get("name")), None)
@@ -2182,19 +2262,28 @@ def api_sql_logins(connection_id):
             return error("No such login")
         if data.get("action") == "create" and current is not None:
             return error("There is a login of that name")
+        # One there already that is not theirs: the same words as any name that cannot be used, so a user learns
+        # nothing of the logins they do not see (the server's own refusal named it)
+        if data.get("action") == "create" and not access.is_admin(me()) and any(
+                str(item.get("name", "")).lower() == str(data.get("name", "")).strip().lower() for item in every["logins"]):
+            return error("That name cannot be used. Choose another.")
         if data.get("action") == "delete" and data.get("confirmation") != data.get("name"):
             return error("Type the login's name to delete it.")
-        sql = _sql_design.plan_login(data.get("action"), data, settings, current)
+        sql = design.plan_login(data.get("action"), data, settings, current)
         if data.get("run") is True:
-            _sql_design.apply(settings, sql)
+            design.apply(settings, sql)
             audit(f"SQL login {data.get('action')}: {data.get('name')}")
+            if data.get("action") == "create":
+                note_made("logins", data.get("name"), connection_id)
+            elif data.get("action") == "delete":
+                forget_made_by("logins", data.get("name"), connection_id)
             # A login a user makes is theirs to see and change, also before it has a database
             if data.get("action") in ("create", "delete") and not access.is_admin(me()):
                 change = access.record_made if data["action"] == "create" else access.forget_made
                 grant(me()["id"], lambda target: change(target, "logins", data.get("name"), connection_id))
-        return jsonify(sql=_sql_design.masked(sql, data.get("password")), ran=data.get("run") is True)
+        return jsonify(sql=design.masked(sql, data.get("password")), ran=data.get("run") is True)
     except (ValueError, OSError, RuntimeError, subprocess.SubprocessError) as exc:
-        return sql_failure(exc)
+        return sql_failure(exc, locals().get("settings"))
 
 
 @app.route("/api/sql/<connection_id>")
@@ -2209,7 +2298,14 @@ def api_sql_status(connection_id):
         if not is_admin():
             databases = [item for item in databases if access.can_sql(me(), connection_id, item.get("name"), "view")]
             backups = [item for item in backups if access.can_sql(me(), connection_id, item.get("database_name") or item.get("database"), "view")]
-        return jsonify(databases=databases, backups=backups,
+            # Where a backup lies on the server is the administrator's: a user cannot reach the file whatever else they
+            # may, and acts on it by its id
+            backups = [{key: value for key, value in item.items() if key != "path"} for item in backups]
+        # An administrator sees who made each database
+        made = {item["name"]: maker("databases", item["name"], connection_id) for item in databases if item.get("id", 5) > 4} if is_admin() else {}
+        # Who owns each, and those users made, to be kept apart
+        return jsonify(databases=databases, backups=backups, made_by={name: who["name"] for name, who in made.items() if who},
+                       user_made=sorted(name for name, who in made.items() if who and who["user"]),
                        local_backup_access=_sql_module.local_backup_access(settings),
                        backup_file_access=_sql_module.backup_file_access(settings))
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as exc:
@@ -2698,11 +2794,24 @@ def api_sites():
             environments = [env for env in site["environments"]
                             if access.sees_env(user, site["name"], "main" if env.get("key") == "main" else env.get("target") or "prod")]
             if environments:
-                visible.append({**site, "environments": environments, "adopt_into": [], "managed_by": site.get("managed_by")})
+                # Whether they have all of it (Delete everything): every environment, the main site too
+                shown = {**site, "environments": environments, "adopt_into": [], "managed_by": site.get("managed_by"),
+                         "has_all": len(environments) == len(site["environments"])}
+                # The NuGet packages only to those who may see them
+                if not access.can(user, site["name"], "main", "packages_view"):
+                    shown.update(packages=[], package_updates=[], package_errors=[], updates="", packages_hidden=True)
+                visible.append(shown)
         sites = visible
         names = {site["name"] for site in sites}
         update_check = dict(update_check, pending=[name for name in update_check["pending"] if name in names],
                             results={name: value for name, value in update_check["results"].items() if name in names})
+    else:
+        # An administrator sees who each site is given to, and who made it
+        for site in sites:
+            site["given_to"] = given_to(lambda person, name=site["name"]: access.site_access(person, name) is not None)
+            maker = made_by("sites", site["name"])
+            if maker:
+                site["made_by"] = maker
     return jsonify(sites=sites, defaults={"umbraco_version": default_umbraco_version()}, update_check=update_check)
 
 
@@ -2825,11 +2934,14 @@ def api_server_crontab():
         try:
             result = subprocess.run(["/usr/bin/python3", HARBOR_COMMAND, "server", "crontab", "list"], capture_output=True, text=True, timeout=30)
             entries = json.loads(result.stdout)
-            # Harbor's backups are suggested while SQL Server and the SQL tools are here
+            # Microsoft SQL Server's backups are suggested while it and its tools are here
             sql_ready = os.path.exists("/opt/mssql/bin/sqlservr") and any(os.access(path, os.X_OK) for path in ("/opt/mssql-tools18/bin/sqlcmd", "/opt/mssql-tools/bin/sqlcmd"))
             harbor_jobs = {entry.get("harbor") for entry in entries if isinstance(entry, dict)}
+            # PostgreSQL's backup while PostgreSQL is here and Harbor has its password
+            postgres_ready = os.path.isdir("/etc/postgresql") and os.path.isfile("/etc/harbor/secrets/postgres.json")
             # Each of Harbor's jobs that is not in cron: removed, it is suggested again
-            return jsonify(entries=entries, suggest=[job for job in ("backup_everything", "shrink_logs") if sql_ready and job not in harbor_jobs])
+            return jsonify(entries=entries, suggest=[job for job in ("backup_everything", "shrink_logs") if sql_ready and job not in harbor_jobs]
+                           + (["postgres_backup"] if postgres_ready and "postgres_backup" not in harbor_jobs else []))
         except (OSError, subprocess.SubprocessError, ValueError) as exc:
             app.logger.error("harbor server crontab list: %s", exc)
             return error("Root's crontab could not be read.", 502)
@@ -2974,24 +3086,42 @@ def server_tool_command(data):
             abort(400, "Choose an edition")
         # Where Microsoft has no SQL Server for this Ubuntu, the dialog says so and the one for an older Ubuntu is installed
         older = ["--older-ubuntu"] if data.get("older_ubuntu") is True else []
-        return "Install SQL Server", harbor + ["sql", "install-server", "--edition", data["edition"], tools_flag, *older], env
+        return "Install Microsoft SQL Server", harbor + ["sql", "install-server", "--edition", data["edition"], tools_flag, *older], env
     if tool == "sa_password":
         return "Set the sa password", harbor + ["sql", "set-sa-password"], env
     if tool == "sql_update":
-        return "Update SQL Server", harbor + ["sql", "update-server", "--yes"], env
+        return "Update Microsoft SQL Server", harbor + ["sql", "update-server", "--yes"], env
     if tool == "sql_uninstall":
         delete = data.get("delete_data") is True
         if delete and data.get("confirmation") != "DELETE":
             abort(400, "Type DELETE to delete the databases")
-        return "Remove SQL Server", harbor + ["sql", "uninstall-server", "--yes", "--delete-data" if delete else "--keep-data", tools_flag], env
+        return "Remove Microsoft SQL Server", harbor + ["sql", "uninstall-server", "--yes", "--delete-data" if delete else "--keep-data", tools_flag], env
+    # PostgreSQL (phase 10): its password never on the command line either
+    if tool in ("pg_install", "pg_password"):
+        password = data.get("postgres_password")
+        if not isinstance(password, str) or len(password) < 8 or len(password) > 128 or "\n" in password:
+            abort(400, "The postgres password needs at least 8 characters")
+        env["HARBOR_POSTGRES_PASSWORD"] = password
+        return ("Install PostgreSQL", harbor + ["postgres", "install"], env) if tool == "pg_install" else ("Set the postgres password", harbor + ["postgres", "set-password"], env)
+    if tool == "pg_update":
+        return "Update PostgreSQL", harbor + ["postgres", "update"], env
+    if tool == "pg_uninstall":
+        delete = data.get("delete_data") is True
+        if delete and data.get("confirmation") != "DELETE":
+            abort(400, "Type DELETE to delete the databases")
+        return "Remove PostgreSQL", harbor + ["postgres", "uninstall", *(["--delete-data"] if delete else []), *(["--with-tools"] if data.get("with_tools") is True else [])], env
+    if tool == "pg_tools_install":
+        return "Install the PostgreSQL tools", harbor + ["postgres", "install-tools"], env
+    if tool == "pg_tools_uninstall":
+        return "Remove the PostgreSQL tools", harbor + ["postgres", "uninstall-tools"], env
     if tool == "tools_install":
-        return "Install SQL tools", harbor + ["sql", "install-sql-tools"], env
+        return "Install the Microsoft SQL Server tools", harbor + ["sql", "install-sql-tools"], env
     if tool == "tools_uninstall":
-        return "Remove SQL tools", harbor + ["sql", "uninstall-sql-tools", "--yes"], env
+        return "Remove the Microsoft SQL Server tools", harbor + ["sql", "uninstall-sql-tools", "--yes"], env
     if tool in ("cron_on", "cron_off"):
         # One of Harbor's jobs (as Scheduled jobs suggests it), or both
         job = data.get("job")
-        if job is not None and job not in ("backup_everything", "shrink_logs"):
+        if job is not None and job not in ("backup_everything", "shrink_logs", "postgres_backup"):
             abort(400, "Not one of Harbor's jobs")
         return ("Turn on" if tool == "cron_on" else "Turn off") + " SQL backups", harbor + ["server", "cron", tool[5:], *(["--job", job] if job else [])], env
     if tool in ("dotnet_install", "dotnet_update", "dotnet_remove"):
@@ -3637,6 +3767,11 @@ def save_config():
     os.chmod(CONFIG_PATH, 0o600)
 
 
+# Bindings and certificates became three actions, and NuGet packages two (1.0.82): those who had them keep what they gave
+if any([access.split_bindings(cfg), access.split_packages(cfg)]):
+    save_config()
+
+
 @app.route("/api/profile", methods=["GET", "POST"])
 def api_profile():
     user = me()
@@ -3800,22 +3935,24 @@ def api_me():
     user = me()
     admin = access.is_admin(user)
     return jsonify(id=user["id"], username=user["username"], name=user.get("name", ""), admin=admin, root=user["id"] == access.ROOT,
-                   web=admin or bool(user.get("web")), sql=admin or bool(user.get("sql")),
+                   # On with nothing in it (no site, no connection, nothing they may make) is no access: not shown
+                   web=access.has_web(user), sql=access.has_sql(user),
                    # Made as many as they may: the buttons that make one more are not shown (the server refuses it too)
                    create_sites=admin or bool(user.get("create_sites")) and not access.may_make(user, "sites", lambda made: os.path.isdir(os.path.join(WEB_ROOT, made))),
                    manage_connections=admin or bool(user.get("manage_connections")),
+                   connection_engines=access.connection_engines(user),
                    # Where a new site can have a temporary address, for those who may create sites
                    temp_domains=temp_domains_shown() if admin or user.get("create_sites") else [],
                    usage=_usage.shows_usage(user), usage_over=usage_over(user),
                    # A user's header: the site search, never the server's addresses, files or terminal
                    header=header_shown(user) if admin else {part: part == "search" for part in HEADER_PARTS},
                    sites={} if admin else {site: {"envs": grant.get("envs", []), "new_envs": grant.get("new_envs", False),
-                                                  "known": grant.get("known", []), "actions": grant.get("actions", [])}
+                                                  "known": grant.get("known", []), "actions": access.site_actions(grant.get("actions", []))}
                                            for site, grant in (user.get("sites") or {}).items()},
                    # A connection where they have made as many databases as they may: full, so Create and Copy are not shown
                    connections={} if admin else {connection: dict(grant, full=bool(access.may_make(user, "databases", connection=connection)))
                                                   for connection, grant in (user.get("connections") or {}).items()},
-                   menu=menu_shown() if admin else {"web": bool(user.get("web")), "sql": bool(user.get("sql"))},
+                   menu=menu_shown() if admin else {"web": access.has_web(user), "sql": access.has_sql(user)},
                    menu_setting={"web": cfg.get("web_menu", "auto"), "sql": cfg.get("sql_menu", "auto")})
 
 
@@ -3851,13 +3988,50 @@ SHELL_ETC = ("passwd", "group", "nsswitch.conf", "profile", "profile.d", "bash.b
 SHELL_HIDDEN = ("/srv", "/opt", "/vns", "/root", "/mnt", "/media", "/boot", "/snap")
 
 
+def local_environment_folders(root):
+    """{environment: its folder} of a site's environments on this server, in /var/www"""
+    found = {}
+    for target in target_ids(root):
+        values = parse_prod(root, target) or {}
+        folder = (values.get("PROD_LOCAL_PATH") or "").rstrip("/")
+        if folder and values.get("PROD_TARGET") != "windows":
+            folder = os.path.realpath(folder)
+            if folder.startswith(WEB_ROOT + os.sep) and folder != os.path.realpath(root) and os.path.isdir(folder):
+                found[target] = folder
+    return found
+
+
+def shell_folders(user):
+    """The folders a user's shell holds, and those it hides: the main site's folder of each site they have Terminal on
+    there, and each environment's folder here they have it on. In a main site's folder an environment they do not have
+    is hidden, so they see neither its files nor (with only an environment) the main site's: the folders above an
+    environment's are empty in the shell, but for the way to it."""
+    folders, hidden = [], []
+    for site in sorted(user.get("sites") or {}):
+        root = os.path.realpath(os.path.join(WEB_ROOT, site))
+        if not os.path.isdir(root) or os.path.dirname(root) != os.path.realpath(WEB_ROOT):
+            continue
+        environments = local_environment_folders(root)
+        main = access.can(user, site, "main", "terminal")
+        if main:
+            folders.append(root)
+        for target, folder in environments.items():
+            if access.can(user, site, target, "terminal"):
+                if not (main and folder.startswith(root + os.sep)):
+                    folders.append(folder)
+            elif main and folder.startswith(root + os.sep):
+                hidden.append(folder)
+    return folders, hidden
+
+
 def user_shell(site, cwd):
     """A shell as the user's own Linux user, locked to their sites (phase 8c): a systemd sandbox where /var/www holds
     only the sites they have Terminal on, /home only their own, /etc only what a shell needs, the rest of the system
     read-only, other processes invisible, and no way to become anyone else."""
     root = os.path.join(WEB_ROOT, site)
     inside = os.path.relpath(cwd, root)
-    if inside.startswith("..") or inside.split(os.sep)[0] in ("scripts", ".vns-publish"):
+    # Never the folders with Harbor's passwords; an environment may be in a folder of its own outside the site's
+    if not inside.startswith("..") and inside.split(os.sep)[0] in ("scripts", ".vns-publish"):
         abort(403, "You do not have access to this folder.")
     user = me()
     name = linux_names().get(user["id"], "")
@@ -3865,18 +4039,20 @@ def user_shell(site, cwd):
         # Made by the sync that runs after every change to the users; it may still be running
         linux_users_changed()
         abort(409, "Your Linux user is being made. Try again in a moment.")
-    sites = sorted(name_ for name_ in (user.get("sites") or {})
-                   if any(access.can(user, name_, env, "terminal") for env in ["main", *target_ids(os.path.join(WEB_ROOT, name_))])
-                   and os.path.isdir(os.path.join(WEB_ROOT, name_)))
-    if site not in sites:
+    folders, hidden = shell_folders(user)
+    # The folder it starts in is one they have Terminal on: the main site's (not an environment's in it), or an
+    # environment's
+    real = os.path.realpath(cwd)
+    reaches = [folder for folder in folders if real == folder or real.startswith(folder + os.sep)]
+    if not reaches or any(real == folder or real.startswith(folder + os.sep) for folder in hidden):
         abort(403, "You do not have access to do this.")
     properties = ["NoNewPrivileges=yes", "ProtectSystem=strict", "ProtectHome=tmpfs", "PrivateTmp=yes", "PrivateDevices=yes",
                   "ProtectProc=invisible", "ProtectKernelTunables=yes", "ProtectKernelLogs=yes", "ProtectKernelModules=yes",
                   "ProtectControlGroups=yes", "ProtectHostname=yes", "RestrictSUIDSGID=yes", "LockPersonality=yes",
                   "TemporaryFileSystem=/etc:ro", "TemporaryFileSystem=/var:ro",
                   *("BindReadOnlyPaths=-/etc/" + item for item in SHELL_ETC),
-                  "BindPaths=/home/" + name, *("BindPaths=" + os.path.join(WEB_ROOT, item) for item in sites),
-                  *("InaccessiblePaths=-" + item for item in SHELL_HIDDEN), "WorkingDirectory=" + cwd]
+                  "BindPaths=/home/" + name, *("BindPaths=" + folder for folder in folders),
+                  *("InaccessiblePaths=-" + item for item in (*SHELL_HIDDEN, *hidden)), "WorkingDirectory=" + cwd]
     argv = ["/usr/bin/systemd-run", "--quiet", "--pty", "--wait", "--collect", "--uid=" + name, "--gid=" + name]
     for item in properties:
         argv += ["-p", item]
@@ -4638,7 +4814,7 @@ def build_command(data):
     if kind == "install_sql_tools":
         if not os.path.isfile(HARBOR_COMMAND):
             abort(500, "Harbor is missing. Update VNS first.")
-        return "Install SQL tools", ["/usr/bin/python3", HARBOR_COMMAND, "sql", "install-sql-tools"], "/"
+        return "Install the Microsoft SQL Server tools", ["/usr/bin/python3", HARBOR_COMMAND, "sql", "install-sql-tools"], "/"
     if kind == "sql_action":
         identifier = data.get("connection")
         if not isinstance(identifier, str):
@@ -4659,6 +4835,9 @@ def build_command(data):
         except ValueError as exc:
             abort(400, str(exc))
         payload = {key: data[key] for key in ("action", "database", "target", "backup_id", "overwrite", "confirmation", "login", "delete_backups", "delete_login") if key in data}
+        # A user is not told whether a database or login of a name is there: one not theirs is not theirs to learn of
+        if not is_admin():
+            payload["private_names"] = True
         return "SQL: " + data["action"], [sys.executable, SQL_HELPER, SQL_CONNECTIONS, identifier, json.dumps(payload)], "/"
     if kind == "update_system":
         if not ADMIN_SITE:
@@ -5327,6 +5506,87 @@ def env_of(site, data, scope_key="scope"):
     return (data.get("target") or "prod") if data.get(scope_key) == "prod" else "main"
 
 
+# ---- who made what (1.0.82): connections, databases and logins, by anyone (an administrator too), for administrators to
+# see. What users made before is in their own record (made, and a connection they own); an administrator's before is
+# not known.
+def note_made(kind, name, connection=None, user_id=None):
+    """name of kind (connections, databases, logins), on connection, made now by user_id (the one asking)"""
+    if not name:
+        return
+    with CONFIG_LOCK:
+        place = cfg.setdefault("made_by", {}).setdefault(kind, {})
+        if connection:
+            place = place.setdefault(connection, {})
+        place[name] = {"by": user_id or (me() or {}).get("id", ""), "at": int(time.time())}
+        save_config()
+
+
+def forget_made_by(kind, name, connection=None):
+    with CONFIG_LOCK:
+        place = (cfg.get("made_by") or {}).get(kind) or {}
+        if connection:
+            place = place.get(connection) or {}
+        if place.pop(name, None) is not None:
+            save_config()
+
+
+def maker(kind, name, connection=None):
+    """Who made it: {"name", "user"} (user: not an administrator), from the register, else a user's own record of what
+    they made; None when not known"""
+    place = (cfg.get("made_by") or {}).get(kind) or {}
+    if connection:
+        place = place.get(connection) or {}
+    found = place.get(name)
+    if isinstance(found, dict) and found.get("by"):
+        person = access.find(cfg, found["by"])
+        return {"name": access.label(cfg, found["by"]), "user": bool(person) and not access.is_admin(person)}
+    for user in cfg.get("users", []):
+        mine = ((kind == "connections" and ((user.get("connections") or {}).get(name) or {}).get("owned"))
+                or (kind in ("databases", "logins") and name in (((user.get("made") or {}).get(kind) or {}).get(connection) or []))
+                or (kind == "sites" and name in ((user.get("made") or {}).get("sites") or [])))
+        if mine:
+            return {"name": access.label(cfg, user.get("id")), "user": not access.is_admin(user)}
+    return None
+
+
+def made_by(kind, name, connection=None):
+    """Who made it, by name; "" when not known"""
+    return (maker(kind, name, connection) or {}).get("name", "")
+
+
+def given_to(allowed):
+    """The users (not administrators, not locked) a thing is given to, by name, for an administrator to see"""
+    return sorted((access.label(cfg, user.get("id")) for user in cfg.get("users", [])
+                   if isinstance(user, dict) and not access.is_admin(user) and not user.get("disabled") and allowed(user)), key=str.lower)
+
+
+def remember_maker(data):
+    """What a task makes or deletes, kept in the register when it has gone well: a site made or copied, or deleted; a
+    database (and its login) made, copied or restored to, or dropped"""
+    uid = (me() or {}).get("id", "")
+    if data.get("kind") in ("create_site", "copy_site"):
+        # The sites there are after it that were not before
+        before = set(site_dirs())
+        return lambda status: status == 0 and [note_made("sites", made, None, uid) for made in set(site_dirs()) - before]
+    if data.get("kind") == "delete_site" and (data.get("scope") or "all") == "all":
+        return lambda status: status == 0 and not os.path.isdir(os.path.join(WEB_ROOT, data.get("site", ""))) and forget_made_by("sites", data.get("site", ""))
+    if data.get("kind") != "sql_action":
+        return None
+    connection, action = data.get("connection"), data.get("action")
+    if action in ("create", "copy", "restore"):
+        made = data.get("database") if action == "create" else data.get("target")
+        login = data.get("login") if isinstance(data.get("login"), str) else None
+        def note(status):
+            if status == 0:
+                note_made("databases", made, connection, uid)
+                if login:
+                    note_made("logins", login, connection, uid)
+        return note
+    if action == "drop":
+        return lambda status: status == 0 and forget_made_by("databases", data.get("database"), connection)
+    return None
+
+
 def authorize_task(data):
     """Stop a task the user may not start. Returns what to do when it has ended, when something the user creates
     should become theirs."""
@@ -5459,7 +5719,8 @@ def authorize_task(data):
     elif kind == "change_binding":
         need(env_of(site, data), "bindings")
     elif kind == "prod_action":
-        need("main" if data.get("scope") == "test" else data.get("target") or "prod", "bindings")
+        need("main" if data.get("scope") == "test" else data.get("target") or "prod",
+             "environment" if data.get("action") == "change_env" else "certificate")
     elif kind == "delete_site":
         scope = data.get("scope") or "all"
         if scope == "all":
@@ -5498,7 +5759,9 @@ def api_term():
         with SESSIONS_LOCK:
             return jsonify(sessions=[describe(s) for s in SESSIONS.values() if sees_session(s)])
     payload = request.get_json(silent=True) or {}
-    after = authorize_task(payload)
+    given, noted = authorize_task(payload), remember_maker(payload)
+    # What the user made becomes theirs, and who made it is kept: both when it has ended
+    after = (lambda status: [callback(status) for callback in (given, noted) if callback]) if (given or noted) else None
     title, argv, cwd = build_command(payload)
     extra_env = production_setup_env(payload, payload.get("site", "")) if payload.get("kind") == "create_prod" else None
     if payload.get("kind") == "server_tool":

@@ -51,12 +51,13 @@ class DatabaseInfoTests(unittest.TestCase):
             ("Data Source=:memory:", "SQLite"),
             ("Server=example;Database=test", "MS SQL"),
             ("Data Source=example;Initial Catalog=test", "MS SQL"),
-            ("Host=postgres;Username=example", "Unknown"),
+            ("Host=postgres;Username=example", "PostgreSQL"),
         ):
             self.settings(value)
             self.assertEqual(database.database_type(self.root), expected)
+        # Npgsql's provider: PostgreSQL, whatever words the string uses (1.0.82)
         self.settings("Server=example;Database=test", "Npgsql")
-        self.assertEqual(database.database_type(self.root), "Unknown")
+        self.assertEqual(database.database_type(self.root), "PostgreSQL")
 
     def test_comments_trailing_commas_and_string_literals(self):
         text = '''{
@@ -123,7 +124,7 @@ with patch.dict(os.environ, {"SITE":"prod.test", "UNIT":"prod.test", "DATABASE_C
             ("Server=example.database.windows.net.evil.test;Database=app", None, "MS SQL"),
             ("Server=private;Application Name='value;Server=example.database.windows.net';Database=app", None, "MS SQL"),
             (r"Server=private;Application Name=SQLEXPRESS;Database=app", None, "MS SQL"),
-            ("Server=private;Database=app", "Npgsql", "Unknown"),
+            ("Server=private;Database=app", "Npgsql", "PostgreSQL"),
         ):
             with self.subTest(connection=connection):
                 self.settings(connection, provider)

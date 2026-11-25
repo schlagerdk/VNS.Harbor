@@ -13,6 +13,7 @@ from harbor.server import samba, ssh
 from harbor.core.system import Stop
 from harbor.state.store import read_json, write_json
 from harbor.sql.databases import PLACEHOLDER, SA_SECRET, SQL_DIR, SQLCMD
+from harbor.sql import postgres
 from harbor.sql.server import FALLBACK_UBUNTU, SUPPORTED_UBUNTU, installed, os_release, sa_scripts
 
 NODESOURCE = "https://deb.nodesource.com/setup_{}.x"
@@ -20,7 +21,14 @@ HARBOR = "/usr/local/bin/harbor"
 # The jobs Harbor adds, as harbor commands (they were /vns/sql/cron/*.sh, which go with the cutover); others in root's
 # crontab (such as the custom cron/delete_old_2dm_data.sh) are left alone
 JOBS = {"shrink_logs": f"0 */4 * * * {HARBOR} sql shrink-logs >> /var/log/sql_shrink_logs.log 2>&1",
-        "backup_everything": f"15 */4 * * * {HARBOR} sql backup-everything >> /var/log/sql_backup_everything.log 2>&1"}
+        "backup_everything": f"15 */4 * * * {HARBOR} sql backup-everything >> /var/log/sql_backup_everything.log 2>&1",
+        # PostgreSQL's of its own (phase 10), a quarter of an hour after Microsoft SQL Server's
+        "postgres_backup": f"30 */4 * * * {HARBOR} postgres backup-everything >> /var/log/postgres_backup_everything.log 2>&1"}
+# The harbor command each job runs
+JOB_COMMANDS = {"shrink_logs": "harbor sql shrink-logs", "backup_everything": "harbor sql backup-everything",
+                "postgres_backup": "harbor postgres backup-everything"}
+# Microsoft SQL Server's jobs: those turned on and off together, as they were before PostgreSQL had one
+MSSQL_JOBS = ("shrink_logs", "backup_everything")
 
 
 def package_version(system, package):
@@ -34,7 +42,7 @@ def crontab(system):
 
 def job_lines(text, name):
     """A job's lines: the harbor command, or the script in /vns/sql/cron it was"""
-    command = f"harbor sql {name.replace('_', '-')}"
+    command = JOB_COMMANDS[name]
     return [line for line in text.splitlines() if not line.lstrip().startswith("#")
             and (f"/sql/cron/{name}.sh" in line or re.search(rf"(^|[\s/]){re.escape(command)}(\s|$)", line))]
 
@@ -155,6 +163,18 @@ def status(system, sql_folder=SQL_DIR):
                        "packages_for": "" if release.get("VERSION_ID", "") in SUPPORTED_UBUNTU else FALLBACK_UBUNTU},
         "sql_tools": {"installed": system.path(SQLCMD).is_file(), "version": package_version(system, "mssql-tools18"),
                       "newer": newer_package(system, "mssql-tools18")},
+        # PostgreSQL beside it (phase 10): the server, its tools, and the postgres password Harbor keeps
+        # The version of the server itself (postgresql-18: 18.6-…), not of the package that brings it (18+290)
+        "postgres": {"installed": installed(system, "postgresql"),
+                     "version": next((package_version(system, f"postgresql-{major}").split("-")[0] for major in reversed(postgres.clusters(system))
+                                      if package_version(system, f"postgresql-{major}")), package_version(system, "postgresql").split("+")[0]),
+                     "newer": newer_package(system, "postgresql"),
+                     "running": system.output("systemctl", "is-active", "postgresql", check=False) == "active"},
+        "postgres_tools": {"installed": postgres.tools_installed(system),
+                           # psql (PostgreSQL) 18.6 (Ubuntu 18.6-0ubuntu0.26.04.1): 18.6
+                           "version": (re.findall(r"\d+(?:\.\d+)+", system.output("psql", "--version", check=False)) or [""])[0] if postgres.tools_installed(system) else "",
+                           "newer": newer_package(system, "postgresql-client")},
+        "postgres_password": {"set": bool(postgres.password(system))},
         "sa_password": {"scripts": len(scripts),
                         "set": bool((read_json(system.path(SA_SECRET)) or {}).get("sa_password"))
                         or (bool(scripts) and not any(f"'{PLACEHOLDER}'" in path.read_text(errors="replace") for path in scripts))},
@@ -180,16 +200,16 @@ def cron(system, on, only=None):
     table = crontab(system)
     lines = table.splitlines()
     if on:
-        missing = [line for name, line in JOBS.items() if not job_lines(table, name) and only in (None, name)]
+        missing = [line for name, line in JOBS.items() if not job_lines(table, name) and (name == only or only is None and name in MSSQL_JOBS)]
         if not missing:
             system.say("The backup and log shrink jobs are in root's crontab." if only is None else "The job is in root's crontab.")
             return
-        step = "Add the backup and log shrink jobs to root's crontab" if only is None else f"Add the {'backup' if only == 'backup_everything' else 'log shrink'} job to root's crontab"
+        step = "Add the backup and log shrink jobs to root's crontab" if only is None else f"Add the job {HARBOR_LABELS[only]} to root's crontab"
         system.plan([step])
         system.step(step)
         lines += missing
     else:
-        mine = {line for name in JOBS for line in job_lines(table, name)}
+        mine = {line for name in JOBS for line in job_lines(table, name) if name == only or only is None and name in MSSQL_JOBS}
         if not mine:
             system.say("The backup and log shrink jobs are not in root's crontab.")
             return
@@ -199,6 +219,16 @@ def cron(system, on, only=None):
         lines = [line for index, line in enumerate(lines) if line not in mine
                  and not (LABEL.match(line) and index + 1 < len(lines) and lines[index + 1] in mine)]
     system.run("crontab", "-", input="".join(line + "\n" for line in lines))
+    if on:
+        # When each was added, as when a job is saved in Scheduled jobs: cron has not run it before, and that is not
+        # a time it should have
+        state = cron_state(system)
+        now = int(time.time())
+        for line in missing:
+            parts = job_parts(line)
+            if parts:
+                state["saved"][parts[1]] = now
+        save_cron_state(system, state, {job_parts(line)[1] for line in lines if job_parts(line)})
     system.say(("Backups every 4 hours (at :15), logs shrunk every 4 hours." if only is None else "The job is in root's crontab.") if on
                else "No backups or log shrinks are run by cron now.")
 
@@ -395,7 +425,8 @@ def save_cron_state(system, state, commands):
 
 
 # What the admin calls Harbor's own jobs until they are given a label
-HARBOR_LABELS = {"backup_everything": "Backup", "shrink_logs": "Log shrink"}
+HARBOR_LABELS = {"backup_everything": "Microsoft SQL Server backup", "shrink_logs": "Microsoft SQL Server log shrink",
+                 "postgres_backup": "PostgreSQL backup"}
 # A job's label: a comment line of its own just above it, so it stays in root's crontab with the job
 LABEL = re.compile(r"^#\s*Harbor label:\s*(.*?)\s*$")
 

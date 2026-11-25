@@ -163,6 +163,15 @@ def _sql(args, system):
     getattr(module, name)(system, *getattr(args, "names", [])[:words], **options)
 
 
+def _postgres(args, system):
+    from harbor.sql import postgres
+    name = args.command.replace("-", "_")
+    if name == "uninstall":
+        postgres.uninstall(system, delete_data=args.delete_data, with_tools=args.with_tools)
+    else:
+        getattr(postgres, name)(system)
+
+
 def _users_sync(args, system):
     import json
     from harbor.server.users import sync
@@ -536,7 +545,7 @@ def parser():
     command.set_defaults(handler=_server_status)
     command = server.add_parser("cron", help="the backup and log shrink jobs in root's crontab: on, off, or upgrade (older jobs to harbor commands)")
     command.add_argument("state", choices=("on", "off", "upgrade"))
-    command.add_argument("--job", choices=("backup_everything", "shrink_logs"), help="on: only this job (as Scheduled jobs suggests it)")
+    command.add_argument("--job", choices=("backup_everything", "shrink_logs", "postgres_backup"), help="on: only this job (as Scheduled jobs suggests it)")
     command.set_defaults(handler=_server_cron)
     command = server.add_parser("dotnet", help="install a .NET channel (SDK and ASP.NET Core runtime), update it to its newest patch, or remove it")
     command.add_argument("action", choices=("install", "update", "remove"))
@@ -726,6 +735,21 @@ def parser():
             # As the script: what is not given is asked for, and more is not read
             command.add_argument("names", nargs="*", default=[])
         command.set_defaults(handler=_sql)
+
+    postgres = groups.add_parser("postgres", help="PostgreSQL here, and its tools").add_subparsers(dest="command", required=True, metavar="<command>")
+    for name, text in (
+            ("install", "PostgreSQL from Ubuntu's packages, its postgres password from HARBOR_POSTGRES_PASSWORD, a connection in the admin"),
+            ("update", "PostgreSQL and its tools to the newest packages"),
+            ("uninstall", "PostgreSQL removed; its databases kept unless --delete-data"),
+            ("install-tools", "psql, pg_dump and pg_restore, to reach a PostgreSQL elsewhere"),
+            ("uninstall-tools", "the PostgreSQL tools removed"),
+            ("set-password", "the postgres password from HARBOR_POSTGRES_PASSWORD"),
+            ("backup-everything", "every database dumped into the backup folder")):
+        command = postgres.add_parser(name, help=text)
+        if name == "uninstall":
+            command.add_argument("--delete-data", action="store_true")
+            command.add_argument("--with-tools", action="store_true")
+        command.set_defaults(handler=_postgres)
 
     command = groups.add_parser("migrate", help="Harbor's copy as the truth, the generated scripts out of the site folders (phase 6)")
     command.add_argument("site", nargs="?", default="", help="one site; every site when left out")

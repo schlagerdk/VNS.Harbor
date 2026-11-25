@@ -99,7 +99,8 @@ class UserTests(unittest.TestCase):
         self.extra = {}
 
     def sync(self, admin_users):
-        system = RecordingSystem(root=self.root, answers={name: getattr(self.server, name) for name in ("groupadd", "useradd", "userdel", "usermod", "gpasswd", "groupdel", "mount", "umount")}, **self.extra)
+        answers = {name: getattr(self.server, name) for name in ("groupadd", "useradd", "userdel", "usermod", "gpasswd", "groupdel", "mount", "umount")}
+        system = RecordingSystem(root=self.root, answers={**answers, **getattr(self, "answers", {})}, **self.extra)
         system.programs.update({"useradd", "setfacl"})
         with mock.patch("sys.stdin", io.StringIO(json.dumps(admin_users))):
             self.assertEqual(main(["users", "sync"], system), 0, system.said)
@@ -168,7 +169,7 @@ class SiteGroupTests(UserTests):
                 {"id": "u_3", "username": "boss", "role": "admin", "sites": {"blog.dk": {"actions": ["files"]}}}]
 
     def test_a_group_per_site_for_the_files_grant(self):
-        system = self.sync(self.users(bo_sites={"shop.dk": {"actions": ["files", "logs"]}, "blog.dk": {"actions": ["logs"]}}))
+        system = self.sync(self.users(bo_sites={"shop.dk": {"envs": ["main"], "actions": ["files", "logs"]}, "blog.dk": {"envs": ["main"], "actions": ["logs"]}}))
         self.assertEqual(users.site_groups(system), {"shop.dk": "site-shop-dk"})
         self.assertEqual(users.members(system, "site-shop-dk"), {"anna", "bo"})
         self.assertIn("setfacl -R -P -m g:site-shop-dk:rwX,m::rwX /var/www/shop.dk", system.commands)
@@ -225,6 +226,46 @@ class SiteGroupTests(UserTests):
         self.assertIn("chmod 1775 /var/www/shop.dk", system.commands)
         self.assertEqual(json.loads((self.root / "var/lib/harbor/closed-sites.json").read_text()), {})
 
+    def environment(self, target="prod", folder="_production"):
+        """A local environment of shop.dk, in a folder in the site's folder, as the admin makes one"""
+        script = self.root / ("var/www/shop.dk/scripts/publish_prod.sh" if target == "prod" else f"var/www/shop.dk/scripts/targets/{target}/publish_prod.sh")
+        script.parent.mkdir(parents=True, exist_ok=True)
+        script.write_text(f'PROD_LOCAL_PATH="/var/www/shop.dk/{folder}"\nPROD_FOLDER="shop.dk/{folder}"\nPROD_BINDING="{target}.shop.dk"\n')
+        (self.root / f"var/www/shop.dk/{folder}").mkdir(exist_ok=True)
+
+    def test_an_environment_alone_gives_only_its_own_folder(self):
+        """Given only an environment, a user reaches its folder and passes through the site's, nothing else of it (1.0.82)"""
+        self.environment()
+        self.environment("staging", "_staging")
+        given = [{"id": "u_1", "username": "anna", "role": "user",
+                  "sites": {"shop.dk": {"envs": ["prod"], "actions": ["terminal"]}}}]
+        system = self.sync(given)
+        group = users.unit_group("shop.dk/prod")
+        self.assertEqual(users.site_groups(system), {"shop.dk/prod": group})
+        self.assertEqual(users.members(system, group), {"anna"})
+        self.assertIn(f"setfacl -R -P -m g:{group}:rwX,m::rwX /var/www/shop.dk/_production", system.commands)
+        self.assertIn(f"setfacl -m g:{group}:--x /var/www/shop.dk", system.commands)
+        # Not the site's folder, nor the other environment
+        self.assertFalse(any(command.startswith("setfacl -R -P -m") and command.endswith(("/var/www/shop.dk", "_staging"))
+                             for command in system.commands), system.commands)
+        self.assertNotIn("site-shop-dk", users.site_groups(system).values())
+
+    def test_the_main_site_is_not_its_environments(self):
+        """The main site's group is taken off the environments' folders in the site's folder, also when it was given
+        the whole folder before environments had groups of their own"""
+        self.environment()
+        system = self.sync(self.users())
+        self.assertEqual(users.site_groups(system), {"shop.dk": "site-shop-dk"})
+        self.assertIn("setfacl -R -P -x g:site-shop-dk /var/www/shop.dk/_production", system.commands)
+        # Already a group before (1.0.81): its folder's ACL still names it, so it is taken off
+        self.answers = {"getfacl --omit-header -p /var/www/shop.dk/_production": "group:site-shop-dk:rwx"}
+        system = self.sync(self.users())
+        self.assertIn("setfacl -R -P -x g:site-shop-dk /var/www/shop.dk/_production", system.commands)
+        # Closed already: left as it is
+        self.answers = {}
+        system = self.sync(self.users())
+        self.assertNotIn("setfacl -R -P -x g:site-shop-dk /var/www/shop.dk/_production", system.commands)
+
     def test_long_site_names(self):
         name = users.site_group("a-very-long-subdomain.of.some-customer.example.com")
         self.assertLessEqual(len(name), 32)
@@ -249,7 +290,7 @@ class SftpTests(SiteGroupTests):
         self.assertTrue(config.rstrip().endswith("Match all"))
         self.assertLess(system.commands.index("sshd -t"), system.commands.index("systemctl reload ssh"))
         self.assertIn("mount --bind /var/www/shop.dk /srv/harbor-sftp/anna/shop.dk", system.commands)
-        self.assertEqual(json.loads((self.root / "var/lib/harbor/sftp.json").read_text()), {"anna": ["shop.dk"]})
+        self.assertEqual(json.loads((self.root / "var/lib/harbor/sftp.json").read_text()), {"anna": {"shop.dk": "/var/www/shop.dk"}})
         self.assertTrue((self.root / "etc/systemd/system/harbor-sftp-mounts.service").is_file())
         # Again: nothing reloaded or mounted twice
         system = self.sync(self.sftp_users())

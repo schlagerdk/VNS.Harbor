@@ -762,22 +762,27 @@ class SqlApiTests(unittest.TestCase):
         self.ns = dict(app=self.app, request=request, jsonify=jsonify, abort=abort, subprocess=subprocess,
                        SQL_LOCK=threading.Lock(), SQL_CONNECTIONS=self.store, SQL_HELPER=str(ROOT / "lib/sql_admin.py"),
                        _sql_module=sql, sys=sys, json=json, os=os, socket=__import__("socket"), HARBOR_DIR=str(ROOT), LIB_DIR=str(ROOT / "lib"), HARBOR_COMMAND=str(ROOT / "bin/harbor"),
-                       error=lambda message, status=400: (jsonify(error=message), status))
+                       error=lambda message, status=400: (jsonify(error=message), status),
+                       cfg={"users": []}, CONFIG_LOCK=threading.Lock(), save_config=lambda: None, time=__import__("time"))
         source = ROOT / "admin/app.py"
-        names = {"api_sql_connections", "api_sql_connection_test", "local_sa_password", "api_sql_status", "build_command"}
+        names = {"api_sql_connections", "api_sql_connection_test", "local_sa_password", "api_sql_status", "build_command",
+                 "note_made", "forget_made_by", "made_by", "maker", "given_to"}
         nodes = [node for node in ast.parse(source.read_text()).body if isinstance(node, ast.FunctionDef) and node.name in names]
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "sql API", "exec"), self.ns)
         add_target_helpers(self.ns)
         self.client = self.app.test_client()
 
     def test_missing_tools_blocks_connection_setup_and_allows_installer(self):
-        with patch.object(sql, "sqlcmd_path", return_value=None):
+        with patch.object(sql, "sqlcmd_path", return_value=None), patch.object(sql, "tools_path", return_value=None):
             response = self.client.get("/api/sql/connections")
             self.assertFalse(response.json["tools_available"])
+            self.assertEqual(response.json["tools"], {"mssql": False, "postgres": False})
             for method in ("post", "put"):
                 response = getattr(self.client, method)("/api/sql/connections", json={})
                 self.assertEqual(response.status_code, 409)
-                self.assertIn("Install SQL", response.json["error"])
+                self.assertIn("Install the Microsoft SQL Server tools", response.json["error"])
+            response = self.client.post("/api/sql/connections", json={"engine": "postgres"})
+            self.assertIn("Install the PostgreSQL tools", response.json["error"])
             _, argv, cwd = self.ns["build_command"]({"kind": "install_sql_tools"})
             self.assertEqual(argv, ["/usr/bin/python3", str(ROOT / "bin/harbor"), "sql", "install-sql-tools"])
             self.assertEqual(cwd, "/")
@@ -794,11 +799,74 @@ class SqlApiTests(unittest.TestCase):
         with patch.object(os.path, "isfile", return_value=False), self.assertRaises(InternalServerError):
             self.ns["build_command"]({"kind": "install_sql_tools"})
 
+    def test_who_made_it_and_who_it_is_given_to(self):
+        """An administrator sees who made a connection, database or login, and the users it is given to (1.0.82)"""
+        from lib import access as real_access
+        self.ns.update(access=real_access, me=lambda: {"id": "root", "role": "admin"},
+                       cfg={"user": "martin", "name": "Martin", "users": [
+                           {"id": "u1", "username": "anna", "name": "Anna", "role": "user", "sql": True,
+                            "connections": {"c1": {"databases": ["Shop"], "actions": [], "owned": True}},
+                            "made": {"databases": {"c1": ["Shop"]}}},
+                           {"id": "u2", "username": "bo", "role": "user", "sql": True, "connections": {"c1": {"databases": ["*"], "actions": []}}},
+                           {"id": "u3", "username": "cy", "role": "user", "sql": True, "disabled": True, "connections": {"c1": {"databases": ["*"]}}}]})
+        made_by, note, forget, given = (self.ns[name] for name in ("made_by", "note_made", "forget_made_by", "given_to"))
+        # A user's own record: what they made before there was a register; a user's, so kept apart
+        self.assertEqual(made_by("databases", "Shop", "c1"), "Anna")
+        self.assertEqual(self.ns["maker"]("databases", "Shop", "c1"), {"name": "Anna", "user": True})
+        self.assertEqual(made_by("connections", "c1"), "Anna")
+        # The register: by anyone, an administrator too, and gone when it is
+        note("databases", "Blog", "c1")
+        self.assertEqual(made_by("databases", "Blog", "c1"), "Martin")
+        self.assertEqual(self.ns["maker"]("databases", "Blog", "c1"), {"name": "Martin", "user": False})
+        forget("databases", "Blog", "c1")
+        self.assertEqual(made_by("databases", "Blog", "c1"), "")
+        # Given to: the users who see it, not a locked one
+        self.assertEqual(given(lambda person: real_access.can_sql(person, "c1", "Shop", "view")), ["Anna", "bo"])
+        self.assertEqual(given(lambda person: real_access.can_sql(person, "c1", "Blog", "view")), ["bo"])
+
+    def test_a_user_is_not_told_how_a_server_is_reached(self):
+        """A connection given to a user, not added by them: its name, engine and address (for Connect…), never its
+        login, backup folder or SSH (1.0.82)"""
+        from lib import access as real_access
+        sql.save_connections(self.store, [
+            {"id": "given", "name": "Kikayo", "host": "sql.example.com", "port": 1433, "username": "sa", "password": "x",
+             "backup_directory": "/b", "trust_certificate": True, "ssh_enabled": False},
+            {"id": "theirs", "name": "Own", "engine": "postgres", "host": "pg.example.com", "port": 5432, "username": "anna",
+             "password": "x", "backup_directory": "/var/opt/postgresql/backup", "trust_certificate": True, "ssh_enabled": False}])
+        user = {"id": "u1", "role": "user", "sql": True, "connections": {"given": {"databases": ["*"]}, "theirs": {"databases": ["*"], "owned": True}}}
+        self.ns.update(access=real_access, me=lambda: user,
+                       owns_connection=lambda identifier: bool(((user.get("connections") or {}).get(identifier) or {}).get("owned")))
+        with patch.object(sql, "tools_path", return_value="/usr/bin/tool"):
+            listed = {item["id"]: item for item in self.client.get("/api/sql/connections").json["connections"]}
+        self.assertEqual({key: listed["given"][key] for key in ("name", "engine", "host", "port")},
+                         {"name": "Kikayo", "engine": "mssql", "host": "sql.example.com", "port": 1433})
+        for key in ("username", "backup_directory", "ssh_enabled"):
+            self.assertNotIn(key, listed["given"], key)
+        self.assertEqual(listed["theirs"]["host"], "pg.example.com")
+
+    def test_harbors_own_password_is_an_administrators_alone(self):
+        """sa or postgres on the server here without a password typed got the password Harbor keeps: a user who may add
+        connections could reach the whole server with it (1.0.82)"""
+        from unittest.mock import mock_open
+        names = {"local_sa_password"}
+        nodes = [node for node in ast.parse((ROOT / "admin/app.py").read_text()).body if isinstance(node, ast.FunctionDef) and node.name in names]
+        namespace = {"json": json, "socket": __import__("socket"), "abort": abort}
+        exec(compile(ast.Module(body=nodes, type_ignores=[]), "app", "exec"), namespace)
+        secret = '{"postgres_password": "kept", "sa_password": "kept"}'
+        for admin, expected in ((False, ""), (True, "kept")):
+            namespace["is_admin"] = lambda admin=admin: admin
+            for engine, login in (("postgres", "postgres"), ("mssql", "sa")):
+                data = {"engine": engine, "host": "localhost", "username": login, "password": ""}
+                with patch("builtins.open", mock_open(read_data=secret)):
+                    namespace["local_sa_password"](data, True)
+                self.assertEqual(data["password"], expected, (admin, engine))
+
     def test_a_connection_is_tested_without_being_saved(self):
         """Test connection tries what is typed: whether it logs in, in plain words when not, and nothing is kept (1.0.70)"""
         typed = {"name": "Here", "host": "sql.example.com", "port": 1433, "username": "app", "password": "test-only", "backup_directory": "/b", "trust_certificate": True}
         self.ns["me"] = lambda: {"id": "root", "role": "admin"}
-        self.ns["access"] = type("access", (), {"is_admin": staticmethod(lambda user: True)})
+        self.ns["access"] = type("access", (), {"is_admin": staticmethod(lambda user: True),
+                                                "connection_engines": staticmethod(lambda user: ["mssql", "postgres"])})
         response = self.client.post("/api/sql/connections/test", json=typed)
         self.assertEqual(response.json, {"ok": True, "databases": 0})
         with patch.object(sql, "databases", side_effect=RuntimeError("Login timeout expired. TCP Provider: Error code 0x2749.")):
@@ -806,6 +874,19 @@ class SqlApiTests(unittest.TestCase):
         self.assertFalse(response.json["ok"])
         self.assertIn("No SQL Server answers on sql.example.com:1433", response.json["error"])
         self.assertEqual(sql.connections(self.store), [])
+
+    def test_a_user_is_never_told_where_a_backup_lies_on_the_server(self):
+        """Not even with Files or Terminal on a site: SQL Server's backup folder is not theirs to reach"""
+        backup = {"id": 7, "database_name": "Shop", "path": "/var/opt/mssql/backup/Shop.bak", "size_mb": 16}
+        user = {"role": "user", "web": True, "sql": True, "sites": {"example.com": {"envs": ["main"], "actions": ["files", "terminal"]}}}
+        self.ns.update(require_sql=lambda *args: None, me=lambda: user,
+                       access=type("access", (), {"can_sql": staticmethod(lambda *args: True)}))
+        with patch.object(sql, "connection", return_value={}), patch.object(sql, "backups", side_effect=lambda settings: [dict(backup)]), \
+                patch.object(sql, "local_backup_access", return_value=True), patch.object(sql, "backup_file_access", return_value=True):
+            self.ns["is_admin"] = lambda: False
+            self.assertNotIn("path", self.client.get("/api/sql/local").json["backups"][0])
+            self.ns["is_admin"] = lambda: True
+            self.assertEqual(self.client.get("/api/sql/local").json["backups"][0]["path"], backup["path"])
 
     def test_tables_of_sql_servers_own_databases_are_not_changed(self):
         """master, model, msdb and tempdb could be designed and dropped in like any other: they are read only (1.0.70)"""
@@ -817,7 +898,8 @@ class SqlApiTests(unittest.TestCase):
         self.ns.update(require_sql=lambda *args: None, sql_settings=lambda connection: self.settings_for_test,
                        audit=lambda text: None, sql_failure=lambda exc: (jsonify(error=str(exc)), 422),
                        _sql_design=type("design", (), {"plan_drop": staticmethod(lambda schema, table: "DROP TABLE x"),
-                                                        "apply": staticmethod(lambda *args: ran.append(args))}))
+                                                        "apply": staticmethod(lambda *args: ran.append(args)), "DEFAULT_SCHEMA": "dbo",
+                                                        "for_connection": staticmethod(lambda settings: None)}))
         self.settings_for_test = {}
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "sql table API", "exec"), self.ns)
         for database in ("master", "MSDB", "tempdb", "model"):
