@@ -148,7 +148,11 @@ def scripts_of(site, target):
     return f"{site.site_root}/scripts" if target == "prod" else f"{site.site_root}/scripts/targets/{target}"
 
 
-def delete_site(system, name="", delete_certificates="", scope="all", target=""):
+def delete_site(system, name="", delete_certificates="", scope="all", target="", only_here=None):
+    """only_here (VNS_DELETE_ONLY_HERE=1): an environment on another Linux server is only removed here, its site there not
+    touched, as one on Windows always is: for one Harbor cannot reach (its login refused, the server gone)"""
+    if only_here is None:
+        only_here = os.environ.get("VNS_DELETE_ONLY_HERE") == "1"
     if not name:
         name = system.ask("Enter site name: ").strip()
     try:
@@ -218,7 +222,7 @@ def delete_site(system, name="", delete_certificates="", scope="all", target="")
             removed.add(found.get("FOLDER", ""))
             steps += deletion.service_steps(found.get("FOLDER", ""))
             steps += deletion.certificate_steps(found.get("BINDING", ""), removed)
-        else:
+        elif not only_here:
             steps.append(f"Delete the remote production site ({found.get('FOLDER', '')})")
     if scope != "prod":
         removed.add(name)
@@ -236,6 +240,8 @@ def delete_site(system, name="", delete_certificates="", scope="all", target="")
         if found.get("TARGET") == "windows":
             # The IIS site is managed on the Windows server, and it holds the only copy of its settings and media
             system.say(f"The site on the Windows server is not touched: remove the IIS site and its folder at {found.get('WINDOWS_SHARE', '')} yourself.")
+        elif only_here and not local_path:
+            system.say(f"The site {folder} on {found.get('IP', 'its server')} is not touched: remove it on the server yourself.")
         elif local_path:
             local_path = local_path.rstrip("/") if local_path != "/" else local_path
             try:

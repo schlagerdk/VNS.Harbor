@@ -156,6 +156,26 @@ def connect(system, name, environment="main", harbor_url=""):
     system.say(f"{site.name} ({environment}) is connected to Harbor.")
 
 
+def reconnect(system, name, environments=("main",), restart=False):
+    """A copied site's connection made its own: its name, its token, and this server's Harbor. Its vns-harbor.json came
+    with its files and named the original and the Harbor that managed it, whose environments its dashboard showed. The
+    package reads it as the site starts: restart restarts one that runs already"""
+    from harbor.core.names import service_name
+    site = site_named(system, name)
+    if not uses_package(system, site):
+        return
+    harbor_url = admin_url(system)
+    for environment in environments:
+        try:
+            connect(system, site.name, environment, harbor_url)
+        except (Stop, OSError) as error:
+            system.warn(f"The connection of {site.name} ({environment}) to Harbor was not written: {error}")
+            continue
+        if restart:
+            unit = site.name if environment == "main" else settings.load(system, site.site_root, environment).FOLDER
+            system.run("systemctl", "try-restart", f"{service_name(unit)}.service", check=False)
+
+
 def backoffice_user(system, name, environment="main"):
     """The Umbraco user for an environment's Backend button: its own, else the site's (an environment's database
     usually has the same users). The package checks that the user is there."""

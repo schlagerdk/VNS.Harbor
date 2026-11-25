@@ -4307,7 +4307,9 @@ def terminal_auto_close(payload):
     if kind in ("shell", "create_site", "setup_site", "copy_site", "register_env", "create_prod", "sync_env", "data_sync", "data_sync_settings", "move_env", "move_site", "adopt_site", "release_site", "delete_site", "delete_user_made", "change_binding", "prod_action", "dotnet_package", "fix_permissions", "publish_both", "bulk", "update_package", "sql_action", "install_sql_tools", "server_tool", "servers",
                 # Moving sites and environments from Windows: an action with its steps, not a terminal
                 "windows_import", "windows_refresh", "windows_refresh_all", "windows_take_over",
-                "windows_move", "windows_move_refresh", "windows_move_refresh_all", "windows_move_take_over"):
+                "windows_move", "windows_move_refresh", "windows_move_refresh_all", "windows_move_take_over",
+                # A site's database converted (Settings, Convert)
+                "convert_site", "convert_delete", "convert_rollback"):
         return True
     if kind == "remote_tool":
         return payload.get("tool") == "shell"
@@ -4801,6 +4803,11 @@ def build_command(data):
         if kind == "windows_refresh":
             return "Refresh from Windows: " + site, [*harbor, "refresh", site, *(["--pause"] if data.get("pause") is True else [])], "/"
         return "Take over from Windows: " + site, [*harbor, "take-over", site], "/"
+    if kind in ("convert_site", "convert_delete", "convert_rollback"):
+        if not os.path.isfile(HARBOR_COMMAND):
+            abort(500, "Harbor is missing. Update VNS first.")
+        title, argv, _ = convert_command(data)
+        return title, argv, "/"
     if kind == "servers":
         if not os.path.isfile(HARBOR_COMMAND):
             abort(500, "Harbor is missing. Update VNS first.")
@@ -5243,6 +5250,9 @@ def build_command(data):
             argv.append("--stop-source")
         if project:
             argv = ["/usr/bin/env", "VNS_COPY_PROJECT=" + project, *argv]
+        # Set up with HTTPS, as chosen in the dialog (offered when DNS points here)
+        if data.get("https") in ("y", "n"):
+            argv = ["/usr/bin/env", "VNS_COPY_HTTPS=" + data["https"], *argv]
         return "Copy site: " + source, argv, HARBOR_DIR
     if kind == "create_site":
         site = dns_name(data.get("site", ""), "site name")
@@ -5440,6 +5450,9 @@ def build_command(data):
         argv = [*harbor_argv("delete_site.sh"), site, certificates, scope]
         if scope == "prod":
             argv = with_target(argv, target_arg(site, data))
+            # An environment on another server Harbor cannot reach: only removed here, its site there not touched
+            if data.get("only_here") is True:
+                argv = ["/usr/bin/env", "VNS_DELETE_ONLY_HERE=1", *argv]
         return "Delete " + scope + ": " + site, argv, HARBOR_DIR
     abort(400, "Unknown task")
 
@@ -5498,7 +5511,7 @@ def sees_session(s):
 # Tasks that run as root by choice, or open a shell: only for administrators
 ADMIN_TASKS = {"servers", "server_tool", "delete_user_made", "install_sql_tools", "update_system", "remote_tool", "move_env", "move_site", "adopt_site", "release_site",
                "setup_site", "unit_tool", "apache", "register_env", "windows_import", "windows_refresh", "windows_refresh_all", "windows_take_over",
-               "windows_move", "windows_move_refresh", "windows_move_refresh_all", "windows_move_take_over"}
+               "windows_move", "windows_move_refresh", "windows_move_refresh_all", "windows_move_take_over", "convert_site", "convert_delete", "convert_rollback"}
 
 
 def env_of(site, data, scope_key="scope"):
@@ -5768,6 +5781,8 @@ def api_term():
         extra_env = server_tool_command(payload)[2]
     if payload.get("kind") == "servers":
         extra_env = servers_command(payload)[2]
+    if payload.get("kind") in ("convert_site", "convert_delete", "convert_rollback"):
+        extra_env = convert_command(payload)[2]
     if payload.get("kind") == "register_env":
         extra_env = production_setup_env(payload, payload.get("site", ""))
     if payload.get("kind") == "move_env":
@@ -5829,10 +5844,36 @@ def api_term():
                      "VNS_MOVE_COPY": "1" if payload.get("copy") else "",
                      "VNS_MOVE_DELETE_LOCAL": "y" if not payload.get("copy") and payload.get("delete_local") == "y" else "n",
                      "VNS_COPY_STOP": "y" if payload.get("copy") and payload.get("stop_source") else "n"}
+        # The environments that go (their ids), and for a migration what happens to those here that do not
+        chosen = payload.get("environments")
+        if chosen is not None:
+            if not isinstance(chosen, list) or any(not isinstance(item, str) or not TARGET_RE.match(item) or item not in target_ids(os.path.join(WEB_ROOT, site))
+                                                   for item in chosen):
+                abort(400, "Unknown environment")
+            extra_env["VNS_MOVE_ENVIRONMENTS"] = ",".join(chosen)
+        bindings = payload.get("env_bindings") or {}
+        if bindings:
+            if not isinstance(bindings, dict) or any(key not in (chosen or []) or not isinstance(value, str) for key, value in bindings.items()):
+                abort(400, "A new binding is for an environment that goes")
+            extra_env["VNS_MOVE_ENV_BINDINGS"] = json.dumps({key: dns_name(value, "binding", fully_qualified=True) for key, value in bindings.items()})
+        if payload.get("left") is not None:
+            if payload.get("left") not in ("delete", "keep"):
+                abort(400, "Choose what happens to the environments left here")
+            extra_env["VNS_MOVE_LEFT"] = payload["left"]
     if payload.get("kind") == "sql_action" and payload.get("login") is not None:
         extra_env = {"VNS_SQL_LOGIN_PASSWORD": payload["login_password"]}
     if payload.get("kind") == "copy_site" and payload.get("connection") is not None:
         extra_env = {"VNS_COPY_SQL": json.dumps(payload["connection"])}
+    if payload.get("kind") == "copy_site" and payload.get("environments"):
+        # The environments here copied with it, each with its new binding: harbor checks the rest
+        chosen = payload["environments"]
+        known = target_ids(os.path.join(WEB_ROOT, site_arg(payload)))
+        if (not isinstance(chosen, list) or len(chosen) > 20 or any(
+                not isinstance(item, dict) or set(item) != {"id", "binding"} or item["id"] not in known or not isinstance(item["binding"], str)
+                for item in chosen)):
+            abort(400, "Choose the environments to copy, each with its binding")
+        extra_env = {**(extra_env or {}), "VNS_COPY_ENVIRONMENTS": json.dumps([{"id": item["id"], "binding": dns_name(item["binding"], "binding", fully_qualified=True)}
+                                                                              for item in chosen])}
     if payload.get("kind") == "create_prod":
         argv = create_prod_command(payload["site"])
     with SESSIONS_LOCK:
@@ -6143,6 +6184,170 @@ def api_windows_list():
     except ValueError:
         return error("The share could not be read.", 400)
     return jsonify(folders=found.get("folders", []), projects=found.get("projects", []), imported=windows_imported())
+
+
+# ---- Settings, Convert (phase 11): each site's database here, converted between SQLite and Microsoft SQL Server or
+# PostgreSQL by harbor site convert. An administrator's alone. A site managed from another server is that server's.
+def convert_units():
+    """Each site here and its environments in a folder here, with its service: (site, unit, label, binding)"""
+    found = []
+    names = site_dirs()
+    adopted = adopted_sites(names)
+    for name in names:
+        if name in adopted or name == ADMIN_SITE or managed_by(name):
+            continue
+        root = os.path.join(WEB_ROOT, name)
+        if os.path.isfile(os.path.join(SERVICE_DIR, service_name(name) + ".service")):
+            # The environment it runs as (DOTNET_ENVIRONMENT or ASPNETCORE_ENVIRONMENT), as the badge on its page says
+            found.append((name, name, convert_environment(name, "Production"), conf_binding(name) or name))
+        for target in environment_order(root, target_ids(root)):
+            prod = parse_prod(root, target) or {}
+            unit = prod.get("PROD_FOLDER") or ""
+            if prod.get("PROD_LOCAL_PATH") and NAME_RE.fullmatch(unit) and os.path.isfile(os.path.join(SERVICE_DIR, service_name(unit) + ".service")):
+                found.append((name, unit, convert_environment(unit, prod.get("PROD_ENVIRONMENT") or ("Production" if target == "prod" else target.capitalize())),
+                              prod.get("PROD_BINDING") or conf_binding(unit) or unit))
+    return found
+
+
+def convert_environment(unit, fallback):
+    """The environment a service runs as; ASP.NET Core's own default, Production, when it sets none"""
+    found = service_environment(unit)
+    return fallback if found in ("", "Unknown") else found
+
+
+@app.route("/api/convert")
+def api_convert():
+    """The sites' databases, the connections they can be converted to or from (never a password), and the databases
+    kept after a conversion"""
+    require_admin()
+    from harbor.core.system import System
+    from harbor.sites import convert
+    system = System()
+    sites = []
+    for site, unit, label, binding in convert_units():
+        item = convert.describe(system, unit)
+        item.pop("folder", None)
+        sites.append({**item, "site": site, "label": label, "binding": binding})
+    connections = [{key: item[key] for key in ("id", "name", "host", "port", "engine") if key in item} for item in sql_connections_public()]
+    kept = []
+    found = sorted(convert.records(system), key=lambda item: item.get("at") or 0, reverse=True)
+    # A site can be rolled back while it runs on its newest conversion's database: to any of its conversions, the
+    # newer ones rolled back first
+    newest, oldest = {}, {}
+    for item in found:
+        newest.setdefault(item.get("unit"), item)
+        # The oldest kept: what the site ran on before its first conversion, where it started
+        oldest[item.get("unit")] = item.get("id")
+    current = {unit: bool(item.get("folder") and item.get("key")) and convert.uses(system, item["folder"], item["key"], item.get("to") or {})
+               for unit, item in newest.items()}
+    name = lambda side: side.get("database") or os.path.basename(side.get("path") or "")
+    # Newest first: a conversion is rolled back before the one before it
+    for item in found:
+        old = item.get("from") or {}
+        new = item.get("to") or {}
+        kept.append({"id": item.get("id"), "unit": item.get("unit"), "at": item.get("at"), "by": item.get("by", ""),
+                     # A SQLite file is kept as its .bak (from 1.0.83), else as it was
+                     "engine": old.get("engine"), "file": os.path.relpath(old.get("backup") or old["path"], item.get("folder") or WEB_ROOT) if old.get("path") else "",
+                     "database": old.get("database", ""), "connection": old.get("connection", ""),
+                     "exists": os.path.isfile(old.get("backup") or old["path"]) if old.get("path") else True,
+                     "to": new.get("engine"),
+                     # What Roll back deletes: the new database, or the new SQLite file; and the name the old one has again
+                     "to_name": new.get("database") or os.path.basename(new.get("path") or ""),
+                     "from_name": old.get("database") or os.path.basename(old.get("path") or ""),
+                     "rollback": current.get(item.get("unit"), False),
+                     "original": oldest.get(item.get("unit")) == item.get("id"),
+                     # What a rollback to it deletes, as harbor works it out: the files and databases it ran on since
+                     "deletes": convert_deletes(convert, system, item) if current.get(item.get("unit")) else [],
+                     # What it runs on now
+                     "current": name(newest[item.get("unit")].get("to") or {})})
+    return jsonify(sites=sites, connections=connections, kept=kept)
+
+
+def convert_deletes(convert, system, item):
+    try:
+        files, databases = convert.rollback_deletes(system, convert.chain(system, item["id"]))
+    except Exception:  # noqa: BLE001 - a record that cannot be read only offers nothing to delete
+        return []
+    return [os.path.basename(path) for path in files] + [entry["database"] for entry in databases]
+
+
+# A database's and login's name as a site's: letters, digits, . _ and - (a PostgreSQL name has 63 bytes at most)
+CONVERT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,62}")
+
+
+def convert_command(data):
+    """harbor site convert, or convert-delete, with the connection and the new login's password in its environment"""
+    harbor = ["/usr/bin/python3", HARBOR_COMMAND, "site"]
+    units = {unit: (site, label) for site, unit, label, _binding in convert_units()}
+    if data.get("kind") in ("convert_delete", "convert_rollback"):
+        identifier = data.get("id")
+        if not isinstance(identifier, str) or not re.fullmatch(r"[0-9a-f]{32}", identifier):
+            abort(400, "Choose a database to delete")
+        from harbor.core.system import System
+        from harbor.sites import convert
+        item = next((item for item in convert.records(System()) if item.get("id") == identifier), None)
+        if not item:
+            abort(400, "That database is not kept after a conversion")
+        rolling = data.get("kind") == "convert_rollback"
+        env = None
+        if rolling:
+            # The new database's server of each conversion it rolls back (it and the ones after it)
+            wanted = {(side or {}).get("connection") for other in convert.chain(System(), identifier) for side in (other.get("to"), other.get("from"))
+                      if (side or {}).get("engine") not in (None, "sqlite")}
+            try:
+                with SQL_LOCK:
+                    env = {"VNS_CONVERT_CONNECTIONS": json.dumps({name: _sql_module.connection(SQL_CONNECTIONS, name) for name in wanted})}
+            except (OSError, ValueError):
+                abort(400, "The connection to a database's server is gone: roll back by hand")
+            return f"Roll back {item.get('unit')}", [*harbor, "convert-rollback", identifier], env
+        # Delete reaches the old database's server
+        old = item.get("from") or {}
+        if old.get("engine") != "sqlite":
+            try:
+                with SQL_LOCK:
+                    env = {"VNS_CONVERT_CONNECTION": json.dumps(_sql_module.connection(SQL_CONNECTIONS, old.get("connection") or ""))}
+            except (OSError, ValueError):
+                abort(400, "The connection to that database's server is gone: delete it on its server")
+        name = old.get("database") or os.path.basename(old.get("path") or "")
+        return f"Delete {name}", [*harbor, "convert-delete", identifier], env
+    unit = data.get("unit")
+    if unit not in units:
+        abort(400, "Choose a site here")
+    to = data.get("to")
+    if to not in ("mssql", "postgres", "sqlite"):
+        abort(400, "Choose what to convert to")
+    identifier = data.get("connection")
+    try:
+        with SQL_LOCK:
+            settings = _sql_module.connection(SQL_CONNECTIONS, identifier) if isinstance(identifier, str) else None
+    except (OSError, ValueError):
+        settings = None
+    if not settings:
+        abort(400, "Choose a connection")
+    if to != "sqlite" and _sql_module.engine(settings) != to:
+        abort(400, "The connection is not the server chosen")
+    user = me() or {}
+    argv = [*harbor, "convert", unit, to, "--by", (user.get("name") or user.get("username") or "")[:120]]
+    env = {"VNS_CONVERT_CONNECTION": json.dumps(settings)}
+    if to == "sqlite":
+        name = data.get("file") or ""
+        if name and (not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,120}\.(?:sqlite\.db|sqlite|sqlite3|db)", name)):
+            abort(400, "A SQLite file's name has letters, digits, . _ and -, and ends in .sqlite.db, .sqlite, .sqlite3 or .db")
+        if name:
+            argv += ["--file", name]
+        title = f"Convert {unit} to SQLite"
+    else:
+        database, login, password = data.get("database"), data.get("login"), data.get("password")
+        if not isinstance(database, str) or not CONVERT_NAME.fullmatch(database):
+            abort(400, "A database's name has letters, digits, . _ and -, at most 63, and starts with a letter or digit")
+        if not isinstance(login, str) or not CONVERT_NAME.fullmatch(login):
+            abort(400, "A login's name has letters, digits, . _ and -, at most 63, and starts with a letter or digit")
+        if not isinstance(password, str) or not 8 <= len(password) <= 128 or any(char in password for char in "\0\r\n"):
+            abort(400, "The login's password must be 8-128 characters without line breaks")
+        argv += ["--database", database, "--login", login]
+        env["VNS_CONVERT_LOGIN_PASSWORD"] = password
+        title = f"Convert {unit} to {'Microsoft SQL Server' if to == 'mssql' else 'PostgreSQL'}"
+    return title, argv, env
 
 
 @app.route("/api/windows/imported")

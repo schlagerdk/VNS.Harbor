@@ -65,6 +65,35 @@ class CopySiteTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("--issue", " ".join(system.commands))
 
+    def harbor_copy(self, conf, https):
+        """harbor alone (the script had no choice): VNS_COPY_HTTPS as Set up with HTTPS sends it"""
+        make_site(self.new, conf)
+        system = self.new.system(answers={"systemctl is-active --quiet": ""})
+        saved = dict(os.environ)
+        os.environ["VNS_COPY_HTTPS"] = https
+        try:
+            code = main(["site", "copy", "shop.dk", "copy.shop.dk", "copy.shop.dk"], system)
+        finally:
+            os.environ.clear()
+            os.environ.update(saved)
+        self.assertEqual(code, 0, system.said)
+        return system, (self.new.root / "etc/apache2/sites-available/copy.shop.dk.conf").read_text()
+
+    def test_an_https_site_copied_without_https_answers_on_http(self):
+        """No certificate asked for, and no line of the source's SSL left to name one the copy has not got"""
+        system, conf = self.harbor_copy(HTTPS, "n")
+        self.assertNotIn("--issue", " ".join(system.commands))
+        self.assertIn("<VirtualHost *:80>", conf)
+        self.assertNotIn("SSL", conf)
+        self.assertIn("ServerName copy.shop.dk", conf)
+
+    def test_an_http_site_copied_with_https(self):
+        system, conf = self.harbor_copy(CONF, "y")
+        self.assertIn("--issue", " ".join(system.commands))
+        self.assertIn("<VirtualHost *:443>", conf)
+        self.assertIn("SSLCertificateFile /etc/ssl/certs/copy.shop.dk_ecc/fullchain.cer", conf)
+        self.assertIn("RewriteRule ^ https://", conf)
+
     def test_a_new_project_is_built(self):
         result, system = self.compare("shop.dk", "copy.shop.dk", "copy.shop.dk", env={"VNS_COPY_PROJECT": "Copy"})
         self.assertEqual(result.returncode, 0, result.stderr)

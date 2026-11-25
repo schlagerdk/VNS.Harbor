@@ -2,6 +2,24 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.83] - Unreleased
+
+### Features
+
+- Settings, Convert: each site's database here (the main site and its environments in a folder here), and Convert… on it. A SQLite database goes to a new database of its own on Microsoft SQL Server or PostgreSQL (Umbraco: Microsoft SQL Server only), with a login of its own; a database on one of them goes to a new SQLite file in the site. Harbor stops the site, converts the tables, keys, indexes and rows, counts the rows on both sides, changes the connection string in appsettings*.json (the rest of the file as it was) and starts the site on the new database. If a step fails, the site runs on the old one again. The old database is kept, folded under its environment's row (Kept), until it is deleted there: a SQLite file renamed with the time of the conversion and .bak, so a conversion back can take its name and each round keeps its own; Roll back puts the site on it again with the connection string it had, and deletes the new one (each with its name typed). Only an AUTOINCREMENT column becomes an identity column: Umbraco gives the rest their ids itself. From the command line: harbor site convert, convert-rollback and convert-delete
+- Copy site checks the new binding's DNS as Create site does: here against this server, to another server against that one (the site's and its environments' names). To another server, Set up with HTTPS is offered only when every name points there
+
+- Copy site chooses the environments that go with it. To another server: each one chosen goes (one here copied, with another binding there when it is given; one on another server or Windows kept as it is); one not chosen is left out, and a migration asks whether those here are deleted or kept here as sites of their own (moved out of the site's folder when they are in it). Here: the environments here chosen are copied as the copy's own, each with a binding of its own, running the build and data they had
+- Copy site here has Set up with HTTPS, offered when DNS points here as in Create site; a copy without it answers on HTTP, also of a site with HTTPS
+- Run custom script is New script… on a site without scripts, rather than an empty menu
+- Sync setup is shown only on a site with environments: without one there is nothing to sync to
+
+### Fixes
+
+- A copied Umbraco site's VNS Harbor dashboard showed the original's environments: its connection to Harbor came with its files. A copy, here or on another server, is connected to the Harbor where it runs, by its own name
+- The lock on a SQL login shows how it is, as its state beside it: closed when it is locked
+- An environment on another Linux server that Harbor cannot reach (its login refused, the server gone) has Remove environment instead of Delete site, as one on Windows: it is removed here, and its site on the server is not touched
+
 ## [1.0.82] - 2026-11-25
 
 ### Features

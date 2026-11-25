@@ -104,8 +104,12 @@ class MoveSiteTests(unittest.TestCase):
             # The new server's harbor: harbor site receive <folder> <SQL server>
             harbor = new / "usr/local/bin/harbor"
             harbor.parent.mkdir(parents=True)
+            # Any other command (a left out environment forgotten: harbor site delete) runs as it is, on that server
             harbor.write_text(
-                f'#!/bin/bash\nshift 2; incoming=${{1#{new}}}\nexec python3 -c "import sys; sys.path.insert(0, \'{ROOT}\'); from harbor.core.system import System; '
+                f'#!/bin/bash\nif [[ $1 != site || $2 != receive ]]; then\n'
+                f'  exec python3 -c "import sys; sys.path.insert(0, \'{ROOT}\'); from harbor.core.system import RecordingSystem; '
+                f'from harbor.cli import main; sys.exit(main(sys.argv[1:], RecordingSystem(root=\'{new}\')))" "$@"\nfi\n'
+                f'shift 2; incoming=${{1#{new}}}\nexec python3 -c "import sys; sys.path.insert(0, \'{ROOT}\'); from harbor.core.system import System; '
                 f'from harbor.cli import main; sys.exit(main([\'site\', \'receive\', sys.argv[1], sys.argv[2]], System(root=\'{new}\')))" "$incoming" "$2"\n')
             harbor.chmod(0o755)
         return folder, here, new
@@ -202,6 +206,86 @@ class MoveSiteTests(unittest.TestCase):
         if result.returncode:
             self.assertIn(result.stderr.strip().splitlines()[-1], [*system.said, *told])
         return result, system, here, new
+
+    def harbor_only(self, env, prepare=None):
+        """harbor alone, for what the script could not do: the environments chosen"""
+        folder, here, new = self.make("harbor")
+        if prepare:
+            prepare(here)
+        fake = self.programs(folder, here, new)
+
+        def real(argv, stdin=None, variables=None):
+            done = subprocess.run(argv, capture_output=True, text=True, input=stdin, env=fake.env() | (variables or {}))
+            return Result(done.returncode, done.stdout, done.stderr)
+        answers = {name: real for name in ("rsync", "ssh", "sshpass", "uname", "hostname", "systemctl", "a2ensite", "a2dissite", "apache2ctl")}
+        saved = dict(os.environ)
+        os.environ.update({"VNS_MOVE_IP": HOST, "VNS_MOVE_USER": "root", "VNS_MOVE_PASSWORD": "", **env})
+        try:
+            system = RecordingSystem(root=here, answers=answers, programs=["sshpass"])
+            code = main(["site", "move", "shop.dk"], system)
+        finally:
+            os.environ.clear()
+            os.environ.update(saved)
+        return code, system, here, new
+
+    def test_a_migration_with_no_environments_deletes_those_here(self):
+        code, system, here, new = self.harbor_only({"VNS_MOVE_ENVIRONMENTS": "", "VNS_MOVE_LEFT": "delete"})
+        self.assertEqual(code, 0, system.said)
+        self.assertTrue((new / "var/www/shop.dk/_publish/Shop.dll").is_file())
+        self.assertFalse((new / "var/www/shop-staging.dk").exists(), "not copied")
+        self.assertFalse((new / "var/www/shop.dk/scripts/targets/staging").exists(), "forgotten there")
+        self.assertFalse((new / "var/www/shop.dk/scripts/targets/production").exists(), "forgotten there")
+        self.assertFalse((here / "var/www/shop-staging.dk").exists(), "deleted here")
+        self.assertFalse((here / "etc/systemd/system/shop-staging.dk.service").exists())
+
+    def test_a_copy_without_the_environment_on_another_server(self):
+        code, system, here, new = self.harbor_only({"VNS_MOVE_ENVIRONMENTS": "staging", "VNS_MOVE_COPY": "1"})
+        self.assertEqual(code, 0, system.said)
+        self.assertTrue((new / "var/www/shop-staging.dk/Shop.dll").is_file())
+        self.assertTrue((new / "var/www/shop.dk/scripts/targets/staging").is_dir())
+        self.assertFalse((new / "var/www/shop.dk/scripts/targets/production").exists())
+        # Here nothing changes: a copy
+        self.assertTrue((here / "var/www/shop.dk/scripts/targets/production").is_dir())
+
+    def test_a_migration_keeps_an_environment_here_as_a_site_of_its_own(self):
+        code, system, here, new = self.harbor_only({"VNS_MOVE_ENVIRONMENTS": "production", "VNS_MOVE_LEFT": "keep"})
+        self.assertEqual(code, 0, system.said)
+        self.assertTrue((here / "var/www/shop-staging.dk/Shop.dll").is_file(), "kept here")
+        self.assertTrue((here / "etc/systemd/system/shop-staging.dk.service").is_file())
+        self.assertFalse((new / "var/www/shop-staging.dk").exists())
+        self.assertFalse((new / "var/www/shop.dk/scripts/targets/staging").exists())
+
+    def test_one_in_the_sites_folder_kept_here_is_moved_out_of_it(self):
+        """Staging in shop.dk/_staging: kept here, it goes to /var/www/shop-staging.dk, its service and config with it"""
+        def inside(here):
+            web = here / "var/www"
+            (web / "shop-staging.dk").rename(web / "shop.dk/_staging")
+            for path in (here / "etc/systemd/system/shop-staging.dk.service", here / "etc/apache2/sites-available/shop-staging.dk.conf",
+                         web / "shop.dk/scripts/targets/staging/publish_prod.sh"):
+                path.write_text(path.read_text().replace("/var/www/shop-staging.dk", "/var/www/shop.dk/_staging"))
+        code, system, here, new = self.harbor_only({"VNS_MOVE_ENVIRONMENTS": "production", "VNS_MOVE_LEFT": "keep", "VNS_MOVE_DELETE_LOCAL": "y"}, inside)
+        self.assertEqual(code, 0, system.said)
+        self.assertTrue((here / "var/www/shop-staging.dk/Shop.dll").is_file(), "moved out, and kept when the site's files go")
+        self.assertFalse((here / "var/www/shop.dk").exists())
+        self.assertIn("WorkingDirectory=/var/www/shop-staging.dk", (here / "etc/systemd/system/shop-staging.dk.service").read_text())
+        self.assertIn("DocumentRoot /var/www/shop-staging.dk/wwwroot", (here / "etc/apache2/sites-available/shop-staging.dk.conf").read_text())
+        self.assertFalse((new / "var/www/shop.dk/_staging").exists(), "not copied")
+
+    def test_an_environment_gets_a_new_binding_there(self):
+        """Given once it runs there, and no certificate for the name it had: its own after, for the new one"""
+        code, system, here, new = self.harbor_only({"VNS_MOVE_ENVIRONMENTS": "staging", "VNS_MOVE_COPY": "1", "VNS_MOVE_HTTPS": "y",
+                                                    "VNS_MOVE_ENV_BINDINGS": '{"staging": "stage.shop.dk"}'})
+        self.assertEqual(code, 0, system.said)
+        sent = " ".join(map(str, system.commands))
+        self.assertIn("VNS_TARGET=staging /usr/local/bin/harbor env binding shop.dk stage.shop.dk '' --yes", sent)
+        self.assertIn("VNS_TARGET=staging /usr/local/bin/harbor env action shop.dk issue_certificate --yes", sent)
+        self.assertIn(("step", "Give staging the binding stage.shop.dk on new.example.test"), system.events)
+
+    def test_a_migration_asks_about_those_left_here(self):
+        code, system, here, new = self.harbor_only({"VNS_MOVE_ENVIRONMENTS": "production"})
+        self.assertEqual(code, 1)
+        self.assertIn("Choose what happens to the environments here", system.said[-1])
+        self.assertTrue((here / "etc/systemd/system/shop.dk.service").is_file(), "nothing done")
 
     # ---- the cases
     def test_a_migration_takes_the_site_and_its_environment_here(self):

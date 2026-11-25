@@ -78,6 +78,72 @@ Steps (each deployed to linux-01 and tried with a real PostgreSQL there):
    the Microsoft SQL Server databases", "Back up the PostgreSQL databases"), each suggested while its engine is here.
 5. [x] Usage and limits; a user's query sandbox; the sites' connection strings (Npgsql in appsettings; Python sites' DATABASE_URL is not changed, as for Microsoft SQL Server).
 
+## Phase 11: Convert a site's database (asked 2026-11-25)
+An administrator converts a site's SQLite database to Microsoft SQL Server or PostgreSQL on a connection they choose,
+or a site's Microsoft SQL Server or PostgreSQL database to SQLite in the site, and Harbor does all of it: the database
+and a login of its own, the conversion, the site's connection string, and the site stopped and started around it.
+Built on VNS.SQLConvert (the user's desktop tool, not in git), whose rules are taken over.
+- **Where**: Settings, Convert (an administrator's): every site with its database type, and Convert on each, which
+  opens a modal with all it needs: the direction, the connection and database name and login (to a server), or the
+  file (to SQLite). Offered for every site here (main sites, environments in a folder here; a site managed from another
+  server is that server's). Environments on other servers and IIS are step 5.
+- **Umbraco**: SQLite and Microsoft SQL Server only (Umbraco does not run on PostgreSQL): umbracoDbDSN and its
+  _ProviderName (Microsoft.Data.Sqlite / Microsoft.Data.SqlClient) in every appsettings*.json that has it.
+- **Other C# sites**: the connection string in appsettings*.json that points at the database. The site's code must
+  use the new provider: the modal says so.
+- **Python sites**: DATABASE_URL where the site keeps it (none of the user's Python sites has a database yet: found
+  where it is when the first does).
+- **The old database is kept**: the SQLite file stays where it was (after a conversion to a server), the server's
+  database stays (after one to SQLite); Settings, Convert shows it with Delete (the name typed to confirm).
+- **Safe**: the site stops while it is converted; the rows of each table are counted on both sides; when a step fails
+  the connection string is put back and the site starts on the old database again.
+
+Steps (each deployed to linux-01 and tried there):
+1. [x] lib/sql_convert.py: the schema (tables, columns, keys, identity, indexes) and the rows, SQLite to Microsoft SQL
+   Server (sqlcmd) and to PostgreSQL (psql), and either to SQLite. VNS.SQLConvert's type rules (GUID, date, bool
+   columns guessed from names and values, Umbraco's own columns, COLLATE NOCASE). Tests with SQLite
+   (tests/test_sql_convert.py), and against both servers on linux-01: a copy of a real Umbraco 17 SQLite database
+   (81 tables) to each and back gave every value as it was (PostgreSQL keeps 6 decimals of a second, not 7).
+   Unlike VNS.SQLConvert: IDENTITY(1,1) on SQL Server (it wrote AUTOINCREMENT there), INT unless a value needs BIGINT,
+   DATETIME2, and the server read directly (no script from SSMS).
+2. [x] The site's side (harbor/sites/convert.py): its working folder from its service, its connection string in
+   appsettings*.json, changed in place (comments and the rest as they were) with the provider, the site stopped and
+   started and asked for its home page (Umbraco sent to its installer is a failure), put back on an error with the new
+   database and login deleted again. Tests: tests/test_sites_convert.py.
+3. [x] `harbor site convert` / `convert-info` / `convert-delete`; the admin's /api/convert and its tasks convert_site and
+   convert_delete (an administrator's; the passwords in the task's environment: tests/admin/test_convert.py).
+4. [x] Settings, Convert: the sites with a database (one without is not shown), each site's environments together with
+   their environment's badge, Convert… and its modal, what an environment kept folded under its row with Roll back and
+   Delete (the name typed). The connection string a site had is kept with the conversion (root's file) for Roll back.
+   Only an AUTOINCREMENT key is an identity column: an IDENTITY on Umbraco's umbracoDocumentVersion refused Save and publish. Tried on linux-01 through the admin's tasks: staging of mhs.linux-01.vns.dk
+   to Microsoft SQL Server (Umbraco ran on it: its home page and /umbraco answered, its login connected), back to
+   SQLite (Umbraco-2.sqlite.db), and the old SQL database deleted with its login; then staging put back as it was.
+5. [ ] An environment on another server (SSH) or on IIS: the file fetched and the settings changed there.
+6. [ ] Python sites: DATABASE_URL, where the first Python site with a database keeps it.
+
+## Phase 12: Copy and migrate with the environments chosen (asked 2026-11-25)
+Copy site lets the user choose which environments go with the site, to another server and here.
+- **To another server**: each environment is a card to choose (none chosen at first). One here that is chosen is
+  copied with the site, as today; one on another server or Windows that is chosen keeps its reference in the copy (the
+  site there is never touched). One not chosen is not copied, and the copy on the new server does not know it (its
+  reference removed there: harbor site delete … prod, VNS_DELETE_ONLY_HERE).
+- **Migrate**: an environment here that is not chosen is asked about in the dialog: deleted here, or kept here as a site
+  of its own (its folder moved out of the site's folder to /var/www/<its folder> when it is inside, its service and
+  Apache config pointed there, and released from the site).
+- **Here** (Copy site to this server): the environments here that are chosen are copied as environments of the copy,
+  each with a new folder, service, port and binding. One on another server is not offered: two main sites would publish
+  to one site.
+
+Steps:
+1. [x] harbor site move: VNS_MOVE_ENVIRONMENTS (the ids that go), VNS_MOVE_LEFT (delete or keep, for a migration);
+   the dialog's choices and the question. Tests in tests/test_sites_move.py (harbor alone: the script could not). Not
+   tried between two real servers yet (linux-01 cannot reach linux-02 over SSH).
+2. [x] harbor site copy here with environments (VNS_COPY_ENVIRONMENTS): each copied as it is, registered (harbor env
+   create, no publish) and set up without a build (VNS_MIGRATE_ONLY; with one when the project is renamed). Tried on
+   linux-01: mhs.linux-01.vns.dk copied with its staging, both ran, then deleted.
+- A copy's vns-harbor.json is written again for the Harbor where it runs (harbor site connect --here): it came with
+  its files and named the original.
+
 ## Phase 8 steps (users on the server)
 Harbor only ever touches the Linux users in its group `harbor-users`; other users of the server are left alone. Which
 admin user has which Linux user is kept in /var/lib/harbor/users.json. Passwords stay locked until SFTP (8d).

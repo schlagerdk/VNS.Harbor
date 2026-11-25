@@ -103,6 +103,22 @@ class DeleteSiteTests(unittest.TestCase):
         # The script's paths point into its root in the test; on a server they are the same as harbor's
         self.assertEqual(system.inputs[0], sent_today(open(stdin).read().replace(str(self.old.root), "")))
 
+    def test_a_server_that_cannot_be_reached_is_only_removed_here(self):
+        """VNS_DELETE_ONLY_HERE: the environment goes from the site, nothing is sent to its server"""
+        make(self.new, environment="remote")
+        saved = dict(os.environ)
+        os.environ.update({"VNS_TARGET": "staging", "VNS_DELETE_ONLY_HERE": "1"})
+        try:
+            system = self.new.system()
+            code = main(["site", "delete", "shop.dk", "n", "prod"], system)
+        finally:
+            os.environ.clear()
+            os.environ.update(saved)
+        self.assertEqual(code, 0, system.said)
+        self.assertNotIn("ssh", " ".join(harbor_commands(system)))
+        self.assertFalse((self.new.root / "var/www/shop.dk/scripts/targets/staging").exists())
+        self.assertIn("The site shop.dk on 10.0.0.5 is not touched: remove it on the server yourself.", system.said)
+
     def test_ubuntus_default_site(self):
         def html(server, legacy=False):
             here = server.redirect if legacy else (lambda text: text)

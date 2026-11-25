@@ -13,6 +13,7 @@ A new project name is built there, and only a site without environments can get 
 
 The new server sets the sites up with `move_site.sh --receive`, whichever VNS it has: receive() is that, with harbor.
 """
+import json
 import os
 from pathlib import Path
 import re
@@ -232,6 +233,44 @@ def receive(system, incoming, sql_server=""):
 
 
 # ---- on this server
+def set_apart(system, site, target_id):
+    """An environment here made a site of its own: its folder out of the site's folder to /var/www/<its folder> when it
+    is inside, its service and Apache config pointed there, and released from the site"""
+    from harbor.sites.adopt import release_site
+    environment = settings.load(system, site.site_root, target_id)
+    folder, root = environment.FOLDER, environment.root.rstrip("/")
+    if root.startswith(f"{site.site_root}/"):
+        new_root = f"{site.root_path}/{folder}"
+        if system.path(new_root).exists():
+            raise Stop(f"{new_root} is there already, so {folder} cannot be moved out of {site.name}.")
+        unit = service_name(folder)
+        running = system.run("systemctl", "is-active", "--quiet", unit, check=False).ok
+        if running:
+            system.run("systemctl", "stop", unit)
+        system.path(new_root).parent.mkdir(parents=True, exist_ok=True)
+        os.rename(system.path(root), system.path(new_root))
+        for path in (system.path(f"{SYSTEMD}/{unit}.service"), system.path(f"{SITES}/{folder}.conf")):
+            if path.is_file():
+                path.write_text(re.sub(re.escape(root) + r"(?=/|\b|$)", new_root, path.read_text()))
+        system.run("systemctl", "daemon-reload")
+        system.run("apache2ctl", "configtest")
+        system.run("systemctl", "reload", "apache2")
+        if running:
+            system.run("systemctl", "start", unit)
+        system.say(f"{folder} is in {new_root} now")
+    try:
+        release_site(system, site.name, target_id)
+    except Stop:
+        # Its settings still name the folder it had in the site's, so release refuses it: they go here, its files and
+        # service stay
+        from harbor.sites.delete import remove
+        remove(system, f"{site.site_root}/scripts/targets/{target_id}")
+        remove(system, f"{site.site_root}/.vns-publish/target-{target_id}.json")
+        if settings.migrated(system, site.site_root):
+            settings.remove(system, site.site_root, target_id)
+        system.say(f"{folder} is a separate site again. Its files and service were not touched.")
+
+
 def move_site(system, name):
     site = Site(site_name(name))
     copy = os.environ.get("VNS_MOVE_COPY", "")
@@ -269,6 +308,22 @@ def move_site(system, name):
     except ValueError as error:
         raise Stop(str(error)) from None
     targets = settings.target_ids(system, site.site_root)
+    # The environments that go (VNS_MOVE_ENVIRONMENTS, their ids with commas; all when it is not given): one left out is
+    # not copied, and the copy there does not know it. In a migration one here that is left out is deleted here, or kept
+    # here as a site of its own (VNS_MOVE_LEFT delete or keep)
+    chosen = os.environ.get("VNS_MOVE_ENVIRONMENTS")
+    left = [] if chosen is None else [target_id for target_id in targets if target_id not in {item for item in chosen.split(",") if item}]
+    targets = [target_id for target_id in targets if target_id not in left]
+    left_here = [target_id for target_id in left if settings.load(system, site.site_root, target_id).LOCAL_PATH]
+    left_action = os.environ.get("VNS_MOVE_LEFT", "")
+    if left_here and not copy and left_action not in ("delete", "keep"):
+        raise Stop("Choose what happens to the environments here that do not go: deleted here, or kept here as sites of their own.")
+    # Left out of the site's folder as it is copied: the folders of those in it
+    excluded = []
+    for target_id in left_here:
+        environment = settings.load(system, site.site_root, target_id)
+        if environment.root.startswith(f"{site.site_root}/"):
+            excluded.append(environment.root[len(site.site_root):].rstrip("/") + "/")
     if project and targets:
         raise Stop(f"{site.name} has environments, which run the build it makes, so its project cannot get a new name.")
     rename = new_site != site.name or new_binding.lower() != old_binding.lower() or bool(project)
@@ -302,6 +357,26 @@ def move_site(system, name):
             folders.append(environment.root)
             new_folders.append(environment.root)
 
+    # A new binding there for an environment here that goes (VNS_MOVE_ENV_BINDINGS: {id: binding}): given once it runs
+    # there, and its certificate then, for the new name, never for the one it had
+    try:
+        new_bindings = json.loads(os.environ.get("VNS_MOVE_ENV_BINDINGS") or "{}")
+    except ValueError:
+        new_bindings = None
+    if not isinstance(new_bindings, dict):
+        raise Stop("The environments' new bindings could not be read.")
+    rebind = {}
+    for target_id, binding in new_bindings.items():
+        if target_id not in targets or not settings.load(system, site.site_root, target_id).LOCAL_PATH:
+            raise Stop(f"{target_id} is not an environment here that goes with the site.")
+        try:
+            validate_binding(binding)
+        except ValueError as error:
+            raise Stop(f"{binding}: {error}") from None
+        if binding.lower() != settings.load(system, site.site_root, target_id).BINDING.lower():
+            rebind[target_id] = binding
+    certificates = [site_id for site_id in certificates if site_id not in rebind]
+
     ssh = ["ssh", "-p", port, "-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=15",
            "-o", "ServerAliveCountMax=2"]
     env = {}
@@ -319,13 +394,18 @@ def move_site(system, name):
     def on_new_server(command, check=True):
         return system.run(*ssh, f"{user}@{host}", f"{sudo} {command}", env=env, check=check)
 
-    def copy_to_new_server(source, destination):
-        system.run("rsync", "-aHz", "-e", " ".join(ssh), f"--rsync-path={sudo + ' ' if sudo else ''}rsync", source, f"{user}@{host}:{destination}", env=env)
+    def copy_to_new_server(source, destination, leave_out=()):
+        system.run("rsync", "-aHz", "-e", " ".join(ssh), f"--rsync-path={sudo + ' ' if sudo else ''}rsync",
+                   *[argument for path in leave_out for argument in ("--exclude", path)], source, f"{user}@{host}:{destination}", env=env)
 
     stop_here = not copy or os.environ.get("VNS_COPY_STOP") == "y"
+    left_names = {target_id: settings.load(system, site.site_root, target_id).BINDING or target_id for target_id in left}
     system.plan([f"Check {host}", *(["Stop the sites here, so their databases and files stay consistent while they are copied"] if stop_here else []),
                  *(f"Copy {source} to {host}:{destination}" for source, destination in zip(folders, new_folders)),
-                 f"Set up the sites on {host}", *([] if copy else ["Remove the sites here"])])
+                 f"Set up the sites on {host}", *[f"Give {target_id} the binding {binding} on {host}" for target_id, binding in rebind.items()],
+                 *([f"Leave {', '.join(left_names.values())} out on {host}"] if left else []),
+                 *([] if copy else [*([f"{'Delete' if left_action == 'delete' else 'Keep'} {left_names[target_id]} here" for target_id in left_here]),
+                                    "Remove the sites here"])])
     # ---- before anything is stopped: the new server must be ready, and have none of the sites
     system.step(f"Check {host}")
     # The new server's own harbor sets the sites up (harbor site receive)
@@ -388,7 +468,7 @@ def move_site(system, name):
         for source, destination in zip(folders, new_folders):
             system.step(f"Copy {source} to {host}:{destination}")
             on_new_server(f"mkdir -p {bash_quote(destination)}")
-            copy_to_new_server(f"{system.path(source)}/", f"{destination}/")
+            copy_to_new_server(f"{system.path(source)}/", f"{destination}/", excluded if source == site.site_root else ())
         on_new_server(f"mkdir -p {bash_quote(incoming)}")
         copy_to_new_server(f"{staging}/", f"{incoming}/")
         system.step(f"Set up the sites on {host}")
@@ -422,6 +502,36 @@ def move_site(system, name):
             raise Stop("", error.result.returncode or 1) from None
         raise
     shutil.rmtree(staging, ignore_errors=True)
+
+    for target_id, binding in rebind.items():
+        system.step(f"Give {target_id} the binding {binding} on {host}")
+        given = on_new_server(f"env VNS_TARGET={bash_quote(target_id)} /usr/local/bin/harbor env binding {bash_quote(new_site)} {bash_quote(binding)} '' --yes",
+                              check=False)
+        if not given.ok:
+            system.warn(f"{target_id} keeps its binding on {host}: use Change bindings on it there.")
+        elif os.environ.get("VNS_MOVE_HTTPS") == "y" and not on_new_server(
+                f"env VNS_TARGET={bash_quote(target_id)} /usr/local/bin/harbor env action {bash_quote(new_site)} issue_certificate --yes", check=False).ok:
+            system.warn(f"{binding} answers on HTTP on {host}: use Issue certificate on it when its DNS points there.")
+    # The copies there talk to the Harbor there, by their own names: their vns-harbor.json came with their files
+    for environment in ["main", *[target_id for target_id in targets if settings.load(system, site.site_root, target_id).LOCAL_PATH]]:
+        on_new_server(f"/usr/local/bin/harbor site connect {bash_quote(new_site)} --environment {bash_quote(environment)} --here", check=False)
+    if left:
+        # The copy there forgets them: their settings go, and nothing is deleted anywhere else (only here, there)
+        system.step(f"Leave {', '.join(left_names.values())} out on {host}")
+        for target_id in left:
+            forgotten = on_new_server(f"env VNS_TARGET={bash_quote(target_id)} VNS_DELETE_ONLY_HERE=1 /usr/local/bin/harbor site delete "
+                                      f"{bash_quote(new_site)} n prod", check=False)
+            if not forgotten.ok:
+                system.warn(f"{left_names[target_id]} is still an environment of {new_site} on {host}: remove it there (Remove environment).")
+    if not copy:
+        for target_id in left_here:
+            if left_action == "delete":
+                system.step(f"Delete {left_names[target_id]} here")
+                from harbor.sites.delete import delete_site
+                delete_site(system, site.name, "n", "prod", target_id)
+            else:
+                system.step(f"Keep {left_names[target_id]} here")
+                set_apart(system, site, target_id)
 
     if copy:
         for unit in stopped:

@@ -231,6 +231,7 @@ tr.sql-backup-older > td:first-child { padding-left: 46px; }
 .badge.engine-badge { flex: none; text-transform: none; letter-spacing: 0; }
 .badge.engine-mssql { background: rgba(204, 41, 39, .18); color: #ff7b72; box-shadow: 0 0 0 1px rgba(204, 41, 39, .35) inset; }
 .badge.engine-postgres { background: rgba(51, 103, 145, .28); color: #79b8ff; box-shadow: 0 0 0 1px rgba(51, 103, 145, .55) inset; }
+.badge.engine-sqlite { background: rgba(63, 185, 80, .16); color: var(--green); box-shadow: 0 0 0 1px rgba(63, 185, 80, .35) inset; }
 .grant-connection-where { display: inline-flex; flex: none; align-items: center; gap: 8px; white-space: nowrap; }
 /* The one connection by the heading, its engine beside it */
 .sql-only-connection:not([hidden]) { display: inline-flex; align-items: center; gap: 12px; }
@@ -453,7 +454,8 @@ dialog.danger h2 { color: var(--red); }
 dialog.danger .primary:not(:disabled) { background: #da3633; border-color: var(--red); }
 #prompt-ok:disabled { opacity: .4; cursor: not-allowed; background: var(--panel2); border-color: var(--line); color: var(--muted); }
 #dlg-prompt { width: min(520px, 92vw); min-width: 0; }
-#prompt-message { overflow-wrap: anywhere; }
+/* A message's line breaks are kept: a long one is written in short lines */
+#prompt-message { overflow-wrap: anywhere; white-space: pre-line; }
 #dlg-prompt .confirmation-copy { white-space: normal; }
 #dlg-prompt .prompt-extra-row { margin-top: 16px; }
 #dlg-prompt #prompt-extra { width: 100%; height: 160px; resize: none; overflow-y: auto; font: inherit; }
@@ -713,7 +715,6 @@ dialog.files-dialog { padding: 18px; }
 .script-menu-edit:hover:not(:where(:disabled, .disabled, .off)), .script-menu-edit:focus-visible { border-color: rgba(210, 153, 34, .35); background: rgba(210, 153, 34, .12); color: #d29922; }
 .script-menu-edit .ico { width: 14px; height: 14px; margin: 0; }
 .script-menu-edit.danger:hover:not(:where(:disabled, .disabled, .off)), .script-menu-edit.danger:focus-visible { border-color: rgba(248, 81, 73, .4); background: rgba(248, 81, 73, .12); color: var(--red); }
-.script-menu-empty { margin: 0; padding: 12px 8px 8px; color: var(--muted); font-size: 12.5px; }
 /* Scripts someone other than root can change: not run until an administrator makes them root's */
 /* Deleting what a dialog is about (a user, a template, a connection): at its foot, away from Save, in red with what it does */
 .danger-zone { display: flex; align-items: center; gap: 12px; margin-top: 22px; padding: 12px 14px; border: 1px solid rgba(248, 81, 73, .35); border-radius: 12px; background: rgba(248, 81, 73, .06); }
@@ -808,7 +809,6 @@ dialog.newsite menu .cancel-action { margin-right: auto; }
 dialog.newsite input:not([type=radio]):not([type=checkbox]), dialog.newsite select { height: 38px; padding: 0 12px; font-size: 14px; line-height: 1.2; }
 dialog.newsite .copy-connection-toggle input[type=checkbox] { width: auto; height: auto; padding: 0; flex-shrink: 0; }
 dialog.newsite .copy-connection-toggle { flex-direction: row; align-items: center; gap: 9px; margin: 16px 0 0; padding: 12px; background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; color: var(--text); cursor: pointer; }
-#dlg-copy-site .copy-dns-hint { margin-top: 0; }
 #copy-sql-fields, #sql-database-login, #sql-restore-login, #sql-restore-overwrite { margin: 12px 0 0; padding: 12px; border: 1px solid var(--line); border-radius: 8px; }
 #copy-sql-fields .hint, #sql-database-login .hint, #sql-restore-login .hint, #sql-restore-overwrite .hint { margin-bottom: 12px; }
 #copy-sql-fields label, #sql-database-login label, #sql-restore-login label, #sql-restore-overwrite label { min-width: 0; }
@@ -2055,6 +2055,20 @@ button.primary.danger-primary:disabled { opacity: .5; }
 .move-site-list { list-style: none; margin: 0 0 14px; padding: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
 .move-site-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 12px; padding: 9px 14px; font-size: 13px; }
 .move-site-list li + li { border-top: 1px solid var(--line); }
+/* An environment to choose: its box first, the whole row clicks it; the site itself has the box's room empty */
+.move-site-list li:has(> .windows-check), .move-site-list li:has(> .move-site-check-space) { grid-template-columns: 22px minmax(0, 1fr) auto auto; }
+.move-site-list li.move-site-env { cursor: pointer; transition: background .15s; }
+.move-site-list li.move-site-env:hover { background: rgba(88, 166, 255, .05); }
+.move-site-list li.move-site-env.chosen { background: rgba(88, 166, 255, .07); }
+.move-site-list .left .move-site-name { color: var(--muted); }
+.move-site-list .left .move-site-where { color: var(--muted); background: rgba(139, 148, 158, .12); }
+#copy-server-left .type-cards { margin-bottom: 14px; }
+/* A copied environment's own binding, under its name: its word and field on one line, not the dialogs' stacked label */
+dialog .move-site-list li > label.move-site-binding { grid-column: 2 / -1; display: flex; flex-direction: row; align-items: center; gap: 12px; margin: 4px 0 2px;
+	color: var(--muted); font-size: 12.5px; text-align: left; cursor: default; }
+dialog .move-site-list li > label.move-site-binding[hidden] { display: none; }
+dialog .move-site-list li > label.move-site-binding > span { flex: none; }
+dialog.newsite .move-site-list .move-site-binding input { flex: 1; min-width: 0; height: 34px; }
 .move-site-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .move-site-where { min-width: 84px; padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 600; text-align: center; }
 .move-site-list .goes .move-site-where { color: var(--green); background: rgba(63, 185, 80, .12); }
@@ -2064,6 +2078,7 @@ button.primary.danger-primary:disabled { opacity: .5; }
 .move-site-http strong { color: #d29922; }
 @media (max-width: 560px) {
 	.move-site-list li { grid-template-columns: minmax(0, 1fr) auto; }
+	.move-site-list li:has(> .windows-check), .move-site-list li:has(> .move-site-check-space) { grid-template-columns: 22px minmax(0, 1fr) auto; }
 	.move-site-where { grid-column: 1 / -1; justify-self: start; }
 }
 
@@ -2922,3 +2937,124 @@ input.made-binding, input.made-binding:focus { border-style: dashed; border-colo
 .preview-image { display: block; max-width: 100%; max-height: 100%; object-fit: contain; }
 .preview-pdf { width: 100%; height: 100%; border: 0; background: #fff; }
 #preview-download .ico { width: 14px; height: 14px; margin: 0; }
+
+/* Settings, Convert: a site with its environments under it, each with its database, what it kept, and Convert… */
+#server-convert-list { grid-template-columns: minmax(0, 1fr); }
+#server-convert-list > .tool-card { grid-column: 1 / -1; min-height: 0; }
+.convert-groups { display: grid; gap: 10px; margin: 4px 0 0; padding: 0; list-style: none; }
+.convert-group { padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: rgba(0, 0, 0, .12); }
+.convert-group-head { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 2px 4px 10px; }
+.convert-group-head .convert-site-link { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.convert-group-icon { display: grid; flex: none; place-items: center; width: 26px; height: 26px; border-radius: 8px; background: rgba(163, 113, 247, .14); color: var(--purple); }
+.convert-group-icon .ico { width: 14px; height: 14px; margin: 0; }
+.convert-rows { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+/* An environment's row and what it kept share one set of columns (subgrid): every database badge stands in one line */
+.convert-entry, .convert-card > .convert-kept { display: grid; grid-template-columns: minmax(160px, 1fr) 140px 172px minmax(0, 1.6fr) 120px 132px; column-gap: 14px; }
+.convert-entry { border-radius: 8px; background: rgba(0, 0, 0, .18); }
+.convert-row { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; align-items: center; min-width: 0; padding: 8px 12px; font-size: 12.5px; }
+.convert-unit { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--text); }
+.convert-unit > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The bent arrow of an environment under its main site */
+.convert-unit > .ico { flex: none; width: 14px; height: 14px; margin: 0 0 4px 4px; color: var(--muted); }
+/* The filter beside Convert's heading, as the SQL Server page's beside its tabs */
+#server-pane-convert .server-pane-head { display: flex; align-items: center; gap: 16px; }
+.convert-filter-box { flex: 0 1 340px; margin-left: auto; }
+.convert-filter-box[hidden] { display: none; }
+.convert-filter-box:has(.sql-filter:not(:placeholder-shown)) .search-clear { display: grid; }
+@media (max-width: 800px) { #server-pane-convert .server-pane-head { flex-wrap: wrap; } .convert-filter-box { flex: 1 1 100%; margin-left: 0; } }
+/* The environment's badge centred in its column, as small as its word; the engine's dot and name from the start of its own */
+.convert-env { display: flex; justify-content: center; min-width: 0; }
+.convert-engine { display: flex; justify-content: flex-start; min-width: 0; }
+/* Light: an environment's badge as small as its word; the engine a dot in its colour and its name as text */
+.convert-env .badge { white-space: nowrap; }
+.convert-engine .badge { display: inline-flex; align-items: center; gap: 7px; padding: 0; background: none; box-shadow: none; color: var(--text);
+	font-size: 12.5px; font-weight: 500; letter-spacing: 0; text-transform: none; white-space: nowrap; }
+.convert-engine .badge::before { content: ""; flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.convert-engine .badge.engine-sqlite::before { background: var(--green); }
+.convert-engine .badge.engine-mssql::before { background: #ff7b72; }
+.convert-engine .badge.engine-postgres::before { background: #79b8ff; }
+.convert-detail { min-width: 0; overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.convert-note { justify-self: end; max-width: 320px; overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.convert-row > button:last-child { justify-self: stretch; justify-content: center; }
+.convert-kept-toggle { justify-self: center; }
+/* Kept: a grey chip that unfolds what the environment ran on before. Grey, as the colours in these rows are the
+   environments' and the engines' */
+.convert-kept-toggle { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--line); border-radius: 999px;
+	background: var(--hover); color: var(--muted); font-size: 12px; font-weight: 600; white-space: nowrap; }
+.convert-kept-toggle .ico { width: 13px; height: 13px; margin: 0; }
+.convert-kept-toggle .ico:last-child { transition: transform .15s; }
+.convert-kept-toggle[aria-expanded="true"] .ico:last-child { transform: rotate(90deg); }
+.convert-kept-toggle:hover:not(:where(:disabled, .disabled, .off)) { border-color: var(--muted); color: var(--text); }
+.convert-kept-toggle[aria-expanded="true"] { color: var(--text); }
+/* Kept: a box of its own under the environment's row, with its heading; its rows still in the row's columns (subgrid) */
+.convert-kept { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; row-gap: 4px; margin: 0 12px 12px; padding: 10px; list-style: none;
+	border: 1px solid var(--line); border-radius: 10px; background: rgba(0, 0, 0, .22); box-shadow: 0 1px 0 rgba(255, 255, 255, .03) inset; }
+.convert-kept-head { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; min-width: 0; padding: 2px 4px 8px; margin-bottom: 4px;
+	border-bottom: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+.convert-kept-head .ico { flex: none; width: 14px; height: 14px; margin: 0; }
+.convert-kept-head strong { color: var(--text); font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; }
+.convert-kept-head small { min-width: 0; overflow: hidden; margin-left: 4px; text-overflow: ellipsis; white-space: nowrap; }
+.convert-kept-count { padding: 0 7px; border-radius: 999px; background: var(--hover); color: var(--text); font-size: 11px; font-weight: 700; line-height: 18px; }
+.convert-kept[hidden] { display: none; }
+.convert-kept-line { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; align-items: center; min-width: 0;
+	padding: 6px 2px; border: 1px solid transparent; border-radius: 8px; font-size: 12.5px; }
+.convert-kept-icon { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 8px; background: var(--hover); color: var(--muted); }
+.convert-kept-icon .ico { width: 14px; height: 14px; margin: 0; }
+.convert-kept-line > .convert-kept-name { grid-column: 1; }
+.convert-kept-line > .convert-env { grid-column: 2; }
+.convert-kept-line > .convert-engine { grid-column: 3; }
+.convert-kept-line > .convert-detail { grid-column: 4; }
+.convert-kept-line > .convert-kept-actions { grid-column: 5 / 7; }
+.convert-kept-name { display: flex; align-items: center; gap: 10px; min-width: 0; font-weight: 600; }
+.convert-kept-file { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.convert-kept-icon { flex: none; }
+/* Where the site started: an outlined badge with a flag, in the text's own colour: no environment's colour, and not
+   filled as an environment's badge is */
+.badge.convert-original { display: inline-flex; align-items: center; justify-content: center; gap: 6px; background: transparent; color: var(--text);
+	box-shadow: 0 0 0 1px var(--muted) inset; }
+.badge.convert-original .ico { width: 12px; height: 12px; margin: 0; }
+.convert-kept-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.convert-card > .convert-kept { padding: 4px 0 0; }
+/* From and To at the top of Convert…: one panel, a side each with a tile in its engine's colour, an arrow between */
+.convert-flow { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 12px; margin: 0 0 20px; padding: 12px 14px;
+	border: 1px solid var(--line); border-radius: 12px; background: var(--panel2); }
+.convert-side { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.convert-side-text { display: grid; gap: 2px; min-width: 0; }
+.convert-side strong { overflow: hidden; color: var(--text); font-size: 13.5px; text-overflow: ellipsis; white-space: nowrap; }
+.convert-side small { overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.convert-side.pending strong { color: var(--muted); font-weight: 500; }
+.convert-tile { display: grid; flex: none; place-items: center; width: 34px; height: 34px; border: 1px dashed var(--line); border-radius: 9px; color: var(--muted); }
+.convert-tile .ico { width: 16px; height: 16px; margin: 0; }
+.convert-tile.engine-sqlite { border: 0; background: rgba(63, 185, 80, .14); color: var(--green); }
+.convert-tile.engine-mssql { border: 0; background: rgba(204, 41, 39, .16); color: #ff7b72; }
+.convert-tile.engine-postgres { border: 0; background: rgba(51, 103, 145, .28); color: #79b8ff; }
+.convert-arrow { display: grid; place-items: center; color: var(--muted); }
+.convert-arrow .ico { width: 16px; height: 16px; margin: 0; }
+@media (max-width: 560px) {
+	.convert-flow { grid-template-columns: minmax(0, 1fr); }
+	.convert-arrow { justify-self: start; margin-left: 9px; transform: rotate(90deg); }
+}
+/* The hint under the login stands apart from the notes; the last note and an empty error add no space above the buttons */
+dialog.newsite .convert-form .hint { margin: 4px 0 16px; }
+.convert-form > .server-action-note:not(:has(~ .server-action-note)) { margin-bottom: 0; }
+.convert-form > .error:empty { display: none; }
+.convert-form > .error { margin: 12px 0 0; }
+/* The server to convert to (or read from) first: Servers' cards, each with its engine */
+.convert-server-choice { margin: 0 0 16px; }
+.convert-server-choice[hidden] { display: none; }
+.convert-servers { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 10px; }
+.convert-servers .server-card { padding: 12px 14px; }
+.convert-servers .server-card.only { pointer-events: none; }
+.server-card-icon.engine-mssql { background: rgba(204, 41, 39, .16); color: #ff7b72; }
+.server-card-icon.engine-postgres { background: rgba(51, 103, 145, .28); color: #79b8ff; }
+@media (max-width: 860px) {
+	.convert-entry, .convert-card > .convert-kept { grid-template-columns: minmax(0, 1fr) auto auto; }
+	.convert-detail, .convert-note { grid-column: 1 / -1; justify-self: start; max-width: none; white-space: normal; }
+	.convert-row > button:last-child, .convert-kept-toggle { grid-column: 1 / -1; justify-self: stretch; justify-content: center; }
+	.convert-row > span:empty { display: none; }
+	.convert-kept-line > .convert-kept-name { grid-column: 1; }
+	.convert-kept-line > .convert-env { grid-column: 2; }
+	.convert-kept-line > .convert-engine { grid-column: 3; }
+	.convert-kept-line > .convert-detail, .convert-kept-line > .convert-kept-actions { grid-column: 1 / -1; }
+	.convert-kept-actions > button { flex: 1; justify-content: center; }
+}

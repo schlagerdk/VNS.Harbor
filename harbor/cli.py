@@ -63,6 +63,27 @@ def _copy_site(args, system):
     copy_site(system, args.source, args.target, args.binding, args.database or "", stop_source=args.stop_source, remove_source=args.remove_source or "")
 
 
+def _convert_site(args, system):
+    from harbor.sites.convert import convert_site
+    convert_site(system, args.unit, args.to, args.database or "", args.login or "", args.file or "", args.key or "", args.by or "")
+
+
+def _convert_info(args, system):
+    import json
+    from harbor.sites.convert import describe, records
+    print(json.dumps({"sites": [describe(system, unit) for unit in args.units], "converted": records(system)}))
+
+
+def _convert_rollback(args, system):
+    from harbor.sites.convert import rollback_to
+    rollback_to(system, args.id)
+
+
+def _convert_delete(args, system):
+    from harbor.sites.convert import delete_old
+    delete_old(system, args.id)
+
+
 def _setup_site(args, system):
     from harbor.sites.setup import setup_site
     setup_site(system, args.site, args.binding, args.certificate, args.environment)
@@ -435,6 +456,10 @@ def _create_environment(args, system):
 
 def _connect(args, system):
     from harbor.umbraco import backoffice
+    if args.here:
+        # A copy: this server's Harbor, never the one its copied vns-harbor.json named (only with the package)
+        backoffice.reconnect(system, args.site, [args.environment], restart=True)
+        return
     backoffice.connect(system, args.site, args.environment, args.harbor_url)
 
 
@@ -597,6 +622,26 @@ def parser():
     command.add_argument("--stop-source", action="store_true", help="stop the source while it is copied, then start it again")
     command.add_argument("--remove-source", choices=("config", "all"), help="move: remove the source's service and Apache config, or all of it, once the copy runs")
     command.set_defaults(handler=_copy_site)
+    command = site.add_parser("convert", help="a site's SQLite database to Microsoft SQL Server or PostgreSQL, or its database there to SQLite "
+                                              "(the connection in VNS_CONVERT_CONNECTION, the new login's password in VNS_CONVERT_LOGIN_PASSWORD)")
+    command.add_argument("unit", help="the site's service: the site, or an environment in a folder here")
+    command.add_argument("to", choices=("mssql", "postgres", "sqlite"))
+    command.add_argument("--database", help="the new database (to a server)")
+    command.add_argument("--login", help="the new database's own login (to a server)")
+    command.add_argument("--file", help="the new SQLite file's name (to SQLite; Umbraco's in umbraco/Data, another's in App_Data)")
+    command.add_argument("--key", help="the connection string to convert, when the site has several")
+    command.add_argument("--by", help="who asked for it, kept with the conversion")
+    command.set_defaults(handler=_convert_site)
+    command = site.add_parser("convert-info", help="the sites' databases as Settings, Convert shows them (JSON), and the conversions made")
+    command.add_argument("units", nargs="*")
+    command.set_defaults(handler=_convert_info)
+    command = site.add_parser("convert-delete", help="the SQLite file a site ran on before a conversion, deleted (or a server's database forgotten)")
+    command.add_argument("id")
+    command.set_defaults(handler=_convert_delete)
+    command = site.add_parser("convert-rollback", help="a conversion undone: the site back on its old database, the new one deleted "
+                                                       "(the connection to the new one's server in VNS_CONVERT_CONNECTION)")
+    command.add_argument("id")
+    command.set_defaults(handler=_convert_rollback)
     command = site.add_parser("setup", help="set up a folder put in /var/www by hand (was setup_site.sh)")
     command.add_argument("site", nargs="?", default="")
     command.add_argument("binding", nargs="?", default="", help="the binding, or * to answer any name")
@@ -678,6 +723,7 @@ def parser():
     command.add_argument("site")
     command.add_argument("--environment", default="main", help="main, or an environment on this server")
     command.add_argument("--harbor-url", default="", help="Harbor's address, as the site reaches it")
+    command.add_argument("--here", action="store_true", help="a copied site: this server's Harbor, and only when it has the package")
     command.set_defaults(handler=_connect)
     command = site.add_parser("backoffice-user", help="the Umbraco user the Backend button logs in as (empty: the login)")
     command.add_argument("site")

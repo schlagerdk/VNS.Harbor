@@ -1080,6 +1080,8 @@ const iconPaths = {
 	sync: "M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8M21 3v5h-5M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16M8 16H3v5",
 	restart: "M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8M21 3v5h-5",
 	undo: "M3 7v6h6M21 17a9 9 0 0 0-15-6.7L3 13",
+	"arrow-right": "M5 12h14M12 5l7 7-7 7",
+	flag: "M4 22V4M4 4h12l-2 4 2 4H4",
 	trash: "M3 6h18M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2",
 	play: "M6 3l14 9-14 9z",
 	stop: "M7 5h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2z",
@@ -1568,6 +1570,13 @@ function customScripts(site) {
 function scriptSelect(site, env = null, className = "") {
 	const target = env && isTarget(env) ? env.target || "prod" : null;
 	const files = target ? env.custom_scripts || [] : customScripts(site);
+	// No scripts yet: New script… as a button of its own, not an empty menu (only an administrator gets here then)
+	if (!files.length) {
+		const button = tonedButton("New script…", "plus", "green", () => newCustomScript(site, target));
+		button.classList.add("small");
+		button.title = `A script of ${target ? "this environment" : "the site"}, run as root in its folder`;
+		return button;
+	}
 	const groups = customScriptGroups(files);
 	const menu = el("div", { className: "script-menu " + (className || "") });
 	const trigger = el("button", {
@@ -1582,7 +1591,6 @@ function scriptSelect(site, env = null, className = "") {
 		el("span", { className: "script-menu-eyebrow", textContent: "SITE AUTOMATIONS" }),
 		el("strong", { textContent: "Custom scripts" }),
 		el("span", { className: "script-menu-count", textContent: String(files.length) + (files.length === 1 ? " script" : " scripts") })));
-	if (!files.length) panel.append(el("p", { className: "script-menu-empty", textContent: target ? "This environment has no scripts of its own yet." : "This site has no scripts yet." }));
 	// Scripts someone other than root can change are not run, as they run as root: an administrator checks them and
 	// makes them root's here
 	const unsafe = (target ? env.custom_scripts_safe : site.custom_scripts_safe) === false;
@@ -2181,8 +2189,9 @@ function envPanel(site, env) {
 			const dataButton = el("button", { textContent: "Sync data…", className: "small", title: "Merge content and media from this site into another", onclick: () => run(() => openSyncDialog(site, env, true)) });
 			sync.insertBefore(dataButton, [...sync.children].find((button) => button.textContent === "Sync settings…") || null);
 		}
-		// Setup first, at the left: the syncs it allows stand at the right
-		sync.prepend(el("button", { textContent: "Sync setup…", className: "small sync-setup", title: dataSyncSummary(env), onclick: () => run(() => openDataSyncDialog(site, env)) }));
+		// Setup first, at the left: the syncs it allows stand at the right. Only with environments: without one there is
+		// nothing to send or receive
+		if (hasProd(site)) sync.prepend(el("button", { textContent: "Sync setup…", className: "small sync-setup", title: dataSyncSummary(env), onclick: () => run(() => openDataSyncDialog(site, env)) }));
 	}
 	// Custom scripts: the main site's, or an environment's own (not on Windows); an administrator has the menu also
 	// without one, to make the first
@@ -2244,6 +2253,8 @@ function envPanel(site, env) {
 	}
 	// An environment on Windows is only removed here: its IIS site and files stay on the server
 	if (hasProd(site) && !site.admin && env.mode === "windows") addManage("Remove environment", () => deleteSite(site, "prod", env), "push-right");
+	// One on another server Harbor cannot reach is only removed here too: nothing can be deleted there
+	else if (hasProd(site) && !site.admin && env.mode === "remote" && env.remote_error) addManage("Remove environment", () => deleteSite(site, "prod", env, { onlyHere: true }), "push-right");
 	// An environment is deleted on its own card. The main site only when it has none left: they are built from its
 	// project (harbor refuses it too)
 	else if (hasProd(site) && !site.admin && isTarget(env)) addManage("Delete site", () => deleteSite(site, "prod", env), "danger");
@@ -2775,24 +2786,111 @@ async function copySite(site, main) {
 	$("#copy-move-row").hidden = !canMoveHere;
 	field("move_here").disabled = !canMoveHere;
 	$("#copy-here-options").hidden = !canMoveHere && !hasService;
-	$("#copy-no-environments").textContent = "The copy is a site of its own: its environments are not copied, and you can add environments to it afterwards."
-		+ (can(site.name, "main", "delete") ? " So it can be copied here, not moved." : "");
+	// The environments here go with a copy here when chosen (none at first), each as one of the copy's with a binding of
+	// its own: as the copy's, staging.shop.dk becomes staging.copy.shop.dk until it is typed. One on another server stays
+	// with the original: two main sites would publish to one site
+	const hereEnvs = sortedEnvironments(site.environments).filter((env) => isTarget(env) && env.mode === "local");
+	const elsewhere = site.environments.some((env) => isTarget(env) && env.mode !== "local");
+	$("#copy-no-environments").textContent = elsewhere
+		? `Environments on other servers stay with ${siteLabel(site)}: two sites cannot publish to one. Add environments to the copy afterwards.` : "";
+	const hereChosen = new Set();
+	const suggestBinding = (env) => {
+		const old = bindingLabel(env) || "", mainBinding = (main && bindingLabel(main)) || "", copyBinding = field("binding").value.trim();
+		if (!copyBinding) return "";
+		return mainBinding && old.toLowerCase().endsWith(mainBinding.toLowerCase()) ? old.slice(0, old.length - mainBinding.length) + copyBinding : `${env.target || "prod"}.${copyBinding}`;
+	};
+	const hereRows = hereEnvs.map((env) => {
+		const target = env.target || "prod";
+		const where = el("span", { className: "move-site-where" });
+		const binding = el("input", { className: "move-site-binding-input", required: true, autocomplete: "off", spellcheck: false, value: suggestBinding(env), ariaLabel: `Binding of the copy of ${bindingLabel(env)}` });
+		binding.oninput = () => { binding.dataset.edited = "1"; };
+		const bindingRow = el("label", { className: "move-site-binding" }, el("span", { textContent: "Binding" }), binding);
+		const box = el("input", { type: "checkbox", className: "windows-check", ariaLabel: bindingLabel(env) || target,
+			onchange: () => { if (box.checked) hereChosen.add(target); else hereChosen.delete(target); update(); } });
+		const row = el("li", { className: "move-site-env" }, box,
+			el("span", { className: "move-site-name", textContent: bindingLabel(env) || env.folder || target }),
+			el("span", { className: `sync-env-name env-${environmentLabel(site, env).toLowerCase()}`, textContent: environmentLabel(site, env) }), where, bindingRow);
+		row.onclick = (event) => { if (event.target !== box && !event.target.closest(".move-site-binding")) { box.checked = !box.checked; box.onchange(); } };
+		row.show = () => {
+			const on = hereChosen.has(target);
+			row.className = "move-site-env " + (on ? "goes chosen" : "left");
+			where.textContent = on ? "Copied" : "Left out";
+			bindingRow.hidden = !on;
+			binding.disabled = !on;
+			if (!binding.dataset.edited) binding.value = suggestBinding(env);
+			// Before the copy has its binding: the form one takes
+			binding.placeholder = `${target}.${field("binding").value.trim() || "copy.example.com"}`;
+		};
+		row.target = target;
+		row.binding = binding;
+		return row;
+	});
+	$("#copy-here-env-list").replaceChildren(...hereRows);
+	const hereAll = () => hereEnvs.every((env) => hereChosen.has(env.target || "prod"));
+	$("#copy-here-select-all").hidden = hereRows.length < 2;
+	$("#copy-here-select-all").onclick = () => {
+		const all = hereAll();
+		for (const row of hereRows) { row.querySelector(".windows-check").checked = !all; if (all) hereChosen.delete(row.target); else hereChosen.add(row.target); }
+		update();
+	};
 	// A site with a project gets a project of its own
 	const hasProject = site.has_project;
 	$("#copy-project-row").hidden = !hasProject;
 	let projectEdited = false;
 
-	// What goes to another server: the site and its environments here. The others stay where they are.
-	const items = sortedEnvironments(site.environments).map((env) => {
-		const goes = !isTarget(env) || env.mode === "local";
-		const where = goes ? "Goes" : env.mode === "windows" ? "Stays on Windows" : `Stays on ${env.host || "its server"}`;
-		return el("li", { className: goes ? "goes" : "stays" },
+	// What goes to another server: the site always, and each environment chosen (none at first). One here is copied;
+	// one on another server or Windows keeps its reference in the copy, and is never touched. One not chosen is left out
+	const chosenEnvs = new Set();
+	const envRow = (env) => {
+		const target = env.target || "prod", here = env.mode === "local";
+		const where = el("span", { className: "move-site-where" });
+		const box = el("input", { type: "checkbox", className: "windows-check", ariaLabel: bindingLabel(env) || env.folder || target,
+			onchange: () => { if (box.checked) chosenEnvs.add(target); else chosenEnvs.delete(target); update(); } });
+		// One here that goes can get another binding there; one elsewhere keeps its own
+		const binding = el("input", { className: "move-site-binding-input", required: true, autocomplete: "off", spellcheck: false, value: bindingLabel(env) || "",
+			ariaLabel: `Binding of ${bindingLabel(env)} on the new server`, oninput: () => update() });
+		const bindingRow = el("label", { className: "move-site-binding" }, el("span", { textContent: "Binding there" }), binding);
+		const row = el("li", { className: "move-site-env" }, box,
 			el("span", { className: "move-site-name", textContent: bindingLabel(env) || env.folder || siteLabel(site) }),
-			el("span", { className: `sync-env-name env-${environmentLabel(site, env).toLowerCase()}`, textContent: environmentLabel(site, env) }),
-			el("span", { className: "move-site-where", textContent: where }));
-	});
-	$("#copy-server-list").replaceChildren(...items);
-	const kept = site.environments.some((env) => isTarget(env) && env.mode !== "local");
+			el("span", { className: `sync-env-name env-${environmentLabel(site, env).toLowerCase()}`, textContent: environmentLabel(site, env) }), where,
+			...(here ? [bindingRow] : []));
+		row.onclick = (event) => { if (event.target !== box && !event.target.closest(".move-site-binding")) { box.checked = !box.checked; box.onchange(); } };
+		row.target = target;
+		row.here = here;
+		row.original = bindingLabel(env) || "";
+		row.binding = binding;
+		row.show = (removing) => {
+			const on = chosenEnvs.has(target);
+			bindingRow.hidden = !on;
+			binding.disabled = !on;
+			row.className = "move-site-env " + (on ? "goes chosen" : "left");
+			where.textContent = !on ? (here && removing ? "Left here" : "Left out") : here ? (removing ? "Moves" : "Copied")
+				: env.mode === "windows" ? "Kept, on Windows" : `Kept, on ${env.host || "its server"}`;
+		};
+		return row;
+	};
+	const mainRow = el("li", { className: "goes" },
+		el("span", { className: "move-site-check-space" }),
+		el("span", { className: "move-site-name", textContent: (main && bindingLabel(main)) || siteLabel(site) }),
+		el("span", { className: `sync-env-name env-${environmentLabel(site, main).toLowerCase()}`, textContent: environmentLabel(site, main) }),
+		el("span", { className: "move-site-where", textContent: "Goes" }));
+	const envTargets = sortedEnvironments(site.environments).filter(isTarget);
+	const envRows = envTargets.map(envRow);
+	const allChosen = () => envTargets.every((env) => chosenEnvs.has(env.target || "prod"));
+	// The names the DNS card checks against the new server: the environments here that go, by the binding they get there
+	const goingBindings = () => envRows.filter((row) => row.here && chosenEnvs.has(row.target)).map((row) => row.binding.value.trim()).filter(Boolean);
+	// Select all beside What goes, as Import from Windows has it beside its sites
+	const selectAll = $("#copy-select-all");
+	selectAll.hidden = envRows.length < 2;
+	selectAll.onclick = () => {
+		const all = allChosen();
+		for (const env of envTargets) { if (all) chosenEnvs.delete(env.target || "prod"); else chosenEnvs.add(env.target || "prod"); }
+		for (const row of envRows) row.querySelector("input").checked = !all;
+		update();
+	};
+	$("#copy-server-list").replaceChildren(mainRow, ...envRows);
+	const kept = () => envTargets.some((env) => env.mode !== "local" && chosenEnvs.has(env.target || "prod"));
+	for (const radio of field("left_here")) radio.checked = false;
 	// On the new server it keeps its folder, binding and project unless they are changed. Its environments run the
 	// build it makes, so only a site without them can get a new project name.
 	field("server_folder").value = siteLabel(site);
@@ -2813,9 +2911,26 @@ async function copySite(site, main) {
 	};
 	field("server_binding").oninput = () => { serverBindingEdited = true; };
 	showServerPath();
-	// With HTTPS, DNS for the site and its environments here is checked against the new server as it is typed
-	$("#copy-server-env-bindings").value = site.environments.filter((env) => isTarget(env) && env.mode === "local").map(bindingLabel).filter(Boolean).join("\n");
-	$("#copy-server-dns").replaceChildren(dnsCard(field("server_binding"), { expect: () => publicAddressOf(field("host").value.trim()) || field("host").value.trim(), aliases: $("#copy-server-env-bindings") }));
+	// The copy's binding here is checked against this server, as Create site's: HTTPS is offered when it points here,
+	// off at first, and a choice made comes back when DNS is right again
+	let hereDns = "empty", hereHttpsChosen = false;
+	field("here_https").checked = false;
+	$("#copy-here-dns").replaceChildren(dnsCard(field("binding"), { onState: (state) => {
+		if (state === "checking") return;
+		hereDns = state;
+		update();
+	} }));
+	// DNS for the site and its environments here is checked against the new server as it is typed, as Create site
+	// checks it against this one: HTTPS is offered only when every name points there. Off at first; a choice made comes
+	// back when DNS is right again
+	let serverDns = "empty", httpsChosen = false;
+	$("#copy-server-dns").replaceChildren(dnsCard(field("server_binding"), { expect: () => publicAddressOf(field("host").value.trim()) || field("host").value.trim(), aliases: $("#copy-server-env-bindings"),
+		onState: (state) => {
+			if (state === "checking") return;
+			serverDns = state;
+			update();
+		} }));
+	field("https").checked = false;
 
 	const update = () => {
 		const toServer = field("destination").value === "server";
@@ -2834,16 +2949,29 @@ async function copySite(site, main) {
 		field("delete_local").disabled = !removing;
 		if (!removing) field("delete_local").checked = false;
 		$("#copy-stop-row").hidden = removing;
+		const hereHttps = !toServer && hereDns === "here";
+		field("here_https").closest(".copy-options").hidden = !hereHttps;
+		field("here_https").disabled = !hereHttps;
+		field("here_https").checked = hereHttps && hereHttpsChosen;
+		const httpsAllowed = toServer && serverDns === "here";
+		field("https").closest(".copy-options").hidden = !httpsAllowed;
+		field("https").disabled = !httpsAllowed;
+		field("https").checked = httpsAllowed && httpsChosen;
 		const https = toServer && field("https").checked;
 		const host = field("host").value.trim();
-		$("#copy-server-dns").hidden = !https;
+		$("#copy-server-dns").hidden = !toServer;
 		$("#copy-server-protocol").classList.toggle("secure", https);
 		$("#copy-server-protocol").replaceChildren(...(!https
-			? [el("strong", { textContent: "Set up with HTTP." }), " DNS may not point to the new server yet, so no certificates are issued there. When it does, use Issue certificate on each site."]
+			? [el("strong", { textContent: "Set up with HTTP." }), httpsAllowed ? " No certificates are issued on the new server. Use Issue certificate on each site later."
+				: " DNS does not point every name to the new server yet, so HTTPS cannot be chosen. When it does, use Issue certificate on each site."]
 			: [el("strong", { textContent: "Set up with HTTPS." }), privateIPv4(host)
 				? ` ${host} is an internal address, so DNS cannot be checked against it here. Each site gets its certificate on the new server; one whose DNS does not point there yet stays on HTTP, and Issue certificate gives it one later.`
 				: " Each site gets its certificate on the new server once it runs there. One whose DNS does not point there yet stays on HTTP, and Issue certificate gives it one later."]));
 		const movingHere = !toServer && canMoveHere && field("move_here").checked;
+		$("#copy-here-envs").hidden = toServer || movingHere || !hereRows.length;
+		$("#copy-no-environments").hidden = toServer || !elsewhere;
+		for (const row of hereRows) row.show();
+		$("#copy-here-select-all").textContent = hereAll() ? "Select none" : "Select all";
 		$("#copy-move-delete-row").hidden = !movingHere;
 		field("move_delete").disabled = !movingHere;
 		if (!movingHere) field("move_delete").checked = false;
@@ -2857,15 +2985,25 @@ async function copySite(site, main) {
 				: `Copy ${siteLabel(site)} to a new folder here, with its own service and Apache config.`
 			: removing ? `Move ${siteLabel(site)} to another server. It no longer runs here.` : `Copy ${siteLabel(site)} to another server. It stays here as it is.`;
 		$("#copy-site-submit").textContent = removing ? "Migrate site" : movingHere ? "Move site" : "Copy site";
-		for (const item of $("#copy-server-list").querySelectorAll(".goes .move-site-where")) item.textContent = removing ? "Moves" : "Copied";
+		mainRow.querySelector(".move-site-where").textContent = removing ? "Moves" : "Copied";
+		$("#copy-server-env-bindings").value = goingBindings().join("\n");
+		for (const row of envRows) row.show(removing);
+		selectAll.textContent = allChosen() ? "Select none" : "Select all";
+		// A migration asks about the environments here that are left: deleted here, or kept here as sites of their own
+		const leftHere = removing && envTargets.some((env) => env.mode === "local" && !chosenEnvs.has(env.target || "prod"));
+		$("#copy-server-left").hidden = !leftHere;
+		for (const radio of field("left_here")) radio.disabled = !leftHere;
+		$("#copy-site-submit").disabled = toServer && leftHere && !field("left_here").value;
 		$("#copy-server-hint").textContent = "The whole folders go, including builds, media, logs and SQLite databases, so the sites run the same version and nothing is built. A database in Microsoft SQL Server stays where it is: connections to this server's own SQL Server are pointed at its address, which must accept connections from the new server."
-			+ (kept ? ` Environments on other servers are not touched, and are published to${removing ? " from the new server" : " from both servers"}.` : "")
+			+ (kept() ? ` Environments on other servers are not touched, and are published to${removing ? " from the new server" : " from both servers"}.` : "")
 			+ " The new server needs the same Harbor version and CPU architecture, and none of the sites. If a step fails, the sites here run as before.";
 	};
 	for (const input of field("destination")) input.onchange = update;
+	for (const radio of field("left_here")) radio.onchange = update;
 	field("remove_here").onchange = update;
 	field("move_here").onchange = update;
-	field("https").onchange = update;
+	field("https").onchange = () => { httpsChosen = field("https").checked; update(); };
+	field("here_https").onchange = () => { hereHttpsChosen = field("here_https").checked; update(); };
 	field("host").addEventListener("input", update);
 	field("change_connection").onchange = update;
 	update();
@@ -2881,7 +3019,7 @@ async function copySite(site, main) {
 		}
 		if (!bindingEdited) field("binding").value = field("target").value;
 	};
-	field("binding").oninput = () => { bindingEdited = true; };
+	field("binding").oninput = () => { bindingEdited = true; update(); };
 	field("database").oninput = () => {
 		databaseEdited = true;
 		suggestUsername();
@@ -2902,9 +3040,14 @@ async function copySite(site, main) {
 						user: field("user").value.trim(), password: field("ssh_password").value, copy: !removing,
 						folder: field("server_folder").value.trim(), binding: field("server_binding").value.trim(),
 						project: serverProject ? field("server_project").value.trim() : "", https: field("https").checked ? "y" : "n",
-						delete_local: removing && field("delete_local").checked ? "y" : "n", stop_source: !removing && field("stop_source").checked };
+						delete_local: removing && field("delete_local").checked ? "y" : "n", stop_source: !removing && field("stop_source").checked,
+						environments: [...chosenEnvs], ...(removing && field("left_here").value ? { left: field("left_here").value } : {}),
+						env_bindings: Object.fromEntries(envRows.filter((row) => row.here && chosenEnvs.has(row.target) && row.binding.value.trim() !== row.original)
+							.map((row) => [row.target, row.binding.value.trim()])) };
 				} else {
-					payload = { kind: "copy_site", site: site.name, target: field("target").value.trim(), binding: field("binding").value.trim() };
+					payload = { kind: "copy_site", site: site.name, target: field("target").value.trim(), binding: field("binding").value.trim(),
+						https: field("here_https").checked ? "y" : "n",
+						environments: hereRows.filter((row) => hereChosen.has(row.target)).map((row) => ({ id: row.target, binding: row.binding.value.trim() })) };
 					if (canMoveHere && field("move_here").checked) {
 						payload.remove_here = true;
 						payload.delete_local = field("move_delete").checked ? "y" : "n";
@@ -2925,7 +3068,7 @@ async function copySite(site, main) {
 	dialog.showModal();
 }
 
-async function deleteSite(site, scope, selected) {
+async function deleteSite(site, scope, selected, { onlyHere = false } = {}) {
 	const allTargets = site.environments.filter(isTarget);
 	const prod = scope === "prod" && selected ? selected : allTargets[0];
 	const main = site.environments.find((e) => e.key === "main");
@@ -2957,9 +3100,11 @@ async function deleteSite(site, scope, selected) {
 				? `This removes the ${prodEnvironment} target from this site. ${windowsKept} The ${mainEnvironment} site is kept.`
 			: `This deletes the ${prodEnvironment} site: its files, service, Apache config and logs. The ${mainEnvironment} site is kept.`,
 	}[scope];
-	// Removing a Windows environment deletes nothing on the server, so it is a plain confirmation
-	const typed = scope === "prod" && windows
-		? await ask({ title: "Remove environment?", message: `${what}\nPublish, sync and the other tools for ${target} are removed here.`, input: false, ok: "Remove" })
+	// Removing a Windows environment, or one on a server Harbor cannot reach, deletes nothing on the server: a plain confirmation
+	const unreachable = scope === "prod" && onlyHere
+		? `This removes the ${prodEnvironment} environment from this site. Harbor cannot reach ${prod.host} (${prod.remote_error}), so the site there is not touched: remove it on the server yourself. The ${mainEnvironment} site is kept.` : "";
+	const typed = scope === "prod" && (windows || onlyHere)
+		? await ask({ title: "Remove environment?", message: `${unreachable || what}\nPublish, sync and the other tools for ${target} are removed here.`, input: false, ok: "Remove" })
 		: await ask({
 			title: scope === "all" ? "Delete everything" : `Delete ${scope === "prod" ? prodEnvironment : mainEnvironment} site`, danger: true, ok: "Delete", match: target,
 			message: `${what}\nType "${target}" to confirm.`,
@@ -2970,10 +3115,10 @@ async function deleteSite(site, scope, selected) {
 		? "Also revoke and remove the certificate(s) for the site being deleted? The remote certificate is kept if another enabled site uses the domain."
 		: "Also revoke and remove the certificate(s) for the site being deleted?";
 	const deletedEnvironments = site.environments.filter((env) => scope === "all" || (scope === "prod" ? env === prod : !isTarget(env)));
-	if (deletedEnvironments.some((env) => env.https !== false && env.mode !== "windows")) {
+	if (!onlyHere && deletedEnvironments.some((env) => env.https !== false && env.mode !== "windows")) {
 		certificates = (await ask({ title: "Certificate", message: certificateMessage, input: false, ok: "Remove certificate(s)" })) === true;
 	}
-	await openTask({ kind: "delete_site", site: site.name, certificates, scope, ...(scope === "prod" ? { target: prod.target || "prod" } : {}) });
+	await openTask({ kind: "delete_site", site: site.name, certificates, scope, ...(scope === "prod" ? { target: prod.target || "prod" } : {}), ...(onlyHere ? { only_here: true } : {}) });
 }
 
 // The clear button empties the search and keeps the cursor in it, as the browser's own did
@@ -7653,6 +7798,267 @@ function openWindowsSettings() {
 			"A site's environment copied from a Windows server here, while it stays live there.", "Copy sites…", "settings-windows-move")]));
 }
 
+// Convert, a part of Settings (phase 11): each site's database here, and Convert… on it: SQLite to Microsoft SQL Server
+// or PostgreSQL, or one of them to SQLite in the site (harbor site convert). The database it ran on before is kept,
+// under Kept after a conversion, until it is deleted there.
+const DATABASE_ENGINES = { sqlite: "SQLite", ...ENGINE_NAMES };
+// The environments whose kept databases are unfolded: they stay so when the list is drawn again
+const convertUnfolded = new Set();
+async function openConvertSettings() {
+	const list = $("#server-convert-list");
+	list.setAttribute("aria-busy", "true");
+	if (!list.childElementCount) list.replaceChildren(loadingState("Reading the sites' databases…"));
+	try {
+		const data = await api("/api/convert");
+		// A site without a database has nothing to convert: it is not shown
+		const withDatabase = data.sites.filter((item) => item.engine);
+		$("#convert-count").textContent = withDatabase.length ? String(withDatabase.length) : "";
+		const engineBadge = (engine) => el("span", { className: "badge engine-badge engine-" + (engine || "none"), textContent: DATABASE_ENGINES[engine] || "No database" });
+		// What each environment ran on before a conversion, kept until it is deleted: folded under its row
+		const keptOf = new Map();
+		for (const item of data.kept) keptOf.set(item.unit, [...(keptOf.get(item.unit) || []), item]);
+		const keptLine = (item) => {
+			const name = item.file || item.database;
+			const when = item.at ? new Date(item.at * 1000).toLocaleString() : "";
+			// The first one kept is where the site started: marked, and said so
+			// In the same columns as its environment's row: the database's badge under the row's
+			return el("li", { className: "convert-kept-line" + (item.original ? " original" : "") },
+				// A file by its name (its whole path when pointed at); Original in the environments' column, where it started
+				el("span", { className: "convert-kept-name" }, el("span", { className: "convert-kept-icon" }, svgIcon("archive")),
+					// The time it was set aside is in its name and under Kept: the name is shown without it
+					el("span", { className: "convert-kept-file", textContent: name.slice(name.lastIndexOf("/") + 1).replace(/\.\d{8}-\d{6}(?:-\d+)?\.bak$/, ".bak"), title: name })),
+				// Outlined, not filled as an environment's: it says what it is, not where it runs
+				el("span", { className: "convert-env" }, ...(item.original ? [el("span", { className: "badge convert-original", title: "What the site ran on before its first conversion" }, svgIcon("flag"), "Original")] : [])),
+				el("span", { className: "convert-engine" }, engineBadge(item.engine)),
+				el("span", { className: "convert-detail", textContent: [`Kept ${when}`, item.by].filter(Boolean).join(" · ") }),
+				el("span", { className: "convert-kept-actions" },
+					...(item.exists && item.rollback ? [tonedButton("Roll back…", "undo", "teal", () => rollbackConverted(item, name))] : []),
+					tonedButton("Delete…", "trash", "red", () => deleteConverted(item, name))));
+		};
+		// An environment's row: its service, its badge in the environment's colour, its database, what it kept and
+		// Convert… (or why it cannot be)
+		const row = (item) => {
+			const targets = convertTargets(item, data.connections);
+			const detail = item.engine === "sqlite" ? `${item.file} · ${bytesText(item.size)}` : item.database ? `${item.database}${item.server ? " on " + item.server : ""}` : "";
+			const note = !item.convertible ? item.reason : !targets.length
+				? (item.engine === "sqlite" ? `Add a connection to ${item.umbraco ? "Microsoft SQL Server" : "Microsoft SQL Server or PostgreSQL"} on the SQL Server page first.`
+					: `Add a connection to its ${DATABASE_ENGINES[item.engine]} on the SQL Server page first.`) : "";
+			const kept = keptOf.get(item.unit) || [];
+			keptOf.delete(item.unit);
+			// What it kept, in a box of its own under the row, said what it is
+			const fold = kept.length ? el("ul", { className: "convert-kept", hidden: !convertUnfolded.has(item.unit), ariaLabel: `Kept after conversions of ${item.unit}` },
+				el("li", { className: "convert-kept-head" }, svgIcon("archive"), el("strong", { textContent: "Kept after conversions" }),
+					el("span", { className: "convert-kept-count", textContent: String(kept.length) }),
+					el("small", { textContent: "What the site ran on before: roll back to one, or delete it" })),
+				...kept.map(keptLine)) : null;
+			const toggle = kept.length ? el("button", { type: "button", className: "convert-kept-toggle", ariaExpanded: String(convertUnfolded.has(item.unit)),
+				title: "What it ran on before, kept until it is deleted", onclick: () => {
+					const open = fold.hidden;
+					fold.hidden = !open;
+					toggle.setAttribute("aria-expanded", String(open));
+					if (open) convertUnfolded.add(item.unit); else convertUnfolded.delete(item.unit);
+				} }, svgIcon("archive"), `Kept ${kept.length}`, svgIcon("chevron")) : el("span");
+			return el("li", { className: "convert-entry" },
+				el("div", { className: "convert-row" },
+					// The service first and the environment in a column of its own: the names and badges stand in straight lines
+					// An environment hangs under its main site: a bent arrow before its name
+					el("span", { className: "convert-unit", title: item.unit }, ...(item.unit === item.site ? [] : [svgIcon("corner")]), el("span", { textContent: item.unit })),
+					el("span", { className: "convert-env" }, el("span", { className: "badge env-" + item.label.toLowerCase(), textContent: item.label })),
+					el("span", { className: "convert-engine" }, engineBadge(item.engine)),
+					el("span", { className: "convert-detail", textContent: detail, title: detail }),
+					toggle,
+					note ? el("span", { className: "convert-note", textContent: note, title: note })
+						: tonedButton("Convert…", "sync", "purple", () => askConvert(item, targets))),
+				...(fold ? [fold] : []));
+		};
+		// A site and its environments together: the site's name and kind once, its environments under it
+		const groups = new Map();
+		for (const item of withDatabase) groups.set(item.site, [...(groups.get(item.site) || []), item]);
+		// What the filter finds a site by: its name, its environments, and the databases it runs on and kept
+		const searchOf = (site, items) => [site, ...items.flatMap((item) => [item.unit, item.label, item.file, item.database, DATABASE_ENGINES[item.engine]]),
+			...data.kept.filter((kept) => items.some((item) => item.unit === kept.unit)).flatMap((kept) => [kept.file, kept.database])].filter(Boolean).join(" ").toLowerCase();
+		const group = ([site, items]) => {
+			const node = el("li", { className: "convert-group" },
+				el("div", { className: "convert-group-head" }, el("span", { className: "convert-group-icon" }, svgIcon("globe")),
+					// The site's name opens its page, as a site's name does on Usage
+					el("button", { type: "button", className: "usage-open convert-site-link", textContent: site, title: `Open ${site}`, onclick: () => go(siteLink(site)) }),
+					...(items.some((item) => item.umbraco) ? [el("span", { className: "badge umbraco", textContent: "Umbraco" })] : [])),
+				el("ul", { className: "convert-rows" }, ...items.map(row)));
+			node.dataset.search = searchOf(site, items);
+			return node;
+		};
+		const sites = el("section", { className: "tool-card tool-card-wide tone-purple convert-card" },
+			el("div", { className: "tool-head" }, el("span", { className: "tool-icon" }, svgIcon("database")),
+				el("div", { className: "tool-title" }, el("strong", { textContent: "Sites" }),
+					el("small", { textContent: "The site is stopped while it is converted, and started on the new database. If a step fails, it runs on the old one again." }))),
+			groups.size ? el("ul", { className: "convert-groups" }, ...[...groups].map(group))
+				: el("p", { className: "tool-text", textContent: "No site here has a database." }));
+		const cards = [sites];
+		// What an environment kept that is not here any more (it was removed): on its own, to be deleted
+		const orphans = [...keptOf.values()].flat();
+		if (orphans.length) {
+			cards.push(el("section", { className: "tool-card tool-card-wide tone-amber convert-card" },
+				el("div", { className: "tool-head" }, el("span", { className: "tool-icon" }, svgIcon("archive")),
+					el("div", { className: "tool-title" }, el("strong", { textContent: "Kept after a conversion" }),
+						el("small", { textContent: "What sites that are no longer here ran on before" }))),
+				el("ul", { className: "convert-kept" }, ...orphans.map(keptLine))));
+		}
+		list.replaceChildren(...cards);
+		// The filter, once there are more than two sites: it keeps what was typed when the list is drawn again
+		$("#convert-filter-box").hidden = groups.size <= 2;
+		if (groups.size <= 2) $("#convert-filter").value = "";
+		applyConvertFilter();
+	} finally {
+		list.removeAttribute("aria-busy");
+	}
+}
+// As the SQL Server page's filter: every word typed is in the site's name, its environments or its databases
+function applyConvertFilter() {
+	const words = $("#convert-filter").value.toLowerCase().split(/\s+/).filter(Boolean);
+	for (const group of document.querySelectorAll("#server-convert-list .convert-group")) {
+		group.classList.toggle("sql-filtered", words.length > 0 && !words.every((word) => group.dataset.search.includes(word)));
+	}
+}
+$("#convert-filter").addEventListener("input", applyConvertFilter);
+$("#convert-filter").addEventListener("keydown", (event) => {
+	if (event.key === "Escape" && event.target.value) { event.preventDefault(); event.stopPropagation(); event.target.value = ""; applyConvertFilter(); }
+});
+$("#convert-filter-clear").onclick = () => { $("#convert-filter").value = ""; applyConvertFilter(); $("#convert-filter").focus(); };
+// The connections a site's database can go to: from SQLite, Microsoft SQL Server's (PostgreSQL's too, but not for
+// Umbraco); from a server, that engine's
+function convertTargets(item, connections) {
+	if (!item.convertible) return [];
+	if (item.engine === "sqlite") return connections.filter((connection) => engineOf(connection) === "mssql" || (!item.umbraco && engineOf(connection) === "postgres"));
+	return connections.filter((connection) => engineOf(connection) === item.engine);
+}
+// A name for SQL as the site's own: its binding, with its dots (letters, digits, . _ and -, at most 63)
+const convertName = (text) => text.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, "").slice(0, 63);
+function askConvert(item, connections) {
+	const toServer = item.engine === "sqlite";
+	// What is converted, from and to, side by side: the To side follows the server chosen and what is typed below
+	// One quiet line: a tile in the engine's colour, the database, and the engine and where in grey
+	const side = () => {
+		const tile = el("span", { className: "convert-tile" }, svgIcon("database")), name = el("strong"), sub = el("small");
+		return { tile, name, sub, card: el("div", { className: "convert-side" }, tile, el("span", { className: "convert-side-text" }, name, sub)) };
+	};
+	const from = side(), to = side();
+	from.tile.classList.add("engine-" + item.engine);
+	// A file by its name, its folder in the grey line: the name is what is read, the folder where
+	const folderOf = (path) => path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
+	const fileName = (path) => path.slice(path.lastIndexOf("/") + 1);
+	from.name.textContent = item.engine === "sqlite" ? fileName(item.file) : item.database;
+	from.name.title = item.engine === "sqlite" ? item.file : item.database;
+	from.sub.textContent = item.engine === "sqlite" ? ["SQLite", bytesText(item.size), folderOf(item.file)].filter(Boolean).join(" · ") : `${DATABASE_ENGINES[item.engine]} · ${item.server || "its server"}`;
+	const flow = el("div", { className: "convert-flow" }, from.card, el("span", { className: "convert-arrow" }, svgIcon("arrow-right")), to.card);
+	const address = (connection) => `${connection.host === "." ? "this server" : connection.host}:${connection.port}`;
+	// The server first, as cards as Servers' are: its engine is what the database becomes (from SQLite), or where the
+	// database is read from (to SQLite). One is not a choice: it is shown, chosen
+	const chosen = el("input", { type: "hidden", name: "connection", value: connections.length === 1 ? connections[0].id : "" });
+	const toValue = () => toServer ? engineOf(connections.find((connection) => connection.id === chosen.value)) : "sqlite";
+	const cards = el("div", { className: "server-cards convert-servers", role: "radiogroup", ariaLabel: "Server" });
+	const drawCards = () => cards.replaceChildren(...connections.map((connection) => {
+		const on = connection.id === chosen.value, only = connections.length === 1;
+		return el("button", { type: "button", className: "server-card" + (on ? " chosen" : "") + (only ? " only" : ""), role: "radio", ariaChecked: String(on),
+			...(only ? { tabIndex: -1 } : { onclick: () => { chosen.value = connection.id; drawCards(); ready(); } }) },
+			el("span", { className: "server-card-icon engine-" + engineOf(connection) }, svgIcon("database")),
+			el("span", { className: "server-card-text" }, el("strong", { textContent: connection.name }),
+				el("small", { textContent: `${ENGINE_NAMES[engineOf(connection)]} · ${address(connection)}`, title: `${ENGINE_NAMES[engineOf(connection)]} · ${address(connection)}` })),
+			el("span", { className: "server-card-check" }, svgIcon("check")));
+	}));
+	// One server is no choice: the To line says which, and no cards take the room
+	const serverField = el("div", { className: "convert-server-choice", hidden: connections.length === 1 },
+		el("div", { className: "ns-section", textContent: toServer ? "Server" : "Read from" }), cards, chosen);
+	const base = convertName(item.binding || item.unit);
+	const serverFields = el("div", { className: "convert-server-fields" },
+		el("label", {}, "Database name", el("input", { name: "database", required: true, maxLength: 63, pattern: "[A-Za-z0-9][A-Za-z0-9._\\-]*", value: base, autocomplete: "off", spellcheck: false })),
+		el("label", {}, "Username", el("input", { name: "login", required: true, maxLength: 63, pattern: "[A-Za-z0-9][A-Za-z0-9._\\-]*", value: base, autocomplete: "off", spellcheck: false })),
+		el("div", { className: "ns-grid" },
+			el("label", {}, "Password", el("input", { name: "password", type: "password", required: true, minLength: 8, maxLength: 128, autocomplete: "new-password", "data-1p-ignore": "", "data-lpignore": "true" })),
+			el("label", {}, "Repeat password", el("input", { name: "confirmation", type: "password", required: true, minLength: 8, maxLength: 128, autocomplete: "new-password", "data-1p-ignore": "", "data-lpignore": "true" }))),
+		el("p", { className: "hint", textContent: "A login of its own that owns the new database: the site's connection string gets it." }));
+	const fileFields = el("div", {},
+		el("label", {}, "File name", el("input", { name: "file", maxLength: 120, pattern: "[A-Za-z0-9][A-Za-z0-9._-]*\\.(sqlite\\.db|sqlite|sqlite3|db)", autocomplete: "off", spellcheck: false,
+			placeholder: item.umbraco ? "Umbraco.sqlite.db" : convertName(item.database || "site") + ".sqlite.db" })),
+		el("p", { className: "hint", textContent: `In ${item.umbraco ? "umbraco/Data" : "App_Data"}. Left empty, a name that is free there.` }));
+	const provider = toServer ? "Microsoft.Data.SqlClient or Npgsql" : "Microsoft.Data.Sqlite";
+	const notes = [
+		el("p", { className: "server-action-note", textContent: toServer
+			? `${item.file} is kept beside it, renamed with the time of the conversion and .bak: Roll back under Kept on the site's row takes it again, and Delete deletes it once the site runs well.`
+			: `The database ${item.database} is kept as it is: delete it under Kept on the site's row once it runs well.` }),
+		...(item.umbraco ? [] : [el("p", { className: "server-action-note", textContent: `Only the connection string ${item.key} is changed: the site's code must use ${provider} for the new database.` })]),
+	];
+	const error = el("p", { className: "error", role: "alert" });
+	// Its own fields in a box of their own: the form is the one every form dialog shares, and keeps no listener of this one
+	const box = el("div", { className: "convert-form" }, flow, serverField, ...(toServer ? [serverFields] : [fileFields]), ...notes, error);
+	openFormDialog({ icon: "sync", title: `Convert ${item.unit}`, text: `${item.label} of ${item.site}`,
+		fields: [box], ok: "Convert", submit: async (form) => {
+			const value = (name) => form.elements[name]?.value || "";
+			if (toServer && value("password") !== value("confirmation")) { error.textContent = "Passwords do not match."; return false; }
+			const payload = { kind: "convert_site", unit: item.unit, to: toValue(), connection: value("connection") };
+			if (toServer) Object.assign(payload, { database: value("database").trim(), login: value("login").trim(), password: value("password") });
+			else if (value("file").trim()) payload.file = value("file").trim();
+			const t = await openTask(payload);
+			if (t) t.afterTask = () => { if (serverTabOpen("convert")) return openConvertSettings(); };
+		} });
+	const form = $("#form-dialog");
+	// The username follows the database's name until it is typed itself, as Create database does
+	let loginEdited = false;
+	if (toServer) {
+		form.elements.database.addEventListener("input", () => { if (!loginEdited) form.elements.login.value = form.elements.database.value; });
+		form.elements.login.addEventListener("input", () => { loginEdited = true; });
+	}
+	// The To side as it is chosen: its engine, its database or file, and where
+	const drawTo = () => {
+		const connection = connections.find((item) => item.id === chosen.value);
+		const engine = connection ? toValue() : "";
+		to.card.classList.toggle("pending", !engine);
+		to.tile.className = "convert-tile" + (engine ? " engine-" + engine : "");
+		if (toServer) {
+			to.name.textContent = form.elements.database.value.trim() || "A new database";
+			to.sub.textContent = connection ? `${DATABASE_ENGINES[engine]} · ${connection.name} · ${address(connection)}` : "Choose a server below";
+		} else {
+			to.name.textContent = form.elements.file.value.trim() || form.elements.file.placeholder;
+			to.sub.textContent = `SQLite · new · ${item.umbraco ? "umbraco/Data" : "App_Data"}`;
+		}
+	};
+	const ready = () => {
+		$("#form-dialog-ok").disabled = !chosen.value;
+		error.textContent = "";
+		drawTo();
+	};
+	drawCards();
+	box.addEventListener("change", ready);
+	box.addEventListener("input", ready);
+	ready();
+}
+// Back to the database it ran on before: the new one goes, with what the site wrote to it since
+async function rollbackConverted(item, name) {
+	// Straight back: nothing is converted. What it deletes is what harbor works out it ran on since
+	const current = item.current, back = item.from_name;
+	const when = item.at ? new Date(item.at * 1000).toLocaleString() : "the conversion";
+	const message = [
+		`${item.unit} goes back to ${item.original ? "the original, " : ""}${back} (${DATABASE_ENGINES[item.engine]}), as before the conversion of ${when}, with the connection string it had then.`,
+		"",
+		`From: ${current}`,
+		`To: ${back}`,
+		"",
+		`Deleted, with what the site wrote to ${item.deletes.length > 1 ? "them" : "it"}:`,
+		...item.deletes.map((name) => `· ${name}`),
+		"",
+		`Type ${current} to confirm.`,
+	].join("\n");
+	if (!(await ask({ title: item.original ? `Roll back ${item.unit} to the original?` : `Roll back ${item.unit}?`, message,
+		match: current, danger: true, ok: "Roll back" }))) return;
+	const t = await openTask({ kind: "convert_rollback", id: item.id });
+	if (t) t.afterTask = () => { if (serverTabOpen("convert")) return openConvertSettings(); };
+}
+async function deleteConverted(item, name) {
+	const where = item.engine === "sqlite" ? "The file goes from the site's folder at once." : `The database goes from its ${DATABASE_ENGINES[item.engine]}, with the logins only it had.`;
+	if (!(await ask({ title: `Delete ${name}?`, message: `${where} Type ${name} to confirm.`, match: name, danger: true, ok: "Delete" }))) return;
+	const t = await openTask({ kind: "convert_delete", id: item.id });
+	if (t) t.afterTask = () => { if (serverTabOpen("convert")) return openConvertSettings(); };
+}
+
 // Updates, a part of Settings: the version here, Check for updates, the update with its notes, and going back
 let lastUpdateCheck = null;
 async function openUpdatesSettings() {
@@ -8457,7 +8863,8 @@ async function loadSqlLogins(connection) {
 				}))] : []),
 				iconAction("pencil", "amber", `Databases and roles of ${login.name}`, () => askSqlLogin(connection, login)),
 				iconAction("key", "blue", `New password for ${login.name}`, () => askSqlLoginPassword(connection, login)),
-				iconAction(login.disabled ? "unlock" : "lock", "purple", login.disabled ? `Let ${login.name} log in again` : `Lock ${login.name}`,
+				// The lock shows how it is, as the chip beside it: closed when locked, open when it can log in. What a click does is its title
+				iconAction(login.disabled ? "lock" : "unlock", "purple", login.disabled ? `Locked: let ${login.name} log in again` : `Can log in: lock ${login.name}`,
 					() => changeSqlLogin(connection, { action: login.disabled ? "enable" : "disable", name: login.name }, login.disabled ? "It can log in again." : "It is locked.")),
 				iconAction("trash", "red", `Delete ${login.name}`, () => deleteSqlLogin(connection, login))])));
 		// Found by its name, its owner and the databases it reaches
@@ -10227,7 +10634,7 @@ $("#audit-clear").onclick = () => run(async () => {
 // Each tool is a part of its own in the side menu; they share one pane, drawn from one look at the server
 // SSH and Samba are one part, Access: how the server itself is reached
 const TOOL_TABS = ["sql", "dotnet", "node", "access"];
-const SERVER_TABS = [...TOOL_TABS, "apache", "jobs", "settings", "servers", "users", "usage", "windows", "updates", "menu"];
+const SERVER_TABS = [...TOOL_TABS, "apache", "jobs", "convert", "settings", "servers", "users", "usage", "windows", "updates", "menu"];
 const TOOL_OF_CARD = { "Microsoft SQL Server": "sql", "Microsoft SQL Server tools": "sql", "sa password": "sql", PostgreSQL: "sql", "PostgreSQL tools": "sql", "postgres password": "sql", Backups: "sql", "Node.js": "node", SSH: "access", Samba: "access" };
 // Settings opens on General: what most often is looked for
 let serverTab = "settings";
@@ -10241,7 +10648,7 @@ async function showServerTab(tab) {
 		$("#server-tab-" + name).setAttribute("aria-selected", String(name === tab));
 		$("#server-tab-" + name).classList.toggle("active", name === tab);
 	}
-	for (const pane of ["tools", "apache", "jobs", "settings", "servers", "users", "usage", "windows", "updates", "menu"]) $("#server-pane-" + pane).hidden = pane !== paneOf(tab);
+	for (const pane of ["tools", "apache", "jobs", "convert", "settings", "servers", "users", "usage", "windows", "updates", "menu"]) $("#server-pane-" + pane).hidden = pane !== paneOf(tab);
 	// The admin site's page, when it was open here, is not
 	$("#server-pane-admin").hidden = true;
 	$("#server-tab-admin").classList.remove("active");
@@ -10255,7 +10662,7 @@ async function showServerTab(tab) {
 		// Another tool is shown from what was read already; Refresh, or coming from another part, reads again
 		if (toolsDrawn && before === "tools") return;
 	}
-	await run({ tools: openServerTools, jobs: openCrontab, servers: openServers, users: openUsers, usage: openUsageSettings, settings: openServerSettings, menu: openMenuSettings, apache: openApacheSettings, windows: openWindowsSettings, updates: openUpdatesSettings }[paneOf(tab)]);
+	await run({ tools: openServerTools, jobs: openCrontab, convert: openConvertSettings, servers: openServers, users: openUsers, usage: openUsageSettings, settings: openServerSettings, menu: openMenuSettings, apache: openApacheSettings, windows: openWindowsSettings, updates: openUpdatesSettings }[paneOf(tab)]);
 }
 function showToolCards() {
 	// Access is two columns (SSH and Samba, then its shares and users); the other tools three

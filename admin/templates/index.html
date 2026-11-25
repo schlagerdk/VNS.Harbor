@@ -126,6 +126,7 @@
         <div class="server-nav-group">This server</div>
         <button type="button" role="tab" id="server-tab-apache" data-tab="apache" aria-controls="server-pane-apache" aria-selected="false"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.24 12.24a6 6 0 0 0-8.49-8.49L5 10.5V19h8.5zM16 8 2 22M17.5 15H9"/></svg><span>Apache</span></button>
         <button type="button" role="tab" id="server-tab-jobs" data-tab="jobs" aria-controls="server-pane-jobs" aria-selected="false"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM12 6v6l4 2"/></svg><span>Scheduled jobs</span></button>
+        <button type="button" role="tab" id="server-tab-convert" data-tab="convert" aria-controls="server-pane-convert" aria-selected="false"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8M21 3v5h-5M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16M8 16H3v5"/></svg><span>Convert</span></button>
         <button type="button" role="tab" id="server-tab-access" data-tab="access" aria-controls="server-pane-tools" aria-selected="false"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 11h14v10H5zM8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Access</span></button>
         <div class="server-nav-group">Software</div>
         <button type="button" role="tab" id="server-tab-dotnet" data-tab="dotnet" aria-controls="server-pane-tools" aria-selected="false"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2l9 5v10l-9 5-9-5V7zM9 9l6 6M15 9l-6 6"/></svg><span>.NET</span></button>
@@ -139,6 +140,10 @@
         <div id="server-pane-jobs" class="server-pane" role="tabpanel" aria-labelledby="server-tab-jobs" hidden>
         <div class="server-pane-head"><div><h3>Scheduled jobs <span id="crontab-count" class="server-pane-count"></span></h3><p id="crontab-text">What this server runs on a schedule, as root</p></div><button type="button" id="crontab-add" class="primary">＋ Add job</button></div>
           <ul id="crontab-list" class="crontab-list" aria-busy="true"></ul>
+        </div>
+        <div id="server-pane-convert" class="server-pane" role="tabpanel" aria-labelledby="server-tab-convert" hidden>
+          <div class="server-pane-head"><div><h3>Convert <span id="convert-count" class="server-pane-count"></span></h3><p>Each site's database here, moved between SQLite and Microsoft SQL Server or PostgreSQL</p></div><div id="convert-filter-box" class="targets-search-box sql-filter-box convert-filter-box" hidden><svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="convert-filter" class="sql-filter" type="search" placeholder="Filter sites, environments, databases…" autocomplete="off" spellcheck="false" aria-label="Filter sites, environments and databases"><button type="button" id="convert-filter-clear" class="search-clear" aria-label="Clear filter" title="Clear filter"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button></div></div>
+          <div id="server-convert-list" class="server-tools convert-list" aria-busy="true"></div>
         </div>
         <div id="server-pane-settings" class="server-pane" role="tabpanel" aria-labelledby="server-tab-settings" hidden>
           <div class="server-pane-head"><div><h3>General</h3><p>How this server is reached, the mail it sends, and how its sites are kept ready</p></div></div>
@@ -615,8 +620,16 @@
         <p class="hint">The project file and dll get this name, and the copy is built. Namespaces in the code are not changed.</p>
       </div>
       <p class="hint" id="copy-site-path"></p>
-      <p class="hint copy-no-environments" id="copy-no-environments" hidden>The copy is a site of its own: its environments are not copied, and you can add environments to it afterwards.</p>
-      <p class="hint copy-dns-hint">For HTTPS, the new binding must point to this server.</p>
+      <!-- The environments here, copied with it as its own when chosen, each with a binding of its own -->
+      <div id="copy-here-envs" hidden>
+        <div class="ns-section">Environments <button type="button" id="copy-here-select-all" class="cancel-link sync-select-all" hidden>Select all</button></div>
+        <ul id="copy-here-env-list" class="move-site-list"></ul>
+      </div>
+      <p class="hint copy-no-environments" id="copy-no-environments" hidden></p>
+      <div id="copy-here-dns"></div>
+      <div class="copy-options" hidden>
+        <label class="sync-option copy-option secure"><input name="here_https" type="checkbox"><span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span><span class="sync-option-text"><span class="sync-option-title">Set up with HTTPS</span><span class="sync-option-sub">A certificate is issued as the copy is made, and HTTP goes to HTTPS</span></span></label>
+      </div>
       <div class="copy-options">
         <label class="sync-option copy-option sql" aria-controls="copy-sql-fields"><input name="change_connection" type="checkbox"><span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg></span><span class="sync-option-text"><span class="sync-option-title">Change SQL connection strings</span><span class="sync-option-sub">Point the copy at another database. Nothing is created on the database server</span></span></label>
       </div>
@@ -648,18 +661,27 @@
         <label>Folder<input name="server_folder" required autocomplete="off" spellcheck="false"></label>
         <label>Binding<input name="server_binding" required autocomplete="off" spellcheck="false"></label>
       </div>
+      <textarea id="copy-server-env-bindings" hidden></textarea>
+      <!-- As Create site: the binding, its DNS, then HTTPS once DNS is right -->
+      <div id="copy-server-dns" hidden></div>
+      <div class="copy-options">
+        <label class="sync-option copy-option secure"><input name="https" type="checkbox"><span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span><span class="sync-option-text"><span class="sync-option-title">Set up with HTTPS</span><span class="sync-option-sub">Certificates are issued on the new server once the sites run there</span></span></label>
+      </div>
       <div id="copy-server-project-row" hidden>
         <label>Project name<input name="server_project" autocomplete="off" spellcheck="false" maxlength="128" pattern="[A-Za-z0-9][A-Za-z0-9._\-]*"></label>
         <p class="hint">A new name renames the project file and dll, and the site is built on the new server. Namespaces in the code are not changed.</p>
       </div>
       <p class="hint" id="copy-server-path"></p>
-      <div class="copy-options">
-        <label class="sync-option copy-option secure"><input name="https" type="checkbox"><span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></span><span class="sync-option-text"><span class="sync-option-title">Set up with HTTPS</span><span class="sync-option-sub">Certificates are issued on the new server once the sites run there</span></span></label>
-      </div>
-      <textarea id="copy-server-env-bindings" hidden></textarea>
-      <div id="copy-server-dns" hidden></div>
-      <div class="ns-section">What goes</div>
+      <div class="ns-section">What goes <button type="button" id="copy-select-all" class="cancel-link sync-select-all" hidden>Select all</button></div>
       <ul id="copy-server-list" class="move-site-list"></ul>
+      <!-- A migration asks what happens to the environments here that do not go -->
+      <div id="copy-server-left" hidden>
+        <div class="ns-section">Environments here that do not go</div>
+        <div class="type-cards">
+          <label class="type-card"><input type="radio" name="left_here" value="delete"><span class="tc-title">Delete them here</span><span class="tc-sub">Their files, services and Apache configs go with the site</span></label>
+          <label class="type-card"><input type="radio" name="left_here" value="keep"><span class="tc-title">Keep them here as sites of their own</span><span class="tc-sub">Moved out of the site's folder when they are in it, and running as before</span></label>
+        </div>
+      </div>
       <p class="hint move-site-http" id="copy-server-protocol"></p>
       <div class="copy-options">
         <label class="sync-option copy-option move"><input name="remove_here" type="checkbox"><span class="sync-option-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></span><span class="sync-option-text"><span class="sync-option-title">Remove it here afterwards</span><span class="sync-option-sub">Migrate: the sites here are stopped while they are copied, and their services and Apache configs are removed once the new server runs them</span></span></label>

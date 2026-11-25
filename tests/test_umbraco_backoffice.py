@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -62,6 +63,19 @@ class BackofficeTests(unittest.TestCase):
         # The state sync never takes the connection's secrets away
         self.run_harbor("state", "sync", "shop.dk")
         self.assertTrue(secret.is_file())
+
+    def test_a_copied_connection_is_made_this_servers(self):
+        """A copy's vns-harbor.json came with its files, naming another Harbor: --here writes this server's, by its name,
+        and restarts it (the package reads it as it starts)"""
+        connection = self.root / "var/www/shop.dk/_publish/vns-harbor.json"
+        connection.write_text(json.dumps({"harbor": "https://admin.other.example.test", "site": "original.dk", "environment": "main",
+                                          "token": "0" * 64, "loginKey": "0" * 64}))
+        with mock.patch("harbor.umbraco.backoffice.admin_url", return_value="https://admin.example.test"):
+            self.run_harbor("site", "connect", "shop.dk", "--here")
+        data = json.loads(connection.read_text())
+        self.assertEqual((data["harbor"], data["site"]), ("https://admin.example.test", "shop.dk"))
+        self.assertNotEqual(data["token"], "0" * 64)
+        self.assertIn("systemctl try-restart shop.dk.service", self.system.commands)
 
     def test_harbors_address_is_the_admin_sites_wherever_its_code_runs(self):
         """Found by its login (config.json), with its code in the release (Harbor) as well as in its folder (VNS 1.x):
