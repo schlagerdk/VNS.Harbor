@@ -8467,7 +8467,8 @@ function exportLine(item) {
 	};
 	return el("li", { className: "export-line" },
 		el("span", { className: "export-os os-" + item.os, ...(osLogos[item.os] ? { innerHTML: osLogos[item.os] } : {}) }, ...(osLogos[item.os] ? [] : [svgIcon("globe")])),
-		el("span", { className: "export-text" }, el("strong", { className: "export-title" }, os ? `${item.site} · ${os}` : item.site,
+		// One kept on another server is named as it is there (an environment's own name, under its site here)
+		el("span", { className: "export-text" }, el("strong", { className: "export-title" }, os ? `${item.label || item.site} · ${os}` : item.label || item.site,
 				// Made and kept on the server the site is managed from: its link is that server's
 				...(item.server ? [el("span", { className: "convert-where managed", title: `Built and kept on ${item.server}, where the site is managed from` }, svgIcon("server"), `On ${item.server}`)] : [])),
 			el("small", { textContent: [`${(item.environments || []).length} environment${(item.environments || []).length === 1 ? "" : "s"}`, item.size ? bytesText(item.size) : "", when(item.at), item.by].filter(Boolean).join(" · ") }),

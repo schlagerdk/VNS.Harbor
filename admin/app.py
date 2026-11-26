@@ -6834,12 +6834,26 @@ REMOTE_HARBOR = 'h=/usr/local/bin/harbor; [ -x "$h" ] || h=/opt/harbor/current/b
 
 
 def managed_export_items(sites):
-    """The exports of the environments here that are managed from another server, kept on that server: read from it
-    (one call a server, side by side), each under its environment here"""
+    """The exports kept on other servers, each under its site here: of a site here managed from another server (made
+    there), and of the environments of the sites here that run on servers in Servers (one made there before 1.0.85). One
+    call a server, side by side"""
+    from harbor.core.system import System
+    from harbor.server import servers
+    try:
+        known = set(servers.servers(System(), "linux"))
+    except (OSError, ValueError):
+        known = set()
     groups = {}
+    # Each environment's folder there, and the site here it is listed under
+    under = {}
     for site in sites:
         if site.get("manager"):
             groups.setdefault(site["manager"], []).append(site["site"])
+            under[(site["manager"], site["site"])] = site["site"]
+        for env in site.get("environments") or []:
+            if env.get("mode") == "remote" and env.get("where") in known:
+                groups.setdefault(env["where"], []).append(env["unit"])
+                under[(env["where"], env["unit"])] = site["site"]
     def read(server, units):
         try:
             _entry, ssh, sudo = manager_entry(server)
@@ -6851,9 +6865,9 @@ def managed_export_items(sites):
             return []
         items = []
         for item in found if isinstance(found, list) else []:
-            unit = next((name for name in units if name in (item.get("environments") or [])), None)
-            if unit and isinstance(item, dict):
-                items.append({**item, "site": unit, "server": server, "deleted": False, "restorable": False})
+            unit = next((name for name in units if name in (item.get("environments") or [])), None) if isinstance(item, dict) else None
+            if unit:
+                items.append({**item, "site": under[(server, unit)], "label": item.get("site"), "server": server, "deleted": False, "restorable": False})
         return items
     if not groups:
         return []

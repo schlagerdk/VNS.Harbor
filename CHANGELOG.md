@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.86] - Unreleased
+
+### Features
+
+- Export Site on the server a site is managed from lists the exports kept on its environments' servers in Servers too (such as one made there before 1.0.85), under the site, each named as it is there and marked with its server, with Download, Copy link and Delete working on it.
+
 ## [1.0.85] - 2026-11-26
 
 ### Features
