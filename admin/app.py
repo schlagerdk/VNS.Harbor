@@ -6867,7 +6867,8 @@ def managed_export_items(sites):
         for item in found if isinstance(found, list) else []:
             unit = next((name for name in units if name in (item.get("environments") or [])), None) if isinstance(item, dict) else None
             if unit:
-                items.append({**item, "site": under[(server, unit)], "label": item.get("site"), "server": server, "deleted": False, "restorable": False})
+                # Named by the environment it is of (account.example.com), not the site it was made under there
+                items.append({**item, "site": under[(server, unit)], "label": unit, "server": server, "deleted": False, "restorable": False})
         return items
     if not groups:
         return []

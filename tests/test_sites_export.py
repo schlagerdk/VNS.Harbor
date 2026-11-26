@@ -218,6 +218,40 @@ class DeleteTests(unittest.TestCase):
 			delete.assert_called_once()
 
 
+class WebConfigTests(unittest.TestCase):
+	"""A Windows export has its web.config, to be put on IIS as it is, though the project runs on Linux and turns it off
+	(found exporting a site, 1.0.88)"""
+	def test_the_project_makes_it_again(self):
+		with tempfile.TemporaryDirectory() as folder:
+			path = Path(folder) / "example.csproj"
+			path.write_bytes(b"\xef\xbb\xbf<Project>\r\n  <PropertyGroup>\r\n    <TargetFramework>net10.0</TargetFramework>\r\n"
+			                 b"    <IsTransformWebConfigDisabled>true</IsTransformWebConfigDisabled>\r\n  </PropertyGroup>\r\n</Project>\r\n")
+			export.web_config_on(folder)
+			self.assertEqual(path.read_bytes(), b"\xef\xbb\xbf<Project>\r\n  <PropertyGroup>\r\n    <TargetFramework>net10.0</TargetFramework>\r\n"
+			                                    b"  </PropertyGroup>\r\n</Project>\r\n")
+
+	def test_the_build_has_it(self):
+		with tempfile.TemporaryDirectory() as folder:
+			source, work = Path(folder, "source"), Path(folder, "work")
+			source.mkdir()
+			work.mkdir()
+			(source / "example.csproj").write_text("<Project />")
+			calls = []
+			def run(*argv, **kwargs):
+				calls.append(argv)
+				output = Path(next(arg for arg in argv if arg.startswith("-p:PublishDir="))[len("-p:PublishDir="):])
+				(output / "example.dll").write_text("")
+			system = mock.Mock(run=run)
+			output = export.build(system, source, work, "windows", "Release")
+			self.assertIn("-p:IsTransformWebConfigDisabled=false", calls[0])
+			# dotnet made none: the one it makes for IIS is written
+			config = (output / "web.config").read_text()
+			self.assertIn('arguments=".\\example.dll"', config)
+			self.assertIn('modules="AspNetCoreModuleV2"', config)
+			linux = export.build(mock.Mock(run=run), source, Path(folder, "work2"), "linux", "Release") if Path(folder, "work2").mkdir() is None else None
+			self.assertFalse((linux / "web.config").exists())
+
+
 class ManagedTests(unittest.TestCase):
 	"""A site that is an environment of a site on another server: the Harbor there exports it, as it has the project"""
 	def system(self, root, servers):
@@ -232,8 +266,11 @@ class ManagedTests(unittest.TestCase):
 	def test_built_on_the_server_it_is_managed_from(self):
 		with tempfile.TemporaryDirectory() as root:
 			system = self.system(root, {"web-01": {"host": "10.0.0.5", "fqdn": "web-01.example.net", "user": "root", "port": 22}})
-			export.export_site(system, "example.com", "windows", ["main"], by="Anna", keep_hours=24)
+			with mock.patch.dict("os.environ", {"HARBOR_PROGRESS": "1"}):
+				export.export_site(system, "example.com", "windows", ["main"], by="Anna", keep_hours=24)
 			sent = next(line for line in system.commands if line.startswith("ssh "))
+			# Its steps there are shown here as it takes them
+			self.assertIn("export HARBOR_PROGRESS=1", sent)
 			# There it is its site's environment, by its folder: built for Windows, kept there and listed here
 			self.assertIn("root@10.0.0.5", sent)
 			self.assertIn("site export test.example.com --os windows --targets unit:example.com --by Anna --keep 24", sent)

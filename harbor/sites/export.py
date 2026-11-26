@@ -289,10 +289,14 @@ def build(system, source, work, os_name, configuration="Release"):
 		shutil.copytree(source, project, symlinks=False)
 	output = work / f"build-{configuration}"
 	output.mkdir()
+	# For IIS its web.config is made, though a project that runs on Linux turns that off
+	windows = ["-p:IsTransformWebConfigDisabled=false"] if os_name == "windows" else []
 	system.run("python3", str(LIB / "build_as.py"), "--", "dotnet", "publish", projects[0].name, "-c", configuration, f"-p:PublishDir={output}",
-	           "--runtime", OSES[os_name], "--self-contained", "false", "--nologo", cwd=str(project))
+	           *windows, "--runtime", OSES[os_name], "--self-contained", "false", "--nologo", cwd=str(project))
 	if not (output / f"{projects[0].stem}.dll").is_file():
 		raise Stop(f"The build for {os_name.capitalize()} failed: {projects[0].stem}.dll is not in its output.")
+	if os_name == "windows" and not (output / "web.config").is_file():
+		(output / "web.config").write_text(default_web_config(projects[0].stem), encoding="utf-8")
 	strip_folder(output)
 	# The project's NuGet settings have nothing to do in a site that runs
 	for config in output.glob("[Nn]u[Gg]et.config"):
@@ -508,6 +512,40 @@ def configuration_of(name):
 	return configuration_for(name) or "Release"
 
 
+WEB_CONFIG = """<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <location path="." inheritInChildApplications="false">
+    <system.webServer>
+      <handlers>
+        <add name="aspNetCore" path="*" verb="*" modules="AspNetCoreModuleV2" resourceType="Unspecified" />
+      </handlers>
+      <aspNetCore processPath="dotnet" arguments=".\\@DLL@.dll" stdoutLogEnabled="false" stdoutLogFile=".\\logs\\stdout" hostingModel="inprocess" />
+    </system.webServer>
+  </location>
+</configuration>
+"""
+
+
+def default_web_config(dll):
+	"""The web.config dotnet publish makes for IIS (the ASP.NET Core Module, in process), for a build that has none"""
+	return WEB_CONFIG.replace("@DLL@", dll).replace("\n", "\r\n")
+
+
+WEB_CONFIG_OFF = re.compile(r"[ \t]*<IsTransformWebConfigDisabled>\s*true\s*</IsTransformWebConfigDisabled>[ \t]*\r?\n?", re.I)
+
+
+def web_config_on(folder):
+	"""A project exported for Windows makes its web.config again as it is published (one that runs on Linux has it
+	turned off): the customer's publish.ps1 needs it for IIS"""
+	for csproj in Path(folder).glob("*.csproj"):
+		raw = csproj.read_bytes()
+		text = raw.decode("utf-8-sig")
+		changed = WEB_CONFIG_OFF.sub("", text)
+		if changed != text:
+			# Its byte order mark kept, as the file had it
+			csproj.write_bytes((b"\xef\xbb\xbf" if raw.startswith(b"\xef\xbb\xbf") else b"") + changed.encode("utf-8"))
+
+
 def set_web_config(path, name):
 	"""The environment in a Windows build's web.config (ASPNETCORE_ENVIRONMENT and DOTNET_ENVIRONMENT), as Harbor sets it"""
 	from harbor.sites import convert
@@ -579,9 +617,12 @@ def export_managed(system, name, note, os_name, by="", keep_hours=72):
 		system.warn(f"Its database on a database server is not in the export: export it from {server_name}'s Export Site to take it along.")
 	from harbor.server import servers
 	command = ["site", "export", main, "--os", os_name, "--targets", f"unit:{name}", "--by", by or "", "--keep", str(int(keep_hours or 0))]
-	system.plan([f"Export {name} on {server_name}, where {main} is"])
-	system.step(f"Export {name} on {server_name}, where {main} is")
-	script = REMOTE_HARBOR + 'exec "$h" ' + " ".join(shlex.quote(part) for part in command) + "\n"
+	system.plan([f"Ask {server_name} to export {name}, where {main} is"])
+	system.step(f"Ask {server_name} to export {name}, where {main} is")
+	# Its steps there (copy, build, export, zip) come here as it takes them, in the admin's window too
+	progress = os.environ.get("HARBOR_PROGRESS", "")
+	script = (REMOTE_HARBOR + (f"export HARBOR_PROGRESS={shlex.quote(progress)}\n" if progress else "unset HARBOR_PROGRESS\n")
+	          + 'exec "$h" ' + " ".join(shlex.quote(part) for part in command) + "\n")
 	result = servers.remote(system, entry, "bash -c " + shlex.quote(script), check=False, capture=False)
 	if not result.ok:
 		raise Stop(f"The export on {server_name} failed.", result.returncode or 1)
@@ -657,6 +698,8 @@ def export_site(system, name, os_name, targets, delete=False, by="", keep_hours=
 			copy_source(system, site, local_folders, tree)
 			project = next(tree.glob("*.csproj")).stem
 			strip_project(tree, [place for _part, place in named] + ["databases", "scripts"])
+			if os_name == "windows":
+				web_config_on(tree)
 			clean_settings(tree)
 			built = {}
 			for configuration in configurations:

@@ -40,7 +40,7 @@ class OtherServersTests(unittest.TestCase):
             found = sorted(items(sites), key=lambda item: item["id"])
         # Each under its site here, named as it is there, with the server it is kept on
         self.assertEqual([(item["site"], item["label"], item["server"]) for item in found],
-                         [("example.com", "test.example.com", "web-01"), ("dev.shop.example.com", "shop.example.com", "web-02")])
+                         [("example.com", "example.com", "web-01"), ("dev.shop.example.com", "shop.example.com", "web-02")])
         # A server not in Servers is not asked
         self.assertEqual(sorted(server for server, _command in asked), ["web-01", "web-02"])
         self.assertTrue(all("export-list --units" in command for _server, command in asked))

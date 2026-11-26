@@ -2,6 +2,14 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.89] - Unreleased
+
+### Fixes
+
+- Export of a site managed from another server shows the steps taken there (copy the project, build, export, zip) as they come, not one step for all of it.
+- An export kept on another server is named by the environment it is of (account.example.com), not by the site it was made under there.
+- A Windows export has its web.config, to be put on IIS as it is, also of a project that turns it off (IsTransformWebConfigDisabled, as one that runs on Linux may): the build makes it, the exported project makes it again with publish.ps1, and one is written when a build still has none.
+
 ## [1.0.88] - 2026-11-26
 
 ### Fixes
