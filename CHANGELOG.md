@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.87] - Unreleased
+
+### Fixes
+
+- Export… of a site managed from another server: the card that says where it is built has a build icon and a light tint, so it is not taken for a choice.
+
 ## [1.0.86] - 2026-11-26
 
 ### Features

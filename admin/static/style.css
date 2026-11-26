@@ -2585,6 +2585,9 @@ dialog.newsite label.sync-option.action-option { flex-direction: row; align-item
 #prompt-options .sync-option { flex-direction: row; align-items: center; justify-content: flex-start; margin: 0; text-align: left; font-size: inherit; color: inherit; }
 /* One that says what is missing (or why a database is kept): no choice of its own, its button at its end */
 .prompt-option-note { cursor: default; }
+/* Export of a site managed from another server: where it is built, said on a lightly tinted card, not a choice */
+.sync-option.export-built { --option-tone: var(--blue); border-color: color-mix(in srgb, var(--option-tone) 28%, transparent); background: color-mix(in srgb, var(--option-tone) 8%, transparent); }
+.sync-option.export-built .sync-option-icon { background: color-mix(in srgb, var(--option-tone) 16%, transparent); color: var(--option-tone); }
 /* Move or Convert to SQLite: each card with its icon, lit as the card is chosen */
 .connect-kind.convert-mode { grid-template-columns: 34px minmax(0, 1fr); column-gap: 12px; align-items: center; align-content: center; }
 .convert-mode > strong, .convert-mode > small { grid-column: 2; }

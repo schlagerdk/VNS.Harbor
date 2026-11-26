@@ -1130,6 +1130,7 @@ const iconPaths = {
 	key: "M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.78 7.78 5.5 5.5 0 0 1 7.78-7.78zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4",
 	server: "M4 4h16v6H4zM4 14h16v6H4zM8 7h.01M8 17h.01M12 7h5M12 17h5",
 	package: "m12 3 9 5v8l-9 5-9-5V8zM3 8l9 5 9-5M12 13v8M7.5 5.5l9 5",
+	hammer: "m15 12-8.5 8.5a2.12 2.12 0 0 1-3-3L12 9M17.64 15 22 10.64M20.91 11.7l-1.25-1.25a3.18 3.18 0 0 1-.93-2.25v-.86L16.01 4.6a5.56 5.56 0 0 0-3.94-1.64H9l.92.82A6.18 6.18 0 0 1 12 8.4v1.56l2 2h2.47l2.26 1.91",
 };
 
 // label (exact, or a prefix ending in "*") -> [icon, tone]
@@ -8552,8 +8553,8 @@ function askExport(site) {
 	const error = el("p", { className: "error", role: "alert" });
 	// Managed from another server: built there, where its project is, and kept there (listed here too). It is deleted
 	// from that server, never with its export from here
-	const managed = site.managed ? el("div", { className: "sync-option action-option prompt-option-note off tone-blue convert-missing" },
-		el("span", { className: "sync-option-icon", ariaHidden: "true" }, svgIcon("server")),
+	const managed = site.managed ? el("div", { className: "sync-option action-option prompt-option-note off tone-blue convert-missing export-built" },
+		el("span", { className: "sync-option-icon", ariaHidden: "true" }, svgIcon("hammer")),
 		el("span", { className: "sync-option-text" }, el("span", { className: "sync-option-title", textContent: `Built on ${site.manager}` }),
 			el("span", { className: "sync-option-sub", textContent: `Its project is there: the export is made and kept on ${site.manager}, and listed here too` }))) : null;
 	const box = el("div", { className: "convert-form" }, ...(managed ? [managed] : []), ...(built ? [el("div", { className: "ns-section", textContent: "For" }), oses] : []),
