@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.88] - Unreleased
+
+### Fixes
+
+- Export… of a site managed from another server: the card that says where it is built is teal, not the blue of a chosen card such as Windows.
+
 ## [1.0.87] - 2026-11-26
 
 ### Fixes
