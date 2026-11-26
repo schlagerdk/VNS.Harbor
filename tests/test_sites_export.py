@@ -2,11 +2,13 @@
 environment's own files kept over a fresh build"""
 import base64
 import json
+import os
 from pathlib import Path
 import re
 import tempfile
 import unittest
 from unittest import mock
+import zipfile
 
 from harbor.core.system import Stop
 from harbor.sites import export
@@ -250,6 +252,27 @@ class WebConfigTests(unittest.TestCase):
 			self.assertIn('modules="AspNetCoreModuleV2"', config)
 			linux = export.build(mock.Mock(run=run), source, Path(folder, "work2"), "linux", "Release") if Path(folder, "work2").mkdir() is None else None
 			self.assertFalse((linux / "web.config").exists())
+
+
+class ZipTests(unittest.TestCase):
+	def test_fast_deflate_and_media_stored(self):
+		with tempfile.TemporaryDirectory() as folder:
+			work = Path(folder, "work")
+			tree = work / "example.com"
+			(tree / "wwwroot/media").mkdir(parents=True)
+			(tree / "appsettings.json").write_text("{}" * 1000)
+			(tree / "wwwroot/media/photo.JPG").write_bytes(b"\xff\xd8" + b"x" * 1000)
+			(tree / "scripts").mkdir()
+			(tree / "scripts/publish.sh").write_text("#!/bin/bash\n")
+			os.chmod(tree / "scripts/publish.sh", 0o755)
+			archive = Path(folder, "example.zip")
+			export.make_zip(tree, work, archive)
+			with zipfile.ZipFile(archive) as zipped:
+				found = {info.filename: info for info in zipped.infolist()}
+			self.assertEqual(found["example.com/appsettings.json"].compress_type, zipfile.ZIP_DEFLATED)
+			self.assertEqual(found["example.com/wwwroot/media/photo.JPG"].compress_type, zipfile.ZIP_STORED)
+			# The publish script can be run as it is
+			self.assertEqual(found["example.com/scripts/publish.sh"].external_attr >> 16 & 0o777, 0o755)
 
 
 class ManagedTests(unittest.TestCase):

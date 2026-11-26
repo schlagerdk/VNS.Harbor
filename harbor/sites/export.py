@@ -546,6 +546,22 @@ def web_config_on(folder):
 			csproj.write_bytes((b"\xef\xbb\xbf" if raw.startswith(b"\xef\xbb\xbf") else b"") + changed.encode("utf-8"))
 
 
+# Already compressed (media, fonts, archives): stored as they are, as deflate makes them no smaller, only slower
+STORED = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif", ".ico", ".mp4", ".webm", ".mov", ".m4v", ".mp3", ".m4a", ".ogg",
+          ".woff", ".woff2", ".zip", ".gz", ".tgz", ".7z", ".rar", ".br", ".nupkg", ".pdf", ".docx", ".xlsx", ".pptx"}
+
+
+def make_zip(tree, work, archive):
+	"""The export's zip: deflate at its fastest level (about three times as fast as the default, a little larger) and what
+	is compressed already stored, each file with its mode (the publish script can be run as it is)"""
+	with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, compresslevel=1, allowZip64=True) as zipped:
+		for path in sorted(tree.rglob("*")):
+			if path.is_file() and not path.is_symlink():
+				stored = path.suffix.lower() in STORED
+				zipped.write(path, path.relative_to(work).as_posix(), compress_type=zipfile.ZIP_STORED if stored else zipfile.ZIP_DEFLATED,
+				             compresslevel=None if stored else 1)
+
+
 def set_web_config(path, name):
 	"""The environment in a Windows build's web.config (ASPNETCORE_ENVIRONMENT and DOTNET_ENVIRONMENT), as Harbor sets it"""
 	from harbor.sites import convert
@@ -770,11 +786,7 @@ def export_site(system, name, os_name, targets, delete=False, by="", keep_hours=
 		                                         framework, built=bool(built)))
 		system.step("Make the zip")
 		archive = folder / (f"{name}.zip" if os_name == ANY else f"{name}-{os_name}.zip")
-		with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED, allowZip64=True) as zipped:
-			for path in sorted(tree.rglob("*")):
-				if path.is_file() and not path.is_symlink():
-					# With its mode: the publish script can be run as it is
-					zipped.write(path, path.relative_to(work).as_posix())
+		make_zip(tree, work, archive)
 		os.chmod(archive, 0o600)
 		item.update(file=archive.name, size=archive.stat().st_size, state="ready", folders={part[0]: place for part, place in named})
 		save(system, item)

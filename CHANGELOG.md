@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.90] - Unreleased
+
+### Fixes
+
+- An export's zip is made about three times as fast: deflate at its fastest level, and media, fonts and archives, compressed already, stored as they are (a little larger zip).
+
 ## [1.0.89] - 2026-11-26
 
 ### Fixes
