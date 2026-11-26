@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.91] - Unreleased
+
+### Fixes
+
+- An exported project leaves its environments' folders, the databases and the scripts out of its build altogether (MSBuild's DefaultItemExcludes, beside its Remove blocks): publish.ps1 on Windows failed with duplicate definitions once a site had run, as it compiled the models Umbraco generates in umbraco/Data/TEMP/InMemoryAuto of the environment's folder.
+
 ## [1.0.90] - 2026-11-26
 
 ### Fixes

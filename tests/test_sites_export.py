@@ -71,6 +71,12 @@ class StripTests(unittest.TestCase):
 			self.assertIn(f'  <!-- Exclude {folder} from build -->\n  <ItemGroup>\n    <Content Remove="{folder}/**" />\n'
 			              f'    <Compile Remove="{folder}/**" />\n    <None Remove="{folder}/**" />\n  </ItemGroup>\n', csproj)
 		self.assertTrue(csproj.endswith("</ItemGroup>\n</Project>\n"))
+		# Never picked up by the build at all: a Windows build compiled the models Umbraco generated in an environment
+		# that had run (_publish/umbraco/Data/TEMP/InMemoryAuto), found on a customer's server
+		self.assertIn("<DefaultItemExcludes>$(DefaultItemExcludes);_publish\\**;_test_external\\**;databases\\**</DefaultItemExcludes>", csproj)
+		# Exported again (from an export), one of it, not two
+		export.strip_project(self.root, ["_publish", "_test_external", "databases"])
+		self.assertEqual((self.root / "site.csproj").read_text().count("<DefaultItemExcludes>"), 1)
 		# English and Danish only, as Harbor builds it
 		self.assertIn("<SatelliteResourceLanguages>en;da</SatelliteResourceLanguages>", csproj)
 		# Left with nuget.org alone it says what dotnet does anyway: it goes

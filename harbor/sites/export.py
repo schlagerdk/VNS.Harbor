@@ -126,6 +126,10 @@ def running_folder(system, unit, fallback):
 EXCLUDED = re.compile(r'[ \t]*<!--\s*Exclude[^>]*?build[^>]*?-->[ \t]*\r?\n[ \t]*<ItemGroup>(?:\s*<(?:Content|Compile|None|EmbeddedResource)\s+Remove="[^"]*"\s*/>)*\s*</ItemGroup>[ \t]*\r?\n?')
 
 
+FOLDERS_MARK = "<!-- The environments' folders, the databases and the scripts are not part of the build -->"
+FOLDERS_EXCLUDED = re.compile(r"[ \t]*" + re.escape(FOLDERS_MARK) + r"\s*<PropertyGroup>\s*<DefaultItemExcludes>[^<]*</DefaultItemExcludes>\s*</PropertyGroup>[ \t]*\r?\n?")
+
+
 def strip_project(folder, folders=()):
 	"""The project without VNS Harbor: its package reference, Harbor's NuGet source and Harbor's files. Each of the
 	folders (its environments', the databases', the scripts') is left out of its build, a block each as Harbor writes
@@ -134,6 +138,7 @@ def strip_project(folder, folders=()):
 		text = csproj.read_text(encoding="utf-8-sig", errors="replace")
 		changed = re.sub(r'[ \t]*<PackageReference\s+Include="VNS\.Harbor"[^>]*?(?:/>|>.*?</PackageReference>)[ \t]*\r?\n?', "", text, flags=re.S | re.I)
 		changed = EXCLUDED.sub("", changed)
+		changed = FOLDERS_EXCLUDED.sub("", changed)
 		# Only English and Danish of the packages' languages, as Harbor builds it (its publish.targets): the customer's
 		# own builds too, with the publish script. One the project names itself stays
 		if "<SatelliteResourceLanguages" not in changed:
@@ -141,7 +146,13 @@ def strip_project(folder, folders=()):
 		# One left empty by an earlier export or by hand
 		changed = re.sub(r"[ \t]*<ItemGroup>\s*</ItemGroup>[ \t]*\r?\n?", "", changed)
 		if folders:
-			blocks = "".join(f'  <!-- Exclude {name} from build -->\n  <ItemGroup>\n    <Content Remove="{name}/**" />\n'
+			# Never picked up by the build at all (MSBuild's DefaultItemExcludes, as Umbraco leaves out its umbraco\Data):
+			# an environment that has run holds Umbraco's generated models (umbraco\Data\TEMP\InMemoryAuto), which a
+			# Windows build otherwise compiled with the project's own. And a block each, as Harbor writes them
+			excludes = ";".join(f"{name}\\**" for name in folders)
+			blocks = (f"  {FOLDERS_MARK}\n  <PropertyGroup>\n    <DefaultItemExcludes>$(DefaultItemExcludes);{excludes}</DefaultItemExcludes>\n"
+			          "  </PropertyGroup>\n")
+			blocks += "".join(f'  <!-- Exclude {name} from build -->\n  <ItemGroup>\n    <Content Remove="{name}/**" />\n'
 			                 f'    <Compile Remove="{name}/**" />\n    <None Remove="{name}/**" />\n  </ItemGroup>\n' for name in folders)
 			changed = re.sub(r"\s*</Project>\s*\Z", lambda match: "\n" + blocks + "</Project>\n", changed, count=1)
 		if changed != text:
