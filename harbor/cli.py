@@ -70,18 +70,69 @@ def _convert_site(args, system):
 
 def _convert_info(args, system):
     import json
-    from harbor.sites.convert import describe, records
-    print(json.dumps({"sites": [describe(system, unit) for unit in args.units], "converted": records(system)}))
+    from harbor.sites.convert import overview
+    print(json.dumps(overview(system, args.units)))
+
+
+def _convert_remote(args, system):
+    from harbor.sites.convert import remote
+    remote(system, args.site, args.target, args.action, args.arguments)
+
+
+def _convert_move(args, system):
+    from harbor.sites.convert import move_site
+    move_site(system, args.unit, args.database, args.login or "", args.keep_login, args.key or "", args.by or "")
+
+
+def _convert_transfer(args, system):
+    from harbor.sites.convert import transfer_database
+    transfer_database(system, args.database, args.name, args.login, args.move)
+
+
+def _export(args, system):
+    from harbor.sites import export
+    if args.action == "site":
+        export.export_site(system, args.name, args.os, [item for item in (args.targets or "").split(",") if item], args.delete, args.by or "", args.keep)
+    elif args.action == "restore":
+        export.restore(system, args.name)
+    elif args.action == "restore-here":
+        export.restore_here(system, args.name)
+    elif args.action == "snapshot":
+        export.snapshot_here(system, args.name, args.unit)
+    elif args.action == "forget":
+        export.forget(system, args.name)
+    elif args.action == "downloaded":
+        export.downloaded(system, args.name)
+    else:
+        export.cleanup(system)
 
 
 def _convert_rollback(args, system):
     from harbor.sites.convert import rollback_to
-    rollback_to(system, args.id)
+    rollback_to(system, args.id, leave=args.leave_databases)
 
 
 def _convert_delete(args, system):
     from harbor.sites.convert import delete_old
-    delete_old(system, args.id)
+    delete_old(system, args.id, leave=args.leave_databases)
+
+
+def _convert_relay(args, system):
+    from harbor.sites import convert
+    if args.step == "prepare":
+        convert.relay_prepare(system, args.unit, args.key or "")
+    elif args.step == "stop":
+        convert.relay_stop(system, args.unit, args.key or "")
+    elif args.step == "login":
+        convert.relay_login(system, args.unit, args.key or "")
+    elif args.step == "switch":
+        convert.relay_switch(system, args.unit, args.engine or "", args.database or "", args.login or "", args.key or "", args.running, args.by or "", args.origin or "")
+    elif args.step == "sqlite":
+        convert.relay_sqlite(system, args.unit, args.key or "", args.by or "", args.incoming or "", args.file or "", args.running, args.origin or "")
+    elif args.step == "resume":
+        convert.relay_resume(system, args.unit)
+    else:
+        convert.relay_finish(system, args.unit, args.engine or "", args.database or "", args.login or "", args.key or "", args.running, args.by or "")
 
 
 def _setup_site(args, system):
@@ -632,16 +683,75 @@ def parser():
     command.add_argument("--key", help="the connection string to convert, when the site has several")
     command.add_argument("--by", help="who asked for it, kept with the conversion")
     command.set_defaults(handler=_convert_site)
-    command = site.add_parser("convert-info", help="the sites' databases as Settings, Convert shows them (JSON), and the conversions made")
+    command = site.add_parser("convert-move", help="a site's database on Microsoft SQL Server or PostgreSQL moved to another server of its kind "
+                                                   "(the new one in VNS_CONVERT_CONNECTION, the old in VNS_CONVERT_SOURCE, a new login's password in VNS_CONVERT_LOGIN_PASSWORD)")
+    command.add_argument("unit")
+    command.add_argument("--database", required=True, help="the database's name on the new server")
+    command.add_argument("--login", help="a new login for it (else --keep-login)")
+    command.add_argument("--keep-login", action="store_true", help="its login goes with it, by its name and password")
+    command.add_argument("--key", help="the connection string, when the site has several")
+    command.add_argument("--by", help="who asked for it, kept with the move")
+    command.set_defaults(handler=_convert_move)
+    command = site.add_parser("convert-transfer", help="a database no site runs on copied (or moved, --move) to another server of its kind, "
+                                                       "with a login of its own (the old server in VNS_CONVERT_SOURCE, the new in VNS_CONVERT_CONNECTION)")
+    command.add_argument("database")
+    command.add_argument("--name", required=True, help="its name on the new server")
+    command.add_argument("--login", required=True, help="its own login there (the password in VNS_CONVERT_LOGIN_PASSWORD)")
+    command.add_argument("--move", action="store_true", help="the old one deleted once the new one is there")
+    command.set_defaults(handler=_convert_transfer)
+    for name, action, text in (("export", "site", "a site and its environments exported for a customer: builds for --os, its source and databases, "
+                                                       "without VNS Harbor, in a zip (Settings, Export)"),
+                               ("export-restore", "restore", "a site deleted with its export put back as it was"),
+                               ("export-restore-here", "restore-here", "(on an environment's server) its snapshot put back"),
+                               ("export-snapshot", "snapshot", "(on an environment's server) its site kept for Restore"),
+                               ("export-forget", "forget", "an export deleted, with its zip and snapshots"),
+                               ("export-downloaded", "downloaded", "an export's zip downloaded: it is deleted 72 hours later"),
+                               ("export-cleanup", "cleanup", "the exports downloaded more than 72 hours ago deleted")):
+        command = site.add_parser(name, help=text)
+        command.set_defaults(handler=_export, action=action)
+        if action != "cleanup":
+            command.add_argument("name", help="the site" if action == "site" else "the export's id")
+        if action == "site":
+            command.add_argument("--os", required=True, choices=("windows", "linux", "any"), help="any: a site that is not built (HTML, Python)")
+            command.add_argument("--targets", help="main and the environments' ids, comma separated")
+            command.add_argument("--delete", action="store_true", help="the site deleted from Harbor once exported (a snapshot kept for Restore)")
+            command.add_argument("--by", help="who asked for it")
+            command.add_argument("--keep", type=int, default=72, help="hours it lives after its link was first used (3, 6, 12, 24, 72 or 168; 0: never deleted by itself)")
+        if action == "snapshot":
+            command.add_argument("unit")
+    command = site.add_parser("convert-info", help="the sites' databases as Settings, Convert shows them (JSON), and what they kept after conversions")
     command.add_argument("units", nargs="*")
     command.set_defaults(handler=_convert_info)
     command = site.add_parser("convert-delete", help="the SQLite file a site ran on before a conversion, deleted (or a server's database forgotten)")
     command.add_argument("id")
+    command.add_argument("--leave-databases", action="store_true", help="a database on a server only forgotten: the Harbor that asked deletes it")
     command.set_defaults(handler=_convert_delete)
     command = site.add_parser("convert-rollback", help="a conversion undone: the site back on its old database, the new one deleted "
                                                        "(the connection to the new one's server in VNS_CONVERT_CONNECTION)")
     command.add_argument("id")
+    command.add_argument("--leave-databases", action="store_true", help="the databases on servers left for the Harbor that asked to delete")
     command.set_defaults(handler=_convert_rollback)
+    command = site.add_parser("convert-relay", help="a site's part of a conversion another Harbor does the database's part of "
+                                                    "(when this server has not the tools): prepare, finish or resume")
+    command.add_argument("step", choices=("prepare", "finish", "resume", "stop", "switch", "sqlite", "login"))
+    command.add_argument("unit")
+    command.add_argument("--engine", choices=("mssql", "postgres"))
+    command.add_argument("--database")
+    command.add_argument("--login")
+    command.add_argument("--key")
+    command.add_argument("--by")
+    command.add_argument("--running", action="store_true", help="it ran before: started again when a step fails")
+    command.add_argument("--origin", help="(switch, sqlite) the old database, as JSON: kept with the move or conversion")
+    command.add_argument("--incoming", help="(sqlite) the SQLite file sent, in /var/lib/harbor/convert-incoming")
+    command.add_argument("--file", help="(sqlite) its name in the site")
+    command.set_defaults(handler=_convert_relay)
+    command = site.add_parser("convert-remote", help="convert, convert-info, convert-rollback or convert-delete run by the Harbor where a site's "
+                                                     "environment runs, over SSH (the connections and password in the same variables, sent on its stdin)")
+    command.add_argument("site", help="the main site here")
+    command.add_argument("target", help="its environment on the other server")
+    command.add_argument("action", choices=("convert", "convert-info", "convert-rollback", "convert-delete", "convert-move"))
+    command.add_argument("arguments", nargs=argparse.REMAINDER)
+    command.set_defaults(handler=_convert_remote)
     command = site.add_parser("setup", help="set up a folder put in /var/www by hand (was setup_site.sh)")
     command.add_argument("site", nargs="?", default="")
     command.add_argument("binding", nargs="?", default="", help="the binding, or * to answer any name")

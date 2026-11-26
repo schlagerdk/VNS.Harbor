@@ -285,10 +285,22 @@ def main():
             chosen = report.validate_report({**json.loads(given), "enabled": False}) if given.strip() else settings.get("report")
             print(json.dumps(report.test_report(found, chosen, socket.gethostname())))
             return 0
+        clean_exports()
         return 0 if run() else 1
     except (OSError, ValueError) as exc:
         print(f"Keep-alive failed: {exc}", file=sys.stderr)
         return 1
+
+
+def clean_exports():
+    """Exports downloaded more than 72 hours ago are deleted (Settings, Export): only where there are any"""
+    harbor = Path("/opt/harbor/current/bin/harbor")
+    if not Path("/var/lib/harbor/exports").is_dir() or not harbor.is_file():
+        return
+    try:
+        subprocess.run(["/usr/bin/python3", str(harbor), "site", "export-cleanup"], capture_output=True, timeout=600)
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"Exports were not cleaned up: {exc}", file=sys.stderr)
 
 
 if __name__ == "__main__":

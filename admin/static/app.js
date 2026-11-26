@@ -617,7 +617,10 @@ function focusOnceEnabled(dialog, button) {
 // Replaces prompt()/confirm(). Resolves to the entered text (or true without an input), or null when cancelled.
 // filter: what may stand in the field, applied as it is typed or pasted (a name of only some characters); valid: when
 // OK can be used
-function ask({ title, message = "", value = "", placeholder = "", ok = "OK", danger = false, input = true, match = null, extra = null, checkbox = null, checkboxChecked = false, loginCheckbox = false, dns = null, dnsCheck = null, filter = null, valid = null }) {
+// options: what else is decided in the same dialog, as option cards ({title, sub, icon, tone, checked}), or a card that
+// says what is missing with a button of its own ({title, sub, icon, tone, action: {label, icon, run}}: it closes the
+// dialog, which answers null, and runs). With options, OK answers {value, options: [checked, …]}
+function ask({ title, message = "", value = "", placeholder = "", ok = "OK", danger = false, input = true, match = null, extra = null, checkbox = null, checkboxChecked = false, loginCheckbox = false, dns = null, dnsCheck = null, filter = null, valid = null, options = null }) {
 	const dlg = $("#dlg-prompt");
 	const field = $("#prompt-input");
 	// dnsCheck: names that must point to the server before OK can be used, as for a certificate
@@ -645,13 +648,24 @@ function ask({ title, message = "", value = "", placeholder = "", ok = "OK", dan
 	$("#prompt-icon").hidden = !styledHeader;
 	if (styledHeader) $("#prompt-icon").replaceChildren(svgIcon(
 		/^(copy|restore)\b/i.test(title) ? "sync" : /^(add|create|new)\b/i.test(title) ? "file" : "pencil"));
+	// With options, the line that asks for the name to be typed stands under them, just above the field it is typed in
+	let confirmLine = "";
+	if (options?.length && match !== null && message.includes("\n")) {
+		confirmLine = message.slice(message.lastIndexOf("\n") + 1);
+		message = message.slice(0, message.lastIndexOf("\n"));
+	}
+	const confirmBox = $("#prompt-confirm");
+	confirmBox.hidden = !confirmLine;
+	confirmBox.textContent = confirmLine;
 	const messageBox = $("#prompt-message");
 	const copyStatus = $("#prompt-copy-status");
 	clearTimeout(copyStatusTimer);
 	copyStatus.textContent = "";
 	copyStatus.title = "";
 	messageBox.textContent = message;
-	const matchIndex = match ? message.lastIndexOf(match) : -1;
+	const matchText = confirmLine || message;
+	const matchBox = confirmLine ? confirmBox : messageBox;
+	const matchIndex = match ? matchText.lastIndexOf(match) : -1;
 	if (matchIndex >= 0) {
 		const copy = el("button", {
 			type: "button", className: "confirmation-copy", textContent: match,
@@ -675,9 +689,25 @@ function ask({ title, message = "", value = "", placeholder = "", ok = "OK", dan
 				}, 2500);
 			},
 		});
-		messageBox.replaceChildren(message.slice(0, matchIndex), copy, message.slice(matchIndex + match.length));
+		matchBox.replaceChildren(matchText.slice(0, matchIndex), copy, matchText.slice(matchIndex + match.length));
 	}
 	$("#prompt-message").hidden = !message;
+	const boxes = [];
+	$("#prompt-options").hidden = !options?.length;
+	$("#prompt-options").replaceChildren(...(options || []).map((option) => {
+		const text = el("span", { className: "sync-option-text" }, el("span", { className: "sync-option-title", textContent: option.title }),
+			...(option.sub ? [el("span", { className: "sync-option-sub", textContent: option.sub })] : []));
+		const icon = el("span", { className: "sync-option-icon", ariaHidden: "true" }, svgIcon(option.icon || "check"));
+		if (option.action || option.note) {
+			boxes.push(null);
+			// .off: no choice, so the card does not light up under the pointer as one does
+			return el("div", { className: `sync-option action-option prompt-option-note off tone-${option.tone || "amber"}` }, icon, text,
+				...(option.action ? [tonedButton(option.action.label, option.action.icon || "plus", option.tone || "amber", () => { dlg.close("cancel"); return option.action.run(); })] : []));
+		}
+		const box = el("input", { type: "checkbox", checked: Boolean(option.checked) });
+		boxes.push(box);
+		return el("label", { className: `sync-option action-option tone-${option.tone || "blue"}` }, box, icon, text);
+	}));
 	field.hidden = !input;
 	field.value = value;
 	field.placeholder = match !== null ? "" : placeholder;
@@ -717,7 +747,8 @@ function ask({ title, message = "", value = "", placeholder = "", ok = "OK", dan
 	dlg.returnValue = "";
 	return new Promise((resolve) => {
 		dlg.onclose = () => resolve(dlg.returnValue === "ok"
-			? (checkbox || loginCheckbox ? { value: field.value, checked: $("#prompt-checkbox").checked, deleteLogin: $("#prompt-login-checkbox").checked } : extra ? { value: field.value, extra: extraField.value } : input ? field.value : true)
+			? options?.length ? { value: field.value, options: boxes.map((box) => box ? box.checked : false) }
+			: (checkbox || loginCheckbox ? { value: field.value, checked: $("#prompt-checkbox").checked, deleteLogin: $("#prompt-login-checkbox").checked } : extra ? { value: field.value, extra: extraField.value } : input ? field.value : true)
 			: null);
 		dlg.showModal();
 		if (input) { field.focus(); field.select(); } else if (extra) extraField.focus(); else okButton.focus();
@@ -1399,8 +1430,9 @@ function environmentLabel(site, env) {
 // a small label with the environment's folder tells them apart: their badges and Frontend buttons are alike. Every
 // environment of such a site has it, the main site too, so its rows look alike.
 function envFolderLabel(site, env) {
-	const kinds = site.environments.map((other) => environmentLabel(site, other));
-	if (new Set(kinds).size === kinds.length) return null;
+	// Only in the list (a card has no room), and only on a site with more than three environments beside its main site
+	// (more than usual: it is used another way, and the folders tell them apart); with a few, the names and badges do
+	if (siteLayout !== "list" || site.environments.filter(isTarget).length <= 3) return null;
 	const folder = envFolderName(env) || (env.folder || env.path || "").replace(/\/+$/, "").split("/").pop() || bindingLabel(env);
 	if (!folder) return null;
 	const where = env.mode === "windows" ? env.folder : env.mode === "remote" ? `${currentUser.admin ? env.host + ":" : ""}/var/www/${env.folder}` : "/var/www/" + (env.path || env.folder);
@@ -1416,6 +1448,8 @@ function publishBadge(env) {
 }
 
 const maxCardEnvironments = 2;
+// The environment a row on a site's card was clicked for: its page scrolls to it once drawn
+let siteEnvFocus = null;
 // Cards the user has unfolded. Kept while the page is open, also when the list is drawn again.
 const expandedCards = new Set();
 
@@ -1448,6 +1482,8 @@ function compactEnvironmentRow(site, env, environment) {
 		if (siteLayout === "list") row.append(badge);
 		else head.append(el("span", { className: "publish-pending-icon", title: "Publish pending: " + badge.title, ariaLabel: "Publish pending" }, svgIcon("upload")));
 	}
+	// Gone from its server: a card has no room for Frontend and Backend beside its badge. The list has, and shows them
+	if (isMissingEnv(env) && siteLayout !== "list") return row;
 	if (address.url) {
 		const frontend = openLink("Frontend", address.url, environment + ": " + address.title, true);
 		frontend.classList.add("frontend");
@@ -1477,6 +1513,17 @@ function siteCard(site) {
 		const environment = environmentLabel(site, env);
 		if (compact) {
 			const row = compactEnvironmentRow(site, env, environment);
+			// A click on the row (not its links) opens the site's page at that environment; while sites are being
+			// selected, the card's click selects it instead
+			if (!(multiSelecting && canMultiSelect(site))) {
+				row.classList.add("to-environment");
+				row.onclick = (event) => {
+					if (event.target.closest("a, button, input, label")) return;
+					event.stopPropagation();
+					siteEnvFocus = { site: site.name, env: envKeyOf(env) };
+					go(siteLink(site.name));
+				};
+			}
 			actions.append(row);
 			continue;
 		}
@@ -2006,6 +2053,27 @@ function renderSite(name) {
 			(focusedItem || menu.querySelector(".script-menu-trigger")).focus();
 		}
 	}
+	focusSiteEnvironment(name);
+}
+
+// The environment clicked on the site's card: shown (a filter hiding it cleared), scrolled to and lit up a moment
+function focusSiteEnvironment(name) {
+	if (!siteEnvFocus || siteEnvFocus.site !== name) return;
+	const panel = [...document.querySelectorAll("#envs > .env, #env-targets > .env")].find((item) => item.dataset.env === siteEnvFocus.env);
+	if (!panel) return;
+	siteEnvFocus = null;
+	if (panel.hidden) {
+		$("#targets-search").value = "";
+		filterTargets();
+	}
+	// In the list of environments: unfolded, as its toggle does it (and remembers it)
+	if (panel.classList.contains("env-listed") && !panel.classList.contains("unfolded")) panel.querySelector(".env-row-toggle")?.click();
+	requestAnimationFrame(() => {
+		panel.scrollIntoView({ block: "center", behavior: "smooth" });
+		panel.classList.remove("env-focused");
+		void panel.offsetWidth;
+		panel.classList.add("env-focused");
+	});
 }
 
 async function updatePackages(site, update) {
@@ -2253,8 +2321,9 @@ function envPanel(site, env) {
 	}
 	// An environment on Windows is only removed here: its IIS site and files stay on the server
 	if (hasProd(site) && !site.admin && env.mode === "windows") addManage("Remove environment", () => deleteSite(site, "prod", env), "push-right");
-	// One on another server Harbor cannot reach is only removed here too: nothing can be deleted there
-	else if (hasProd(site) && !site.admin && env.mode === "remote" && env.remote_error) addManage("Remove environment", () => deleteSite(site, "prod", env, { onlyHere: true }), "push-right");
+	// One on another server Harbor cannot reach, or whose site there is gone, is only removed here too: nothing can be
+	// (or is left to be) deleted there
+	else if (hasProd(site) && !site.admin && env.mode === "remote" && (env.remote_error || isMissingEnv(env))) addManage("Remove environment", () => deleteSite(site, "prod", env, { onlyHere: true }), "push-right");
 	// An environment is deleted on its own card. The main site only when it has none left: they are built from its
 	// project (harbor refuses it too)
 	else if (hasProd(site) && !site.admin && isTarget(env)) addManage("Delete site", () => deleteSite(site, "prod", env), "danger");
@@ -2263,7 +2332,7 @@ function envPanel(site, env) {
 	// Its edge in the colour of its environment, as its badge
 	const panel = el("section", { className: `env ${isTarget(env) ? "prod" : ""} tone-${environmentLabel(site, env).toLowerCase()}` }, heading, meta);
 	panel.dataset.env = envKeyOf(env);
-	if (missing) panel.append(el("p", { className: "package-error", textContent: `The site no longer exists on ${env.host}. Publish creates it again. Delete site removes this environment here.` }));
+	if (missing) panel.append(el("p", { className: "package-error", textContent: `The site no longer exists on ${env.host}. Publish creates it again. Remove environment removes it here.` }));
 	else if (env.exists === false) panel.append(el("p", { className: "muted", textContent: "Nothing published here yet." }));
 	if (env.remote_error) panel.append(el("p", { className: "package-error", textContent: "Remote status unavailable: " + env.remote_error }));
 	if (quick.children.length) panel.append(quick);
@@ -2724,6 +2793,14 @@ const refreshServerPickers = () => Promise.all(serverPickers.map((picker) => pic
 	serverPicker("linux", $("#copy-server-fields"), (chosen) => {
 		if (chosen) set(copyForm, { host: chosen.host, ssh_port: chosen.port, user: chosen.user, ssh_password: "" });
 		copyForm.elements.host?.dispatchEvent(new Event("input"));
+		// The folder and bindings there follow the server chosen, as Add environment's do (its wildcard asked once)
+		copyForm.suggestForServer?.();
+		if (chosen && !(chosen.name in serverWildcards)) {
+			api(`/api/servers/${encodeURIComponent(chosen.name)}/wildcard`).then(({ domain }) => {
+				serverWildcards[chosen.name] = domain;
+				if (domain && copyForm.elements.remote_server?.value === chosen.name) copyForm.suggestForServer?.();
+			}).catch(() => {});
+		}
 	}, { onKept: (count) => {
 		// Copy site to another server: only to one in Servers
 		const card = $("#copy-server-card");
@@ -2848,7 +2925,7 @@ async function copySite(site, main) {
 			onchange: () => { if (box.checked) chosenEnvs.add(target); else chosenEnvs.delete(target); update(); } });
 		// One here that goes can get another binding there; one elsewhere keeps its own
 		const binding = el("input", { className: "move-site-binding-input", required: true, autocomplete: "off", spellcheck: false, value: bindingLabel(env) || "",
-			ariaLabel: `Binding of ${bindingLabel(env)} on the new server`, oninput: () => update() });
+			ariaLabel: `Binding of ${bindingLabel(env)} on the new server`, oninput: () => { binding.dataset.edited = "1"; update(); } });
 		const bindingRow = el("label", { className: "move-site-binding" }, el("span", { textContent: "Binding there" }), binding);
 		const row = el("li", { className: "move-site-env" }, box,
 			el("span", { className: "move-site-name", textContent: bindingLabel(env) || env.folder || siteLabel(site) }),
@@ -3006,7 +3083,23 @@ async function copySite(site, main) {
 	field("here_https").onchange = () => { hereHttpsChosen = field("here_https").checked; update(); };
 	field("host").addEventListener("input", update);
 	field("change_connection").onchange = update;
-	update();
+	// On another server the names follow its name, as Add environment's do: mhs.linux-01.vns.dk on linux-02 is
+	// mhs.linux-02.vns.dk. A field that was typed in keeps what was typed
+	let suggestedFolder = null;
+	form.suggestForServer = () => {
+		const found = keptServers.find((item) => item.kind === "linux" && item.name === field("remote_server")?.value);
+		const server = found ? { ...found, wildcard: serverWildcards[found.name] || "" } : null;
+		const follow = (name) => server && name ? onServer(name, server) : name;
+		const folder = follow(siteLabel(site));
+		if (suggestedFolder === null || field("server_folder").value === suggestedFolder) field("server_folder").value = folder;
+		suggestedFolder = folder;
+		previousFolder = field("server_folder").value;
+		if (!serverBindingEdited) field("server_binding").value = follow((main && bindingLabel(main)) || siteLabel(site));
+		for (const row of envRows) if (row.here && !row.binding.dataset.edited) row.binding.value = follow(row.original);
+		showServerPath();
+		update();
+	};
+	form.suggestForServer();
 	showCopyPath();
 
 	field("project").oninput = () => { projectEdited = true; };
@@ -3102,23 +3195,53 @@ async function deleteSite(site, scope, selected, { onlyHere = false } = {}) {
 	}[scope];
 	// Removing a Windows environment, or one on a server Harbor cannot reach, deletes nothing on the server: a plain confirmation
 	const unreachable = scope === "prod" && onlyHere
-		? `This removes the ${prodEnvironment} environment from this site. Harbor cannot reach ${prod.host} (${prod.remote_error}), so the site there is not touched: remove it on the server yourself. The ${mainEnvironment} site is kept.` : "";
-	const typed = scope === "prod" && (windows || onlyHere)
+		? (isMissingEnv(prod) && !prod.remote_error
+			? `This removes the ${prodEnvironment} environment from this site. Its site on ${prod.host} is gone already, so nothing is deleted there. The ${mainEnvironment} site is kept.`
+			: `This removes the ${prodEnvironment} environment from this site. Harbor cannot reach ${prod.host} (${prod.remote_error}), so the site there is not touched: remove it on the server yourself. The ${mainEnvironment} site is kept.`) : "";
+	const simple = scope === "prod" && (windows || onlyHere);
+	// What else is decided in the same dialog: the certificates, and the databases it runs on (never one another site
+	// here uses too; one whose server this server has no connection to says so, with Add connection)
+	const options = [];
+	const certificateMessage = remote && scope !== "test"
+		? "Revoked and removed; the remote one is kept if another enabled site uses the domain"
+		: "Revoked and removed for the names deleted";
+	const deletedEnvironments = site.environments.filter((env) => scope === "all" || (scope === "prod" ? env === prod : !isTarget(env)));
+	const offersCertificates = !onlyHere && deletedEnvironments.some((env) => env.https !== false && env.mode !== "windows");
+	if (offersCertificates) options.push({ title: "Remove the certificates too", sub: certificateMessage, icon: "shield", tone: "amber" });
+	let offered = [];
+	if (currentUser.admin && !simple) {
+		const params = new URLSearchParams({ scope, ...(scope === "prod" ? { target: prod.target || "prod" } : {}) });
+		const found = (await api(`/api/sites/${encodeURIComponent(site.name)}/databases?${params}`)).databases || [];
+		const where = (item) => `${DATABASE_ENGINES[item.engine]} on ${item.host}${item.port ? ":" + item.port : ""}`;
+		for (const item of found) {
+			if (item.shared.length) {
+				options.push({ note: true, title: `${item.database} is kept`, sub: `${item.shared.join(", ")} uses it too · ${where(item)}`, icon: "database", tone: "blue" });
+			} else if (!item.reachable) {
+				options.push({ note: true, title: `${item.database} is kept`, sub: `On ${item.host}'s own SQL Server: delete it on its SQL Server page`, icon: "database", tone: "blue" });
+			} else if (!item.connection) {
+				options.push({ title: `${item.database} cannot be deleted from here`, sub: `No connection to ${where(item)} on this server: add one to delete it with the site`, icon: "database", tone: "amber",
+					action: { label: "Add connection…", run: () => addConvertConnection({}, item.engine, { host: item.host, port: item.port },
+						// Then Delete site again, where it can be ticked now
+						() => deleteSite(site, scope, selected, { onlyHere })) } });
+			} else {
+				offered.push(item);
+				options.push({ title: `Delete the database ${item.database}`, sub: `${where(item)}, with the logins only it has. Left unticked, it is kept`, icon: "database", tone: "red" });
+			}
+		}
+	}
+	const answer = simple
 		? await ask({ title: "Remove environment?", message: `${unreachable || what}\nPublish, sync and the other tools for ${target} are removed here.`, input: false, ok: "Remove" })
 		: await ask({
 			title: scope === "all" ? "Delete everything" : `Delete ${scope === "prod" ? prodEnvironment : mainEnvironment} site`, danger: true, ok: "Delete", match: target,
-			message: `${what}\nType "${target}" to confirm.`,
+			message: `${what}\nType "${target}" to confirm.`, options,
 		});
-	if (typed === null) return;
-	let certificates = false;
-	const certificateMessage = remote && scope !== "test"
-		? "Also revoke and remove the certificate(s) for the site being deleted? The remote certificate is kept if another enabled site uses the domain."
-		: "Also revoke and remove the certificate(s) for the site being deleted?";
-	const deletedEnvironments = site.environments.filter((env) => scope === "all" || (scope === "prod" ? env === prod : !isTarget(env)));
-	if (!onlyHere && deletedEnvironments.some((env) => env.https !== false && env.mode !== "windows")) {
-		certificates = (await ask({ title: "Certificate", message: certificateMessage, input: false, ok: "Remove certificate(s)" })) === true;
-	}
-	await openTask({ kind: "delete_site", site: site.name, certificates, scope, ...(scope === "prod" ? { target: prod.target || "prod" } : {}), ...(onlyHere ? { only_here: true } : {}) });
+	if (answer === null) return;
+	const chosen = answer?.options || [];
+	// The certificates' card first, when it is offered
+	const certificates = offersCertificates && chosen[0] === true;
+	const databases = offered.filter((item) => chosen[options.findIndex((option) => option.title === `Delete the database ${item.database}`)] === true).map((item) => item.database);
+	await openTask({ kind: "delete_site", site: site.name, certificates, scope, ...(scope === "prod" ? { target: prod.target || "prod" } : {}), ...(onlyHere ? { only_here: true } : {}),
+		...(databases.length ? { databases } : {}) });
 }
 
 // The clear button empties the search and keeps the cursor in it, as the browser's own did
@@ -6926,6 +7049,15 @@ function saveSqlConnection(id) {
 // Who made something and who it is given to, for an administrator, in words: Made by …, Users: … (three at most, with
 // how many more; all of them in its title). One who made it and alone has it: Owner: …, one chip.
 // Who owns a database or a login (made it): one chip
+// The sites a database is the database of (their connection strings name it): a green chip, the first one's page a click
+// away, all of them in its title
+function usedByChip(users) {
+	const first = users[0];
+	const title = `Used by ${users.map((item) => item.label).join(", ")}: it is not deleted while a site runs on it`;
+	return el("span", { className: "who-chips" }, el("button", { type: "button", className: "who-chip who-used", title, onclick: () => go(siteLink(first.site)) },
+		svgIcon("globe"), el("span", { className: "who-label", textContent: "Used by" }),
+		el("span", { textContent: first.unit + (users.length > 1 ? ` +${users.length - 1}` : "") })));
+}
 function ownerChip(name) {
 	return el("span", { className: "who-chips" }, el("span", { className: "who-chip who-owner", title: `Made by ${name}, who owns it` },
 		svgIcon("user"), el("span", { className: "who-label", textContent: "Owner" }), el("span", { textContent: name })));
@@ -6961,6 +7093,8 @@ function engineBadge(connection) {
 }
 // The engine worked with on the SQL page, when there are connections to both; kept after a reload
 let sqlEngine = "";
+// What Add connection opened from elsewhere (Convert, Delete site, Kept) does once the connection is saved
+let sqlAfterAdd = null;
 // The connections of the engine worked with: all of them, when there is one engine
 let sqlShownConnections = [];
 try { sqlEngine = localStorage.getItem("vns-sql-engine") || ""; } catch (error) { /* none */ }
@@ -7118,9 +7252,11 @@ async function refreshSql() {
 	$("#sql-status").hidden = true;
 	$("#sql-loading").hidden = false;
 	try {
-		const data = await api("/api/sql/" + encodeURIComponent(id));
+		// Which of them the sites run on (an administrator's view), read beside them
+		const [data, usage] = await Promise.all([api("/api/sql/" + encodeURIComponent(id)),
+			currentUser.admin ? api(`/api/sql/usage?connection=${encodeURIComponent(id)}`).then((found) => found.usage || {}).catch(() => ({})) : {}]);
 		if (generation !== sqlLoadGeneration) return;
-		sqlSnapshot = data;
+		sqlSnapshot = { ...data, usage };
 		$("#sql-backups-panel").hidden = data.backups.length === 0;
 		const hasUserDatabases = data.databases.some((database) => database.id > 4);
 		$("#sql-backup-all").hidden = !hasUserDatabases || !canSql(id, "*", "backup");
@@ -7152,6 +7288,7 @@ async function refreshSql() {
 		for (const database of data.databases) {
 			const actions = el("div", { className: "actions" });
 			if (database.id > 4) {
+				// Copy opens on a copy, Move beside it in the same dialog for an administrator (it reaches both servers)
 				for (const [label, action, need] of [["Backup", "backup", "backup"], ["Copy", "copy", "copy"], ["Delete", "drop", "delete"]]) {
 					if (canSql(id, database.name, need)) actions.append(el("button", { textContent: label, onclick: () => run(() => sqlDatabaseAction(action, database)) }));
 				}
@@ -7173,7 +7310,8 @@ async function refreshSql() {
 				el("span", { className: "sql-name-icon" + (database.id <= 4 ? " system" : "") }, svgIcon("database")), el("span", { className: "sql-database-label", textContent: database.name }),
 				// An Umbraco site's database (it has Umbraco's tables): Umbraco's badge, as its site has
 				...(database.umbraco ? [el("span", { className: "badge umbraco sql-database-kind", textContent: "Umbraco", title: "An Umbraco site's database" })] : []),
-				...(data.made_by?.[database.name] ? [ownerChip(data.made_by[database.name])] : []))),
+				...(data.made_by?.[database.name] ? [ownerChip(data.made_by[database.name])] : []),
+				...(usage[database.name.toLowerCase()] ? [usedByChip(usage[database.name.toLowerCase()])] : []))),
 				sqlCell("Size", { className: "num", textContent: formatSqlSize(database.size_mb) }), sqlCell("State", {
 					className: "sql-state-" + database.state.toLowerCase(),
 					textContent: database.state,
@@ -7217,6 +7355,8 @@ async function refreshSql() {
 async function sqlDatabaseAction(action, database) {
 	const connection = sqlSelected();
 	const payload = { kind: "sql_action", connection, action, database: database.name };
+	// An administrator copies here or to another server, and moves: one dialog for both
+	if (action === "copy" && currentUser.admin) return askSqlTransfer(database, "copy");
 	if (action === "copy") {
 		const values = await askSqlDatabase(database.name);
 		if (!values) return;
@@ -7434,9 +7574,180 @@ function confirmField(match) {
 	return el("div", { className: "confirm-field" }, el("span", { className: "confirm-field-label" }, "Type ", copy, " to confirm"), field);
 }
 
+// What Copy's dialog read for a move with its site, while it is open: {key (connection|database), info (a promise)}
+let sqlTransferInfo = null;
+// Copy or Move a database from the SQL Server page (an administrator's): here or to another server of its kind, with a
+// login of its own. One a site runs on is moved with its site (Settings, Convert's Move: its connection string follows);
+// one no site runs on is copied there and, moved, deleted here once it is
+async function askSqlTransfer(database, mode) {
+	const connection = sqlSelected();
+	const current = sqlConnections.find((item) => item.id === connection);
+	const engine = engineOf(current);
+	const users = sqlSnapshot.usage?.[database.name.toLowerCase()] || [];
+	// The site it is the database of, when one alone: a move takes it along (its connection string follows)
+	const siteUser = users.length === 1 ? users[0] : null;
+	if (!formDialog.open || !sqlTransferInfo || sqlTransferInfo.key !== `${connection}|${database.name}`) {
+		convertConnections = (await api("/api/convert/connections")).connections || [];
+		// What a move with its site needs (its login, and whether only it has it): read at once, while Copy is shown
+		sqlTransferInfo = { key: `${connection}|${database.name}`, info: siteUser ? api(`/api/convert/move?${new URLSearchParams({ unit: siteUser.unit, ...(siteUser.where ? { where: siteUser.where } : {}) })}`) : null };
+		sqlTransferInfo.info?.catch(() => {});
+		formDialog.addEventListener("close", () => { sqlTransferInfo = null; }, { once: true });
+	}
+	const shared = mode === "move" && users.length > 1;
+	const others = convertConnections.filter((item) => engineOf(item) === engine && item.id !== connection);
+	const here = { id: "", name: current?.name || "This server", host: current?.host, port: current?.port, files: true, here: true };
+	const choices = mode === "copy" ? [here, ...others] : others;
+	const engineName = DATABASE_ENGINES[engine];
+	const address = (item) => `${LOCAL_DATABASE_HOSTS.includes(String(item.host).toLowerCase()) ? "this server" : item.host}:${item.port}`;
+	const reaches = (item) => engine !== "mssql" || item.here || item.files !== false;
+	const modes = el("div", { className: "connect-kinds convert-modes", role: "radiogroup", ariaLabel: "What is done" },
+		...[["copy", "Copy", "A copy of its own, the original as it is", "copy"], ["move", "Move", "To another server, deleted here", "arrow-right"]]
+			.map(([value, title, line, icon]) => el("label", { className: "connect-kind convert-mode" },
+				el("span", { className: "convert-mode-icon", ariaHidden: "true" }, svgIcon(icon)),
+				el("input", { type: "radio", name: "transfer_mode", value, checked: value === mode, onchange: () => run(() => askSqlTransfer(database, value)) }),
+				el("strong", { textContent: title }), el("small", { textContent: line }))));
+	// Who runs on it, said as what the mode does with them: a copy leaves them on it, a move takes one along, several stop it
+	const used = users.length ? el("div", { className: `sync-option action-option prompt-option-note off ${shared ? "tone-red" : "tone-amber"} convert-missing convert-used` },
+		el("span", { className: "sync-option-icon", ariaHidden: "true" }, svgIcon("globe")),
+		el("span", { className: "sync-option-text" }, el("span", { className: "sync-option-title", textContent: `Used by ${users.map((item) => item.unit).join(", ")}` }),
+			el("span", { className: "sync-option-sub", textContent: mode === "copy" ? "A copy is a database of its own: the site goes on running on this one"
+				: shared ? "Several sites run on it: it is not moved from here. Move each site's own in Settings, Convert DB"
+				: "The site goes along: it is stopped while it is moved, its connection string follows, and it is started on the new one" }))) : null;
+	if (!choices.length) {
+		openFormDialog({ icon: "sync", title: `${mode === "copy" ? "Copy" : "Move"} ${database.name}`, text: `${engineName} · ${current?.name || ""}`, ok: mode === "copy" ? "Copy" : "Move", fields: [
+			el("div", { className: "convert-form" }, modes, el("div", { className: "sync-option action-option prompt-option-note off tone-amber convert-missing" },
+				el("span", { className: "sync-option-icon", ariaHidden: "true" }, svgIcon("database")),
+				el("span", { className: "sync-option-text" }, el("span", { className: "sync-option-title", textContent: `No other ${engineName} here` }),
+					el("span", { className: "sync-option-sub", textContent: `Add a connection to the one to move ${database.name} to` })),
+				tonedButton("Add connection…", "plus", "amber", () => addConvertConnection({}, engine, null, () => askSqlTransfer(database, mode)))))] });
+		$("#form-dialog-ok").disabled = true;
+		return;
+	}
+	const chosen = el("input", { type: "hidden", name: "target", value: mode === "copy" ? "" : choices.length === 1 ? choices[0].id : "" });
+	const cards = el("div", { className: "server-cards convert-servers", role: "radiogroup", ariaLabel: "To" });
+	const drawCards = () => cards.replaceChildren(...choices.map((item) => {
+		// This one (a copy here) is chosen while no other is
+		const on = item.here ? !chosen.value : item.id === chosen.value;
+		return el("button", { type: "button", className: "server-card" + (on ? " chosen" : ""), role: "radio", ariaChecked: String(on),
+			onclick: () => { chosen.value = item.id; drawCards(); ready(); } },
+			el("span", { className: "server-card-icon engine-" + engine }, svgIcon("database")),
+			el("span", { className: "server-card-text" }, el("strong", { textContent: item.here ? `${item.name} (this one)` : item.name }),
+				el("small", { textContent: engineName }), el("small", { textContent: address(item) })),
+			...(reaches(item) ? [] : [el("span", { className: "server-card-warn", title: "Needs SSH for its backup files", ariaLabel: "Needs SSH for its backup files" }, svgIcon("alert"))]),
+			el("span", { className: "server-card-check" }, svgIcon("check")));
+	}));
+	const noFiles = el("div", { className: "sync-option action-option prompt-option-note off tone-amber convert-missing", hidden: true },
+		el("span", { className: "sync-option-icon", ariaHidden: "true" }, svgIcon("server")),
+		el("span", { className: "sync-option-text" }, el("span", { className: "sync-option-title" }),
+			el("span", { className: "sync-option-sub", textContent: "The backup is carried between the servers' backup folders: turn on SSH for backup files in its connection" })),
+		tonedButton("Edit connection…", "pencil", "amber", () => editConvertConnection(chosen.value || connection, () => askSqlTransfer(database, mode))));
+	const sourceReaches = reaches(convertConnections.find((item) => item.id === connection) || here);
+	const nameField = el("label", {}, "Database name", el("input", { name: "name", required: true, maxLength: 63, pattern: "[A-Za-z0-9][A-Za-z0-9._\\-]*", autocomplete: "off", spellcheck: false }));
+	const loginFields = el("div", { className: "convert-server-fields" },
+		el("label", {}, "Username", el("input", { name: "login", required: true, maxLength: 63, pattern: "[A-Za-z0-9][A-Za-z0-9._\\-]*", autocomplete: "off", spellcheck: false })),
+		el("div", { className: "ns-grid" },
+			el("label", {}, "Password", el("input", { name: "password", type: "password", required: true, minLength: 8, maxLength: 128, autocomplete: "new-password", "data-1p-ignore": "", "data-lpignore": "true" })),
+			el("label", {}, "Repeat password", el("input", { name: "confirmation", type: "password", required: true, minLength: 8, maxLength: 128, autocomplete: "new-password", "data-1p-ignore": "", "data-lpignore": "true" }))),
+		el("p", { className: "hint", textContent: "What a site logs in with to reach the new database (its connection string's User Id), owner of it. The server's logins are not copied with a database: only its own users, who have no login there." }));
+	const note = el("p", { className: "server-action-note" });
+	const error = el("p", { className: "error", role: "alert" });
+	// Moved with its site: its login can go along (by its name and password) when only it has it; read when the dialog opened
+	const keepChoice = el("div", { className: "connect-kinds", role: "radiogroup", ariaLabel: "Login", hidden: true });
+	const keepWait = el("div", { className: "convert-opening small" }, loadingState("Reading its login…"));
+	const withSite = mode === "move" && siteUser;
+	const box = shared ? el("div", { className: "convert-form" }, modes, used)
+		: el("div", { className: "convert-form" }, modes, ...(used ? [used] : []),
+			// The servers in a box of their own, with its room under it, as Convert's
+			el("div", { className: "convert-server-choice" }, el("div", { className: "ns-section", textContent: "To" }), cards, chosen), noFiles, nameField,
+			el("div", { className: "ns-section", textContent: "Login" }),
+			...(withSite ? [keepWait, keepChoice] : []), loginFields, note, error);
+	openFormDialog({ icon: mode === "copy" ? "copy" : "sync", title: `${mode === "copy" ? "Copy" : "Move"} ${database.name}`, text: `${engineName} · ${current?.name || ""}`,
+		ok: mode === "copy" ? "Copy" : "Move", fields: [box], submit: async (form) => {
+			if (shared) return false;
+			const value = (name) => form.elements[name]?.value || "";
+			const keeping = withSite && value("login_mode") === "keep";
+			if (!keeping && value("password") !== value("confirmation")) { error.textContent = "Passwords do not match."; return false; }
+			if (withSite) {
+				// With its site: Settings, Convert's Move (stopped, copied, its connection string changed, started, the old one deleted)
+				const t = await openTask({ kind: "convert_move", unit: siteUser.unit, ...(siteUser.where ? { where: siteUser.where } : {}), connection: value("target"),
+					database: value("name").trim(), keep_login: keeping, ...(keeping ? {} : { login: value("login").trim(), password: value("password") }) });
+				if (t) t.afterTask = () => { if (currentView === "sql") return refreshSql(); };
+				return;
+			}
+			const target = value("target");
+			const name = value("name").trim(), login = value("login").trim();
+			if (mode === "copy" && !target) {
+				// Here, as Copy always did
+				await openTask({ kind: "sql_action", connection, action: "copy", database: database.name, target: name, login, login_password: value("password") });
+				return;
+			}
+			await openTask({ kind: "sql_transfer", connection, target, database: database.name, name, login, password: value("password"), move: mode === "move" });
+		} });
+	if (shared) {
+		$("#form-dialog-ok").disabled = true;
+		return;
+	}
+	const form = $("#form-dialog");
+	let nameEdited = false, loginEdited = false;
+	form.elements.name.addEventListener("input", () => { nameEdited = true; if (!loginEdited) form.elements.login.value = convertName(form.elements.name.value); });
+	if (withSite) {
+		sqlTransferInfo.info.then((found) => {
+			if (!keepChoice.isConnected) return;
+			const keep = found.alone && found.login;
+			keepChoice.replaceChildren(
+				...(keep ? [el("label", { className: "connect-kind" }, el("input", { type: "radio", name: "login_mode", value: "keep", checked: true }),
+					el("strong", { textContent: `Keep ${found.login}` }), el("small", { textContent: "Only this database has it: it goes along, by its name and password" }))] : []),
+				el("label", { className: "connect-kind" }, el("input", { type: "radio", name: "login_mode", value: "new", checked: !keep }),
+					el("strong", { textContent: "A new login" }), el("small", { textContent: found.login && !found.alone ? `${found.login} is used by other databases too: it stays` : "Its own, made on the new server" })));
+			keepWait.remove();
+			keepChoice.hidden = false;
+			ready();
+		}).catch((failure) => { keepWait.replaceChildren(el("p", { className: "error", textContent: failure.message })); });
+	}
+	form.elements.login.addEventListener("input", () => { loginEdited = true; });
+	const ready = () => {
+		// A dialog put in another's place (Copy ↔ Move) is done: it never writes into the one shown now
+		if (!box.isConnected) return;
+		const target = choices.find((item) => item.id === chosen.value && !item.here);
+		const toHere = mode === "copy" && !chosen.value;
+		// With its site, its login kept: no new login to type
+		const keeping = withSite && form.elements.login_mode?.value === "keep";
+		loginFields.hidden = keeping || (withSite && !keepChoice.childElementCount);
+		for (const input of loginFields.querySelectorAll("input")) { input.disabled = loginFields.hidden; input.required = !loginFields.hidden; }
+		// Here a copy needs a name of its own; on another server it keeps its name, as Move does
+		if (!nameEdited) {
+			// Here a copy has a name of its own (suggested), there its own name
+			form.elements.name.value = toHere ? `${database.name}-copy`.slice(0, 63) : database.name;
+			if (!loginEdited) form.elements.login.value = convertName(form.elements.name.value);
+		}
+		const blocked = !toHere && (!sourceReaches || (target && !reaches(target)));
+		noFiles.hidden = !blocked;
+		if (blocked) noFiles.querySelector(".sync-option-title").textContent = `No access to the backup files on ${!sourceReaches ? current?.name : target.name}`;
+		note.textContent = mode === "move"
+			? `${database.name} is copied there by the server's own backup${engine === "mssql" ? " (copy-only)" : ""}, then deleted here with its backups and the logins only it had${withSite ? ", once the site runs on the new one" : ". No site Harbor manages runs on it; a site Harbor does not manage is not seen"}.`
+			: toHere ? "A copy of its own on this server: the original stays as it is." : `A copy of its own on ${target ? target.name : "the server chosen"}, made by the server's own backup: the original stays as it is.`;
+		$("#form-dialog-ok").disabled = (mode === "move" && !target) || blocked || (withSite && !keepChoice.childElementCount);
+		error.textContent = "";
+	};
+	drawCards();
+	box.addEventListener("change", ready);
+	box.addEventListener("input", ready);
+	ready();
+}
 // Delete a database: what goes with it as cards, its own logins (named, when the logins are known here) and its backup
 // files, and its name typed to confirm. Shared and administrator logins always stay.
 function askDropDatabase(database) {
+	// One a site runs on is not deleted: said why, and nothing to confirm
+	const users = sqlSnapshot.usage?.[database.name.toLowerCase()];
+	if (users?.length) {
+		openFormDialog({ icon: "trash", title: `Delete ${database.name}?`, text: "A site runs on it: it is not deleted.", ok: "Delete", danger: true, fields: [
+			el("div", { className: "sync-option action-option prompt-option-note off tone-red convert-missing" },
+				el("span", { className: "sync-option-icon", ariaHidden: "true" }, svgIcon("globe")),
+				el("span", { className: "sync-option-text" }, el("span", { className: "sync-option-title", textContent: `Used by ${users.map((item) => item.unit).join(", ")}` }),
+					el("span", { className: "sync-option-sub", textContent: "Its connection string names this database: it would stop working. Convert or move it in Settings, Convert DB first, or delete the site with its database." })))] });
+		$("#form-dialog-ok").disabled = true;
+		return new Promise((resolve) => formDialog.addEventListener("close", () => resolve(null), { once: true }));
+	}
 	return new Promise((resolve) => {
 		let answered = null;
 		// Logins that reach this database and no other: the ones that go with it
@@ -7810,14 +8121,18 @@ async function openConvertSettings() {
 	if (!list.childElementCount) list.replaceChildren(loadingState("Reading the sites' databases…"));
 	try {
 		const data = await api("/api/convert");
-		// A site without a database has nothing to convert: it is not shown
-		const withDatabase = data.sites.filter((item) => item.engine);
+		convertConnections = data.connections;
+		// A site without a database has nothing to convert: it is not shown. One on a server that did not answer is, with why
+		const withDatabase = data.sites.filter((item) => item.engine || item.unreached);
 		$("#convert-count").textContent = withDatabase.length ? String(withDatabase.length) : "";
 		const engineBadge = (engine) => el("span", { className: "badge engine-badge engine-" + (engine || "none"), textContent: DATABASE_ENGINES[engine] || "No database" });
 		// What each environment ran on before a conversion, kept until it is deleted: folded under its row
+		// An environment by its server and service: one on another server may have the name of one here
+		const keyOf = (item) => `${item.where || ""}|${item.unit}`;
 		const keptOf = new Map();
-		for (const item of data.kept) keptOf.set(item.unit, [...(keptOf.get(item.unit) || []), item]);
-		const keptLine = (item) => {
+		for (const item of data.kept) keptOf.set(keyOf(item), [...(keptOf.get(keyOf(item)) || []), item]);
+		// One whose site is gone says which site it was, and where: so it is known whether it is safe to delete
+		const keptLine = (item, orphan = false) => {
 			const name = item.file || item.database;
 			const when = item.at ? new Date(item.at * 1000).toLocaleString() : "";
 			// The first one kept is where the site started: marked, and said so
@@ -7826,48 +8141,71 @@ async function openConvertSettings() {
 				// A file by its name (its whole path when pointed at); Original in the environments' column, where it started
 				el("span", { className: "convert-kept-name" }, el("span", { className: "convert-kept-icon" }, svgIcon("archive")),
 					// The time it was set aside is in its name and under Kept: the name is shown without it
-					el("span", { className: "convert-kept-file", textContent: name.slice(name.lastIndexOf("/") + 1).replace(/\.\d{8}-\d{6}(?:-\d+)?\.bak$/, ".bak"), title: name })),
+					el("span", { className: "convert-kept-file", textContent: name.slice(name.lastIndexOf("/") + 1).replace(/\.\d{8}-\d{6}(?:-\d+)?\.bak$/, ".bak"), title: name }),
+					...(orphan ? [el("small", { className: "convert-kept-site", textContent: `From ${item.unit}${item.where ? " on " + item.where : ""}`, title: `${item.unit}: ${name}` })] : [])),
 				// Outlined, not filled as an environment's: it says what it is, not where it runs
 				el("span", { className: "convert-env" }, ...(item.original ? [el("span", { className: "badge convert-original", title: "What the site ran on before its first conversion" }, svgIcon("flag"), "Original")] : [])),
 				el("span", { className: "convert-engine" }, engineBadge(item.engine)),
 				el("span", { className: "convert-detail", textContent: [`Kept ${when}`, item.by].filter(Boolean).join(" · ") }),
 				el("span", { className: "convert-kept-actions" },
-					...(item.exists && item.rollback ? [tonedButton("Roll back…", "undo", "teal", () => rollbackConverted(item, name))] : []),
-					tonedButton("Delete…", "trash", "red", () => deleteConverted(item, name))));
+					// Each only where this admin reaches the database servers it needs; else why not
+					// Without a connection to the database's server here, the button says what is missing and offers to add it
+					...(item.can_rollback ? [tonedButton("Roll back…", "undo", "teal", () => rollbackConverted(item, name))]
+						: item.rollback && item.exists && item.rollback_needs ? [tonedButton("Roll back…", "undo", "teal", () => needConnection(item.rollback_needs, `roll ${item.unit} back`, () => openConvertSettings()))] : []),
+					tonedButton("Delete…", "trash", "red", () => item.can_delete ? deleteConverted(item, name) : needConnection(item.delete_needs, `delete ${name}`, () => openConvertSettings()))));
 		};
 		// An environment's row: its service, its badge in the environment's colour, its database, what it kept and
 		// Convert… (or why it cannot be)
 		const row = (item) => {
 			const targets = convertTargets(item, data.connections);
-			const detail = item.engine === "sqlite" ? `${item.file} · ${bytesText(item.size)}` : item.database ? `${item.database}${item.server ? " on " + item.server : ""}` : "";
-			const note = !item.convertible ? item.reason : !targets.length
-				? (item.engine === "sqlite" ? `Add a connection to ${item.umbraco ? "Microsoft SQL Server" : "Microsoft SQL Server or PostgreSQL"} on the SQL Server page first.`
-					: `Add a connection to its ${DATABASE_ENGINES[item.engine]} on the SQL Server page first.`) : "";
-			const kept = keptOf.get(item.unit) || [];
-			keptOf.delete(item.unit);
+			const detail = item.engine === "sqlite" ? `${item.file} · ${bytesText(item.size)}` : item.database ? `${item.database} on ${databaseServer(item)}` : "";
+			// Why it cannot be converted, in full; without a connection to convert with, a button to the SQL Server page
+			// where one is added, in Convert…'s place
+			const note = !item.convertible ? item.reason : "";
+			const needs = item.convertible && !targets.length ? (item.engine === "sqlite" ? (item.umbraco ? "Microsoft SQL Server" : "Microsoft SQL Server or PostgreSQL")
+				: DATABASE_ENGINES[item.engine]) : "";
+			// The one kind it can use, when there is one: Umbraco's is Microsoft SQL Server, a server's database its own engine
+			const needsKind = item.engine === "sqlite" ? (item.umbraco ? "mssql" : "") : item.engine;
+			const kept = keptOf.get(keyOf(item)) || [];
+			keptOf.delete(keyOf(item));
 			// What it kept, in a box of its own under the row, said what it is
-			const fold = kept.length ? el("ul", { className: "convert-kept", hidden: !convertUnfolded.has(item.unit), ariaLabel: `Kept after conversions of ${item.unit}` },
+			const fold = kept.length ? el("ul", { className: "convert-kept", hidden: !convertUnfolded.has(keyOf(item)), ariaLabel: `Kept after conversions of ${item.unit}` },
 				el("li", { className: "convert-kept-head" }, svgIcon("archive"), el("strong", { textContent: "Kept after conversions" }),
 					el("span", { className: "convert-kept-count", textContent: String(kept.length) }),
 					el("small", { textContent: "What the site ran on before: roll back to one, or delete it" })),
-				...kept.map(keptLine)) : null;
-			const toggle = kept.length ? el("button", { type: "button", className: "convert-kept-toggle", ariaExpanded: String(convertUnfolded.has(item.unit)),
+				...kept.map((line) => keptLine(line))) : null;
+			const toggle = kept.length ? el("button", { type: "button", className: "convert-kept-toggle", ariaExpanded: String(convertUnfolded.has(keyOf(item))),
 				title: "What it ran on before, kept until it is deleted", onclick: () => {
 					const open = fold.hidden;
 					fold.hidden = !open;
 					toggle.setAttribute("aria-expanded", String(open));
-					if (open) convertUnfolded.add(item.unit); else convertUnfolded.delete(item.unit);
+					if (open) convertUnfolded.add(keyOf(item)); else convertUnfolded.delete(keyOf(item));
 				} }, svgIcon("archive"), `Kept ${kept.length}`, svgIcon("chevron")) : el("span");
 			return el("li", { className: "convert-entry" },
 				el("div", { className: "convert-row" },
 					// The service first and the environment in a column of its own: the names and badges stand in straight lines
 					// An environment hangs under its main site: a bent arrow before its name
-					el("span", { className: "convert-unit", title: item.unit }, ...(item.unit === item.site ? [] : [svgIcon("corner")]), el("span", { textContent: item.unit })),
+					el("span", { className: "convert-unit", title: item.where ? `${item.unit} on ${item.where}` : item.unit }, ...(item.unit === item.site ? [] : [svgIcon("corner")]),
+						// Its name in full, and under it where it runs when that is another server (or the main site's server,
+						// for one managed from there)
+						el("span", { className: "convert-unit-text" },
+							el("span", { className: "convert-unit-name", textContent: item.unit }),
+							...(item.where ? [el("span", { className: "convert-where", title: `Runs on ${item.where}: converted there by its Harbor` }, svgIcon("server"), `On ${item.where}`)]
+								: item.managed ? [el("span", { className: "convert-where managed", title: `An environment of a site on ${item.managed}` }, svgIcon("link"), `From ${item.managed}`)] : []))),
 					el("span", { className: "convert-env" }, el("span", { className: "badge env-" + item.label.toLowerCase(), textContent: item.label })),
-					el("span", { className: "convert-engine" }, engineBadge(item.engine)),
+					el("span", { className: "convert-engine" }, item.unreached ? el("span", { className: "badge engine-badge engine-none", textContent: "Unknown" }) : engineBadge(item.engine)),
 					el("span", { className: "convert-detail", textContent: detail, title: detail }),
-					toggle,
-					note ? el("span", { className: "convert-note", textContent: note, title: note })
+					// Without a Kept chip the reason takes its column too
+					...(kept.length && !needs || !note && !needs ? [toggle] : []),
+					note ? el("span", { className: "convert-note" + (kept.length ? "" : " wide"), textContent: note, title: note })
+						// Add connection… is wider than Convert…: it and the Kept chip share both columns, side by side
+						: needs ? el("span", { className: "convert-end" }, ...(kept.length ? [toggle] : []),
+							Object.assign(tonedButton("Add connection…", "plus", "amber", () => addConvertConnection(item, needsKind,
+								// A database on a server: a connection to that server, its host and port filled in
+								item.engine !== "sqlite" && item.server && !LOCAL_DATABASE_HOSTS.includes(item.server.toLowerCase().split(/[,\\]/)[0])
+									? { host: item.server.split(/[,\\]/)[0], port: (item.server.match(/,(\d+)$/) || [])[1] || "" } : null,
+								() => openConvertSettings())),
+								{ className: "convert-add", title: `No connection to ${needs} yet${item.umbraco ? " (Umbraco runs only on Microsoft SQL Server)" : ""}: add one, then convert here` }))
 						: tonedButton("Convert…", "sync", "purple", () => askConvert(item, targets))),
 				...(fold ? [fold] : []));
 		};
@@ -7875,8 +8213,8 @@ async function openConvertSettings() {
 		const groups = new Map();
 		for (const item of withDatabase) groups.set(item.site, [...(groups.get(item.site) || []), item]);
 		// What the filter finds a site by: its name, its environments, and the databases it runs on and kept
-		const searchOf = (site, items) => [site, ...items.flatMap((item) => [item.unit, item.label, item.file, item.database, DATABASE_ENGINES[item.engine]]),
-			...data.kept.filter((kept) => items.some((item) => item.unit === kept.unit)).flatMap((kept) => [kept.file, kept.database])].filter(Boolean).join(" ").toLowerCase();
+		const searchOf = (site, items) => [site, ...items.flatMap((item) => [item.unit, item.label, item.file, item.database, item.where, item.managed, DATABASE_ENGINES[item.engine]]),
+			...data.kept.filter((kept) => items.some((item) => keyOf(item) === keyOf(kept))).flatMap((kept) => [kept.file, kept.database])].filter(Boolean).join(" ").toLowerCase();
 		const group = ([site, items]) => {
 			const node = el("li", { className: "convert-group" },
 				el("div", { className: "convert-group-head" }, el("span", { className: "convert-group-icon" }, svgIcon("globe")),
@@ -7901,7 +8239,7 @@ async function openConvertSettings() {
 				el("div", { className: "tool-head" }, el("span", { className: "tool-icon" }, svgIcon("archive")),
 					el("div", { className: "tool-title" }, el("strong", { textContent: "Kept after a conversion" }),
 						el("small", { textContent: "What sites that are no longer here ran on before" }))),
-				el("ul", { className: "convert-kept" }, ...orphans.map(keptLine))));
+				el("ul", { className: "convert-kept" }, ...orphans.map((item) => keptLine(item, true)))));
 		}
 		list.replaceChildren(...cards);
 		// The filter, once there are more than two sites: it keeps what was typed when the list is drawn again
@@ -7929,7 +8267,465 @@ $("#convert-filter-clear").onclick = () => { $("#convert-filter").value = ""; ap
 function convertTargets(item, connections) {
 	if (!item.convertible) return [];
 	if (item.engine === "sqlite") return connections.filter((connection) => engineOf(connection) === "mssql" || (!item.umbraco && engineOf(connection) === "postgres"));
-	return connections.filter((connection) => engineOf(connection) === item.engine);
+	// From a server: read where it is, by this server's connection to it (none: one is added, its host filled in; one
+	// added since is found by its host and port)
+	const where = databaseHost(item);
+	return connections.filter((connection) => connection.id === item.source || (!item.source && engineOf(connection) === item.engine && where
+		&& String(connection.host).toLowerCase() === where.host.toLowerCase() && (!where.port || String(connection.port) === where.port)));
+}
+const LOCAL_DATABASE_HOSTS = [".", "localhost", "127.0.0.1", "::1", "(local)"];
+// The host and port a site's database is on (Server=host,port), not this or that server's own (localhost): null
+function databaseHost(item) {
+	if (!item.server) return null;
+	const host = item.server.split(/[,\\]/)[0].replace(/^tcp:/i, "");
+	if (LOCAL_DATABASE_HOSTS.includes(host.toLowerCase())) return null;
+	return { host, port: (item.server.match(/,(\d+)$/) || [])[1] || "" };
+}
+// The server a site's database is on, as its connection string names it: its own server's in words
+function databaseServer(item) {
+	if (!item.server) return "its server";
+	return LOCAL_DATABASE_HOSTS.includes(item.server.toLowerCase().split(/[,\\]/)[0]) ? (item.where ? `${item.where} itself` : "this server") : item.server;
+}
+// Add connection from Convert, Delete site and Kept: the SQL Server page's dialog of the kind the site can use (one it
+// could not use is never offered), over the page one is on, its host and port filled in when known. Once it is saved,
+// after() takes it up there (the dialog it came from again, with it). Without that kind's tools here, they are
+// installed first, in Settings, SQL Server
+async function addConvertConnection(item, kind, server = null, after = null) {
+	const data = await api("/api/sql/connections");
+	const tools = data.tools || { mssql: data.tools_available === true, postgres: false };
+	const why = item.umbraco ? `${item.unit} is an Umbraco site, and Umbraco runs only on Microsoft SQL Server.` : "";
+	if (kind && !tools[kind]) {
+		const ok = await ask({ title: `${DATABASE_ENGINES[kind]} tools needed first`, input: false, ok: "Open SQL Server settings",
+			message: [why, `A connection to ${DATABASE_ENGINES[kind]} needs its tools on this server. Install them (or ${DATABASE_ENGINES[kind]} itself) in Settings, SQL Server, then add the connection.`].filter(Boolean).join("\n\n") });
+		if (ok) go("#server/sql");
+		return;
+	}
+	if (!kind && !tools.mssql && !tools.postgres) {
+		if (await ask({ title: "SQL tools needed first", input: false, ok: "Open SQL Server settings",
+			message: "A connection needs Microsoft SQL Server's or PostgreSQL's tools on this server. Install them in Settings, SQL Server, then add the connection." })) go("#server/sql");
+		return;
+	}
+	sqlToolsAvailable = data.tools_available === true;
+	sqlTools = tools;
+	sqlAfterAdd = after;
+	openSqlConnection(null, kind || (tools.mssql ? "mssql" : "postgres"), server);
+}
+// The convert dialog at once, while what it shows is read (the site's database, maybe on another server): it fills in
+// when that is there, and goes when it fails
+function convertOpening(title, text) {
+	if (formDialog.open) return;
+	openFormDialog({ icon: "sync", title, text, fields: [el("div", { className: "convert-form convert-opening" }, loadingState("Reading the site's database…"))], ok: "Convert" });
+	$("#form-dialog-ok").disabled = true;
+}
+async function convertOpened(work) {
+	try {
+		return await work();
+	} catch (error) {
+		if (formDialog.open && formDialog.querySelector(".convert-opening")) formDialog.close();
+		throw error;
+	}
+}
+// Edit connection from Move (to turn on SSH for backup files): the SQL Server page's dialog over this one, which takes
+// the connection up again once it is saved
+async function editConvertConnection(id, after) {
+	const data = await api("/api/sql/connections");
+	const connection = (data.connections || []).find((item) => item.id === id);
+	if (!connection) throw new Error("That connection is gone.");
+	sqlToolsAvailable = data.tools_available === true;
+	sqlTools = data.tools || { mssql: sqlToolsAvailable, postgres: false };
+	sqlAfterAdd = after;
+	openSqlConnection(connection);
+}
+// A connection this server needs to the database server a conversion used, to roll back or delete here: said what it
+// is, and Add connection with its host and port filled in
+async function needConnection(needs, what, after = null) {
+	const engine = needs?.engine === "postgres" ? "postgres" : "mssql";
+	const where = `${needs?.host || "its server"}${needs?.port ? ":" + needs.port : ""}`;
+	if (!(await ask({ title: `A connection to ${where} is needed`, input: false, ok: `Add ${engine === "mssql" ? "SQL Server" : "PostgreSQL"} connection`,
+		message: `To ${what} from here, this server needs its own connection to the ${DATABASE_ENGINES[engine]} at ${where}, which holds the database. Nothing is done until it has one.` }))) return;
+	await addConvertConnection({}, engine, { host: needs?.host || "", port: needs?.port || "" }, after);
+}
+// Under a side's name in From and To: what it is, and where, a line each, so both sides stand alike (none: blank)
+function sideLines(sub, kind = "", where = "") {
+	sub.replaceChildren(...[kind, where].filter(Boolean).map((text) => el("small", { textContent: text, title: text })));
+	sub.hidden = !kind && !where;
+}
+// ---- Settings, Export: a site and its environments for a customer (harbor site export), and the exports made: their
+// zip to download or its link to send (deleted the time chosen after its first download), and Restore of a site deleted with one
+// The sites whose exports are unfolded: they stay so when the list is drawn again
+const exportUnfolded = new Set();
+async function openExportSettings() {
+	const list = $("#server-export-list");
+	list.setAttribute("aria-busy", "true");
+	if (!list.childElementCount) list.replaceChildren(loadingState("Reading the sites…"));
+	try {
+		const data = await api("/api/exports");
+		$("#export-count").textContent = data.sites.length ? String(data.sites.length) : "";
+		// The columns of Convert DB's rows: the folder and where it runs, the environment (a Python or HTML site has one,
+		// Live, as its card says), the database it runs on and what it is, from the site's page (the list of sites)
+		const envLabel = (site, env) => site.kind === "python" || site.kind === "html" ? "Live" : env.label;
+		const engines = { "SQLite": "sqlite", "MS SQL": "mssql", "SQL Express": "mssql", "Azure SQL": "mssql", "PostgreSQL": "postgres" };
+		const shown = (site, env) => allSites.find((item) => item.name === site.site)?.environments.find((item) => envKeyOf(item) === env.target || (env.target === "main" && !isTarget(item)));
+		const databaseOf = (site, env) => {
+			const info = shown(site, env);
+			const engine = engines[info?.database] || "";
+			const server = (info?.database_server || "").replace(/^\.(?=$|[\\,])/, "localhost");
+			const detail = !info?.database ? "" : engine === "sqlite" ? info.database_name || "SQLite file" : [info.database_name, server && "on " + server].filter(Boolean).join(" ");
+			return [el("span", { className: "convert-engine" }, el("span", { className: "badge engine-badge engine-" + (engine || "none"), textContent: engine ? DATABASE_ENGINES[engine] : "No database" })),
+				el("span", { className: "convert-detail", textContent: detail, title: detail })];
+		};
+		const environmentRow = (site, env) => el("li", { className: "convert-entry" }, el("div", { className: "convert-row" },
+			el("span", { className: "convert-unit", title: env.unit }, ...(env.target === "main" ? [] : [svgIcon("corner")]),
+				el("span", { className: "convert-unit-text" }, el("span", { className: "convert-unit-name", textContent: env.unit }),
+					...(env.mode === "remote" ? [el("span", { className: "convert-where", title: `Runs on ${env.where}: copied from there` }, svgIcon("server"), `On ${env.where}`)]
+						: env.mode === "windows" ? [el("span", { className: "convert-where", title: "On Windows: export it from its IIS server" }, svgIcon("windows"), "Windows: left out")]
+						: site.managed && env.target === "main" ? [el("span", { className: "convert-where managed", title: `An environment of a site on ${site.managed}` }, svgIcon("link"), `From ${site.managed}`)] : []))),
+			el("span", { className: "convert-env" }, el("span", { className: "badge env-" + String(envLabel(site, env)).toLowerCase(), textContent: envLabel(site, env) })),
+			...databaseOf(site, env)));
+		// Each site's exports under it, folded as Convert DB's Kept is: a chip in its head unfolds them
+		const exportsOf = new Map();
+		for (const item of data.exports) exportsOf.set(item.site, [...(exportsOf.get(item.site) || []), item]);
+		const group = (site) => {
+			const made = exportsOf.get(site.site) || [];
+			exportsOf.delete(site.site);
+			const fold = made.length ? el("div", { className: "export-fold", hidden: !exportUnfolded.has(site.site) },
+				el("div", { className: "convert-kept-head" }, svgIcon("archive"), el("strong", { textContent: "Exports" }),
+					el("span", { className: "convert-kept-count", textContent: String(made.length) }),
+					el("small", { textContent: "Each zip is deleted the time chosen after its link was first used (unless it never is), and its link with it" })),
+				el("ul", { className: "export-items" }, ...made.map(exportLine))) : null;
+			const toggle = made.length ? el("button", { type: "button", className: "convert-kept-toggle", ariaExpanded: String(exportUnfolded.has(site.site)),
+				title: "The exports made of it", onclick: () => {
+					const open = fold.hidden;
+					fold.hidden = !open;
+					toggle.setAttribute("aria-expanded", String(open));
+					if (open) exportUnfolded.add(site.site); else exportUnfolded.delete(site.site);
+				} }, svgIcon("archive"), `Exports ${made.length}`, svgIcon("chevron")) : null;
+			const node = el("li", { className: "convert-group" },
+				el("div", { className: "convert-group-head" }, el("span", { className: "convert-group-icon" }, svgIcon("globe")),
+					el("button", { type: "button", className: "usage-open convert-site-link", textContent: site.site, title: `Open ${site.site}`, onclick: () => go(siteLink(site.site)) }),
+					// What it is, in the colour its card has it: Umbraco, C# / .NET, Python or HTML
+					el("span", { className: "badge " + site.kind, textContent: kindLabel[site.kind] || site.kind }),
+					el("span", { className: "export-site-action" }, ...(toggle ? [toggle] : []), tonedButton("Export…", "download", "purple", () => askExport(site)))),
+				// Its exports first, under the chip that unfolds them, then its environments
+				...(fold ? [fold] : []), el("ul", { className: "convert-rows" }, ...site.environments.map((env) => environmentRow(site, env))));
+			// What the filter finds it by: its name and kind, its environments and where they run, and its exports
+			node.dataset.search = [site.site, kindLabel[site.kind], ...site.environments.flatMap((env) => [env.unit, env.label, env.where]),
+				...made.map((item) => [item.os, item.file]).flat()].filter(Boolean).join(" ").toLowerCase();
+			return node;
+		};
+		const sites = el("section", { className: "tool-card tool-card-wide tone-purple convert-card" },
+			el("div", { className: "tool-head" }, el("span", { className: "tool-icon" }, svgIcon("download")),
+				el("div", { className: "tool-title" }, el("strong", { textContent: "Sites" }),
+					el("small", { textContent: "Export… builds a site and the environments chosen for Windows or Linux, with its source and its databases, and takes VNS Harbor out" }))),
+			data.sites.length ? el("ul", { className: "convert-groups" }, ...data.sites.map(group)) : el("p", { className: "tool-text", textContent: "No sites here." }));
+		const cards = [sites];
+		// Those of sites that are no longer here (deleted with their export): on their own, where Restore puts one back
+		const orphans = [...exportsOf.values()].flat();
+		if (orphans.length) cards.push(el("section", { className: "tool-card tool-card-wide tone-amber convert-card" },
+			el("div", { className: "tool-head" }, el("span", { className: "tool-icon" }, svgIcon("archive")),
+				el("div", { className: "tool-title" }, el("strong", { textContent: "Exports of sites no longer here" }),
+					el("small", { textContent: "A site deleted with its export: Restore puts it back as it was, until its zip is deleted" }))),
+			el("ul", { className: "export-items" }, ...orphans.map(exportLine))));
+		list.replaceChildren(...cards);
+		// The filter, once there are more than two sites: it keeps what was typed when the list is drawn again
+		$("#export-filter-box").hidden = data.sites.length <= 2;
+		if (data.sites.length <= 2) $("#export-filter").value = "";
+		applyExportFilter();
+	} finally {
+		list.removeAttribute("aria-busy");
+	}
+}
+// As Convert DB's filter: every word typed is in the site's name, kind, environments or exports
+function applyExportFilter() {
+	const words = $("#export-filter").value.toLowerCase().split(/\s+/).filter(Boolean);
+	for (const group of document.querySelectorAll("#server-export-list .convert-group")) {
+		group.classList.toggle("sql-filtered", words.length > 0 && !words.every((word) => group.dataset.search.includes(word)));
+	}
+}
+$("#export-filter").addEventListener("input", applyExportFilter);
+$("#export-filter").addEventListener("keydown", (event) => {
+	if (event.key === "Escape" && event.target.value) { event.preventDefault(); event.stopPropagation(); event.target.value = ""; applyExportFilter(); }
+});
+$("#export-filter-clear").onclick = () => { $("#export-filter").value = ""; applyExportFilter(); $("#export-filter").focus(); };
+function exportLine(item) {
+	const when = (seconds) => new Date(seconds * 1000).toLocaleString();
+	const lives = !item.keep ? "" : item.keep % 86400 === 0 && item.keep >= 86400 * 2 ? `${item.keep / 86400} days` : `${item.keep / 3600} hours`;
+	const state = item.state !== "ready" ? "Being made, or stopped"
+		: !item.keep ? (item.downloaded ? `Downloaded by its link ${when(item.downloaded)} · never deleted by itself` : "Its link not used yet · never deleted by itself")
+		: item.downloaded ? `Downloaded by its link ${when(item.downloaded)} · deleted ${when(item.expires)}` : `Its link not used yet: its ${lives} start when it is`;
+	const os = item.os === "windows" ? "Windows" : item.os === "linux" ? "Linux" : "";
+	const copyLink = async () => {
+		await copyText(item.link);
+		toast(item.keep ? `The link is copied: it works until ${lives} after its first download.` : "The link is copied: it works until the export is deleted.", "ok");
+	};
+	return el("li", { className: "export-line" },
+		el("span", { className: "export-os os-" + item.os, ...(osLogos[item.os] ? { innerHTML: osLogos[item.os] } : {}) }, ...(osLogos[item.os] ? [] : [svgIcon("globe")])),
+		el("span", { className: "export-text" }, el("strong", { textContent: os ? `${item.site} · ${os}` : item.site }),
+			el("small", { textContent: [`${(item.environments || []).length} environment${(item.environments || []).length === 1 ? "" : "s"}`, item.size ? bytesText(item.size) : "", when(item.at), item.by].filter(Boolean).join(" · ") }),
+			el("small", { className: item.downloaded ? "export-countdown" : "", textContent: state }),
+			...(item.deleted ? [el("small", { className: "export-deleted", textContent: `${item.site} was deleted from Harbor with it: Restore puts it back as it was` })] : [])),
+		el("span", { className: "export-actions" },
+			// A button as its neighbours are. Its own address, not the customer's link: it does not start its time
+			...(item.link ? [tonedButton("Download", "download", "green", () => { el("a", { href: `/api/exports/${item.id}/zip`, download: item.file || "" }).click(); }),
+				tonedButton("Copy link", "copy", "blue", copyLink)] : []),
+			...(item.restorable ? [tonedButton("Restore…", "undo", "teal", () => restoreExport(item))] : []),
+			tonedButton("Delete…", "trash", "red", () => deleteExport(item))));
+}
+async function deleteExport(item) {
+	if (!(await ask({ title: `Delete the export of ${item.site}?`, input: false, danger: true, ok: "Delete",
+		message: `Its zip is deleted, and its link stops working${item.deleted ? `. So is the snapshot Restore puts ${item.site} back from: it cannot be restored after this` : ""}.` }))) return;
+	await api(`/api/exports/${item.id}`, { method: "DELETE" });
+	return openExportSettings();
+}
+async function restoreExport(item) {
+	if (!(await ask({ title: `Restore ${item.site}?`, input: false, ok: "Restore",
+		message: `${item.site} is put back as it was before the export: its folders, services, Apache config and Harbor's own, here and on the servers its environments ran on, and started. The export stays.` }))) return;
+	const t = await openTask({ kind: "export_restore", id: item.id });
+	if (t) t.afterTask = () => { if (serverTabOpen("export")) return openExportSettings(); };
+}
+// Export…: for Windows or Linux, the environments that go (all at first), and whether the site is deleted from Harbor
+// once it is exported (a snapshot kept for Restore)
+function askExport(site) {
+	const exportable = site.environments.filter((env) => env.mode !== "windows");
+	// Only a .NET site is built for an OS; HTML and Python run on either, as they are
+	const built = site.kind === "csharp" || site.kind === "umbraco";
+	const oses = el("div", { className: "connect-kinds convert-modes", role: "radiogroup", ariaLabel: "For" },
+		...[["windows", "Windows", "IIS: a build for Windows, web.config with it"], ["linux", "Linux", "A build for Linux, run by dotnet"]].map(([value, title, line], index) =>
+			el("label", { className: "connect-kind convert-mode" }, el("span", { className: "convert-mode-icon export-os-icon", ariaHidden: "true", innerHTML: osLogos[value] }),
+				el("input", { type: "radio", name: "export_os", value, checked: index === 0 }), el("strong", { textContent: title }), el("small", { textContent: line }))));
+	// One on another server stands out: its own colour and icon, and where it is beside its name
+	const envs = el("div", { className: "export-envs" }, ...exportable.map((env) => {
+		const remote = env.mode === "remote";
+		const card = checkOption("env_" + env.target, env.unit, remote ? `${env.label} · copied from ${env.where}` : `${env.label} · here`, true,
+			remote ? "server" : env.target === "main" ? "globe" : "corner", remote ? "teal" : "purple");
+		if (remote) {
+			card.classList.add("export-env-remote");
+			card.querySelector(".sync-option-title").append(el("span", { className: "export-env-where", title: `Runs on ${env.where}: copied from there over SSH` },
+				el("span", { className: "os-logo", innerHTML: osLogos.linux }), `On ${env.where}`));
+		}
+		return card;
+	}));
+	// How long the zip and its link live once the link was first used
+	const lifetime = el("div", { className: "design-chips export-lifetime", role: "radiogroup", ariaLabel: "Lives" },
+		...[[3, "3 hours"], [6, "6 hours"], [12, "12 hours"], [24, "24 hours"], [72, "72 hours"], [168, "7 days"], [0, "Never"]].map(([hours, label]) =>
+			el("label", { className: "design-chip" }, el("input", { type: "radio", name: "export_keep", value: String(hours), checked: hours === 72 }), el("span", { textContent: label }))));
+	const remove = checkOption("delete_site", `Delete ${site.site} from Harbor once exported`, "Its folders, services and Apache config here and on its environments' servers, and the databases chosen below", false, "trash", "red");
+	// Its databases on servers, read when the deletion is chosen: each can go with it (kept for Restore first)
+	const databases = el("div", { className: "export-envs export-databases", hidden: true });
+	let offeredDatabases = [], databasesRead = null;
+	const readDatabases = () => databasesRead || (databasesRead = api(`/api/sites/${encodeURIComponent(site.site)}/databases?scope=all`).then(({ databases: found }) => {
+		const where = (item) => `${DATABASE_ENGINES[item.engine]} on ${item.host}${item.port ? ":" + item.port : ""}`;
+		offeredDatabases = found.filter((item) => item.connection && item.reachable && !item.shared.length);
+		const note = (title, sub, extra = []) => el("div", { className: "sync-option action-option prompt-option-note off tone-blue convert-missing" },
+			el("span", { className: "sync-option-icon", ariaHidden: "true" }, svgIcon("database")),
+			el("span", { className: "sync-option-text" }, el("span", { className: "sync-option-title", textContent: title }), el("span", { className: "sync-option-sub", textContent: sub })), ...extra);
+		databases.replaceChildren(...found.map((item) => item.shared.length ? note(`${item.database} is kept`, `${item.shared.join(", ")} uses it too · ${where(item)}`)
+			: !item.reachable ? note(`${item.database} is kept`, `On ${item.host}'s own SQL Server: delete it there`)
+			: !item.connection ? note(`${item.database} is kept`, `No connection to ${where(item)} here`,
+				[tonedButton("Add connection…", "plus", "amber", () => addConvertConnection({}, item.engine, { host: item.host, port: item.port }, () => askExport(site)))])
+			: checkOption("drop_" + item.database, `Delete the database ${item.database}`, `${where(item)}: backed up first, Restore puts it back`, false, "database", "red")));
+		if (!found.length) databases.replaceChildren(el("p", { className: "hint", textContent: "No databases on servers: its SQLite files are in its folders, kept with them." }));
+	}).catch((failure) => { databases.replaceChildren(el("p", { className: "error", textContent: failure.message })); }));
+	const warning = el("div", { className: "sync-option action-option prompt-option-note off tone-red convert-missing convert-used", hidden: true },
+		el("span", { className: "sync-option-icon", ariaHidden: "true" }, svgIcon("alert")),
+		el("span", { className: "sync-option-text" }, el("span", { className: "sync-option-title", textContent: `${site.site} stops running` }),
+			el("span", { className: "sync-option-sub", textContent: "Every environment of it, here and on the other servers, is taken down and deleted once the zip is made, also those not in the zip, and the databases chosen. A snapshot of all of it is kept: Restore under Exports puts the whole site back as it was, its databases too, until the zip is deleted. After that it cannot be restored." })));
+	const notes = [
+		...(!built ? [el("p", { className: "hint", textContent: site.kind === "python" ? "A Python site runs on Windows and Linux alike: its files go as they are, without its virtual environment (the customer makes one where it runs)." : "An HTML site runs anywhere: its files go as they are." })]
+			: site.project ? [] : [el("p", { className: "server-action-note", textContent: "There is no project here (it was published from elsewhere): what runs is exported as it is, not rebuilt, and without its source." })]),
+		el("p", { className: "hint", textContent: "Its databases are backed up into databases/ in the zip when this server has a connection to their servers; SQLite files are in the environments' own folders." }),
+	];
+	const error = el("p", { className: "error", role: "alert" });
+	const box = el("div", { className: "convert-form" }, ...(built ? [el("div", { className: "ns-section", textContent: "For" }), oses] : []),
+		el("div", { className: "ns-section", textContent: "What goes" }), envs,
+		el("div", { className: "ns-section", textContent: "Its link lives, after its first download" }), lifetime,
+		el("div", { className: "ns-section", textContent: "Afterwards" }), remove, warning, databases, ...notes, error);
+	openFormDialog({ icon: "download", title: `Export ${site.site}`, text: "For a customer, without VNS Harbor", ok: "Export", fields: [box], submit: async (form) => {
+		const targets = exportable.filter((env) => form.elements["env_" + env.target]?.checked).map((env) => env.target);
+		if (!targets.length) { error.textContent = "Choose what goes."; return false; }
+		const deleting = form.elements.delete_site.checked;
+		if (deleting && !(await ask({ title: `Delete ${site.site} from Harbor?`, danger: true, ok: "Export and delete", match: site.site,
+			message: `${site.site} and every environment of it stop running and are deleted once the export is made. Restore puts it back until the zip is deleted.\nType "${site.site}" to confirm.` }))) return false;
+		const dropping = deleting ? offeredDatabases.filter((item) => form.elements["drop_" + item.database]?.checked).map((item) => item.database) : [];
+		const t = await openTask({ kind: "site_export", site: site.site, os: built ? form.elements.export_os.value : "any", targets, delete: deleting,
+			keep: Number(form.elements.export_keep.value), ...(dropping.length ? { databases: dropping } : {}) });
+		if (t) t.afterTask = () => { if (serverTabOpen("export")) return openExportSettings(); };
+	} });
+	const form = $("#form-dialog");
+	const ready = () => {
+		if (!box.isConnected) return;
+		warning.hidden = !form.elements.delete_site.checked;
+		databases.hidden = !form.elements.delete_site.checked;
+		if (form.elements.delete_site.checked && !databasesRead) {
+			databases.replaceChildren(loadingState("Reading its databases…"));
+			readDatabases();
+		}
+		$("#form-dialog-ok").replaceChildren(svgIcon("check"), form.elements.delete_site.checked ? "Export and delete" : "Export");
+		error.textContent = "";
+	};
+	box.addEventListener("change", ready);
+	ready();
+}
+// Every connection here (no password), as Settings, Convert last read them: Move chooses among them
+let convertConnections = [];
+// A database on a server: moved to another server of its kind, or converted to SQLite. Two cards at the top of either
+// dialog; choosing the other opens its dialog in this one's place
+function convertModes(active, item) {
+	// Convert first: it is what Convert… opens on
+	const choices = [["sqlite", "Convert to SQLite", "A SQLite file in the site", "sync"],
+		["move", "Move to another server", `Another ${DATABASE_ENGINES[item.engine]}`, "arrow-right"]];
+	return el("div", { className: "connect-kinds convert-modes", role: "radiogroup", ariaLabel: "What is done" },
+		...choices.map(([value, title, line, icon]) => el("label", { className: "connect-kind convert-mode" },
+			el("span", { className: "convert-mode-icon", ariaHidden: "true" }, svgIcon(icon)),
+			el("input", { type: "radio", name: "convert_mode", value, checked: value === active, onchange: () => run(async () => {
+				if (value === "move") {
+					// Read the first time: a spinner under the choice meanwhile, the rest of the form put away
+					const form = formDialog.querySelector(".convert-form");
+					if (!item.moveInfo && form) {
+						const modes = form.querySelector(".convert-modes");
+						form.replaceChildren(...(modes ? [modes] : []), el("div", { className: "convert-opening" }, loadingState("Reading where it can be moved…")));
+						$("#form-dialog-ok").disabled = true;
+					}
+					try {
+						return await askMove(item);
+					} catch (error) {
+						askConvert(item, convertTargets(item, convertConnections));
+						throw error;
+					}
+				}
+				askConvert(item, convertTargets(item, convertConnections));
+			}) }),
+			el("strong", { textContent: title }), el("small", { textContent: line }))));
+}
+// Move…: the site's database to another server of its kind, the site stopped while it is copied by the server's own
+// backup, its connection string changed and it started; the old one kept, under Kept, until it is deleted. Its login
+// goes with it when only this database has it (by its name and password), else it gets a new one
+async function askMove(item) {
+	convertOpening(`Move ${item.database || item.unit}`, `${item.label} of ${item.site}${item.where ? ", on " + item.where : ""}`);
+	return convertOpened(() => askMoveRead(item));
+}
+async function askMoveRead(item) {
+	const params = new URLSearchParams({ unit: item.unit, ...(item.where ? { where: item.where } : {}),
+		...(item.database ? { engine: item.engine, database: item.database, server: item.server || "", login: item.login || "" } : {}) });
+	// Read once while the dialog is open: back from Convert to SQLite it is shown at once. Closed, it is forgotten, so
+	// the next time reads it as it is then
+	if (!item.moveInfo) {
+		item.moveInfo = await api(`/api/convert/move?${params}`);
+		formDialog.addEventListener("close", () => { delete item.moveInfo; }, { once: true });
+	}
+	const found = item.moveInfo;
+	// What the site's database is, as read: Convert to SQLite beside it reads from there (opened from the SQL Server page,
+	// the item knew only the site)
+	Object.assign(item, { engine: found.engine, ...(item.database ? {} : { database: found.database, server: found.server || `${found.host}${found.port ? "," + found.port : ""}`,
+		login: found.login, ...(found.umbraco !== undefined && found.umbraco !== null ? { umbraco: found.umbraco } : {}) }), ...(found.source ? { source: found.source } : {}) });
+	const engineName = DATABASE_ENGINES[found.engine];
+	const connections = convertConnections.filter((connection) => engineOf(connection) === found.engine && connection.id !== found.source);
+	// What Move lacks here, said on a card with Add connection: the dialog still opens, Convert to SQLite beside it
+	// Microsoft SQL Server's backup is carried between the servers' backup folders: both must be reached, here or by SSH
+	const reaches = (id) => found.engine !== "mssql" || convertConnections.find((connection) => connection.id === id)?.files !== false;
+	const missing = !found.source
+		? { title: `No connection to ${found.host}${found.port ? ":" + found.port : ""} here`, sub: `Where ${found.database} is now: Move copies it from there`,
+			run: () => addConvertConnection(item, found.engine, { host: found.host, port: found.port }, () => { delete item.moveInfo; return askMove(item); }) }
+		: !connections.length ? { title: `No other ${engineName} here`, sub: `Add a connection to the one to move ${found.database} to`,
+			run: () => addConvertConnection(item, found.engine, null, () => { delete item.moveInfo; return askMove(item); }) }
+		: !reaches(found.source) ? { title: `No access to the backup files on ${found.host}`, sub: "Its backup is made there and carried to the new server: turn on SSH for backup files in its connection",
+			label: "Edit connection…", icon: "pencil", run: () => editConvertConnection(found.source, () => { delete item.moveInfo; return askMove(item); }) }
+		: null;
+	const address = (connection) => `${LOCAL_DATABASE_HOSTS.includes(String(connection.host).toLowerCase()) ? "this server" : connection.host}:${connection.port}`;
+	const side = () => {
+		const tile = el("span", { className: "convert-tile engine-" + found.engine }, svgIcon("database")), name = el("strong"), sub = el("span", { className: "convert-side-sub" });
+		return { tile, name, sub, card: el("div", { className: "convert-side" }, tile, el("span", { className: "convert-side-text" }, name, sub)) };
+	};
+	const from = side(), to = side();
+	from.name.textContent = found.database;
+	sideLines(from.sub, engineName, `${found.host}${found.port ? ":" + found.port : ""}`);
+	const flow = el("div", { className: "convert-flow" }, from.card, el("span", { className: "convert-arrow" }, svgIcon("arrow-right")), to.card);
+	const chosen = el("input", { type: "hidden", name: "connection", value: connections.length === 1 ? connections[0].id : "" });
+	const cards = el("div", { className: "server-cards convert-servers", role: "radiogroup", ariaLabel: "Server" });
+	const drawCards = () => cards.replaceChildren(...connections.map((connection) => {
+		const on = connection.id === chosen.value, only = connections.length === 1;
+		return el("button", { type: "button", className: "server-card" + (on ? " chosen" : "") + (only ? " only" : ""), role: "radio", ariaChecked: String(on),
+			...(only ? { tabIndex: -1 } : { onclick: () => { chosen.value = connection.id; drawCards(); ready(); } }) },
+			el("span", { className: "server-card-icon engine-" + found.engine }, svgIcon("database")),
+			el("span", { className: "server-card-text" }, el("strong", { textContent: connection.name }),
+				// Its kind and where, a line each, as From and To have them
+				el("small", { textContent: engineName }), el("small", { textContent: address(connection) })),
+			// No access to its backup files: a small warning in its corner (chosen, the dialog says what to do)
+			...(reaches(connection.id) ? [] : [el("span", { className: "server-card-warn", title: "Needs SSH for its backup files", ariaLabel: "Needs SSH for its backup files" }, svgIcon("alert"))]),
+			el("span", { className: "server-card-check" }, svgIcon("check")));
+	}));
+	const serverField = el("div", { className: "convert-server-choice", hidden: connections.length === 1 }, el("div", { className: "ns-section", textContent: "To" }), cards, chosen);
+	// The one chosen without access to its backup files: said, with Edit connection, and Move waits for it
+	const noFiles = el("div", { className: "sync-option action-option prompt-option-note off tone-amber convert-missing", hidden: true },
+		el("span", { className: "sync-option-icon", ariaHidden: "true" }, svgIcon("server")),
+		el("span", { className: "sync-option-text" }, el("span", { className: "sync-option-title" }),
+			el("span", { className: "sync-option-sub", textContent: "The backup is restored there from its backup folder: turn on SSH for backup files in its connection" })),
+		tonedButton("Edit connection…", "pencil", "amber", () => editConvertConnection(chosen.value, () => { delete item.moveInfo; return askMove(item); })));
+	const nameField = el("label", {}, "Database name", el("input", { name: "database", required: true, maxLength: 63, pattern: "[A-Za-z0-9][A-Za-z0-9._\\-]*",
+		value: found.database, autocomplete: "off", spellcheck: false }));
+	// Its login: along with it when only it has it, else a new one of its own
+	const keep = found.alone && found.login;
+	const logins = el("div", { className: "connect-kinds", role: "radiogroup", ariaLabel: "Login" },
+		...(keep ? [el("label", { className: "connect-kind" }, el("input", { type: "radio", name: "login_mode", value: "keep", checked: true }),
+			el("strong", { textContent: `Keep ${found.login}` }), el("small", { textContent: "Only this database has it: it goes along, by its name and password" }))] : []),
+		el("label", { className: "connect-kind" }, el("input", { type: "radio", name: "login_mode", value: "new", checked: !keep }),
+			el("strong", { textContent: "A new login" }), el("small", { textContent: found.login && !found.alone ? `${found.login} is used by other databases too: it stays` : "Its own, made on the new server" })));
+	const newLogin = el("div", { className: "convert-server-fields" },
+		el("label", {}, "Username", el("input", { name: "login", maxLength: 63, pattern: "[A-Za-z0-9][A-Za-z0-9._\\-]*", value: convertName(item.binding || item.unit), autocomplete: "off", spellcheck: false })),
+		el("div", { className: "ns-grid" },
+			el("label", {}, "Password", el("input", { name: "password", type: "password", minLength: 8, maxLength: 128, autocomplete: "new-password", "data-1p-ignore": "", "data-lpignore": "true" })),
+			el("label", {}, "Repeat password", el("input", { name: "confirmation", type: "password", minLength: 8, maxLength: 128, autocomplete: "new-password", "data-1p-ignore": "", "data-lpignore": "true" }))));
+	const note = el("p", { className: "server-action-note", textContent: `${item.unit} is stopped while its database is copied${found.engine === "mssql" ? " (the server's own backup and restore)" : " (pg_dump and pg_restore)"}, and started on the new one. Once it runs there, ${found.database} is deleted from ${found.host}, with its backups there and the logins only it had: to go back, move it back.` });
+	const error = el("p", { className: "error", role: "alert" });
+	const lacking = missing ? el("div", { className: "sync-option action-option prompt-option-note off tone-amber convert-missing" },
+		el("span", { className: "sync-option-icon", ariaHidden: "true" }, svgIcon("database")),
+		el("span", { className: "sync-option-text" }, el("span", { className: "sync-option-title", textContent: missing.title }), el("span", { className: "sync-option-sub", textContent: missing.sub })),
+		// Over this dialog, which takes the new connection once it is saved
+		tonedButton(missing.label || "Add connection…", missing.icon || "plus", "amber", () => missing.run())) : null;
+	const box = missing ? el("div", { className: "convert-form" }, convertModes("move", item), flow, lacking, error)
+		// The server first, then what is done, from and to, as it is chosen
+		: el("div", { className: "convert-form" }, convertModes("move", item), serverField, noFiles, flow, nameField,
+			el("div", { className: "ns-section", textContent: "Login" }), logins, newLogin, note, error);
+	openFormDialog({ icon: "sync", title: `Move ${found.database}`, text: `${item.label} of ${item.site}${item.where ? ", on " + item.where : ""}`,
+		fields: [box], ok: "Move", submit: async (form) => {
+			if (missing || !reaches(form.elements.connection?.value)) return false;
+			const value = (name) => form.elements[name]?.value || "";
+			const keeping = value("login_mode") === "keep";
+			if (!keeping && value("password") !== value("confirmation")) { error.textContent = "Passwords do not match."; return false; }
+			if (!keeping && value("password").length < 8) { error.textContent = "The password needs at least 8 characters."; return false; }
+			const t = await openTask({ kind: "convert_move", unit: item.unit, ...(item.where ? { where: item.where } : {}), connection: value("connection"),
+				database: value("database").trim(), keep_login: keeping, ...(keeping ? {} : { login: value("login").trim(), password: value("password") }) });
+			if (t) t.afterTask = () => { if (serverTabOpen("convert")) return openConvertSettings(); };
+		} });
+	const form = $("#form-dialog");
+	if (missing) {
+		to.card.classList.add("pending");
+		to.name.textContent = "Another server";
+		sideLines(to.sub, engineName, "Add a connection first");
+		$("#form-dialog-ok").disabled = true;
+		return;
+	}
+	const ready = () => {
+		if (!box.isConnected) return;
+		const keeping = form.elements.login_mode?.value === "keep";
+		newLogin.hidden = keeping;
+		for (const input of newLogin.querySelectorAll("input")) { input.disabled = keeping; input.required = !keeping; }
+		const connection = connections.find((each) => each.id === chosen.value);
+		// Blank until a server is chosen above: a dashed tile, and only that
+		to.card.classList.toggle("pending", !connection);
+		to.tile.className = "convert-tile" + (connection ? " engine-" + found.engine : "");
+		to.name.textContent = connection ? form.elements.database.value.trim() || found.database : "Choose a server above";
+		sideLines(to.sub, ...(connection ? [engineName, `${connection.name} · ${address(connection)}`] : []));
+		const blocked = Boolean(connection) && !reaches(connection.id);
+		noFiles.hidden = !blocked;
+		if (blocked) noFiles.querySelector(".sync-option-title").textContent = `No access to the backup files on ${connection.name}`;
+		$("#form-dialog-ok").disabled = !chosen.value || blocked;
+		error.textContent = "";
+	};
+	drawCards();
+	box.addEventListener("change", ready);
+	box.addEventListener("input", ready);
+	ready();
 }
 // A name for SQL as the site's own: its binding, with its dots (letters, digits, . _ and -, at most 63)
 const convertName = (text) => text.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, "").slice(0, 63);
@@ -7938,7 +8734,7 @@ function askConvert(item, connections) {
 	// What is converted, from and to, side by side: the To side follows the server chosen and what is typed below
 	// One quiet line: a tile in the engine's colour, the database, and the engine and where in grey
 	const side = () => {
-		const tile = el("span", { className: "convert-tile" }, svgIcon("database")), name = el("strong"), sub = el("small");
+		const tile = el("span", { className: "convert-tile" }, svgIcon("database")), name = el("strong"), sub = el("span", { className: "convert-side-sub" });
 		return { tile, name, sub, card: el("div", { className: "convert-side" }, tile, el("span", { className: "convert-side-text" }, name, sub)) };
 	};
 	const from = side(), to = side();
@@ -7948,9 +8744,11 @@ function askConvert(item, connections) {
 	const fileName = (path) => path.slice(path.lastIndexOf("/") + 1);
 	from.name.textContent = item.engine === "sqlite" ? fileName(item.file) : item.database;
 	from.name.title = item.engine === "sqlite" ? item.file : item.database;
-	from.sub.textContent = item.engine === "sqlite" ? ["SQLite", bytesText(item.size), folderOf(item.file)].filter(Boolean).join(" · ") : `${DATABASE_ENGINES[item.engine]} · ${item.server || "its server"}`;
+	if (item.engine === "sqlite") sideLines(from.sub, ["SQLite", bytesText(item.size)].filter(Boolean).join(" · "), folderOf(item.file) || "The site's folder");
+	else sideLines(from.sub, DATABASE_ENGINES[item.engine], databaseServer(item));
 	const flow = el("div", { className: "convert-flow" }, from.card, el("span", { className: "convert-arrow" }, svgIcon("arrow-right")), to.card);
-	const address = (connection) => `${connection.host === "." ? "this server" : connection.host}:${connection.port}`;
+	// This server's own SQL Server is given to a site on another server by this server's address
+	const address = (connection) => `${LOCAL_DATABASE_HOSTS.includes(String(connection.host).toLowerCase()) ? "this server" : connection.host}:${connection.port}`;
 	// The server first, as cards as Servers' are: its engine is what the database becomes (from SQLite), or where the
 	// database is read from (to SQLite). One is not a choice: it is shown, chosen
 	const chosen = el("input", { type: "hidden", name: "connection", value: connections.length === 1 ? connections[0].id : "" });
@@ -7962,7 +8760,8 @@ function askConvert(item, connections) {
 			...(only ? { tabIndex: -1 } : { onclick: () => { chosen.value = connection.id; drawCards(); ready(); } }) },
 			el("span", { className: "server-card-icon engine-" + engineOf(connection) }, svgIcon("database")),
 			el("span", { className: "server-card-text" }, el("strong", { textContent: connection.name }),
-				el("small", { textContent: `${ENGINE_NAMES[engineOf(connection)]} · ${address(connection)}`, title: `${ENGINE_NAMES[engineOf(connection)]} · ${address(connection)}` })),
+				// Its kind and where, a line each, as From and To have them
+				el("small", { textContent: ENGINE_NAMES[engineOf(connection)] }), el("small", { textContent: address(connection), title: address(connection) })),
 			el("span", { className: "server-card-check" }, svgIcon("check")));
 	}));
 	// One server is no choice: the To line says which, and no cards take the room
@@ -7976,10 +8775,12 @@ function askConvert(item, connections) {
 			el("label", {}, "Password", el("input", { name: "password", type: "password", required: true, minLength: 8, maxLength: 128, autocomplete: "new-password", "data-1p-ignore": "", "data-lpignore": "true" })),
 			el("label", {}, "Repeat password", el("input", { name: "confirmation", type: "password", required: true, minLength: 8, maxLength: 128, autocomplete: "new-password", "data-1p-ignore": "", "data-lpignore": "true" }))),
 		el("p", { className: "hint", textContent: "A login of its own that owns the new database: the site's connection string gets it." }));
+	// The name harbor gives the file when none is typed (harbor site convert): Umbraco's own, else the database's
+	const sqliteDefault = item.umbraco ? "Umbraco.sqlite.db" : (item.database || "site").replace(/[^A-Za-z0-9._-]/g, "_") + ".sqlite.db";
 	const fileFields = el("div", {},
 		el("label", {}, "File name", el("input", { name: "file", maxLength: 120, pattern: "[A-Za-z0-9][A-Za-z0-9._-]*\\.(sqlite\\.db|sqlite|sqlite3|db)", autocomplete: "off", spellcheck: false,
-			placeholder: item.umbraco ? "Umbraco.sqlite.db" : convertName(item.database || "site") + ".sqlite.db" })),
-		el("p", { className: "hint", textContent: `In ${item.umbraco ? "umbraco/Data" : "App_Data"}. Left empty, a name that is free there.` }));
+			placeholder: sqliteDefault })),
+		el("p", { className: "hint", textContent: `Saved in ${item.umbraco ? "umbraco/Data" : "App_Data"}. Leave it empty for ${sqliteDefault}, with a number added if that name is taken.` }));
 	const provider = toServer ? "Microsoft.Data.SqlClient or Npgsql" : "Microsoft.Data.Sqlite";
 	const notes = [
 		el("p", { className: "server-action-note", textContent: toServer
@@ -7989,12 +8790,21 @@ function askConvert(item, connections) {
 	];
 	const error = el("p", { className: "error", role: "alert" });
 	// Its own fields in a box of their own: the form is the one every form dialog shares, and keeps no listener of this one
-	const box = el("div", { className: "convert-form" }, flow, serverField, ...(toServer ? [serverFields] : [fileFields]), ...notes, error);
-	openFormDialog({ icon: "sync", title: `Convert ${item.unit}`, text: `${item.label} of ${item.site}`,
+	// The server first, then what is done, from and to, as it is chosen
+	// From a server this one has no connection to: said, with Add connection (its host filled in); it comes back here
+	const where = databaseHost(item);
+	const lacking = !toServer && !connections.length ? el("div", { className: "sync-option action-option prompt-option-note off tone-amber convert-missing" },
+		el("span", { className: "sync-option-icon", ariaHidden: "true" }, svgIcon("database")),
+		el("span", { className: "sync-option-text" }, el("span", { className: "sync-option-title", textContent: `No connection to ${where ? where.host + (where.port ? ":" + where.port : "") : databaseServer(item)} here` }),
+			el("span", { className: "sync-option-sub", textContent: `Where ${item.database} is: it is read from there` })),
+		tonedButton("Add connection…", "plus", "amber", () => addConvertConnection(item, item.engine, where, () => askConvert(item, convertTargets(item, convertConnections))))) : null;
+	const box = el("div", { className: "convert-form" }, ...(toServer ? [] : [convertModes("sqlite", item)]), ...(lacking ? [lacking] : [serverField]), flow,
+		...(toServer ? [serverFields] : [fileFields]), ...notes, error);
+	openFormDialog({ icon: "sync", title: `Convert ${item.unit}`, text: `${item.label} of ${item.site}${item.where ? ", on " + item.where : ""}`,
 		fields: [box], ok: "Convert", submit: async (form) => {
 			const value = (name) => form.elements[name]?.value || "";
 			if (toServer && value("password") !== value("confirmation")) { error.textContent = "Passwords do not match."; return false; }
-			const payload = { kind: "convert_site", unit: item.unit, to: toValue(), connection: value("connection") };
+			const payload = { kind: "convert_site", unit: item.unit, to: toValue(), connection: value("connection"), ...(item.where ? { where: item.where } : {}) };
 			if (toServer) Object.assign(payload, { database: value("database").trim(), login: value("login").trim(), password: value("password") });
 			else if (value("file").trim()) payload.file = value("file").trim();
 			const t = await openTask(payload);
@@ -8014,14 +8824,16 @@ function askConvert(item, connections) {
 		to.card.classList.toggle("pending", !engine);
 		to.tile.className = "convert-tile" + (engine ? " engine-" + engine : "");
 		if (toServer) {
-			to.name.textContent = form.elements.database.value.trim() || "A new database";
-			to.sub.textContent = connection ? `${DATABASE_ENGINES[engine]} · ${connection.name} · ${address(connection)}` : "Choose a server below";
+			// Blank until a server is chosen above
+			to.name.textContent = connection ? form.elements.database.value.trim() || "A new database" : "Choose a server above";
+			sideLines(to.sub, ...(connection ? [DATABASE_ENGINES[engine], `${connection.name} · ${address(connection)}`] : []));
 		} else {
 			to.name.textContent = form.elements.file.value.trim() || form.elements.file.placeholder;
-			to.sub.textContent = `SQLite · new · ${item.umbraco ? "umbraco/Data" : "App_Data"}`;
+			sideLines(to.sub, "SQLite · new", item.umbraco ? "umbraco/Data" : "App_Data");
 		}
 	};
 	const ready = () => {
+		if (!box.isConnected) return;
 		$("#form-dialog-ok").disabled = !chosen.value;
 		error.textContent = "";
 		drawTo();
@@ -8049,13 +8861,13 @@ async function rollbackConverted(item, name) {
 	].join("\n");
 	if (!(await ask({ title: item.original ? `Roll back ${item.unit} to the original?` : `Roll back ${item.unit}?`, message,
 		match: current, danger: true, ok: "Roll back" }))) return;
-	const t = await openTask({ kind: "convert_rollback", id: item.id });
+	const t = await openTask({ kind: "convert_rollback", id: item.id, ...(item.where ? { where: item.where, unit: item.unit } : {}) });
 	if (t) t.afterTask = () => { if (serverTabOpen("convert")) return openConvertSettings(); };
 }
 async function deleteConverted(item, name) {
 	const where = item.engine === "sqlite" ? "The file goes from the site's folder at once." : `The database goes from its ${DATABASE_ENGINES[item.engine]}, with the logins only it had.`;
 	if (!(await ask({ title: `Delete ${name}?`, message: `${where} Type ${name} to confirm.`, match: name, danger: true, ok: "Delete" }))) return;
-	const t = await openTask({ kind: "convert_delete", id: item.id });
+	const t = await openTask({ kind: "convert_delete", id: item.id, ...(item.where ? { where: item.where, unit: item.unit } : {}) });
 	if (t) t.afterTask = () => { if (serverTabOpen("convert")) return openConvertSettings(); };
 }
 
@@ -8210,8 +9022,13 @@ function openFormDialog({ icon, title, text = "", fields, ok = "", submit = null
 	const syncConfirm = () => { $("#form-dialog-ok").disabled = Boolean(confirm) && confirm.value !== confirm.dataset.match; };
 	if (confirm) confirm.addEventListener("input", syncConfirm);
 	syncConfirm();
-	formDialog.showModal();
-	form.querySelector("input:not([type=checkbox]):not([type=radio]), textarea")?.focus();
+	// Open already when one dialog takes another's place in it (Convert's Move and Convert to SQLite)
+	if (!formDialog.open) formDialog.showModal();
+	// A field to type in has the focus; without one, nothing has: the dialog would give it to its first card, which
+	// then looks chosen before anything is done
+	const typed = form.querySelector("input:not([type=checkbox]):not([type=radio]):not([type=hidden]), textarea");
+	if (typed) typed.focus();
+	else if (formDialog.contains(document.activeElement)) document.activeElement.blur();
 }
 $("#form-dialog-cancel").onclick = () => formDialog.close();
 
@@ -8657,10 +9474,8 @@ async function toggleSqlTables(toggle, database) {
 		}
 		const quote = (name) => sqlQuote(name);
 		const action = (icon, tone, title, onclick) => Object.assign(tonedButton("", icon, tone, onclick), { title, ariaLabel: title, className: "icon-action" });
-		body.replaceChildren(el("div", { className: "sql-tables-head" },
-			el("span", { className: "sql-tables-count muted", textContent: `${data.tables.length} table${data.tables.length === 1 ? "" : "s"}` }),
-			...(system ? [el("span", { className: "sql-tables-locked", title: "SQL Server's own tables: they can be read, not designed or dropped here" }, svgIcon("lock"), "Read only")] : [])),
-			el("ul", {}, ...data.tables.map((table) => el("li", { className: "sql-table-line" },
+		// A filter beside the count, once there are more than a few: a table found by its name (and schema)
+		const lines = el("ul", {}, ...data.tables.map((table) => el("li", { className: "sql-table-line" },
 				// The line opens its rows, for one who may run queries; for another it only says what the table is
 				el(mayQuery ? "button" : "span", { className: "sql-table-open" + (mayQuery ? "" : " sql-table-still"),
 					...(mayQuery ? { type: "button", title: "Select the first 1000 rows", onclick: () => openSqlQuery(database, firstRowsSql(table.schema, table.name)) } : {}) },
@@ -8668,7 +9483,15 @@ async function toggleSqlTables(toggle, database) {
 					el("span", { className: "sql-table-meta muted", textContent: `${Number(table.rows).toLocaleString()} rows · ${formatSqlSize(table.size_mb)}` })),
 				el("span", { className: "sql-table-actions desktop-only" },
 					...(mayEdit ? [action("pencil", "amber", `Design ${table.name}`, () => openTableDesigner(database, table)),
-						action("trash", "red", `Drop ${table.name}`, () => dropSqlTable(database, table, toggle))] : []))))), ...newTable);
+						action("trash", "red", `Drop ${table.name}`, () => dropSqlTable(database, table, toggle))] : [])))));
+		data.tables.forEach((table, index) => { lines.children[index].dataset.search = `${table.schema}.${table.name}`; });
+		const filter = grantSearch(lines, "Filter tables…", ".sql-table-line");
+		filter.classList.add("sql-tables-filter");
+		body.replaceChildren(el("div", { className: "sql-tables-head" },
+			el("span", { className: "sql-tables-count muted", textContent: `${data.tables.length} table${data.tables.length === 1 ? "" : "s"}` }), filter,
+			...(system ? [el("span", { className: "sql-tables-locked", title: "SQL Server's own tables: they can be read, not designed or dropped here" }, svgIcon("lock"), "Read only")] : [])),
+			lines, filter.empty, ...newTable);
+		filter.reset(true);
 	} catch (error) {
 		body.replaceChildren(el("p", { className: "sql-tables-error", textContent: error.message || "Could not read the tables." }));
 	}
@@ -8953,6 +9776,11 @@ function openSqlQuery(database, script) {
 	loadSnippetColumns(database.name, sqlQueryDialog.dataset.view);
 	$("#sql-query-title").textContent = `Query ${database.name}`;
 	$("#sql-query-status").textContent = "";
+	// Opened on a script (a table's rows): what the window showed before goes, and a spinner says the new is read
+	if (script) {
+		$("#sql-query-output").classList.remove("sql-query-error");
+		$("#sql-query-output").replaceChildren(el("div", { className: "sql-query-reading" }, loadingState("Reading the rows…")));
+	}
 	if (!sqlQueryDialog.open) sqlQueryDialog.showModal();
 	$("#sql-query-text").focus();
 	if (script) {
@@ -9098,6 +9926,12 @@ function showSqlResults(output, data) {
 	output.scrollTop = 0;
 }
 
+// Whether a script can change a database: one of the words that write, outside its comments and texts (SELECT … INTO
+// makes a table, so INTO counts; a plain SELECT, WITH … SELECT or SHOW does not)
+function sqlChanges(script) {
+	const bare = script.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/--[^\n]*/g, " ").replace(/'(?:[^']|'')*'/g, "''").replace(/"(?:[^"]|"")*"/g, '""').replace(/\[[^\]]*\]/g, "[]");
+	return /\b(insert|update|delete|merge|create|alter|drop|truncate|into|exec|execute|call|grant|revoke|deny|rename|restore|backup|dbcc|bulk|copy|vacuum|reindex|cluster|comment|set\s+identity_insert)\b/i.test(bare);
+}
 // Whether a script ran in the window since it opened: closed, the database's tables (rows, size) are read again
 let sqlQueryRan = false;
 sqlQueryDialog.addEventListener("close", () => {
@@ -9134,7 +9968,8 @@ async function runSqlQuery() {
 			}
 		}
 		const output = $("#sql-query-output");
-		if (response.ok) sqlQueryRan = true;
+		// Only a script that can change the tables (rows, size) has them read again when the window closes: reading them does not
+		if (response.ok && sqlChanges(script)) sqlQueryRan = true;
 		output.classList.toggle("sql-query-error", !response.ok);
 		if (response.ok) showSqlResults(output, data);
 		else output.replaceChildren(el("pre", { textContent: data.error || data.message || "The script failed." }));
@@ -9363,13 +10198,13 @@ function showSqlEngine() {
 	updateSqlSshFields();
 	syncSqlPassword();
 }
-function openSqlConnection(connection = null) {
+function openSqlConnection(connection = null, kind = "", server = null) {
 	if (!sqlToolsAvailable) throw new Error("Install the SQL Server tools on the admin server first.");
 	editingSqlConnection = connection?.id || null;
 	const form = $("#form-sql-connection");
 	form.reset();
 	// One being changed keeps its engine; a new one is of the engine worked with on the page
-	const engine = connection ? engineOf(connection) : sqlTools[sqlEngine] ? sqlEngine : ["mssql", "postgres"].find((item) => sqlTools[item]) || "mssql";
+	const engine = connection ? engineOf(connection) : kind && sqlTools[kind] ? kind : sqlTools[sqlEngine] ? sqlEngine : ["mssql", "postgres"].find((item) => sqlTools[item]) || "mssql";
 	sqlDialogEngine = engine;
 	const defaults = ENGINE_DEFAULTS[engine];
 	form.elements.port.value = defaults.port;
@@ -9381,6 +10216,10 @@ function openSqlConnection(connection = null) {
 	form.elements.username.placeholder = own ? "" : "The login you were given";
 	form.elements.host.placeholder = own ? "" : "sql.example.com";
 	form.elements.backup_directory.value = defaults.backup;
+	if (!connection && server?.host) {
+		form.elements.host.value = server.host;
+		if (server.port) form.elements.port.value = server.port;
+	}
 	if (connection) {
 		for (const key of ["name", "host", "port", "username", "backup_directory"]) form.elements[key].value = connection[key];
 		form.elements.trust_certificate.checked = connection.trust_certificate;
@@ -9460,6 +10299,8 @@ $("#sql-edit-connection").onclick = () => run(() => {
 $("#dlg-sql-connection").addEventListener("close", () => {
 	$("#form-sql-connection").reset();
 	editingSqlConnection = null;
+	// Cancelled: nothing is taken up
+	sqlAfterAdd = null;
 });
 $("#sql-connection-cancel").onclick = () => $("#dlg-sql-connection").close();
 // The connection as typed: what Save sends, and what Test connection tries
@@ -9519,8 +10360,15 @@ $("#form-sql-connection").onsubmit = (event) => {
 			const saved = await api("/api/sql/connections", { method: data.id ? "PUT" : "POST", json: data });
 			form.reset();
 			sqlConnectionSaid(null);
+			const after = sqlAfterAdd;
+			sqlAfterAdd = null;
 			$("#dlg-sql-connection").close();
-			await loadSqlConnections(saved.id);
+			if (currentView === "sql" || !after) await loadSqlConnections(saved.id);
+			if (after) {
+				// The dialog it was added from takes it up: with the connections as they are now
+				convertConnections = (await api("/api/convert/connections")).connections || [];
+				await after();
+			}
 		} catch (error) {
 			sqlConnectionSaid("bad", error.message);
 		} finally {
@@ -9971,7 +10819,7 @@ function templateCard(template) {
 // The site tree: a site's box gives all of it; opened, its environments one by one, and its actions
 // A filter above a long list in a user's access: hides each item that does not hold every word typed
 // (an item's text is its data-search, or what it shows). Shown only when the list is long enough to need it.
-function grantSearch(list, placeholder) {
+function grantSearch(list, placeholder, itemSelector = ".grant-site, .grant-chip") {
 	const input = el("input", { type: "search", className: "grant-search", placeholder, autocomplete: "off", spellcheck: false, ariaLabel: placeholder });
 	const clear = el("button", { type: "button", className: "search-clear", ariaLabel: "Clear filter", title: "Clear filter" });
 	clear.innerHTML = '<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>';
@@ -9979,7 +10827,7 @@ function grantSearch(list, placeholder) {
 	const box = el("div", { className: "grant-search-box" }, input, clear);
 	box.insertAdjacentHTML("afterbegin", icon);
 	const empty = el("p", { className: "muted grant-no-match", textContent: "Nothing matches the filter.", hidden: true });
-	const items = () => [...list.children].filter((item) => item.matches(".grant-site, .grant-chip"));
+	const items = () => [...list.children].filter((item) => item.matches(itemSelector));
 	const apply = () => {
 		const words = input.value.toLowerCase().split(/\s+/).filter(Boolean);
 		let shown = 0;
@@ -10634,7 +11482,7 @@ $("#audit-clear").onclick = () => run(async () => {
 // Each tool is a part of its own in the side menu; they share one pane, drawn from one look at the server
 // SSH and Samba are one part, Access: how the server itself is reached
 const TOOL_TABS = ["sql", "dotnet", "node", "access"];
-const SERVER_TABS = [...TOOL_TABS, "apache", "jobs", "convert", "settings", "servers", "users", "usage", "windows", "updates", "menu"];
+const SERVER_TABS = [...TOOL_TABS, "apache", "jobs", "convert", "export", "settings", "servers", "users", "usage", "windows", "updates", "menu"];
 const TOOL_OF_CARD = { "Microsoft SQL Server": "sql", "Microsoft SQL Server tools": "sql", "sa password": "sql", PostgreSQL: "sql", "PostgreSQL tools": "sql", "postgres password": "sql", Backups: "sql", "Node.js": "node", SSH: "access", Samba: "access" };
 // Settings opens on General: what most often is looked for
 let serverTab = "settings";
@@ -10648,7 +11496,7 @@ async function showServerTab(tab) {
 		$("#server-tab-" + name).setAttribute("aria-selected", String(name === tab));
 		$("#server-tab-" + name).classList.toggle("active", name === tab);
 	}
-	for (const pane of ["tools", "apache", "jobs", "convert", "settings", "servers", "users", "usage", "windows", "updates", "menu"]) $("#server-pane-" + pane).hidden = pane !== paneOf(tab);
+	for (const pane of ["tools", "apache", "jobs", "convert", "export", "settings", "servers", "users", "usage", "windows", "updates", "menu"]) $("#server-pane-" + pane).hidden = pane !== paneOf(tab);
 	// The admin site's page, when it was open here, is not
 	$("#server-pane-admin").hidden = true;
 	$("#server-tab-admin").classList.remove("active");
@@ -10662,7 +11510,7 @@ async function showServerTab(tab) {
 		// Another tool is shown from what was read already; Refresh, or coming from another part, reads again
 		if (toolsDrawn && before === "tools") return;
 	}
-	await run({ tools: openServerTools, jobs: openCrontab, convert: openConvertSettings, servers: openServers, users: openUsers, usage: openUsageSettings, settings: openServerSettings, menu: openMenuSettings, apache: openApacheSettings, windows: openWindowsSettings, updates: openUpdatesSettings }[paneOf(tab)]);
+	await run({ tools: openServerTools, jobs: openCrontab, convert: openConvertSettings, export: openExportSettings, servers: openServers, users: openUsers, usage: openUsageSettings, settings: openServerSettings, menu: openMenuSettings, apache: openApacheSettings, windows: openWindowsSettings, updates: openUpdatesSettings }[paneOf(tab)]);
 }
 function showToolCards() {
 	// Access is two columns (SSH and Samba, then its shares and users); the other tools three

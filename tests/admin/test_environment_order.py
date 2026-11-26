@@ -96,7 +96,9 @@ console.log(JSON.stringify(sortedEnvironments(input).map((env) => env.binding)))
         # A site with more environments of the same kind (subsites) tells them apart by a label with the folder
         self.assertIn("const folder = envFolderLabel(site, env);", row)
         label = source[source.index("function envFolderLabel"):source.index("function publishBadge")]
-        self.assertIn("if (new Set(kinds).size === kinds.length) return null;", label)
+        # Only in the list, never on a card, and only with more than three environments beside the main site
+        self.assertIn('if (siteLayout !== "list" || site.environments.filter(isTarget).length <= 3) return null;', label)
+        self.assertNotIn("kinds", label)
         # The Backend button logs straight in when the site has the VNS.Harbor package and a chosen user
         self.assertIn('backendButton(site, env, address.url + "umbraco"', row)
 
@@ -122,6 +124,25 @@ console.log(JSON.stringify(sortedEnvironments(input).map((env) => env.binding)))
 console.log(JSON.stringify([isMissingEnv({mode: "remote", exists: false}), isMissingEnv({mode: "remote"}),
     isMissingEnv({mode: "remote", exists: true}), isMissingEnv({mode: "local", exists: false})]));"""], capture_output=True, text=True, check=True)
         self.assertEqual(json.loads(result.stdout), [True, False, False, False])
+        # Its row on the card has no Frontend or Backend: nothing there to open, and the row has no room beside its badge
+        row = source[source.index("function compactEnvironmentRow("):source.index("function siteCard(")]
+        self.assertLess(row.index('if (isMissingEnv(env) && siteLayout !== "list") return row;'), row.index('openLink("Frontend"'))
+
+    def test_a_cards_row_opens_the_site_at_its_environment(self):
+        source = (APP / "static/app.js").read_text()
+        card = source[source.index("function siteCard("):]
+        # The row's own links keep opening the site; the rest of it goes to the page, where that environment is scrolled to
+        self.assertIn('if (event.target.closest("a, button, input, label")) return;', card)
+        self.assertIn("siteEnvFocus = { site: site.name, env: envKeyOf(env) };", card)
+        self.assertIn("if (!(multiSelecting && canMultiSelect(site)))", card)
+        start = source.index("function focusSiteEnvironment(")
+        focus = source[start:source.index("\n}\n", start)]
+        self.assertIn("item.dataset.env === siteEnvFocus.env", focus)
+        self.assertIn("siteEnvFocus = null;", focus)
+        # Folded in the list of environments: unfolded
+        self.assertIn('panel.querySelector(".env-row-toggle")?.click()', focus)
+        render = source[source.index("function renderSite("):source.index("function focusSiteEnvironment(")]
+        self.assertIn("focusSiteEnvironment(name);", render)
 
     def test_title_is_the_binding_of_the_main_site(self):
         source = (APP / "static/app.js").read_text()

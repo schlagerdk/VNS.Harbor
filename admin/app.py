@@ -427,7 +427,8 @@ def protect():
                 return jsonify(error="Invalid CSRF token"), 403
     if request.path.startswith("/ws/") and urlparse(request.headers.get("Origin", "")).netloc != request.headers.get("Host", ""):
         return jsonify(error="Bad origin"), 403
-    public = request.path == "/login" or request.path.startswith("/static/")
+    # An export's zip, by its link's secret (Settings, Export): what a customer is sent, without a login
+    public = request.path == "/login" or request.path.startswith("/static/") or request.path.startswith("/download/") and request.method in ("GET", "HEAD")
     g.user = session_user()
     if not public and g.user is None:
         session.clear()
@@ -4309,7 +4310,7 @@ def terminal_auto_close(payload):
                 "windows_import", "windows_refresh", "windows_refresh_all", "windows_take_over",
                 "windows_move", "windows_move_refresh", "windows_move_refresh_all", "windows_move_take_over",
                 # A site's database converted (Settings, Convert)
-                "convert_site", "convert_delete", "convert_rollback"):
+                "convert_site", "convert_delete", "convert_rollback", "convert_move", "sql_transfer", "site_export", "export_restore"):
         return True
     if kind == "remote_tool":
         return payload.get("tool") == "shell"
@@ -4803,7 +4804,17 @@ def build_command(data):
         if kind == "windows_refresh":
             return "Refresh from Windows: " + site, [*harbor, "refresh", site, *(["--pause"] if data.get("pause") is True else [])], "/"
         return "Take over from Windows: " + site, [*harbor, "take-over", site], "/"
-    if kind in ("convert_site", "convert_delete", "convert_rollback"):
+    if kind in ("site_export", "export_restore"):
+        if not os.path.isfile(HARBOR_COMMAND):
+            abort(500, "Harbor is missing. Update VNS first.")
+        title, argv, _ = export_command(data)
+        return title, argv, "/"
+    if kind == "sql_transfer":
+        if not os.path.isfile(HARBOR_COMMAND):
+            abort(500, "Harbor is missing. Update VNS first.")
+        title, argv, _ = sql_transfer_command(data)
+        return title, argv, "/"
+    if kind in ("convert_site", "convert_delete", "convert_rollback", "convert_move"):
         if not os.path.isfile(HARBOR_COMMAND):
             abort(500, "Harbor is missing. Update VNS first.")
         title, argv, _ = convert_command(data)
@@ -4841,6 +4852,11 @@ def build_command(data):
                 _sql_module.validate_restore_login(data)
         except ValueError as exc:
             abort(400, str(exc))
+        # Never one a site here runs on: it would stop working
+        if data["action"] == "drop":
+            users = sql_database_usage(identifier).get(str(data.get("database", "")).casefold())
+            if users:
+                abort(400, f"{data['database']} is used by {', '.join(item['label'] for item in users)}: convert or move it first")
         payload = {key: data[key] for key in ("action", "database", "target", "backup_id", "overwrite", "confirmation", "login", "delete_backups", "delete_login") if key in data}
         # A user is not told whether a database or login of a name is there: one not theirs is not theirs to learn of
         if not is_admin():
@@ -5511,7 +5527,8 @@ def sees_session(s):
 # Tasks that run as root by choice, or open a shell: only for administrators
 ADMIN_TASKS = {"servers", "server_tool", "delete_user_made", "install_sql_tools", "update_system", "remote_tool", "move_env", "move_site", "adopt_site", "release_site",
                "setup_site", "unit_tool", "apache", "register_env", "windows_import", "windows_refresh", "windows_refresh_all", "windows_take_over",
-               "windows_move", "windows_move_refresh", "windows_move_refresh_all", "windows_move_take_over", "convert_site", "convert_delete", "convert_rollback"}
+               "windows_move", "windows_move_refresh", "windows_move_refresh_all", "windows_move_take_over", "convert_site", "convert_delete", "convert_rollback", "convert_move",
+               "sql_transfer", "site_export", "export_restore"}
 
 
 def env_of(site, data, scope_key="scope"):
@@ -5781,8 +5798,14 @@ def api_term():
         extra_env = server_tool_command(payload)[2]
     if payload.get("kind") == "servers":
         extra_env = servers_command(payload)[2]
-    if payload.get("kind") in ("convert_site", "convert_delete", "convert_rollback"):
+    if payload.get("kind") in ("convert_site", "convert_delete", "convert_rollback", "convert_move"):
         extra_env = convert_command(payload)[2]
+    if payload.get("kind") == "sql_transfer":
+        extra_env = sql_transfer_command(payload)[2]
+    if payload.get("kind") in ("site_export", "export_restore"):
+        extra_env = export_command(payload)[2]
+    if payload.get("kind") == "delete_site":
+        extra_env = delete_databases_env(payload, site_arg(payload))
     if payload.get("kind") == "register_env":
         extra_env = production_setup_env(payload, payload.get("site", ""))
     if payload.get("kind") == "move_env":
@@ -6186,20 +6209,24 @@ def api_windows_list():
     return jsonify(folders=found.get("folders", []), projects=found.get("projects", []), imported=windows_imported())
 
 
-# ---- Settings, Convert (phase 11): each site's database here, converted between SQLite and Microsoft SQL Server or
-# PostgreSQL by harbor site convert. An administrator's alone. A site managed from another server is that server's.
+# ---- Settings, Convert (phase 11): each site's database, converted between SQLite and Microsoft SQL Server or
+# PostgreSQL by harbor site convert. An administrator's alone. A site here (also an environment managed from another
+# server's main site) is converted here; an environment on another Linux server is converted by the Harbor there, over
+# SSH (harbor site convert-remote). Its conversions are kept where it runs, so either Harbor rolls them back.
 def convert_units():
     """Each site here and its environments in a folder here, with its service: (site, unit, label, binding)"""
     found = []
     names = site_dirs()
     adopted = adopted_sites(names)
     for name in names:
-        if name in adopted or name == ADMIN_SITE or managed_by(name):
+        if name in adopted or name == ADMIN_SITE:
             continue
         root = os.path.join(WEB_ROOT, name)
         if os.path.isfile(os.path.join(SERVICE_DIR, service_name(name) + ".service")):
             # The environment it runs as (DOTNET_ENVIRONMENT or ASPNETCORE_ENVIRONMENT), as the badge on its page says
             found.append((name, name, convert_environment(name, "Production"), conf_binding(name) or name))
+        if managed_by(name):
+            continue
         for target in environment_order(root, target_ids(root)):
             prod = parse_prod(root, target) or {}
             unit = prod.get("PROD_FOLDER") or ""
@@ -6209,110 +6236,775 @@ def convert_units():
     return found
 
 
+def convert_remote_units():
+    """The environments of the sites here that run on another Linux server: (site, target, unit, label, binding, where,
+    reach), where is the server's name in Servers (else its address), reach the SSH it is reached by"""
+    from harbor.core.system import System
+    from harbor.server import servers
+    try:
+        named = {(entry.get("host") or "").lower(): name for name, entry in servers.servers(System(), "linux").items()}
+    except (OSError, ValueError):
+        named = {}
+    found = []
+    names = site_dirs()
+    adopted = adopted_sites(names)
+    for name in names:
+        if name in adopted or name == ADMIN_SITE or managed_by(name):
+            continue
+        root = os.path.join(WEB_ROOT, name)
+        for target in environment_order(root, target_ids(root)):
+            prod = parse_prod(root, target) or {}
+            unit = prod.get("PROD_FOLDER") or ""
+            if prod.get("PROD_LOCAL_PATH") or prod.get("PROD_TARGET") == "windows" or not prod.get("PROD_IP") or not NAME_RE.fullmatch(unit):
+                continue
+            host = prod["PROD_IP"]
+            found.append((name, target, unit, prod.get("PROD_ENVIRONMENT") or ("Production" if target == "prod" else target.capitalize()),
+                          prod.get("PROD_BINDING") or unit, named.get(host.lower()) or host, (host.lower(), prod.get("PROD_USER"), prod.get("PROD_SSH_PORT"))))
+    return found
+
+
 def convert_environment(unit, fallback):
     """The environment a service runs as; ASP.NET Core's own default, Production, when it sets none"""
     found = service_environment(unit)
     return fallback if found in ("", "Unknown") else found
 
 
+def convert_remote_info(site, target, units):
+    """harbor site convert-info on the server where these environments run, by its own Harbor: (info, error)"""
+    try:
+        result = subprocess.run(["/usr/bin/python3", HARBOR_COMMAND, "site", "convert-remote", site, target, "convert-info", *units],
+                                capture_output=True, text=True, timeout=60, stdin=subprocess.DEVNULL)
+    except subprocess.TimeoutExpired:
+        return None, "The server did not answer in time."
+    lines = [line for line in result.stdout.splitlines() if line.startswith("{")]
+    if result.returncode != 0 or not lines:
+        said = [line for line in (result.stderr + result.stdout).splitlines() if line.strip() and not line.startswith("Warning: Permanently added")]
+        if any("invalid choice: 'convert-info'" in line or "convert-info" in line and "invalid choice" in line for line in said):
+            return None, "Update Harbor on that server: it does not convert sites yet."
+        return None, (said[-1] if said else "The server could not be reached.")
+    try:
+        found = json.loads(lines[-1])
+    except ValueError:
+        return None, "The server's answer could not be read."
+    if "kept" not in found:
+        return None, "Update Harbor on that server to convert its sites from here."
+    return found, ""
+
+
+CONVERT_LOCAL_HOSTS = {".", "localhost", "127.0.0.1", "::1", "(local)"}
+
+
+def convert_host(host):
+    """A host as compared: without brackets or a trailing dot (but . is SQL Server's own name for itself)"""
+    host = (host or "").strip().strip("[]").casefold()
+    return host if host == "." else host.rstrip(".")
+
+
+def convert_own_addresses():
+    try:
+        return set(subprocess.run(["hostname", "-I"], capture_output=True, text=True, timeout=5).stdout.split())
+    except (OSError, subprocess.SubprocessError):
+        return set()
+
+
+def convert_address_for(remote_host):
+    """This server's address as another server reaches it: the one it sends from to that server (ip route get), else
+    its first. A connection to this server's own SQL Server (localhost) is given to that server by it"""
+    try:
+        target = socket.gethostbyname(remote_host)
+        found = re.search(r"\bsrc (\S+)", subprocess.run(["ip", "-o", "route", "get", target], capture_output=True, text=True, timeout=5).stdout)
+        if found:
+            return found[1]
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return next(iter(sorted(convert_own_addresses())), "")
+
+
+def convert_connection(server, remote):
+    """This admin's connection to the database server a conversion used: the same one by its id (made here), else one
+    to the same engine, host and port. A server's own (localhost) is never another server's"""
+    if not server:
+        return None
+    try:
+        with SQL_LOCK:
+            items = _sql_module.connections(SQL_CONNECTIONS)
+    except (OSError, ValueError):
+        return None
+    host, engine, port = convert_host(server.get("host")), server.get("engine"), server.get("port")
+    if not remote:
+        for item in items:
+            if server.get("connection") and item.get("id") == server["connection"]:
+                return item
+        # This server's own, by whichever of its names (., localhost, 127.0.0.1) or addresses
+        if host in CONVERT_LOCAL_HOSTS or host in _sql_module.own_addresses():
+            return next((item for item in items if _sql_module.engine(item) == engine and convert_host(item.get("host")) in CONVERT_LOCAL_HOSTS
+                         and (not port or str(item.get("port") or "") == str(port))), None)
+    if not host or remote and host in CONVERT_LOCAL_HOSTS:
+        return None
+    # On another server, this server's own SQL Server by this server's address: the localhost connection here, by it
+    if remote and host in convert_own_addresses():
+        for item in items:
+            if _sql_module.engine(item) == engine and convert_host(item.get("host")) in CONVERT_LOCAL_HOSTS \
+                    and (not port or str(item.get("port") or "") == str(port)):
+                return {**item, "host": server.get("host")}
+    for item in items:
+        if _sql_module.engine(item) != engine or convert_host(item.get("host")) != host:
+            continue
+        if port and str(item.get("port") or "") != str(port):
+            continue
+        if remote and convert_host(item.get("host")) in CONVERT_LOCAL_HOSTS:
+            continue
+        return item
+    return None
+
+
+def convert_kept_ready(item, remote):
+    """What this admin can do with a kept database: roll back to it and delete it, or why not (a connection missing)"""
+    missing = [server for server in item.get("servers") or [] if not convert_connection(server, remote)]
+    if missing:
+        # The server a connection is missing to: the page offers to add it, its host and port filled in
+        item["rollback_needs"] = {key: missing[0].get(key) for key in ("engine", "host", "port")}
+    old = item.get("server")
+    item["can_delete"] = not old or bool(convert_connection(old, remote))
+    if not item["can_delete"]:
+        item["delete_needs"] = {key: old.get(key) for key in ("engine", "host", "port")}
+    item["can_rollback"] = bool(item.get("rollback") and item.get("exists") and not missing)
+    item.pop("servers", None)
+    item.pop("server", None)
+    return item
+
+
+# ---- Delete site: the databases on servers the site and its environments being deleted run on, offered to be deleted
+# with them (never one another site here uses too), by this admin's connection to their server
+def database_server(item):
+    """The host and port a site's database is on, as its connection string names them (Server=host,port)"""
+    server = (item.get("server") or "").strip()
+    host, _, port = server.partition(",")
+    host = host.split("\\")[0].removeprefix("tcp:")
+    return host, (port.strip() if port.strip().isdigit() else "")
+
+
+def site_databases(site, scope, target):
+    """[{unit, label, engine, database, host, port, connection, shared}] of what Delete site deletes"""
+    from harbor.core.system import System
+    from harbor.sites import convert
+    system = System()
+    root = os.path.join(WEB_ROOT, site)
+    here, there = [], []
+    if scope in ("all", "test") and os.path.isfile(os.path.join(SERVICE_DIR, service_name(site) + ".service")):
+        here.append((site, convert_environment(site, "Production")))
+    if scope in ("all", "prod"):
+        for each in target_ids(root) if scope == "all" else [target]:
+            prod = parse_prod(root, each) or {}
+            unit = prod.get("PROD_FOLDER") or ""
+            label = prod.get("PROD_ENVIRONMENT") or ("Production" if each == "prod" else each.capitalize())
+            if prod.get("PROD_TARGET") == "windows" or not NAME_RE.fullmatch(unit):
+                continue
+            if prod.get("PROD_LOCAL_PATH"):
+                here.append((unit, label))
+            elif prod.get("PROD_IP"):
+                there.append((each, unit, label, prod["PROD_IP"]))
+    found = []
+    def add(item, label, remote, where=""):
+        if item.get("engine") not in ("mssql", "postgres") or not item.get("database"):
+            return
+        host, port = database_server(item)
+        # One on the other server's own SQL Server (localhost there) is not reached from here
+        own_there = remote and convert_host(host) in CONVERT_LOCAL_HOSTS
+        connection = None if own_there else convert_connection({"engine": item["engine"], "host": host, "port": port}, remote)
+        found.append({"unit": item.get("unit"), "label": label, "engine": item["engine"], "database": item["database"],
+                      "host": f"{where} itself" if own_there else host, "port": port, "connection": (connection or {}).get("id"),
+                      "reachable": not own_there, "shared": []})
+    for unit, label in here:
+        add(convert.describe(system, unit), label, False)
+    for each, unit, label, host in there:
+        info, _why = convert_remote_info(site, each, [unit])
+        for item in (info or {}).get("sites", []):
+            add(item, label, True, host)
+    # Never one another site here runs on too: it is kept, and said so
+    if found:
+        deleted = {item["unit"] for item in found} | {unit for unit, _label in here}
+        for _site, unit, _label, _binding in convert_units():
+            if unit in deleted:
+                continue
+            other = convert.describe(system, unit)
+            host, _port = database_server(other)
+            for item in found:
+                if other.get("engine") == item["engine"] and (other.get("database") or "").lower() == item["database"].lower() \
+                        and (convert_host(host) == convert_host(item["host"]) or {convert_host(host), convert_host(item["host"])} <= CONVERT_LOCAL_HOSTS):
+                    item["shared"].append(unit)
+    return found
+
+
+@app.route("/api/sites/<site>/databases")
+def api_site_databases(site):
+    """What Delete site can delete of the site's databases on servers: an administrator's (it needs the connections)"""
+    if not access.is_admin(me()):
+        return jsonify(databases=[])
+    if site not in site_dirs():
+        abort(400, "Unknown site")
+    scope = request.args.get("scope") or "all"
+    if scope not in ("all", "test", "prod"):
+        abort(400, "Invalid scope")
+    target = target_arg(site, request.args) if scope == "prod" else ""
+    return jsonify(databases=site_databases(site, scope, target))
+
+
+def delete_databases_env(data, site):
+    """The databases chosen to be deleted with a site, with this admin's connection to each (in the task's
+    environment, never its command line): only those Delete site offers"""
+    chosen = data.get("databases")
+    if not chosen or not access.is_admin(me()):
+        return None
+    if not isinstance(chosen, list) or not all(isinstance(item, str) for item in chosen):
+        abort(400, "Choose the databases to delete")
+    scope = data.get("scope") or "all"
+    target = target_arg(site, data) if scope == "prod" else ""
+    wanted = []
+    try:
+        with SQL_LOCK:
+            items = {item["id"]: item for item in _sql_module.connections(SQL_CONNECTIONS)}
+    except (OSError, ValueError):
+        items = {}
+    for item in site_databases(site, scope, target):
+        if item["database"] not in chosen or item["shared"]:
+            continue
+        settings = items.get(item.get("connection") or "")
+        if not settings:
+            abort(400, f"Add a connection to {item['host']} on the SQL Server page to delete {item['database']}")
+        if convert_host(settings.get("host")) in CONVERT_LOCAL_HOSTS and convert_host(item["host"]) not in CONVERT_LOCAL_HOSTS:
+            settings = {**settings, "host": item["host"]}
+        wanted.append({"engine": item["engine"], "database": item["database"], "connection": settings, "unit": item["unit"]})
+    return {"VNS_DELETE_DATABASES": json.dumps(wanted)} if wanted else None
+
+
+def convert_source(data, remote):
+    """This admin's connection to the server a site's database is on now, as harbor describes the site"""
+    from harbor.core.system import System
+    from harbor.sites import convert
+    if remote:
+        found, why = convert_remote_info(remote[0], remote[1], [remote[2]])
+        item = next((item for item in (found or {}).get("sites", []) if item.get("unit") == remote[2]), None)
+        if not item:
+            abort(400, why or "The site is not found on its server")
+    else:
+        item = convert.describe(System(), data.get("unit"))
+    if item.get("engine") not in ("mssql", "postgres"):
+        abort(400, "Only a database on Microsoft SQL Server or PostgreSQL is moved")
+    host, port = database_server(item)
+    if remote and convert_host(host) in CONVERT_LOCAL_HOSTS:
+        abort(400, f"Its database is on {remote[3]}'s own server: move it from the Harbor there")
+    source = convert_connection({"engine": item["engine"], "host": host, "port": port}, bool(remote))
+    return item, source, host, port
+
+
+def convert_move_command(data, unit, remote, run, where):
+    """harbor site convert-move: the database to another server of its kind, the connection to the old one beside it"""
+    item, source, host, port = convert_source(data, remote)
+    if not source:
+        abort(400, f"Add a connection to {host}{':' + port if port else ''} on the SQL Server page to move its database from here")
+    identifier = data.get("connection")
+    try:
+        with SQL_LOCK:
+            target = _sql_module.connection(SQL_CONNECTIONS, identifier) if isinstance(identifier, str) else None
+    except (OSError, ValueError):
+        target = None
+    if not target:
+        abort(400, "Choose the server to move it to")
+    if _sql_module.engine(target) != item["engine"]:
+        abort(400, "Move it to a server of its own kind: Convert changes its kind")
+    if target.get("id") == source.get("id"):
+        abort(400, "It is on that server already")
+    if remote and convert_host(target.get("host")) in CONVERT_LOCAL_HOSTS:
+        address = convert_address_for(next(entry for entry in convert_remote_units() if entry[5] == remote[3] and entry[2] == remote[2])[6][0])
+        if not address:
+            abort(400, "This server's address could not be found: add a connection to its SQL Server by its address")
+        target = {**target, "host": address}
+    database = data.get("database")
+    if not isinstance(database, str) or not CONVERT_NAME.fullmatch(database):
+        abort(400, "A database's name has letters, digits, . _ and -, at most 63, and starts with a letter or digit")
+    user = me() or {}
+    argv = ["convert-move", unit, "--database", database, "--by", (user.get("name") or user.get("username") or "")[:120]]
+    env = {"VNS_CONVERT_CONNECTION": json.dumps(target), "VNS_CONVERT_SOURCE": json.dumps(source)}
+    if data.get("keep_login") is True:
+        argv.append("--keep-login")
+    else:
+        login, password = data.get("login"), data.get("password")
+        if not isinstance(login, str) or not CONVERT_NAME.fullmatch(login):
+            abort(400, "A login's name has letters, digits, . _ and -, at most 63, and starts with a letter or digit")
+        if not isinstance(password, str) or not 8 <= len(password) <= 128 or any(char in password for char in "\0\r\n"):
+            abort(400, "The login's password must be 8-128 characters without line breaks")
+        argv += ["--login", login]
+        env["VNS_CONVERT_LOGIN_PASSWORD"] = password
+    return f"Move the database of {unit}{where} to {target.get('name') or target['host']}", run(*argv), env
+
+
+@app.route("/api/convert/move")
+def api_convert_move():
+    """What Move needs to know first: whether this admin reaches the database's server, and whether its login is its
+    alone (then it can go with it, by its name and password)"""
+    require_admin()
+    data = {"unit": request.args.get("unit", ""), "where": request.args.get("where", "")}
+    remote = convert_remote_unit(data) if data["where"] else None
+    if not remote and data["unit"] not in {unit for _site, unit, _label, _binding in convert_units()}:
+        abort(400, "Choose a site here")
+    if request.args.get("database"):
+        # As Settings, Convert read it a moment ago: no second trip to the site's server. Only this admin's own connection
+        # and its logins are looked at with it; the move itself reads the site again
+        item = {"engine": request.args.get("engine"), "database": request.args.get("database"), "server": request.args.get("server", ""),
+                "login": request.args.get("login", "")}
+        if item["engine"] not in ("mssql", "postgres"):
+            abort(400, "Only a database on Microsoft SQL Server or PostgreSQL is moved")
+        host, port = database_server(item)
+        own_there = bool(remote) and convert_host(host) in CONVERT_LOCAL_HOSTS
+        source = None if own_there else convert_connection({"engine": item["engine"], "host": host, "port": port}, bool(remote))
+    else:
+        item, source, host, port = convert_source(data, remote)
+    login = item.get("login") or ""
+    alone = False
+    if source and login:
+        try:
+            if item["engine"] == "mssql":
+                alone = login in _sql_module.exclusive_database_logins(source, item["database"])
+            else:
+                alone = login in _sql_module.pg().exclusive_logins(source, item["database"])
+        except (RuntimeError, ValueError, OSError, subprocess.SubprocessError):
+            alone = False
+    return jsonify(source=(source or {}).get("id"), host=host, port=port, engine=item["engine"], database=item["database"], login=login, alone=alone,
+                   umbraco=item.get("umbraco"), server=item.get("server", ""))
+
+
 @app.route("/api/convert")
 def api_convert():
-    """The sites' databases, the connections they can be converted to or from (never a password), and the databases
-    kept after a conversion"""
+    """The sites' databases here and on the servers its environments run on, the connections they can be converted to
+    or from (never a password), and the databases kept after a conversion"""
     require_admin()
     from harbor.core.system import System
     from harbor.sites import convert
     system = System()
-    sites = []
-    for site, unit, label, binding in convert_units():
+    sites, kept = [], []
+    # ?site=: only that site and its environments (Convert… on a site's page)
+    only = request.args.get("site") or ""
+    here = [entry for entry in convert_units() if not only or entry[0] == only]
+    for site, unit, label, binding in here:
         item = convert.describe(system, unit)
         item.pop("folder", None)
-        sites.append({**item, "site": site, "label": label, "binding": binding})
-    connections = [{key: item[key] for key in ("id", "name", "host", "port", "engine") if key in item} for item in sql_connections_public()]
-    kept = []
-    found = sorted(convert.records(system), key=lambda item: item.get("at") or 0, reverse=True)
-    # A site can be rolled back while it runs on its newest conversion's database: to any of its conversions, the
-    # newer ones rolled back first
-    newest, oldest = {}, {}
-    for item in found:
-        newest.setdefault(item.get("unit"), item)
-        # The oldest kept: what the site ran on before its first conversion, where it started
-        oldest[item.get("unit")] = item.get("id")
-    current = {unit: bool(item.get("folder") and item.get("key")) and convert.uses(system, item["folder"], item["key"], item.get("to") or {})
-               for unit, item in newest.items()}
-    name = lambda side: side.get("database") or os.path.basename(side.get("path") or "")
-    # Newest first: a conversion is rolled back before the one before it
-    for item in found:
-        old = item.get("from") or {}
-        new = item.get("to") or {}
-        kept.append({"id": item.get("id"), "unit": item.get("unit"), "at": item.get("at"), "by": item.get("by", ""),
-                     # A SQLite file is kept as its .bak (from 1.0.83), else as it was
-                     "engine": old.get("engine"), "file": os.path.relpath(old.get("backup") or old["path"], item.get("folder") or WEB_ROOT) if old.get("path") else "",
-                     "database": old.get("database", ""), "connection": old.get("connection", ""),
-                     "exists": os.path.isfile(old.get("backup") or old["path"]) if old.get("path") else True,
-                     "to": new.get("engine"),
-                     # What Roll back deletes: the new database, or the new SQLite file; and the name the old one has again
-                     "to_name": new.get("database") or os.path.basename(new.get("path") or ""),
-                     "from_name": old.get("database") or os.path.basename(old.get("path") or ""),
-                     "rollback": current.get(item.get("unit"), False),
-                     "original": oldest.get(item.get("unit")) == item.get("id"),
-                     # What a rollback to it deletes, as harbor works it out: the files and databases it ran on since
-                     "deletes": convert_deletes(convert, system, item) if current.get(item.get("unit")) else [],
-                     # What it runs on now
-                     "current": name(newest[item.get("unit")].get("to") or {})})
-    return jsonify(sites=sites, connections=connections, kept=kept)
+        managed = managed_by(site) if unit == site else None
+        sites.append({**item, "site": site, "label": label, "binding": binding, "where": "",
+                      **({"managed": (managed.get("host") or "").split(".")[0].lower()} if managed else {})})
+    for item in convert.kept(system, {unit for _site, unit, _label, _binding in here} if only else None):
+        kept.append({**convert_kept_ready(item, False), "where": ""})
+    # Each other server once, over the SSH of one of its environments: in parallel, as the sites' statuses are read
+    groups = {}
+    for entry in convert_remote_units():
+        if not only or entry[0] == only:
+            groups.setdefault(entry[6], []).append(entry)
+    def read(entries):
+        site, target = entries[0][0], entries[0][1]
+        return entries, *convert_remote_info(site, target, sorted({entry[2] for entry in entries}))
+    if groups:
+        with ThreadPoolExecutor(max_workers=6) as executor:
+            answers = list(executor.map(read, groups.values()))
+        for entries, found, why in answers:
+            described = {item.get("unit"): item for item in (found or {}).get("sites", [])}
+            for site, target, unit, label, binding, where, _reach in entries:
+                # One the server did not answer for is shown with why: it is there, only not reached
+                item = described.get(unit) or {"unit": unit, "convertible": False, "unreached": True, "reason": why or "Not found on that server."}
+                if found and not item.get("engine") and item.get("reason") and "no service" in item["reason"]:
+                    continue
+                sites.append({**item, "site": site, "target": target, "label": label, "binding": binding, "where": where})
+            for item in (found or {}).get("kept", []):
+                kept.append({**convert_kept_ready(item, True), "where": entries[0][5]})
+    # The connection here to the server each site's database is on: Convert to SQLite reads it from there, no other
+    for item in sites:
+        if item.get("engine") in ("mssql", "postgres") and item.get("database"):
+            host, port = database_server(item)
+            remote = bool(item.get("where"))
+            if not (remote and convert_host(host) in CONVERT_LOCAL_HOSTS):
+                found = convert_connection({"engine": item["engine"], "host": host, "port": port}, remote)
+                if found:
+                    item["source"] = found["id"]
+    return jsonify(sites=sites, connections=convert_connections_public(), kept=kept)
 
 
-def convert_deletes(convert, system, item):
+def convert_connections_public():
+    """The connections Convert and Move choose among (never a password), and whether each reaches its backup files
+    (here, or over SSH): Move carries a Microsoft SQL Server database's backup between two servers that do"""
+    found = []
+    for item in sql_connections_public():
+        public = {key: item[key] for key in ("id", "name", "host", "port", "engine") if key in item}
+        try:
+            public["files"] = item.get("engine") == "postgres" or bool(_sql_module.backup_file_access(item))
+        except (KeyError, ValueError):
+            public["files"] = False
+        found.append(public)
+    return found
+
+
+# ---- SQL Server page: which databases the sites run on, by their connection strings (here, and the environments on other
+# servers as their status last said), so one in use is shown so and never deleted
+SQL_DEFAULT_PORTS = {"mssql": "1433", "postgres": "5432"}
+
+
+def sql_server_key(host, port, engine, there=""):
+    """A database server as compared: this server's own (by any of its names or addresses) as one, another by its
+    address, with its port (the engine's own when none is named)"""
+    host = convert_host(host)
+    if host in CONVERT_LOCAL_HOSTS:
+        host = convert_host(there) if there else "this server"
+    if host in _sql_module.own_addresses():
+        host = "this server"
+    return host, str(port or SQL_DEFAULT_PORTS.get(engine, ""))
+
+
+def sql_database_usage(connection_id):
+    """{database (casefolded): [{label, site, unit, where}]} of the sites whose connection strings name a database on
+    this connection's server"""
+    from harbor.core.system import System
+    from harbor.sites import convert
     try:
-        files, databases = convert.rollback_deletes(system, convert.chain(system, item["id"]))
-    except Exception:  # noqa: BLE001 - a record that cannot be read only offers nothing to delete
-        return []
-    return [os.path.basename(path) for path in files] + [entry["database"] for entry in databases]
+        with SQL_LOCK:
+            connection = _sql_module.connection(SQL_CONNECTIONS, connection_id)
+    except (OSError, ValueError):
+        return {}
+    engine = _sql_module.engine(connection)
+    key = sql_server_key(connection.get("host"), connection.get("port"), engine)
+    found = {}
+    def add(database, server, kind, label, site, unit, where="", there="", environment=""):
+        if kind != engine or not database:
+            return
+        host, _, port = (server or "").partition(",")
+        if sql_server_key(host.split("\\")[0].removeprefix("tcp:"), port.strip(), engine, there) == key:
+            found.setdefault(database.casefold(), []).append({"label": label, "site": site, "unit": unit, "where": where, "environment": environment})
+    system = System()
+    for site, unit, label, _binding in convert_units():
+        try:
+            item = convert.describe(system, unit)
+        except Exception:  # noqa: BLE001 - a site that cannot be read only shows nothing here
+            continue
+        add(item.get("database"), item.get("server"), item.get("engine"), f"{unit} ({label})", site, unit, environment=label)
+    kinds = {"MS SQL": "mssql", "SQL Express": "mssql", "Azure SQL": "mssql", "PostgreSQL": "postgres"}
+    remote = convert_remote_units()
+    # Each environment on another server as its status says (read again when not read in the last 15 seconds), in parallel
+    with ThreadPoolExecutor(max_workers=8) as executor:
+        statuses = list(executor.map(lambda entry: remote_status(entry[0], entry[1]), remote))
+    for (site, target, unit, label, _binding, where, reach), status in zip(remote, statuses):
+        add(status.get("database_name"), status.get("database_server"), kinds.get(status.get("database")), f"{unit} ({label}, on {where})",
+            site, unit, where, reach[0], label)
+    return found
+
+
+def sql_transfer_command(data):
+    """harbor site convert-transfer: a database no site runs on copied or moved (move) to another connection of its
+    kind, with a login of its own. One a site runs on is moved with its site (Settings, Convert's Move)"""
+    def settings_of(identifier):
+        try:
+            with SQL_LOCK:
+                return _sql_module.connection(SQL_CONNECTIONS, identifier) if isinstance(identifier, str) else None
+        except (OSError, ValueError):
+            return None
+    source, target = settings_of(data.get("connection")), settings_of(data.get("target"))
+    if not source or not target:
+        abort(400, "Choose the server to copy it to")
+    if source["id"] == target["id"]:
+        abort(400, "That is the server it is on")
+    if _sql_module.engine(source) != _sql_module.engine(target):
+        abort(400, "Copy it to a server of its own kind")
+    database, name, login, password = data.get("database"), data.get("name"), data.get("login"), data.get("password")
+    try:
+        _sql_module.identifier(database or "")
+    except ValueError as exc:
+        abort(400, str(exc))
+    if not isinstance(name, str) or not CONVERT_NAME.fullmatch(name):
+        abort(400, "A database's name has letters, digits, . _ and -, at most 63, and starts with a letter or digit")
+    if not isinstance(login, str) or not CONVERT_NAME.fullmatch(login):
+        abort(400, "A login's name has letters, digits, . _ and -, at most 63, and starts with a letter or digit")
+    if not isinstance(password, str) or not 8 <= len(password) <= 128 or any(char in password for char in "\0\r\n"):
+        abort(400, "The login's password must be 8-128 characters without line breaks")
+    for settings in (source, target):
+        if _sql_module.engine(settings) == "mssql" and not _sql_module.backup_file_access(settings):
+            abort(400, f"Turn on SSH for backup files in the connection to {settings['host']}: the backup is carried between the servers' backup folders")
+    move = data.get("move") is True
+    if move:
+        users = sql_database_usage(source["id"]).get(database.casefold())
+        if users:
+            abort(400, f"{database} is used by {', '.join(item['label'] for item in users)}: move it with its site in Settings, Convert DB")
+    argv = ["/usr/bin/python3", HARBOR_COMMAND, "site", "convert-transfer", database, "--name", name, "--login", login, *(["--move"] if move else [])]
+    env = {"VNS_CONVERT_SOURCE": json.dumps(source), "VNS_CONVERT_CONNECTION": json.dumps(target), "VNS_CONVERT_LOGIN_PASSWORD": password}
+    return f"{'Move' if move else 'Copy'} {database} to {target.get('name') or target['host']}", argv, env
+
+
+# ---- Settings, Export: a site and its environments for a customer, without VNS Harbor (harbor site export)
+EXPORTS_DIR = "/var/lib/harbor/exports"
+
+
+def export_sites():
+    """Each site here with the environments an export can take: [{site, managed, environments: [{target, unit, label,
+    where, mode}]}]"""
+    from harbor.core.system import System
+    from harbor.server import servers
+    try:
+        named = {(entry.get("host") or "").lower(): server for server, entry in servers.servers(System(), "linux").items()}
+    except (OSError, ValueError):
+        named = {}
+    found = []
+    names = site_dirs()
+    adopted = adopted_sites(names)
+    for name in names:
+        if name in adopted or name == ADMIN_SITE:
+            continue
+        root = os.path.join(WEB_ROOT, name)
+        managed = managed_by(name)
+        environments = [{"target": "main", "unit": name, "label": convert_environment(name, "Production") if unit_of(name) else "Site",
+                         "where": "", "mode": "local"}]
+        if not managed:
+            for target in environment_order(root, target_ids(root)):
+                prod = parse_prod(root, target) or {}
+                unit = prod.get("PROD_FOLDER") or ""
+                if not unit:
+                    continue
+                mode = "windows" if prod.get("PROD_TARGET") == "windows" else "local" if prod.get("PROD_LOCAL_PATH") else "remote"
+                host = prod.get("PROD_IP", "")
+                environments.append({"target": target, "unit": unit, "mode": mode, "where": named.get(host.lower()) or host if mode == "remote" else "",
+                                     "label": prod.get("PROD_ENVIRONMENT") or ("Production" if target == "prod" else target.capitalize())})
+        found.append({"site": name, "kind": site_kind(name), "managed": (managed.get("host") or "").split(".")[0].lower() if managed else "",
+                      "project": bool(glob.glob(os.path.join(glob.escape(root), "*.csproj"))), "environments": environments})
+    return found
+
+
+def site_kind(name):
+    """What a site is, as its card says: umbraco, csharp, python or html (from its project, else what it runs)"""
+    root = os.path.join(WEB_ROOT, name)
+    projects = [path for path in glob.glob(os.path.join(glob.escape(root), "*.csproj")) if os.path.isfile(path)]
+    if projects:
+        return "umbraco" if any("Umbraco.Cms" in read_text(path) for path in projects) else "csharp"
+    if os.path.isfile(os.path.join(root, "app", "app.py")):
+        return "python"
+    published = published_project_info(root, read_text(os.path.join(SERVICE_DIR, service_name(name) + ".service")))
+    return published["kind"] if published else "html"
+
+
+def export_items():
+    """The exports kept here, as the admin shows them (with the link to send, never the server's paths)"""
+    items = []
+    for path in sorted(glob.glob(os.path.join(EXPORTS_DIR, "*", "meta.json"))):
+        try:
+            with open(path, encoding="utf-8") as stream:
+                item = json.load(stream)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(item, dict) or item.get("state") == "snapshot":
+            continue
+        keep = item.get("keep", 72 * 3600)
+        items.append({key: item.get(key) for key in ("id", "site", "os", "at", "by", "environments", "size", "state", "deleted", "downloaded", "restored", "file")}
+                     | {"link": request.host_url.rstrip("/") + "/download/" + item["token"] if item.get("token") and item.get("state") == "ready" else "",
+                        "keep": keep, "expires": item["downloaded"] + keep if item.get("downloaded") and keep else None,
+                        "restorable": bool(item.get("deleted") and os.path.isfile(os.path.join(os.path.dirname(path), "snapshot.tar.gz")))})
+    return sorted(items, key=lambda item: item.get("at") or 0, reverse=True)
+
+
+@app.route("/api/exports")
+def api_exports():
+    require_admin()
+    return jsonify(sites=export_sites(), exports=export_items())
+
+
+@app.route("/api/exports/<identifier>", methods=["DELETE"])
+def api_export_delete(identifier):
+    """An export deleted now: its zip and its link, and its snapshot (Restore is not possible after it)"""
+    require_admin()
+    if not re.fullmatch(r"[0-9a-f]{16}", identifier):
+        abort(400, "That is not an export")
+    result = subprocess.run(["/usr/bin/python3", HARBOR_COMMAND, "site", "export-forget", identifier], capture_output=True, text=True, timeout=300)
+    if result.returncode:
+        lines = [line for line in (result.stderr + result.stdout).splitlines() if line.strip()]
+        return error(lines[-1] if lines else "The export could not be deleted.", 400)
+    return jsonify(ok=True)
+
+
+@app.route("/api/exports/<identifier>/zip")
+def api_export_zip(identifier):
+    """An export's zip for an administrator here: it is not the customer's download, so its time does not start"""
+    require_admin()
+    if not re.fullmatch(r"[0-9a-f]{16}", identifier):
+        abort(400, "That is not an export")
+    folder = os.path.join(EXPORTS_DIR, identifier)
+    try:
+        with open(os.path.join(folder, "meta.json"), encoding="utf-8") as stream:
+            item = json.load(stream)
+    except (OSError, ValueError):
+        abort(404)
+    archive = os.path.join(folder, item.get("file") or "")
+    if item.get("state") != "ready" or not item.get("file") or not os.path.isfile(archive):
+        abort(404)
+    return send_file(archive, as_attachment=True, download_name=item["file"], mimetype="application/zip", conditional=True)
+
+
+@app.route("/download/<token>", methods=["GET", "HEAD"])
+def export_download(token):
+    """An export's zip, by its link (the customer's): no login. Its first download starts its time (3 hours to 7 days, or never, as chosen), then it is
+    deleted. An administrator's Download is /api/exports/<id>/zip, which does not"""
+    if not re.fullmatch(r"[A-Za-z0-9_-]{20,100}", token):
+        abort(404)
+    for path in glob.glob(os.path.join(EXPORTS_DIR, "*", "meta.json")):
+        try:
+            with open(path, encoding="utf-8") as stream:
+                item = json.load(stream)
+        except (OSError, ValueError):
+            continue
+        if not isinstance(item, dict) or not item.get("token") or not hmac.compare_digest(item["token"], token):
+            continue
+        archive = os.path.join(os.path.dirname(path), item.get("file") or "")
+        if item.get("state") != "ready" or not item.get("file") or not os.path.isfile(archive):
+            break
+        # A link previewed (HEAD) does not start the countdown; a download does
+        if request.method == "GET" and not item.get("downloaded"):
+            subprocess.run(["/usr/bin/python3", HARBOR_COMMAND, "site", "export-downloaded", item["id"]], capture_output=True, timeout=60)
+        return send_file(archive, as_attachment=True, download_name=item["file"], mimetype="application/zip", conditional=True)
+    return Response("This export is not here any more: it was deleted some time after it was first downloaded.", status=410, mimetype="text/plain")
+
+
+def export_databases_env(site, labels):
+    """The databases of the environments exported, with this admin's connection to each (in the task's environment,
+    never its command line): {environment folder: {database, connection}}"""
+    try:
+        with SQL_LOCK:
+            items = {item["id"]: item for item in _sql_module.connections(SQL_CONNECTIONS)}
+    except (OSError, ValueError):
+        items = {}
+    wanted = {}
+    for item in site_databases(site, "all", ""):
+        if item["unit"] not in labels or not item.get("connection") or item["unit"] in wanted:
+            continue
+        settings = items.get(item["connection"])
+        if not settings:
+            continue
+        if convert_host(settings.get("host")) in CONVERT_LOCAL_HOSTS and convert_host(item["host"]) not in CONVERT_LOCAL_HOSTS:
+            settings = {**settings, "host": item["host"]}
+        wanted[item["unit"]] = {"database": item["database"], "connection": settings}
+    return wanted
+
+
+def export_command(data):
+    """harbor site export (with the databases' connections in its environment), or export-restore"""
+    harbor = ["/usr/bin/python3", HARBOR_COMMAND, "site"]
+    if data.get("kind") == "export_restore":
+        identifier = data.get("id")
+        if not isinstance(identifier, str) or not re.fullmatch(r"[0-9a-f]{16}", identifier):
+            abort(400, "That is not an export")
+        return "Restore the site of an export", [*harbor, "export-restore", identifier], None
+    site = site_arg(data)
+    entry = next((item for item in export_sites() if item["site"] == site), None)
+    if not entry:
+        abort(400, "Choose a site here")
+    # A .NET site is built for the OS chosen; one that is not (HTML, Python) runs on either
+    built = entry["kind"] in ("csharp", "umbraco")
+    if built and data.get("os") not in ("windows", "linux"):
+        abort(400, "Choose Windows or Linux")
+    if not built:
+        data = {**data, "os": "any"}
+    targets = data.get("targets")
+    known = {item["target"]: item for item in entry["environments"] if item["mode"] != "windows"}
+    if not isinstance(targets, list) or not targets or any(target not in known for target in targets):
+        abort(400, "Choose what to export")
+    user = me() or {}
+    keep = data.get("keep", 72)
+    if keep not in (3, 6, 12, 24, 72, 168, 0):
+        abort(400, "Choose how long it lives")
+    argv = [*harbor, "export", site, "--os", data["os"], "--targets", ",".join(targets), "--by", (user.get("name") or user.get("username") or "")[:120],
+            "--keep", str(keep), *(["--delete"] if data.get("delete") is True else [])]
+    labels = {known[target]["unit"] for target in targets}
+    databases = export_databases_env(site, labels)
+    env = {"VNS_EXPORT_DATABASES": json.dumps(databases)} if databases else {}
+    # Deleted with it: the databases chosen too (kept for Restore first, as Delete site takes them)
+    if data.get("delete") is True and data.get("databases"):
+        env.update(delete_databases_env({"databases": data["databases"], "scope": "all"}, site) or {})
+    env = env or None
+    return f"Export {site}" + ("" if data["os"] == "any" else f" for {'Windows' if data['os'] == 'windows' else 'Linux'}"), argv, env
+
+
+@app.route("/api/sql/usage")
+def api_sql_usage():
+    """Which databases of a connection the sites run on: shown on the SQL Server page, an administrator's"""
+    if not is_admin():
+        return jsonify(usage={})
+    identifier = request.args.get("connection", "")
+    return jsonify(usage=sql_database_usage(identifier))
+
+
+@app.route("/api/convert/connections")
+def api_convert_connections():
+    require_admin()
+    return jsonify(connections=convert_connections_public())
 
 
 # A database's and login's name as a site's: letters, digits, . _ and - (a PostgreSQL name has 63 bytes at most)
 CONVERT_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,62}")
 
 
+def convert_remote_unit(data):
+    """The environment on another server a task is for, by its server and service: (site, target, unit, where)"""
+    where, unit = data.get("where"), data.get("unit")
+    for site, target, found, _label, _binding, name, _reach in convert_remote_units():
+        if name == where and found == unit:
+            return site, target, unit, where
+    abort(400, "Choose a site")
+
+
+def convert_kept_item(identifier, remote):
+    """A kept database as harbor tells it, here or on the environment's server"""
+    from harbor.core.system import System
+    from harbor.sites import convert
+    if remote:
+        site, target, unit, _where = remote
+        found, why = convert_remote_info(site, target, [unit])
+        if not found:
+            abort(400, why)
+        items = found["kept"]
+    else:
+        items = convert.kept(System())
+    item = next((item for item in items if item.get("id") == identifier), None)
+    if not item:
+        abort(400, "That database is not kept after a conversion")
+    return item
+
+
 def convert_command(data):
-    """harbor site convert, or convert-delete, with the connection and the new login's password in its environment"""
+    """harbor site convert, convert-rollback or convert-delete, with the connections and the new login's password in its
+    environment; for an environment on another server, run there by its Harbor (convert-remote)"""
     harbor = ["/usr/bin/python3", HARBOR_COMMAND, "site"]
-    units = {unit: (site, label) for site, unit, label, _binding in convert_units()}
+    remote = convert_remote_unit(data) if data.get("where") else None
+    run = (lambda action, *rest: [*harbor, "convert-remote", remote[0], remote[1], action, *rest]) if remote \
+        else (lambda action, *rest: [*harbor, action, *rest])
+    where = f" on {remote[3]}" if remote else ""
     if data.get("kind") in ("convert_delete", "convert_rollback"):
         identifier = data.get("id")
         if not isinstance(identifier, str) or not re.fullmatch(r"[0-9a-f]{32}", identifier):
             abort(400, "Choose a database to delete")
-        from harbor.core.system import System
-        from harbor.sites import convert
-        item = next((item for item in convert.records(System()) if item.get("id") == identifier), None)
-        if not item:
-            abort(400, "That database is not kept after a conversion")
-        rolling = data.get("kind") == "convert_rollback"
+        item = convert_kept_item(identifier, remote)
         env = None
-        if rolling:
-            # The new database's server of each conversion it rolls back (it and the ones after it)
-            wanted = {(side or {}).get("connection") for other in convert.chain(System(), identifier) for side in (other.get("to"), other.get("from"))
-                      if (side or {}).get("engine") not in (None, "sqlite")}
-            try:
-                with SQL_LOCK:
-                    env = {"VNS_CONVERT_CONNECTIONS": json.dumps({name: _sql_module.connection(SQL_CONNECTIONS, name) for name in wanted})}
-            except (OSError, ValueError):
-                abort(400, "The connection to a database's server is gone: roll back by hand")
-            return f"Roll back {item.get('unit')}", [*harbor, "convert-rollback", identifier], env
+        if data.get("kind") == "convert_rollback":
+            # The database servers it deletes from, by the ids harbor knows them by: this admin's connection to each
+            env = {}
+            for server in item.get("servers") or []:
+                found = convert_connection(server, bool(remote))
+                if not found:
+                    abort(400, f"Add a connection to {server.get('host') or 'its server'} on the SQL Server page to roll back here")
+                env[server.get("connection") or ""] = found
+            return f"Roll back {item.get('unit')}{where}", run("convert-rollback", identifier), {"VNS_CONVERT_CONNECTIONS": json.dumps(env)}
         # Delete reaches the old database's server
-        old = item.get("from") or {}
-        if old.get("engine") != "sqlite":
-            try:
-                with SQL_LOCK:
-                    env = {"VNS_CONVERT_CONNECTION": json.dumps(_sql_module.connection(SQL_CONNECTIONS, old.get("connection") or ""))}
-            except (OSError, ValueError):
-                abort(400, "The connection to that database's server is gone: delete it on its server")
-        name = old.get("database") or os.path.basename(old.get("path") or "")
-        return f"Delete {name}", [*harbor, "convert-delete", identifier], env
+        if item.get("server"):
+            found = convert_connection(item["server"], bool(remote))
+            if not found:
+                abort(400, f"Add a connection to {item['server'].get('host') or 'its server'} on the SQL Server page to delete it here")
+            env = {"VNS_CONVERT_CONNECTION": json.dumps(found)}
+        name = item.get("database") or os.path.basename(item.get("file") or "")
+        return f"Delete {name}{where}", run("convert-delete", identifier), env
     unit = data.get("unit")
-    if unit not in units:
+    if not remote and unit not in {unit for _site, unit, _label, _binding in convert_units()}:
         abort(400, "Choose a site here")
+    if data.get("kind") == "convert_move":
+        return convert_move_command(data, unit, remote, run, where)
     to = data.get("to")
     if to not in ("mssql", "postgres", "sqlite"):
         abort(400, "Choose what to convert to")
@@ -6326,8 +7018,14 @@ def convert_command(data):
         abort(400, "Choose a connection")
     if to != "sqlite" and _sql_module.engine(settings) != to:
         abort(400, "The connection is not the server chosen")
+    if remote and convert_host(settings.get("host")) in CONVERT_LOCAL_HOSTS:
+        # This server's own SQL Server: the other server reaches it by this server's address
+        address = convert_address_for(next(entry for entry in convert_remote_units() if entry[5] == remote[3] and entry[2] == remote[2])[6][0])
+        if not address:
+            abort(400, "This server's address could not be found: add a connection to its SQL Server by its address")
+        settings = {**settings, "host": address}
     user = me() or {}
-    argv = [*harbor, "convert", unit, to, "--by", (user.get("name") or user.get("username") or "")[:120]]
+    argv = ["convert", unit, to, "--by", (user.get("name") or user.get("username") or "")[:120]]
     env = {"VNS_CONVERT_CONNECTION": json.dumps(settings)}
     if to == "sqlite":
         name = data.get("file") or ""
@@ -6335,7 +7033,7 @@ def convert_command(data):
             abort(400, "A SQLite file's name has letters, digits, . _ and -, and ends in .sqlite.db, .sqlite, .sqlite3 or .db")
         if name:
             argv += ["--file", name]
-        title = f"Convert {unit} to SQLite"
+        title = f"Convert {unit}{where} to SQLite"
     else:
         database, login, password = data.get("database"), data.get("login"), data.get("password")
         if not isinstance(database, str) or not CONVERT_NAME.fullmatch(database):
@@ -6346,8 +7044,8 @@ def convert_command(data):
             abort(400, "The login's password must be 8-128 characters without line breaks")
         argv += ["--database", database, "--login", login]
         env["VNS_CONVERT_LOGIN_PASSWORD"] = password
-        title = f"Convert {unit} to {'Microsoft SQL Server' if to == 'mssql' else 'PostgreSQL'}"
-    return title, argv, env
+        title = f"Convert {unit}{where} to {'Microsoft SQL Server' if to == 'mssql' else 'PostgreSQL'}"
+    return title, run(*argv), env
 
 
 @app.route("/api/windows/imported")

@@ -346,6 +346,206 @@ class ConvertTests(Site):
 		self.assertEqual(list(self.system.path(self.folder + "/umbraco/Data").iterdir()), [])
 		self.assertEqual(convert.records(self.system), [])
 
+	def test_kept_says_what_each_needs_and_which_server(self):
+		self.run_convert()
+		found = convert.kept(self.system)
+		self.assertEqual(len(found), 1)
+		item = found[0]
+		self.assertTrue(item["rollback"] and item["exists"] and item["original"])
+		self.assertEqual(item["deletes"], ["site"])
+		# The server a rollback deletes from, by its host and port too: another server's Harbor matches its own connection
+		self.assertEqual(item["servers"], [{"engine": "mssql", "connection": "c1", "host": ".", "port": 1433,
+		                                    "database": "site", "login": "site_user"}])
+		self.assertIsNone(item["server"])
+		self.assertEqual(convert.kept(self.system, {"other.example.com"}), [])
+		overview = convert.overview(self.system, ["example.com-test"])
+		self.assertEqual(overview["sites"][0]["engine"], "mssql")
+		self.assertNotIn("folder", overview["sites"][0])
+		self.assertEqual(len(overview["kept"]), 1)
+
+	def test_a_deleted_sites_conversions_are_forgotten(self):
+		self.run_convert()
+		self.assertEqual(convert.forget_gone(self.system), 0)
+		import shutil
+		shutil.rmtree(self.system.path(self.folder))
+		self.system.path("/etc/systemd/system/example.com-test.service").unlink()
+		self.assertEqual(convert.kept(self.system), [])
+		self.assertEqual(convert.records(self.system), [])
+
+	def test_a_site_made_again_in_the_same_folder_has_not_the_old_ones_conversions(self):
+		self.run_convert()
+		# Deleted and made again (its folder and service there again), without the file the old one kept
+		for path in self.system.path(self.folder + "/umbraco/Data").glob("*.bak"):
+			path.unlink()
+		self.assertEqual(convert.kept(self.system), [])
+
+
+MSSQL_SETTINGS = """{
+  "ConnectionStrings": {
+    "umbracoDbDSN": "Server=old.example.com,1433;Database=site;User Id=site_user;Password=old secret;TrustServerCertificate=True;",
+    "umbracoDbDSN_ProviderName": "Microsoft.Data.SqlClient"
+  },
+  "Umbraco": { "CMS": { "Global": { "Id": "x" } } }
+}
+"""
+
+
+class MoveTests(Site):
+	"""A site's database moved to another server of its kind: the connection string follows, the old one is kept"""
+	def setUp(self):
+		super().setUp()
+		self.system.path(self.folder + "/appsettings.json").write_text(MSSQL_SETTINGS)
+
+	def move(self, failing=None, **kwargs):
+		environment = {"VNS_CONVERT_CONNECTION": json.dumps({"id": "new", "host": "new.example.com", "port": 1433, "username": "sa", "password": "x"}),
+		               "VNS_CONVERT_SOURCE": json.dumps({"id": "old", "host": "old.example.com", "port": 1433, "username": "sa", "password": "y"}),
+		               "VNS_CONVERT_LOGIN_PASSWORD": "a long password"}
+		with mock.patch.dict(os.environ, environment), mock.patch.object(convert, "move_database", side_effect=failing) as moved, \
+				mock.patch.object(convert, "need_tools"), mock.patch.object(convert, "drop_server") as drop, \
+				mock.patch.object(convert, "drop_old") as old, mock.patch.object(convert, "responds", return_value=(True, "")):
+			try:
+				convert.move_site(self.system, "example.com-test", "site", **kwargs)
+			finally:
+				self.moved, self.dropped, self.old_dropped = moved, drop, old
+		return moved
+
+	def test_its_login_goes_along_by_its_name_and_password(self):
+		moved = self.move(keep_login=True)
+		self.assertEqual(moved.call_args.args[4:], ("site", "site", "site_user", "old secret"))
+		text = self.system.path(self.folder + "/appsettings.json").read_text()
+		self.assertIn("Server=new.example.com,1433;Database=site;User Id=site_user;Password=\\\"old secret\\\"", text)
+		# Nothing kept: the old one is deleted once the site runs on the new one (a move back is a move)
+		self.assertEqual(convert.records(self.system), [])
+		self.assertEqual(self.old_dropped.call_args.args[2:], ({"id": "old", "host": "old.example.com", "port": 1433, "username": "sa", "password": "y"}, "site"))
+		# Nothing of it is left there: its backups go too
+		self.assertEqual(self.old_dropped.call_args.kwargs, {"backups": True})
+
+	def test_its_conversions_find_it_where_it_is_now(self):
+		# Converted from SQLite before, onto the old server: a roll back to that deletes the database where it is now
+		convert.record(self.system, {"id": "a" * 32, "unit": "example.com-test", "folder": self.folder, "key": "umbracoDbDSN", "at": 1,
+		                             "from": {"engine": "sqlite", "path": self.folder + "/umbraco/Data/Umbraco.sqlite.db"},
+		                             "to": {"engine": "mssql", "connection": "old", "host": "old.example.com", "port": 1433, "database": "site", "login": "site_user"}})
+		self.move(keep_login=True)
+		moved = convert.records(self.system)[0]["to"]
+		self.assertEqual((moved["host"], moved["connection"], moved["database"]), ("new.example.com", "new", "site"))
+
+	def test_a_new_login(self):
+		moved = self.move(login="site_new")
+		self.assertEqual(moved.call_args.args[6:], ("site_new", "a long password"))
+
+	def test_a_failed_start_puts_it_back_and_deletes_the_new_one(self):
+		with mock.patch.object(convert, "start_and_check", side_effect=Stop("did not start")), self.assertRaises(Stop):
+			self.move(keep_login=True)
+		self.assertEqual(self.system.path(self.folder + "/appsettings.json").read_text(), MSSQL_SETTINGS)
+		self.assertTrue(self.dropped.called)
+		self.assertFalse(self.old_dropped.called)
+		self.assertEqual(convert.records(self.system), [])
+
+	def test_never_to_another_kind(self):
+		with mock.patch.dict(os.environ, {"VNS_CONVERT_CONNECTION": json.dumps({"host": "pg.example.com", "username": "a", "password": "b", "engine": "postgres"}),
+		                                  "VNS_CONVERT_SOURCE": json.dumps({"host": "old.example.com", "username": "a", "password": "b"})}), \
+				self.assertRaisesRegex(Stop, "Convert changes its kind"):
+			convert.move_site(self.system, "example.com-test", "site", keep_login=True)
+
+
+class RemoteTests(unittest.TestCase):
+	"""A site's environment on another server: converted there by its own Harbor, the secrets on its stdin"""
+	def test_secrets_go_on_stdin_never_on_the_command_line(self):
+		system = mock.Mock()
+		system.run.return_value = mock.Mock(ok=True)
+		environment = mock.Mock(LOCAL_PATH="", windows=False, PASSWORD="", USER="root", IP="prod.example.com", SSH_PORT="22")
+		secrets = {"VNS_CONVERT_CONNECTION": json.dumps({"host": "sql.example.com", "password": "server secret"}),
+		           "VNS_CONVERT_LOGIN_PASSWORD": "login secret", "HARBOR_PROGRESS": "json"}
+		with mock.patch.dict(os.environ, secrets), \
+				mock.patch("harbor.environments.remote.remote_environment", return_value=(None, environment)), \
+				mock.patch.object(convert, "_relay", return_value=False):
+			convert.remote(system, "example.com", "prod", "convert", ["example.com", "mssql", "--by", "Jane Doe", "--database", "site"])
+			self.assertNotIn("VNS_CONVERT_LOGIN_PASSWORD", os.environ)
+		argv, kwargs = system.run.call_args.args, system.run.call_args.kwargs
+		self.assertEqual(argv[-2], "root@prod.example.com")
+		self.assertNotIn("secret", " ".join(argv))
+		self.assertIn("'Jane Doe'", argv[-1])
+		self.assertIn("HARBOR_PROGRESS=json", argv[-1])
+		lines = kwargs["input"].split("\n")
+		self.assertEqual(json.loads(lines[0])["password"], "server secret")
+		self.assertEqual(lines[1:3], ["", "login secret"])
+
+	def relay(self, tools_there, failing=None):
+		"""A conversion to Microsoft SQL Server of a site on a server without its tools: what runs where"""
+		environment = mock.Mock(LOCAL_PATH="", windows=False, PASSWORD="", USER="root", IP="prod.example.com", SSH_PORT="22")
+		system = mock.Mock()
+		calls = self.calls = []
+		info = {"sites": [{"unit": "example.com", "engine": "sqlite", "umbraco": True, "file": "umbraco/Data/Umbraco.sqlite.db"}],
+		        "kept": [], "tools": {"mssql": tools_there}}
+		def remote_json(system, environment, parts, values=("", "", "")):
+			calls.append(("json", parts[1:3]))
+			return info if parts[1] == "convert-info" else {"path": "/var/www/example.com/umbraco/Data/Umbraco.sqlite.db", "running": True, "umbraco": True, "key": "umbracoDbDSN"}
+		def remote_run(system, environment, parts, values=("", "", ""), progress=True, capture=False):
+			calls.append(("run", parts[1:3], values))
+			return mock.Mock(ok=True, returncode=0)
+		fake = mock.Mock()
+		fake.from_sqlite.side_effect = failing or (lambda *args, **kwargs: {"tables": 3, "rows": 9})
+		secrets = {"VNS_CONVERT_CONNECTION": json.dumps({"id": "c1", "host": "10.0.0.1", "port": 1433, "username": "sa", "password": "server secret"}),
+		           "VNS_CONVERT_LOGIN_PASSWORD": "login secret"}
+		with mock.patch.dict(os.environ, secrets), \
+				mock.patch("harbor.environments.remote.remote_environment", return_value=(None, environment)), \
+				mock.patch.object(convert, "_remote_json", side_effect=remote_json), mock.patch.object(convert, "_remote_run", side_effect=remote_run), \
+				mock.patch.object(convert, "_fetch") as fetch, mock.patch.object(convert, "_here", return_value=True), \
+				mock.patch.object(convert, "create_database", return_value={"host": "10.0.0.1"}) as create, \
+				mock.patch.object(convert, "drop_server") as drop, mock.patch.object(convert, "converter", return_value=fake):
+			try:
+				convert.remote(system, "example.com", "prod", "convert",
+				               ["example.com", "mssql", "--by", "Jane", "--database", "site", "--login", "site", "--key", "umbracoDbDSN"])
+			finally:
+				self.created, self.dropped, self.fetched, self.loaded = create.called, drop.called, fetch.called, fake.from_sqlite.called
+		return calls
+
+	def test_converted_there_when_it_has_the_tools(self):
+		calls = self.relay(True)
+		self.assertEqual([call[1] for call in calls], [("convert-info", "example.com"), ("convert", "example.com")])
+		self.assertFalse(self.created)
+
+	def test_the_data_converted_here_when_that_server_has_not_the_tools(self):
+		calls = self.relay(False)
+		self.assertEqual([call[1] for call in calls], [("convert-info", "example.com"), ("convert-relay", "prepare"), ("convert-relay", "finish")])
+		self.assertTrue(self.created and self.fetched and self.loaded)
+		self.assertFalse(self.dropped)
+		# The login's password goes there on stdin, to be in its connection string
+		self.assertEqual(calls[-1][2][2], "login secret")
+
+	def test_a_failed_relay_deletes_the_new_database_and_starts_the_site_again(self):
+		def fail(*args, **kwargs):
+			raise RuntimeError("umbracoNode has 2 rows in SQLite and 0 in site")
+		with self.assertRaises(Stop):
+			self.relay(False, failing=fail)
+		self.assertTrue(self.dropped)
+		self.assertEqual(self.calls[-1][1], ("convert-relay", "resume"))
+
+	def test_to_sqlite_converted_here_when_that_server_has_not_the_tools(self):
+		environment = mock.Mock(LOCAL_PATH="", windows=False, PASSWORD="", USER="root", IP="prod.example.com", SSH_PORT="22")
+		calls = []
+		info = {"sites": [{"unit": "example.com", "engine": "mssql", "database": "site"}], "kept": [], "tools": {"mssql": False}}
+		def remote_json(system, environment, parts, values=("", "", "")):
+			calls.append(parts[1:3])
+			return info if parts[1] == "convert-info" else {"running": True, "key": "umbracoDbDSN", "engine": "mssql", "database": "site"}
+		def remote_run(system, environment, parts, values=("", "", ""), progress=True, capture=False):
+			calls.append(parts[1:3])
+			return mock.Mock(ok=True, returncode=0)
+		fake = mock.Mock()
+		fake.to_sqlite.return_value = {"tables": 3, "rows": 9}
+		with mock.patch.dict(os.environ, {"VNS_CONVERT_CONNECTION": json.dumps({"host": "10.0.0.1", "username": "sa", "password": "x"})}), \
+				mock.patch("harbor.environments.remote.remote_environment", return_value=(None, environment)), \
+				mock.patch.object(convert, "_remote_json", side_effect=remote_json), mock.patch.object(convert, "_remote_run", side_effect=remote_run), \
+				mock.patch.object(convert, "_send") as send, mock.patch.object(convert, "_here", return_value=True), \
+				mock.patch.object(convert, "converter", return_value=fake):
+			convert.remote(mock.Mock(), "example.com", "prod", "convert", ["example.com", "sqlite", "--by", "Jane"])
+		self.assertEqual(calls, [("convert-info", "example.com"), ("convert-relay", "stop"), ("convert-relay", "sqlite")])
+		self.assertTrue(send.called and fake.to_sqlite.called)
+
+	def test_only_convert_actions(self):
+		with self.assertRaises(Stop):
+			convert.remote(mock.Mock(), "example.com", "prod", "delete", [])
+
 
 if __name__ == "__main__":
 	unittest.main()

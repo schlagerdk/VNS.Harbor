@@ -6,6 +6,7 @@
 An environment on a Windows server is only removed here: its IIS site and files are removed on the server.
 Like the script, a step that fails does not stop the rest unless it says so: what can be removed is removed.
 """
+import json
 import os
 from pathlib import Path
 import re
@@ -36,6 +37,9 @@ rm -f -- "/var/log/apache2/${SITE}-80-error.log" "/var/log/apache2/${SITE}-443-e
 rm -rf -- "/var/lib/vns-roots/${SITE}"
 rm -f -- "/var/lib/vns-managed/${SITE}"
 rm -rf -- "${root:?}"
+# Its conversions are forgotten by the Harbor there (one that has convert), so none is left for a site made again
+h=/usr/local/bin/harbor; [[ -x ${h} ]] || h=/opt/harbor/current/bin/harbor
+[[ -x ${h} ]] && "${h}" site convert-info >/dev/null 2>&1 || true
 if [[ ${DELETE_CERTIFICATE} =~ ^([yY]|[yY][eE][sS])$ ]]; then
 	domain_in_use=0
 	for conf in /etc/apache2/sites-enabled/*.conf; do
@@ -231,6 +235,15 @@ def delete_site(system, name="", delete_certificates="", scope="all", target="",
                      else "Delete site and files")
         if not ubuntu_default:
             steps += deletion.certificate_steps(binding, removed)
+    # The databases on servers chosen in Delete site to go with it (VNS_DELETE_DATABASES, the admin's connections to
+    # them): deleted last, once nothing runs on them
+    try:
+        databases = json.loads(os.environ.pop("VNS_DELETE_DATABASES", "") or "[]")
+    except ValueError:
+        databases = []
+    databases = [item for item in databases if isinstance(item, dict) and isinstance(item.get("connection"), dict) and item.get("database")
+                 and item.get("engine") in ("mssql", "postgres")]
+    steps += [f"Delete the database {item['database']}" for item in databases]
     system.plan(steps)
 
     # ---- environments
@@ -324,6 +337,22 @@ def delete_site(system, name="", delete_certificates="", scope="all", target="",
         # Apache's default site has no binding and no certificate of its own
         if not ubuntu_default:
             deletion.certificate(binding, site.certificate_directory)
+
+    for item in databases:
+        system.step(f"Delete the database {item['database']}")
+        from harbor.sites import convert as converting
+        try:
+            converting.drop_old(system, item["engine"], item["connection"], item["database"])
+        except Stop as error:
+            system.warn(f"{item['database']} could not be deleted: {error}. Delete it on the SQL Server page.")
+
+    # What the deleted sites kept after a conversion is not left for sites that are gone
+    from harbor.sites import convert
+    try:
+        if convert.forget_gone(system):
+            system.say("Forget the databases kept after conversions of the deleted sites")
+    except OSError as error:
+        system.warn(f"The conversions of the deleted sites could not be forgotten: {error}")
 
     system.say("Reload daemon")
     system.run("systemctl", "daemon-reload", check=False)

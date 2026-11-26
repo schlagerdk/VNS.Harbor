@@ -490,6 +490,31 @@ def backup(settings, name):
     return path
 
 
+def copy_backup(settings, name):
+    """A copy-only backup of a database to a file of its own in the backup directory, for a copy: <name>.copy-<id>.bak"""
+    identifier(name)
+    if any(char in name for char in '/\\:*?"<>|'):
+        raise ValueError("Database name cannot be used as a backup filename: " + name)
+    separator = "\\" if "\\" in settings["backup_directory"] else "/"
+    path = settings["backup_directory"].rstrip("/\\") + separator + f"{name}.copy-{uuid.uuid4().hex[:8]}.bak"
+    prepare_backup_access(settings, path, write=True)
+    execute(settings, f"BACKUP DATABASE {identifier(name)} TO DISK={literal(path)} WITH INIT, COPY_ONLY;")
+    return path
+
+
+def forget_copy_backup(settings, path):
+    """The copy's own backup file deleted again, where Harbor reaches the backup directory; else said where it is"""
+    try:
+        if backup_file_access(settings) and "\\" not in settings["backup_directory"]:
+            found = file_operation(settings, "inspect", {path: None}, skip_missing=True)
+            if found:
+                file_operation(settings, "delete", found)
+            return
+    except (OSError, ValueError, RuntimeError, subprocess.SubprocessError):
+        pass
+    print(f"The copy's backup file is left on the SQL server: {path}", file=sys.stderr, flush=True)
+
+
 def restore(settings, name, path, position, overwrite):
     prepare_backup_access(settings, path, write=False)
     files = execute(settings, f"RESTORE FILELISTONLY FROM DISK={literal(path)} WITH FILE={position};", table=True)
@@ -550,7 +575,19 @@ def local_backup_access(settings):
     if settings["host"].strip() == ".":
         return True
     host = settings["host"].strip("[]").rstrip(".").casefold()
-    return host in {"localhost", "127.0.0.1", "::1", socket.gethostname().casefold(), socket.getfqdn().casefold()}
+    # Also by one of its own addresses: a site on another server is given this one's SQL Server by its address
+    if host in {"localhost", "127.0.0.1", "::1", socket.gethostname().casefold(), socket.getfqdn().casefold()}:
+        return True
+    return bool(re.fullmatch(r"[0-9.]+|[0-9a-f:]+", host)) and host in own_addresses()
+
+
+def own_addresses():
+    """This server's own addresses (hostname -I)"""
+    try:
+        found = subprocess.run(["hostname", "-I"], capture_output=True, text=True, timeout=5).stdout
+        return set(found.split()) if isinstance(found, str) else set()
+    except Exception:  # noqa: BLE001 - none known: only its names count
+        return set()
 
 
 def backup_file_access(settings):
@@ -568,6 +605,33 @@ def prepare_backup_access(settings, path, write):
     else:
         print("SQL backup file permissions cannot be prepared without local or SSH access; "
               "the SQL Server service account must have access on its server.", file=sys.stderr, flush=True)
+
+
+def backup_file_pipe(settings, path, write):
+    """How a backup file on the SQL server is read (cat) or written (cat >) as root, as argv and env: None when it is
+    here. For a database moved to another server: its backup goes from one server's backup folder to the other's"""
+    if local_backup_access(settings):
+        return None
+    config = ssh_settings(settings)
+    if not config["ssh_enabled"]:
+        raise ValueError(f"No access to the backup folder of {settings.get('host')}: turn on SSH in its connection")
+    ssh = shutil.which("ssh")
+    if not ssh:
+        raise ValueError("ssh is not installed on the admin server")
+    args = [ssh, "-T", "-p", str(config["ssh_port"]), "-o", "StrictHostKeyChecking=accept-new",
+            "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=2"]
+    env = os.environ.copy()
+    if config["ssh_password"]:
+        sshpass = shutil.which("sshpass")
+        if not sshpass:
+            raise ValueError("sshpass is required for password login: sudo apt install sshpass")
+        args = [sshpass, "-e", *args]
+        env["SSHPASS"] = config["ssh_password"]
+    else:
+        args += ["-o", "BatchMode=yes"]
+    sudo = "" if config["ssh_username"] == "root" else "sudo -n "
+    command = f"{sudo}sh -c " + shlex.quote(("cat > " if write else "cat ") + shlex.quote(path))
+    return [*args, config["ssh_username"] + "@" + config["ssh_host"], command], env
 
 
 def file_operation(settings, operation, files, skip_missing=False):
@@ -840,7 +904,8 @@ END CATCH;""")
             if query_json(settings, "SELECT name FROM sys.server_principals WHERE name=" + literal(login[0])):
                 raise ValueError(taken(data, "SQL login already exists. Choose another username before copying/restoring."))
         if action == "copy":
-            path, position = backup(settings, name), 1
+            # A backup of its own, copy-only, deleted again: none of the database's backups is overwritten or added to
+            path, position = copy_backup(settings, name), 1
         else:
             backup_id = data.get("backup_id")
             if isinstance(backup_id, bool) or not (
@@ -855,7 +920,11 @@ END CATCH;""")
             login = validate_restore_login(data)
             if query_json(settings, "SELECT name FROM sys.server_principals WHERE name=" + literal(login[0])):
                 raise ValueError(taken(data, "SQL login already exists. Choose another username before restoring."))
-        restore(settings, target, path, position, overwrite)
+        try:
+            restore(settings, target, path, position, overwrite)
+        finally:
+            if action == "copy":
+                forget_copy_backup(settings, path)
         if login:
             create_restore_login(settings, target, *login)
     print("OK: " + action, flush=True)

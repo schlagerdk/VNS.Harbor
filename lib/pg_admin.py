@@ -507,19 +507,35 @@ def run_action(settings, data):
         overwrite = existing is not None
         if overwrite and (action == "copy" or data.get("confirmation") != target or data.get("overwrite") is not True):
             raise ValueError(taken(data, "Destination exists. Explicit overwrite confirmation is required for restore."))
-        path = Path(backup(settings, name)) if action == "copy" else Path(selected_backup(settings, data.get("backup_id"))["path"])
-        if overwrite:
-            # The same owner as before, in a database made again
-            owner = existing.get("owner")
-            drop_database(settings, target)
-            create_database(settings, target, owner if owner and owner != settings["username"] else None)
-            restore(settings, target, path, owner)
+        if action == "copy":
+            # A dump of its own, outside the backups, deleted again: none of the database's backups is overwritten or added to
+            handle, made = tempfile.mkstemp(prefix="harbor-copy-", suffix=".dump")
+            os.close(handle)
+            os.chmod(made, 0o600)
+            path = Path(made)
+            try:
+                run([pg_dump(), "-Fc", "-d", name, "-f", str(path)], settings)
+            except BaseException:
+                path.unlink(missing_ok=True)
+                raise
         else:
-            login = validate_login(data)
-            if role_exists(settings, login[0]):
-                raise ValueError(taken(data, "That login exists already. Choose another username."))
-            create_login(settings, *login)
-            create_database(settings, target, login[0])
-            own_schema(settings, target, login[0])
-            restore(settings, target, path, login[0])
+            path = Path(selected_backup(settings, data.get("backup_id"))["path"])
+        try:
+            if overwrite:
+                # The same owner as before, in a database made again
+                owner = existing.get("owner")
+                drop_database(settings, target)
+                create_database(settings, target, owner if owner and owner != settings["username"] else None)
+                restore(settings, target, path, owner)
+            else:
+                login = validate_login(data)
+                if role_exists(settings, login[0]):
+                    raise ValueError(taken(data, "That login exists already. Choose another username."))
+                create_login(settings, *login)
+                create_database(settings, target, login[0])
+                own_schema(settings, target, login[0])
+                restore(settings, target, path, login[0])
+        finally:
+            if action == "copy":
+                path.unlink(missing_ok=True)
     print("OK: " + action, flush=True)

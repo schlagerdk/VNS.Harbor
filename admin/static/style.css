@@ -223,6 +223,9 @@ tr.sql-backup-older > td:first-child { padding-left: 46px; }
 .who-chip.who-made .who-label::after { content: ""; }
 .who-chip.who-given { color: #a5c8ff; border-color: rgba(88, 166, 255, .3); background: rgba(88, 166, 255, .07); }
 .who-chip.who-owner { color: #c9a8ff; border-color: rgba(163, 113, 247, .35); background: rgba(163, 113, 247, .08); }
+/* A site runs on it: green, and its site's page a click away */
+.who-chip.who-used { color: #7ee787; border-color: rgba(63, 185, 80, .35); background: rgba(63, 185, 80, .08); cursor: pointer; }
+.who-chip.who-used:hover:not(:where(:disabled, .disabled, .off)) { border-color: rgba(63, 185, 80, .7); background: rgba(63, 185, 80, .14); }
 .sql-database-name .who-chips { margin-left: 10px; }
 .sql-database-name .sql-database-kind { flex: none; margin-left: 10px; font-size: 10px; padding: 2px 7px; }
 .login-name-row { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-width: 0; }
@@ -560,6 +563,10 @@ body.login { display: grid; place-items: center; min-height: 100vh; min-height: 
 #site-head > .actions { display: flex; gap: 8px; flex-wrap: wrap; padding-top: 20px; margin-bottom: 20px; }
 .envs { display: grid; grid-template-columns: repeat(auto-fit, minmax(420px, 1fr)); gap: 16px; }
 .env { display: flex; flex-direction: column; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 0 20px 18px; border-top: 3px solid var(--blue); }
+/* The environment a site card's row was clicked for: lit up a moment once the page has scrolled to it */
+.env.env-focused { animation: env-focused 1.8s ease-out; }
+@keyframes env-focused { 0%, 35% { box-shadow: 0 0 0 2px var(--blue), 0 0 22px rgba(88, 166, 255, .35); } 100% { box-shadow: 0 0 0 2px transparent; } }
+@media (prefers-reduced-motion: reduce) { .env.env-focused { animation: none; } }
 .env.prod { border-top-color: var(--orange); }
 /* Same header as the NuGet panel beside it */
 .env-head { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 0 -20px 14px; padding: 16px 20px; border-bottom: 1px solid var(--line); border-radius: 9px 9px 0 0; background: linear-gradient(110deg, rgba(163, 113, 247, .08), transparent); }
@@ -750,7 +757,10 @@ dialog.files-dialog { padding: 18px; }
 .badge.version[data-major="7"] { background: #953800; }
 
 /* Button icons and tones */
-button .ico { width: 1.1em; height: 1.1em; margin: -2px 6px -2px -2px; vertical-align: middle; }
+/* A button's icon centred on its text's capital letters (-0.2em: its middle where theirs is), not on the small letters'
+   height (vertical-align: middle left it a little low). No margin above or under it: one there moves it off that line.
+   How the button lays itself out is not changed */
+button .ico { width: 1.1em; height: 1.1em; margin: 0 6px 0 -2px; vertical-align: -0.2em; }
 button[data-tone] { --tone: var(--muted); color: var(--tone); border-color: color-mix(in srgb, var(--tone) 35%, var(--line)); background: color-mix(in srgb, var(--tone) 9%, var(--panel2)); }
 button[data-tone]:hover:not(:where(:disabled, .disabled, .off)) { background: color-mix(in srgb, var(--tone) 20%, var(--panel2)); border-color: var(--tone); }
 button[data-tone="blue"] { --tone: var(--blue); }
@@ -844,6 +854,9 @@ a.btn-link .ico { width: 13px; height: 13px; flex: none; }
 .site-environment-head .badge { font-size: 10px; padding: 4px 7px; }
 .site-environment-links { display: flex; align-items: stretch; gap: 6px; flex-shrink: 0; }
 .site-link-group.compact { padding: 7px 12px; }
+/* A row opens the site's page at its environment: it lights up under the pointer, its links still their own */
+.site-link-group.to-environment { cursor: pointer; transition: background .15s; }
+.site-link-group.to-environment:hover:not(:where(:disabled, .disabled, .off)) { background: rgba(88, 166, 255, .06); }
 .site-link-group.compact .site-environment-head { flex-shrink: 0; flex-wrap: nowrap; }
 .site-link-group.compact .site-environment-links { flex-shrink: 1; min-width: 0; }
 .site-link-group.compact a.btn-link span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -904,6 +917,13 @@ a.btn-link .ico { width: 13px; height: 13px; flex: none; }
 /* A table a line: its name opens its rows, its buttons beside it; New table at the top */
 .sql-tables-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
 .sql-tables-head .sql-tables-count { margin: 0; }
+/* Filter tables…: beside the count, the size of the user dialog's filter */
+.sql-tables-head .sql-tables-filter { flex: 0 1 280px; margin-left: auto; }
+.sql-tables-filter .grant-search { width: 100%; min-width: 0; height: 30px; margin: 0; padding: 0 34px 0 34px; border: 1px solid var(--line); border-radius: 9px; background: rgba(0, 0, 0, .22); font-size: 12.5px; transition: background .15s, border-color .15s, box-shadow .15s; }
+.sql-tables-filter .grant-search:hover:not(:where(:disabled, .disabled, .off)) { border-color: rgba(255, 255, 255, .16); }
+.sql-tables-filter .grant-search:focus { outline: none; background: rgba(0, 0, 0, .3); border-color: rgba(88, 166, 255, .55); box-shadow: 0 0 0 3px rgba(88, 166, 255, .14); }
+.sql-tables-head .sql-tables-filter + .sql-tables-locked { margin-left: 0; }
+.sql-table-line[hidden] { display: none; }
 .sql-first-table { margin: 4px 0 6px; padding: 12px; }
 .sql-add-table { margin: 8px 0 4px; }
 .sql-tables-locked { display: inline-flex; align-items: center; gap: 5px; margin-left: 10px; padding: 2px 9px; border: 1px solid rgba(210, 153, 34, .35); border-radius: 999px;
@@ -1087,6 +1107,11 @@ dialog#dlg-form.wide { width: min(1180px, 96vw); }
 .server-card-text { display: grid; gap: 1px; min-width: 0; }
 .server-card-text strong { font-size: 13.5px; }
 .server-card-text small { overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+/* Convert's servers: its kind and where, a line each (cut with … when narrow) */
+.convert-servers .server-card-text { display: grid; gap: 1px; min-width: 0; }
+/* A server Move cannot carry the backup to yet: a small amber warning in the card's top right corner */
+.convert-servers .server-card-warn { position: absolute; top: 14px; right: 16px; display: inline-flex; color: #d29922; }
+.convert-servers .server-card-warn .ico { width: 14px; height: 14px; margin: 0; }
 .server-card-check { display: none; margin-left: auto; color: var(--blue); }
 .server-card-check .ico { width: 15px; height: 15px; margin: 0; }
 .server-card.chosen { border-color: rgba(88, 166, 255, .7); background: rgba(88, 166, 255, .12); box-shadow: 0 1px 8px rgba(88, 166, 255, .12); }
@@ -1578,6 +1603,11 @@ dialog fieldset.snippet-choice { min-width: 0; margin: 0; padding: 0; border: 0;
 /* The lock first, before the name, as on a narrow screen */
 .env-targets.list > .env-listed > .env-head { display: grid; grid-template-columns: minmax(22px, auto) minmax(0, 280px) 112px 112px minmax(0, 1fr) auto 30px; flex-wrap: nowrap; gap: 12px; }
 .env-targets.list > .env-listed > .env-head .env-col-icons { order: -1; }
+/* With one on another server (its server's icon and logo beside the lock), every row's icons take that room: the names
+   and badges below and above it stay in line, rather than that row's starting further right */
+@media (min-width: 1201px) {
+	.env-targets.list:has(.env-col-icons .remote-icon) > .env-listed > .env-head { grid-template-columns: 64px minmax(0, 280px) 112px 112px minmax(0, 1fr) auto 30px; }
+}
 .env-col { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .env-col-name h3 { min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .env-col-actions { justify-content: flex-end; gap: 10px; }
@@ -1995,6 +2025,10 @@ button.primary.danger-primary:disabled { opacity: .5; }
 @media (min-width: 801px) { .phone-only { display: none !important; } }
 @media (max-width: 800px) {
 	.desktop-only { display: none !important; }
+	/* Convert, Move, Roll back and Delete of a site's database are not done from a phone: Settings, Convert only shows
+	   what each runs on and kept */
+	#server-pane-convert .convert-row > button:last-child, #server-pane-convert .convert-end, #server-pane-convert .convert-kept-actions,
+	#server-pane-convert .convert-note { display: none !important; }
 	.page-header { flex-wrap: wrap; gap: 8px; padding: 8px 12px; }
 	.page-header > .spacer, .page-header:has(#search:not([hidden])) > .spacer { display: block; flex: 1; }
 	.brand .logo { width: 32px; height: 32px; border-radius: 8px; }
@@ -2058,7 +2092,7 @@ button.primary.danger-primary:disabled { opacity: .5; }
 /* An environment to choose: its box first, the whole row clicks it; the site itself has the box's room empty */
 .move-site-list li:has(> .windows-check), .move-site-list li:has(> .move-site-check-space) { grid-template-columns: 22px minmax(0, 1fr) auto auto; }
 .move-site-list li.move-site-env { cursor: pointer; transition: background .15s; }
-.move-site-list li.move-site-env:hover { background: rgba(88, 166, 255, .05); }
+.move-site-list li.move-site-env:hover:not(:where(:disabled, .disabled, .off)) { background: rgba(88, 166, 255, .05); }
 .move-site-list li.move-site-env.chosen { background: rgba(88, 166, 255, .07); }
 .move-site-list .left .move-site-name { color: var(--muted); }
 .move-site-list .left .move-site-where { color: var(--muted); background: rgba(139, 148, 158, .12); }
@@ -2542,6 +2576,65 @@ dialog.newsite label.sync-option.action-option { flex-direction: row; align-item
 .action-option.tone-purple { --option-tone: var(--purple); }
 .action-option.tone-red .sync-option-icon, .action-option.tone-amber .sync-option-icon { color: color-mix(in srgb, var(--option-tone) 70%, var(--muted)); }
 .action-option:has(input:disabled) { opacity: .45; cursor: default; }
+/* What else a confirmation decides, as option cards above the name typed (Delete site: certificates, databases) */
+.prompt-options { display: grid; gap: 8px; margin: 20px 0; }
+/* Type the name to confirm: under the options, just above its field */
+.prompt-confirm { margin: 0 0 8px; color: var(--muted); font-size: 14px; overflow-wrap: anywhere; }
+.prompt-confirm[hidden] { display: none; }
+.prompt-options[hidden] { display: none; }
+#prompt-options .sync-option { flex-direction: row; align-items: center; justify-content: flex-start; margin: 0; text-align: left; font-size: inherit; color: inherit; }
+/* One that says what is missing (or why a database is kept): no choice of its own, its button at its end */
+.prompt-option-note { cursor: default; }
+/* Move or Convert to SQLite: each card with its icon, lit as the card is chosen */
+.connect-kind.convert-mode { grid-template-columns: 34px minmax(0, 1fr); column-gap: 12px; align-items: center; align-content: center; }
+.convert-mode > strong, .convert-mode > small { grid-column: 2; }
+.convert-mode-icon { grid-row: 1 / 3; display: grid; place-items: center; width: 34px; height: 34px; border-radius: 9px; background: rgba(255, 255, 255, .04); color: var(--muted); }
+.convert-mode-icon .ico { width: 18px; height: 18px; margin: 0; }
+.convert-mode:has(input:checked) .convert-mode-icon { background: rgba(88, 166, 255, .16); color: var(--blue); }
+/* Settings, Export: Export… at the end of a site's head; the exports made, a line each with its OS, what it is, its
+   countdown once downloaded, and its actions */
+.convert-group-head .export-site-action { display: flex; align-items: center; gap: 10px; margin-left: auto; }
+/* A site's exports: a box of its own over its rows, under the chip that unfolds it, with its heading */
+.export-fold { margin: 0 0 10px; padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: rgba(0, 0, 0, .22); box-shadow: 0 1px 0 rgba(255, 255, 255, .03) inset; }
+.export-fold[hidden] { display: none; }
+.export-fold .export-items { margin: 0; }
+.export-items { display: grid; gap: 8px; margin: 4px 0 0; padding: 0; list-style: none; }
+.export-line { display: flex; align-items: center; gap: 14px; min-width: 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: rgba(0, 0, 0, .18); }
+.export-os { display: grid; flex: none; place-items: center; width: 34px; height: 34px; border-radius: 9px; background: rgba(255, 255, 255, .04); }
+.export-os svg, .export-os-icon svg { width: 18px; height: 18px; }
+.export-text { display: grid; gap: 2px; min-width: 0; }
+.export-text strong { color: var(--text); font-size: 14px; }
+.export-text small { overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.export-text small.export-countdown { color: #d29922; }
+.export-text small.export-deleted { color: #ff7b72; white-space: normal; }
+.export-actions { display: flex; flex: none; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-left: auto; }
+/* What goes: the environments as option cards, two side by side where there is room */
+.export-envs { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; margin: 0 0 16px; }
+.export-envs .sync-option { margin: 0; }
+.export-lifetime { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 16px; }
+.export-databases { margin-top: 10px; }
+.export-databases[hidden] { display: none; }
+.action-option.tone-teal { --option-tone: #39c5cf; }
+/* An environment on another server: in its own colour, with where it runs beside its name */
+.export-env-remote .sync-option-title { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
+.export-env-where { display: inline-flex; align-items: center; gap: 5px; padding: 1px 8px; border: 1px solid color-mix(in srgb, var(--option-tone) 45%, transparent);
+	border-radius: 999px; background: color-mix(in srgb, var(--option-tone) 10%, transparent); color: var(--option-tone); font-size: 11.5px; font-weight: 600; }
+.export-env-where .os-logo { display: inline-flex; }
+.export-env-where .os-logo svg { width: 12px; height: 12px; }
+@media (max-width: 800px) { .export-line { flex-wrap: wrap; } .export-actions { width: 100%; justify-content: stretch; } .export-actions > * { flex: 1; justify-content: center; } }
+/* The query window while a table's rows are read: its spinner in the middle of the output */
+.sql-query-reading { display: grid; place-items: center; min-height: 160px; }
+/* The convert dialog while what it shows is read: its spinner in the middle of the room the form takes */
+.convert-opening { display: grid; place-items: center; min-height: 180px; }
+.convert-opening.small { min-height: 90px; margin-bottom: 12px; }
+/* Move without a server to move to: the card says what is missing, in the dialog's flow */
+.convert-missing { margin: 0 0 16px; }
+.convert-missing > button { flex: none; margin-left: auto; }
+/* Used by a site: dashed in its tone (amber; red when several sites stop a move), its icon lit, so it is seen and read */
+.convert-used { border: 1px dashed color-mix(in srgb, var(--option-tone) 60%, transparent); background: color-mix(in srgb, var(--option-tone) 7%, transparent); }
+.action-option.convert-used .sync-option-icon { background: color-mix(in srgb, var(--option-tone) 16%, transparent); color: var(--option-tone); }
+.prompt-option-note > button { flex: none; margin-left: auto; }
+@media (max-width: 560px) { .prompt-option-note { flex-wrap: wrap; } .prompt-option-note > button { flex: 1 1 100%; justify-content: center; } }
 .server-action-fields .action-option:first-child { margin-top: 2px; }
 /* Servers: its toolbar as in Users, within the dialog's margins */
 /* Add server: the address wide, its SSH port beside it */
@@ -2939,8 +3032,10 @@ input.made-binding, input.made-binding:focus { border-style: dashed; border-colo
 #preview-download .ico { width: 14px; height: 14px; margin: 0; }
 
 /* Settings, Convert: a site with its environments under it, each with its database, what it kept, and Convert… */
-#server-convert-list { grid-template-columns: minmax(0, 1fr); }
-#server-convert-list > .tool-card { grid-column: 1 / -1; min-height: 0; }
+#server-convert-list, #server-export-list { grid-template-columns: minmax(0, 1fr); }
+#server-convert-list > .tool-card, #server-export-list > .tool-card { grid-column: 1 / -1; min-height: 0; }
+/* Export Site's rows have Convert DB's first columns: the folder, the environment, the database and what it is */
+#server-export-list .convert-entry { grid-template-columns: minmax(160px, 1fr) 140px 172px minmax(0, 1.6fr); }
 .convert-groups { display: grid; gap: 10px; margin: 4px 0 0; padding: 0; list-style: none; }
 .convert-group { padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: rgba(0, 0, 0, .12); }
 .convert-group-head { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 2px 4px 10px; }
@@ -2956,12 +3051,23 @@ input.made-binding, input.made-binding:focus { border-style: dashed; border-colo
 .convert-unit > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The bent arrow of an environment under its main site */
 .convert-unit > .ico { flex: none; width: 14px; height: 14px; margin: 0 0 4px 4px; color: var(--muted); }
+/* The server an environment runs on, when it is another one (or the main site's, for one managed from there): a quiet
+   chip after its name, as the Kept chip is grey */
+.convert-unit-text { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; }
+.convert-unit-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.convert-where { flex: none; display: inline-flex; align-items: center; gap: 5px; padding: 2px 8px; border: 1px solid var(--line);
+	border-radius: 999px; background: var(--hover); color: var(--muted); font-size: 11px; font-weight: 600; }
+.convert-where .ico { width: 12px; height: 12px; margin: 0; }
+/* A kept database whose site is gone: the site it came from, under its name */
+.convert-kept-name:has(.convert-kept-site) { flex-wrap: wrap; row-gap: 2px; }
+.convert-kept-site { flex-basis: 100%; padding-left: 36px; color: var(--muted); font-size: 11.5px; font-weight: 500; overflow: hidden; text-overflow: ellipsis;
+	white-space: nowrap; }
 /* The filter beside Convert's heading, as the SQL Server page's beside its tabs */
-#server-pane-convert .server-pane-head { display: flex; align-items: center; gap: 16px; }
+#server-pane-convert .server-pane-head, #server-pane-export .server-pane-head { display: flex; align-items: center; gap: 16px; }
 .convert-filter-box { flex: 0 1 340px; margin-left: auto; }
 .convert-filter-box[hidden] { display: none; }
 .convert-filter-box:has(.sql-filter:not(:placeholder-shown)) .search-clear { display: grid; }
-@media (max-width: 800px) { #server-pane-convert .server-pane-head { flex-wrap: wrap; } .convert-filter-box { flex: 1 1 100%; margin-left: 0; } }
+@media (max-width: 800px) { #server-pane-convert .server-pane-head, #server-pane-export .server-pane-head { flex-wrap: wrap; } .convert-filter-box { flex: 1 1 100%; margin-left: 0; } }
 /* The environment's badge centred in its column, as small as its word; the engine's dot and name from the start of its own */
 .convert-env { display: flex; justify-content: center; min-width: 0; }
 .convert-engine { display: flex; justify-content: flex-start; min-width: 0; }
@@ -2974,7 +3080,13 @@ input.made-binding, input.made-binding:focus { border-style: dashed; border-colo
 .convert-engine .badge.engine-mssql::before { background: #ff7b72; }
 .convert-engine .badge.engine-postgres::before { background: #79b8ff; }
 .convert-detail { min-width: 0; overflow: hidden; color: var(--muted); text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
-.convert-note { justify-self: end; max-width: 320px; overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+/* Why a site cannot be converted: read in full, over two lines at most, under the Kept and Convert… columns */
+.convert-row > .convert-note.wide { grid-column: 5 / 7; }
+/* Add connection… in Convert…'s place: as wide as its words, at the row's end, with the Kept chip before it */
+.convert-end { grid-column: 5 / 7; display: flex; align-items: center; justify-content: flex-end; gap: 10px; min-width: 0; }
+.convert-end > .convert-add { flex: none; white-space: nowrap; }
+.convert-note { justify-self: end; max-width: 320px; overflow: hidden; color: var(--text); opacity: .75; font-size: 12px; line-height: 1.35;
+	text-align: right; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
 .convert-row > button:last-child { justify-self: stretch; justify-content: center; }
 .convert-kept-toggle { justify-self: center; }
 /* Kept: a grey chip that unfolds what the environment ran on before. Grey, as the colours in these rows are the
@@ -3014,14 +3126,21 @@ input.made-binding, input.made-binding:focus { border-style: dashed; border-colo
 	box-shadow: 0 0 0 1px var(--muted) inset; }
 .badge.convert-original .ico { width: 12px; height: 12px; margin: 0; }
 .convert-kept-actions { display: flex; justify-content: flex-end; gap: 8px; }
-.convert-card > .convert-kept { padding: 4px 0 0; }
+/* On its own card (its site is gone): the box has room round its lines, as a site's rows have, and Delete is as wide as
+   Convert… above it, in the same place */
+.convert-card > .convert-kept { margin: 0; padding: 8px 10px; }
+.convert-card > .convert-kept > .convert-kept-line { padding: 6px 2px; }
+.convert-card > .convert-kept .convert-kept-actions > button { min-width: 132px; justify-content: center; }
 /* From and To at the top of Convert…: one panel, a side each with a tile in its engine's colour, an arrow between */
 .convert-flow { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 12px; margin: 0 0 20px; padding: 12px 14px;
 	border: 1px solid var(--line); border-radius: 12px; background: var(--panel2); }
 .convert-side { display: flex; align-items: center; gap: 12px; min-width: 0; }
 .convert-side-text { display: grid; gap: 2px; min-width: 0; }
 .convert-side strong { overflow: hidden; color: var(--text); font-size: 13.5px; text-overflow: ellipsis; white-space: nowrap; }
-.convert-side small { overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+/* Its engine and where, a line each (both sides alike), cut with … when narrow: the whole is its title */
+.convert-side-sub { display: grid; gap: 1px; min-width: 0; }
+.convert-side-sub[hidden] { display: none; }
+.convert-side small { overflow: hidden; color: var(--muted); font-size: 12px; line-height: 1.4; text-overflow: ellipsis; white-space: nowrap; }
 .convert-side.pending strong { color: var(--muted); font-weight: 500; }
 .convert-tile { display: grid; flex: none; place-items: center; width: 34px; height: 34px; border: 1px dashed var(--line); border-radius: 9px; color: var(--muted); }
 .convert-tile .ico { width: 16px; height: 16px; margin: 0; }
@@ -3049,7 +3168,10 @@ dialog.newsite .convert-form .hint { margin: 4px 0 16px; }
 .server-card-icon.engine-postgres { background: rgba(51, 103, 145, .28); color: #79b8ff; }
 @media (max-width: 860px) {
 	.convert-entry, .convert-card > .convert-kept { grid-template-columns: minmax(0, 1fr) auto auto; }
-	.convert-detail, .convert-note { grid-column: 1 / -1; justify-self: start; max-width: none; white-space: normal; }
+	#server-export-list .convert-entry { grid-template-columns: minmax(0, 1fr) auto; }
+	.convert-detail, .convert-note, .convert-row > .convert-note.wide { grid-column: 1 / -1; justify-self: start; max-width: none; white-space: normal; text-align: left; }
+	.convert-end { grid-column: 1 / -1; justify-content: stretch; }
+	.convert-end > .convert-add { flex: 1; justify-content: center; }
 	.convert-row > button:last-child, .convert-kept-toggle { grid-column: 1 / -1; justify-self: stretch; justify-content: center; }
 	.convert-row > span:empty { display: none; }
 	.convert-kept-line > .convert-kept-name { grid-column: 1; }

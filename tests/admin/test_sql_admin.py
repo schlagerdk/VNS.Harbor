@@ -558,19 +558,24 @@ class SqlAdminTests(unittest.TestCase):
         self.assertIn("ALTER ROLE [db_owner] ADD MEMBER", query)
 
     def test_copy_only_to_new_database(self):
-        with patch.object(sql, "databases", return_value=self.rows), patch.object(sql, "backup", return_value="/backup/copy.bak"), \
+        # A backup of its own, copy-only, deleted again: the database's own backups are neither overwritten nor added to
+        with patch.object(sql, "databases", return_value=self.rows), patch.object(sql, "copy_backup", return_value="/backup/Example.copy-1.bak") as made, \
+                patch.object(sql, "forget_copy_backup") as forget, patch.object(sql, "backup") as backup, \
                 patch.object(sql, "restore") as restore, patch.object(sql, "query_json", return_value=[]), \
                 patch.object(sql, "create_restore_login") as create_login:
             sql.run_action(self.settings, {"action": "copy", "database": "Example", "target": "New",
                                           "login": "New", "login_password": "test-secret"})
-            restore.assert_called_once_with(self.settings, "New", "/backup/copy.bak", 1, False)
+            made.assert_called_once_with(self.settings, "Example")
+            backup.assert_not_called()
+            restore.assert_called_once_with(self.settings, "New", "/backup/Example.copy-1.bak", 1, False)
+            forget.assert_called_once_with(self.settings, "/backup/Example.copy-1.bak")
             create_login.assert_called_once_with(self.settings, "New", "New", "test-secret")
             with self.assertRaises(ValueError):
                 sql.run_action(self.settings, {"action": "copy", "database": "Example", "target": "master"})
 
     def test_copy_rejects_existing_login_before_backing_up(self):
         with patch.object(sql, "databases", return_value=self.rows), \
-                patch.object(sql, "query_json", return_value=[{"name": "New"}]), patch.object(sql, "backup") as backup:
+                patch.object(sql, "query_json", return_value=[{"name": "New"}]), patch.object(sql, "copy_backup") as backup:
             with self.assertRaisesRegex(ValueError, "already exists"):
                 sql.run_action(self.settings, dict(action="copy", database="Example", target="New",
                                                    login="New", login_password="test-secret"))

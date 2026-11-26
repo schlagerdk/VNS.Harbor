@@ -33,6 +33,11 @@ sandbox of its own, and builds run as the unprivileged user `vns-build`.
   <img src="assets/screenshots/usage.jpg" alt="Usage: every site and database, who made it and its limit, with a mail when one grows past it" width="49%" />
 </p>
 
+<p align="center">
+  <img src="assets/screenshots/convert.jpg" alt="Convert DB: each site's database, moved between SQLite and Microsoft SQL Server or PostgreSQL, here or on another server" width="49%" />
+  <img src="assets/screenshots/export.jpg" alt="Export Site: a site and its environments for a customer, built for Windows or Linux with its source and databases, without VNS Harbor" width="49%" />
+</p>
+
 ## Installation
 
 On a new Ubuntu server, as root:

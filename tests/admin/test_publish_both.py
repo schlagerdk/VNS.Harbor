@@ -110,6 +110,7 @@ function el(tag, props = {}, ...children) {
         replaceChildren() {this.children = [];}}, props);
 }
 const $ = selector => nodes[selector] ||= el("div");
+let siteEnvFocus = null;
 let allSites = [], sitesLoaded = true, confirmed = false, tasks = [], prompts = [];
 const buttonScripts = new Set(["publish_local.sh", "publish.sh", "publish_prod.sh"]);
 const currentUser = {admin: true};
