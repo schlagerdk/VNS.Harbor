@@ -96,9 +96,10 @@ def units(system, name, targets):
 	if "main" in targets:
 		found.append((name, "local", name, running_folder(system, name, root), None, "main"))
 	for target in settings.target_ids(system, root):
-		if target not in targets:
-			continue
 		environment = settings.load(system, root, target)
+		# By its id, or by its folder (unit:<folder>): an environment's server asks for its own by the name it has there
+		if target not in targets and f"unit:{environment.FOLDER}" not in targets:
+			continue
 		if environment.windows:
 			system.warn(f"{environment.FOLDER} runs on Windows: it is not exported (export it from its IIS server)")
 			continue
@@ -540,11 +541,88 @@ def folder_names(system, site, found):
 
 
 # ---- the export
+# ---- an environment managed from another server: exported by the Harbor there, which has its project
+def managed_note(system, name):
+	"""(main site, its server's name) when this site is an environment of a site on another server, else None"""
+	note = system.path(f"/var/lib/vns-managed/{name}")
+	if not note.is_file():
+		return None
+	lines = [line.strip() for line in note.read_text(errors="replace").splitlines()]
+	return (lines[0] if lines else "", lines[1] if len(lines) > 1 else "")
+
+
+def manager_server(system, host):
+	"""The server in Servers that a managed site's note names (by its full name, address or short name): (name, entry)"""
+	from harbor.server import servers
+	host = (host or "").strip().lower()
+	for server_name, entry in servers.servers(system, "linux").items():
+		if host and host in (str(entry.get("fqdn") or "").lower(), str(entry.get("host") or "").lower(), server_name.lower(),
+		                     *[str(item).lower() for item in entry.get("names") or []]) or host.split(".")[0] == server_name.lower():
+			return server_name, entry
+	return None
+
+
+REMOTE_HARBOR = 'h=/usr/local/bin/harbor; [ -x "$h" ] || h=/opt/harbor/current/bin/harbor\n'
+
+
+def export_managed(system, name, note, os_name, by="", keep_hours=72):
+	"""An environment of a site on another server, exported by the Harbor there: it builds the project for the OS chosen
+	and takes this environment's own files from here, as it does for its environments. The export is kept there, under
+	its site, and listed here too"""
+	main, host = note
+	found = manager_server(system, host)
+	if not found:
+		raise Stop(f"{name} is an environment of {main or 'a site'} on {host or 'another server'}, which has its project: add that server "
+		           "under Servers to export it from here.")
+	server_name, entry = found
+	if os.environ.pop("VNS_EXPORT_DATABASES", ""):
+		system.warn(f"Its database on a database server is not in the export: export it from {server_name}'s Export Site to take it along.")
+	from harbor.server import servers
+	command = ["site", "export", main, "--os", os_name, "--targets", f"unit:{name}", "--by", by or "", "--keep", str(int(keep_hours or 0))]
+	system.plan([f"Export {name} on {server_name}, where {main} is"])
+	system.step(f"Export {name} on {server_name}, where {main} is")
+	script = REMOTE_HARBOR + 'exec "$h" ' + " ".join(shlex.quote(part) for part in command) + "\n"
+	result = servers.remote(system, entry, "bash -c " + shlex.quote(script), check=False, capture=False)
+	if not result.ok:
+		raise Stop(f"The export on {server_name} failed.", result.returncode or 1)
+	system.say(f"The export is kept on {server_name}, under {main}, and listed here under {name}.")
+
+
+def admin_site(system):
+	"""The admin site's name here (its data folder in /var/www): its address is the download link's"""
+	for path in sorted(system.path("/etc/systemd/system").glob("*.service")):
+		match = re.search(r"(?m)^(?:WorkingDirectory|Environment=HARBOR_ADMIN_DATA)=/var/www/([^/\n]+)/app$", path.read_text(errors="replace"))
+		if match and system.path(f"/var/www/{match[1]}/app/config.json").is_file():
+			return match[1]
+	return ""
+
+
+def export_list(system, units):
+	"""The exports here of the environments named (for their own server's admin): JSON, with each one's link"""
+	admin = admin_site(system)
+	wanted = set(units)
+	found = []
+	for item in exports(system):
+		if item.get("state") == "snapshot" or not wanted & set(item.get("environments") or []):
+			continue
+		keep = item.get("keep", KEEP_AFTER_DOWNLOAD)
+		found.append({key: item.get(key) for key in ("id", "site", "os", "at", "by", "environments", "size", "state", "downloaded", "file")}
+		             | {"keep": keep, "expires": item["downloaded"] + keep if item.get("downloaded") and keep else None,
+		                "link": f"https://{admin}/download/{item['token']}" if admin and item.get("token") and item.get("state") == "ready" else ""})
+	print(json.dumps({"exports": found}))
+
+
 def export_site(system, name, os_name, targets, delete=False, by="", keep_hours=72):
 	"""harbor site export: the zip made (and the site deleted from Harbor when asked, a snapshot kept for Restore)"""
 	from harbor.sites import convert
 	if os_name not in (*OSES, ANY):
 		raise Stop("Export for windows, linux or any.")
+	# An environment of a site on another server: the Harbor there exports it (it has the project to build)
+	note = managed_note(system, name)
+	if note:
+		if delete:
+			raise Stop(f"{name} is an environment of a site on {note[1] or 'another server'}: delete it from there.")
+		return export_managed(system, name, note, os_name, by, keep_hours)
 	try:
 		databases = json.loads(os.environ.pop("VNS_EXPORT_DATABASES", "") or "{}")
 	except ValueError:

@@ -546,7 +546,14 @@ def index():
         shown = menu_shown()
         start = "sql" if not shown["web"] else "sites" if not shown["sql"] else start
     return render_template("index.html", csrf=csrf_token(), admin_site=ADMIN_SITE, hostname=socket.gethostname(), user=user.get("name") or user["username"],
-                           start_view=start, role="admin" if access.is_admin(user) else "user", header=header_shown(user))
+                           start_view=start, role="admin" if access.is_admin(user) else "user", header=header_shown(user), site_tools=site_tools())
+
+
+def site_tools():
+    """Settings' Sites group: Convert DB with sites here, Export Site with sites or exports kept here (one of a site deleted
+    with its export is restored from there)"""
+    sites = has_sites()
+    return {"convert": sites, "export": sites or bool(glob.glob(os.path.join(EXPORTS_DIR, "*", "meta.json")))}
 
 
 MENU_SETTINGS = ("auto", "show", "hide")
@@ -6300,6 +6307,34 @@ def convert_host(host):
     return host if host == "." else host.rstrip(".")
 
 
+# A database server's name looked up (DNS, /etc/hosts): {name: (until, addresses)}, kept five minutes
+_HOST_ADDRESSES = {}
+
+
+def host_addresses(host):
+    """A database server's addresses: an address as it is, a name with what it resolves to (sql-01 and 172.23.3.21 are
+    the same server). A name that does not resolve is itself"""
+    host = convert_host(host)
+    if not host or host in CONVERT_LOCAL_HOSTS or re.fullmatch(r"[0-9.]+|[0-9a-f:]+", host):
+        return {host}
+    kept = _HOST_ADDRESSES.get(host)
+    if kept and kept[0] > time.time():
+        return kept[1]
+    try:
+        found = {info[4][0] for info in socket.getaddrinfo(host, None, type=socket.SOCK_STREAM)}
+    except (OSError, UnicodeError):
+        found = set()
+    found = {host, *found}
+    _HOST_ADDRESSES[host] = (time.time() + 300, found)
+    return found
+
+
+def same_host(one, other):
+    """Whether two hosts are the same database server: by name or address, either way"""
+    one, other = convert_host(one), convert_host(other)
+    return one == other or bool(host_addresses(one) & host_addresses(other))
+
+
 def convert_own_addresses():
     try:
         return set(subprocess.run(["hostname", "-I"], capture_output=True, text=True, timeout=5).stdout.split())
@@ -6348,7 +6383,7 @@ def convert_connection(server, remote):
                     and (not port or str(item.get("port") or "") == str(port)):
                 return {**item, "host": server.get("host")}
     for item in items:
-        if _sql_module.engine(item) != engine or convert_host(item.get("host")) != host:
+        if _sql_module.engine(item) != engine or not same_host(item.get("host"), host):
             continue
         if port and str(item.get("port") or "") != str(port):
             continue
@@ -6652,6 +6687,10 @@ def sql_server_key(host, port, engine, there=""):
     host = convert_host(host)
     if host in CONVERT_LOCAL_HOSTS:
         host = convert_host(there) if there else "this server"
+    # A name by its address, so a connection to 172.23.3.21 and a site's sql-01 are the same server
+    addresses = sorted((item for item in host_addresses(host) if item != host), key=lambda item: (":" in item, item))
+    if addresses:
+        host = addresses[0]
     if host in _sql_module.own_addresses():
         host = "this server"
     return host, str(port or SQL_DEFAULT_PORTS.get(engine, ""))
@@ -6767,9 +6806,59 @@ def export_sites():
                 host = prod.get("PROD_IP", "")
                 environments.append({"target": target, "unit": unit, "mode": mode, "where": named.get(host.lower()) or host if mode == "remote" else "",
                                      "label": prod.get("PROD_ENVIRONMENT") or ("Production" if target == "prod" else target.capitalize())})
+        # One managed from another server is exported by the Harbor there (it has the project): only when that server is
+        # in Servers, which reaches it
+        manager = ""
+        if managed:
+            from harbor.sites.export import manager_server
+            try:
+                manager = (manager_server(System(), managed.get("host")) or ("",))[0]
+            except (OSError, ValueError):
+                manager = ""
         found.append({"site": name, "kind": site_kind(name), "managed": (managed.get("host") or "").split(".")[0].lower() if managed else "",
-                      "project": bool(glob.glob(os.path.join(glob.escape(root), "*.csproj"))), "environments": environments})
+                      "manager": manager, "project": bool(glob.glob(os.path.join(glob.escape(root), "*.csproj"))), "environments": environments})
     return found
+
+
+def manager_entry(server):
+    """A Linux server in Servers by its name, for an export kept there: (entry, the ssh to it) or 404"""
+    from harbor.core.system import System
+    from harbor.server import servers
+    entry = servers.servers(System(), "linux").get(server or "")
+    if not entry:
+        abort(404)
+    return entry, [*servers.ssh(entry), f"{entry['user']}@{entry['host']}"], "" if entry["user"] == "root" else "sudo -n "
+
+
+REMOTE_HARBOR = 'h=/usr/local/bin/harbor; [ -x "$h" ] || h=/opt/harbor/current/bin/harbor; exec "$h" '
+
+
+def managed_export_items(sites):
+    """The exports of the environments here that are managed from another server, kept on that server: read from it
+    (one call a server, side by side), each under its environment here"""
+    groups = {}
+    for site in sites:
+        if site.get("manager"):
+            groups.setdefault(site["manager"], []).append(site["site"])
+    def read(server, units):
+        try:
+            _entry, ssh, sudo = manager_entry(server)
+            result = subprocess.run([*ssh, sudo + "bash -c " + shlex.quote(REMOTE_HARBOR + "site export-list --units " + shlex.quote(",".join(units)))],
+                                    capture_output=True, text=True, timeout=20)
+            lines = [line for line in result.stdout.splitlines() if line.startswith("{")]
+            found = json.loads(lines[-1]).get("exports", []) if lines else []
+        except (OSError, ValueError, subprocess.SubprocessError, HTTPException):
+            return []
+        items = []
+        for item in found if isinstance(found, list) else []:
+            unit = next((name for name in units if name in (item.get("environments") or [])), None)
+            if unit and isinstance(item, dict):
+                items.append({**item, "site": unit, "server": server, "deleted": False, "restorable": False})
+        return items
+    if not groups:
+        return []
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        return [item for found in executor.map(lambda pair: read(*pair), groups.items()) for item in found]
 
 
 def site_kind(name):
@@ -6806,7 +6895,9 @@ def export_items():
 @app.route("/api/exports")
 def api_exports():
     require_admin()
-    return jsonify(sites=export_sites(), exports=export_items())
+    sites = export_sites()
+    exports = sorted(export_items() + managed_export_items(sites), key=lambda item: item.get("at") or 0, reverse=True)
+    return jsonify(sites=sites, exports=exports)
 
 
 @app.route("/api/exports/<identifier>", methods=["DELETE"])
@@ -6815,7 +6906,13 @@ def api_export_delete(identifier):
     require_admin()
     if not re.fullmatch(r"[0-9a-f]{16}", identifier):
         abort(400, "That is not an export")
-    result = subprocess.run(["/usr/bin/python3", HARBOR_COMMAND, "site", "export-forget", identifier], capture_output=True, text=True, timeout=300)
+    if request.args.get("server"):
+        # One kept on the server an environment here is managed from: deleted there
+        _entry, ssh, sudo = manager_entry(request.args["server"])
+        result = subprocess.run([*ssh, sudo + "bash -c " + shlex.quote(REMOTE_HARBOR + "site export-forget " + identifier)],
+                                capture_output=True, text=True, timeout=300)
+    else:
+        result = subprocess.run(["/usr/bin/python3", HARBOR_COMMAND, "site", "export-forget", identifier], capture_output=True, text=True, timeout=300)
     if result.returncode:
         lines = [line for line in (result.stderr + result.stdout).splitlines() if line.strip()]
         return error(lines[-1] if lines else "The export could not be deleted.", 400)
@@ -6828,6 +6925,25 @@ def api_export_zip(identifier):
     require_admin()
     if not re.fullmatch(r"[0-9a-f]{16}", identifier):
         abort(400, "That is not an export")
+    if request.args.get("server"):
+        # One kept on the server an environment here is managed from: read from there as it is sent, never kept here
+        name = request.args.get("file", "")
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,200}\.zip", name):
+            abort(400, "That is not an export")
+        _entry, ssh, sudo = manager_entry(request.args["server"])
+        process = subprocess.Popen([*ssh, f"{sudo}cat {shlex.quote(os.path.join(EXPORTS_DIR, identifier, name))}"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        first = process.stdout.read(65536)
+        if not first:
+            process.wait()
+            abort(404)
+        def stream():
+            try:
+                yield first
+                yield from iter(lambda: process.stdout.read(1024 * 1024), b"")
+            finally:
+                process.stdout.close()
+                process.wait()
+        return Response(stream(), mimetype="application/zip", headers={"Content-Disposition": f'attachment; filename="{name}"'})
     folder = os.path.join(EXPORTS_DIR, identifier)
     try:
         with open(os.path.join(folder, "meta.json"), encoding="utf-8") as stream:
@@ -6897,6 +7013,11 @@ def export_command(data):
     entry = next((item for item in export_sites() if item["site"] == site), None)
     if not entry:
         abort(400, "Choose a site here")
+    # Managed from another server: exported by the Harbor there, which this one reaches only when it is in Servers
+    if entry["managed"] and not entry["manager"]:
+        abort(400, f"{site} is managed from {entry['managed']}: add that server under Servers to export it from here")
+    if entry["managed"] and data.get("delete") is True:
+        abort(400, f"{site} is managed from {entry['managed']}: delete it from there")
     # A .NET site is built for the OS chosen; one that is not (HTML, Python) runs on either
     built = entry["kind"] in ("csharp", "umbraco")
     if built and data.get("os") not in ("windows", "linux"):

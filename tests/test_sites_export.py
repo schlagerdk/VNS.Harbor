@@ -8,6 +8,7 @@ import tempfile
 import unittest
 from unittest import mock
 
+from harbor.core.system import Stop
 from harbor.sites import export
 
 CSPROJ = """<Project Sdk="Microsoft.NET.Sdk.Web">
@@ -215,6 +216,65 @@ class DeleteTests(unittest.TestCase):
 				export.export_site(system, "example.com", "any", ["main"], delete=True)
 			self.assertEqual([part[5] for part in snapshot.call_args.args[3]], ["main", "test"])
 			delete.assert_called_once()
+
+
+class ManagedTests(unittest.TestCase):
+	"""A site that is an environment of a site on another server: the Harbor there exports it, as it has the project"""
+	def system(self, root, servers):
+		from harbor.core.system import RecordingSystem
+		system = RecordingSystem(root=root)
+		Path(root, "var/lib/vns-managed").mkdir(parents=True)
+		Path(root, "var/lib/vns-managed/example.com").write_text("test.example.com\nWEB-01.example.net\n")
+		Path(root, "var/lib/harbor").mkdir(parents=True, exist_ok=True)
+		Path(root, "var/lib/harbor/servers.json").write_text(json.dumps(servers))
+		return system
+
+	def test_built_on_the_server_it_is_managed_from(self):
+		with tempfile.TemporaryDirectory() as root:
+			system = self.system(root, {"web-01": {"host": "10.0.0.5", "fqdn": "web-01.example.net", "user": "root", "port": 22}})
+			export.export_site(system, "example.com", "windows", ["main"], by="Anna", keep_hours=24)
+			sent = next(line for line in system.commands if line.startswith("ssh "))
+			# There it is its site's environment, by its folder: built for Windows, kept there and listed here
+			self.assertIn("root@10.0.0.5", sent)
+			self.assertIn("site export test.example.com --os windows --targets unit:example.com --by Anna --keep 24", sent)
+			self.assertFalse(Path(root, "var/lib/harbor/exports").exists(), "nothing made here")
+
+	def test_not_without_that_server_in_servers(self):
+		with tempfile.TemporaryDirectory() as root:
+			system = self.system(root, {"web-02": {"host": "10.0.0.6", "fqdn": "web-02.example.net", "user": "root", "port": 22}})
+			with self.assertRaises(Stop) as stopped:
+				export.export_site(system, "example.com", "windows", ["main"])
+			self.assertIn("add that server under Servers", str(stopped.exception))
+			self.assertFalse([line for line in system.commands if line.startswith("ssh ")])
+			# Nor deleted with its export from here: it is deleted from there
+			with self.assertRaises(Stop):
+				export.export_site(system, "example.com", "windows", ["main"], delete=True)
+
+	def test_the_server_is_found_by_its_full_name_address_or_short_name(self):
+		with tempfile.TemporaryDirectory() as root:
+			system = self.system(root, {"web-01": {"host": "10.0.0.5", "user": "root", "port": 22}})
+			for host in ("WEB-01.example.net", "web-01", "10.0.0.5"):
+				self.assertEqual(export.manager_server(system, host)[0], "web-01", host)
+			self.assertIsNone(export.manager_server(system, "web-02.example.net"))
+
+	def test_its_exports_are_listed_for_its_server_with_their_link(self):
+		with tempfile.TemporaryDirectory() as root:
+			from harbor.core.system import RecordingSystem
+			system = RecordingSystem(root=root)
+			Path(root, "etc/systemd/system").mkdir(parents=True)
+			Path(root, "etc/systemd/system/admin.service").write_text("[Service]\nEnvironment=HARBOR_ADMIN_DATA=/var/www/admin.web-01.example.net/app\n")
+			Path(root, "var/www/admin.web-01.example.net/app").mkdir(parents=True)
+			Path(root, "var/www/admin.web-01.example.net/app/config.json").write_text("{}")
+			for identifier, environments in (("a" * 16, ["test.example.com", "example.com"]), ("b" * 16, ["test.example.com"])):
+				Path(root, "var/lib/harbor/exports", identifier).mkdir(parents=True)
+				Path(root, "var/lib/harbor/exports", identifier, "meta.json").write_text(json.dumps(
+					{"id": identifier, "site": "test.example.com", "environments": environments, "state": "ready", "token": "t" * 30, "file": "x.zip", "at": 1}))
+			with mock.patch("builtins.print") as printed:
+				export.export_list(system, ["example.com"])
+			found = json.loads(printed.call_args.args[0])["exports"]
+			self.assertEqual([item["id"] for item in found], ["a" * 16])
+			self.assertEqual(found[0]["link"], "https://admin.web-01.example.net/download/" + "t" * 30)
+			self.assertNotIn("token", found[0])
 
 
 class LifetimeTests(unittest.TestCase):

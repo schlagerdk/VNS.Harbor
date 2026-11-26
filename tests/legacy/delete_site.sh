@@ -157,6 +157,9 @@ rm -f -- "/var/log/apache2/${SITE}-80-error.log" "/var/log/apache2/${SITE}-443-e
 rm -rf -- "/var/lib/vns-roots/${SITE}"
 rm -f -- "/var/lib/vns-managed/${SITE}"
 rm -rf -- "${root:?}"
+# Its conversions are forgotten by the Harbor there (one that has convert), so none is left for a site made again
+h=/usr/local/bin/harbor; [[ -x ${h} ]] || h=/opt/harbor/current/bin/harbor
+[[ -x ${h} ]] && "${h}" site convert-info >/dev/null 2>&1 || true
 if [[ ${DELETE_CERTIFICATE} =~ ^([yY]|[yY][eE][sS])$ ]]; then
 	domain_in_use=0
 	for conf in /etc/apache2/sites-enabled/*.conf; do

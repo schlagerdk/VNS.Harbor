@@ -2,6 +2,17 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.85] - Unreleased
+
+### Features
+
+- Export Site on a server where a site is an environment managed from another server: the Harbor there exports it, as it has the project. It builds it for the OS chosen (on Windows with its web.config, to be put on IIS as it is) with that environment's own files from here, and keeps the export there, under its site, where it is listed too. Here it is listed under the environment, marked as on that server, with Download, Copy link (that server's) and Delete working on it. It needs that server under Servers (without it, Export… says so and leads there), and it is deleted from that server, never with its export from here.
+
+### Fixes
+
+- Convert DB, Move and the SQL Server page's Used by find the connection to a database server named in a site's connection string by its name (sql-01) when the connection is saved with its address (172.23.3.21), or the other way round: the name is looked up, so Add connection is no longer asked for one that is there.
+- Settings: Convert DB and Export Site are not shown on a server without sites (Export Site is while it keeps exports, as one of a site deleted with its export is restored from there).
+
 ## [1.0.84] - 2026-11-26
 
 ### Features

@@ -14,7 +14,15 @@ ROOT = Path(__file__).resolve().parents[2]
 APP = ROOT / "admin/app.py"
 
 
-FUNCTIONS = ("convert_command", "convert_move_command", "convert_remote_unit", "convert_kept_item", "convert_connection", "convert_host")
+FUNCTIONS = ("convert_command", "convert_move_command", "convert_remote_unit", "convert_kept_item", "convert_connection", "convert_host",
+             "same_host", "host_addresses")
+# What a name resolves to in these tests: sql-01 is 10.0.0.21
+RESOLVED = {"sql-01": "10.0.0.21"}
+def fake_resolve(host, *args, **kwargs):
+	if host not in RESOLVED:
+		raise OSError("not found")
+	return [(2, 1, 6, "", (RESOLVED[host], 0))]
+SOCKET = mock.Mock(getaddrinfo=fake_resolve, SOCK_STREAM=1)
 KEPT = {"id": "a" * 32, "unit": "example.com", "database": "", "file": "umbraco/Data/Umbraco.sqlite.db.bak",
         "servers": [{"engine": "mssql", "connection": "made-on-test", "host": "sql.example.com", "port": 1433}], "server": None}
 
@@ -22,13 +30,15 @@ KEPT = {"id": "a" * 32, "unit": "example.com", "database": "", "file": "umbraco/
 def lifted(remote_kept=None):
 	tree = ast.parse(APP.read_text())
 	nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in FUNCTIONS
-	         or isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") in ("CONVERT_NAME", "CONVERT_LOCAL_HOSTS")]
+	         or isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") in ("CONVERT_NAME", "CONVERT_LOCAL_HOSTS", "_HOST_ADDRESSES")]
 	connection = {"id": "c1", "name": "Local", "host": ".", "port": 1433, "username": "sa", "password": "server secret", "engine": "mssql"}
 	remote = {"id": "c2", "name": "SQL", "host": "SQL.example.com", "port": 1433, "username": "sa", "password": "other secret", "engine": "mssql"}
-	found = {"c1": connection, "c2": remote}
+	by_address = {"id": "c3", "name": "SQL-01", "host": "10.0.0.21", "port": 1433, "username": "sa", "password": "third secret", "engine": "mssql"}
+	found = {"c1": connection, "c2": remote, "c3": by_address}
 	sql = mock.Mock(connection=mock.Mock(side_effect=lambda store, identifier: found[identifier] if identifier in found else (_ for _ in ()).throw(ValueError("Unknown"))),
-	                connections=lambda store: [connection, remote], engine=lambda item: item.get("engine", "mssql"))
-	ns = {"re": re, "json": json, "os": __import__("os"), "abort": flask.abort, "HARBOR_COMMAND": "/opt/harbor/current/bin/harbor",
+	                connections=lambda store: [connection, remote, by_address], engine=lambda item: item.get("engine", "mssql"),
+	                own_addresses=lambda: {"10.0.0.1"})
+	ns = {"re": re, "json": json, "os": __import__("os"), "time": __import__("time"), "socket": SOCKET, "abort": flask.abort, "HARBOR_COMMAND": "/opt/harbor/current/bin/harbor",
 	      "SQL_LOCK": mock.MagicMock(), "SQL_CONNECTIONS": "/x/sql-connections.json", "_sql_module": sql,
 	      "convert_units": lambda: [("example.com", "example.com", "Production", "example.com"), ("example.com", "test-example.com", "Test", "test.example.com")],
 	      "convert_remote_units": lambda: [("example.com", "prod", "example.com", "Production", "example.com", "prod-host", ("prod.example.com", "root", "22"))],
@@ -37,6 +47,7 @@ def lifted(remote_kept=None):
 	      "convert_source": lambda data, remote: ({"engine": "mssql", "database": "site"}, {"id": "c1", "host": "."}, ".", ""),
 	      "me": lambda: {"name": "Admin"}}
 	exec(compile(ast.Module(body=nodes, type_ignores=[]), str(APP), "exec"), ns)
+	lifted.ns = ns
 	return ns["convert_command"]
 
 
@@ -124,12 +135,24 @@ class MoveTests(unittest.TestCase):
 			lifted()({"kind": "convert_move", "unit": "example.com", "connection": "c1", "database": "site", "keep_login": True})
 
 
+class ConnectionTests(unittest.TestCase):
+	def test_a_server_named_in_a_connection_string_is_the_connection_to_its_address(self):
+		"""A site's Server=sql-01 and a connection saved as 10.0.0.21 are the same server: Convert and Move use it, never
+		Add connection (found on a server, 1.0.84)"""
+		lifted()
+		connection = lifted.ns["convert_connection"]
+		self.assertEqual(connection({"engine": "mssql", "host": "sql-01", "port": 1433}, False)["id"], "c3")
+		self.assertEqual(connection({"engine": "mssql", "host": "sql-01", "port": ""}, True)["id"], "c3")
+		# A name that does not resolve is only itself
+		self.assertIsNone(connection({"engine": "mssql", "host": "sql-02", "port": 1433}, False))
+
+
 class SqlUsageTests(unittest.TestCase):
 	def test_a_server_by_any_of_its_names(self):
 		tree = ast.parse(APP.read_text())
-		nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in ("sql_server_key", "convert_host")
-		         or isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") in ("CONVERT_LOCAL_HOSTS", "SQL_DEFAULT_PORTS")]
-		ns = {"_sql_module": mock.Mock(own_addresses=lambda: {"10.0.0.1"})}
+		nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in ("sql_server_key", "convert_host", "host_addresses")
+		         or isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") in ("CONVERT_LOCAL_HOSTS", "SQL_DEFAULT_PORTS", "_HOST_ADDRESSES")]
+		ns = {"_sql_module": mock.Mock(own_addresses=lambda: {"10.0.0.1"}), "re": re, "time": __import__("time"), "socket": SOCKET}
 		exec(compile(ast.Module(body=nodes, type_ignores=[]), str(APP), "exec"), ns)
 		key = ns["sql_server_key"]
 		# This server's own, as localhost, . or its address, with the engine's port when none is named
@@ -138,6 +161,8 @@ class SqlUsageTests(unittest.TestCase):
 		# Another server's own (localhost there) is that server
 		self.assertEqual(key("localhost", "", "mssql", "10.0.0.2"), key("10.0.0.2", 1433, "mssql"))
 		self.assertNotEqual(key("10.0.0.2", 1433, "mssql"), key("10.0.0.2", 1434, "mssql"))
+		# A site's sql-01 is the connection's 10.0.0.21: Used by shows on it
+		self.assertEqual(key("sql-01", 1433, "mssql"), key("10.0.0.21", "", "mssql"))
 
 
 class SqlTransferTests(unittest.TestCase):

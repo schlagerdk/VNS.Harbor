@@ -103,6 +103,8 @@ def _export(args, system):
         export.forget(system, args.name)
     elif args.action == "downloaded":
         export.downloaded(system, args.name)
+    elif args.action == "list":
+        export.export_list(system, [item for item in (args.units or "").split(",") if item])
     else:
         export.cleanup(system)
 
@@ -706,11 +708,14 @@ def parser():
                                ("export-snapshot", "snapshot", "(on an environment's server) its site kept for Restore"),
                                ("export-forget", "forget", "an export deleted, with its zip and snapshots"),
                                ("export-downloaded", "downloaded", "an export's zip downloaded: it is deleted 72 hours later"),
-                               ("export-cleanup", "cleanup", "the exports downloaded more than 72 hours ago deleted")):
+                               ("export-cleanup", "cleanup", "the exports downloaded more than 72 hours ago deleted"),
+                               ("export-list", "list", "(for an environment's server) the exports here of the environments named, as JSON")):
         command = site.add_parser(name, help=text)
         command.set_defaults(handler=_export, action=action)
-        if action != "cleanup":
+        if action not in ("cleanup", "list"):
             command.add_argument("name", help="the site" if action == "site" else "the export's id")
+        if action == "list":
+            command.add_argument("--units", required=True, help="the environments' folders, comma separated")
         if action == "site":
             command.add_argument("--os", required=True, choices=("windows", "linux", "any"), help="any: a site that is not built (HTML, Python)")
             command.add_argument("--targets", help="main and the environments' ids, comma separated")

@@ -814,7 +814,8 @@ async function route() {
 		if (filesDialog.open) filesDialog.close();
 		showView("server");
 		// Older or unknown addresses lead to General
-		await showServerTab(SERVER_TABS.includes(arg) ? arg : arg === "ssh" || arg === "samba" ? "access" : "settings");
+		// A tab this server does not show (Convert DB and Export Site without sites) leads to General too
+		await showServerTab(SERVER_TABS.includes(arg) && !$("#server-tab-" + arg)?.hidden ? arg : arg === "ssh" || arg === "samba" ? "access" : "settings");
 	} else if (view === "sql") {
 		if (filesDialog.open) filesDialog.close();
 		showView("sql");
@@ -8405,7 +8406,13 @@ async function openExportSettings() {
 					el("button", { type: "button", className: "usage-open convert-site-link", textContent: site.site, title: `Open ${site.site}`, onclick: () => go(siteLink(site.site)) }),
 					// What it is, in the colour its card has it: Umbraco, C# / .NET, Python or HTML
 					el("span", { className: "badge " + site.kind, textContent: kindLabel[site.kind] || site.kind }),
-					el("span", { className: "export-site-action" }, ...(toggle ? [toggle] : []), tonedButton("Export…", "download", "purple", () => askExport(site)))),
+					el("span", { className: "export-site-action" }, ...(toggle ? [toggle] : []),
+						// Managed from another server: exported by the Harbor there, which has its project. Without that server
+						// in Servers it cannot be reached: said, with the way to add it
+						site.managed && !site.manager
+							? Object.assign(tonedButton(`Add ${site.managed} under Servers`, "server", "amber", () => go("#server/servers")),
+								{ title: `${site.site} is managed from ${site.managed}, which has its project: add that server under Servers to export it from here` })
+							: tonedButton("Export…", "download", "purple", () => askExport(site)))),
 				// Its exports first, under the chip that unfolds them, then its environments
 				...(fold ? [fold] : []), el("ul", { className: "convert-rows" }, ...site.environments.map((env) => environmentRow(site, env))));
 			// What the filter finds it by: its name and kind, its environments and where they run, and its exports
@@ -8460,13 +8467,19 @@ function exportLine(item) {
 	};
 	return el("li", { className: "export-line" },
 		el("span", { className: "export-os os-" + item.os, ...(osLogos[item.os] ? { innerHTML: osLogos[item.os] } : {}) }, ...(osLogos[item.os] ? [] : [svgIcon("globe")])),
-		el("span", { className: "export-text" }, el("strong", { textContent: os ? `${item.site} · ${os}` : item.site }),
+		el("span", { className: "export-text" }, el("strong", { className: "export-title" }, os ? `${item.site} · ${os}` : item.site,
+				// Made and kept on the server the site is managed from: its link is that server's
+				...(item.server ? [el("span", { className: "convert-where managed", title: `Built and kept on ${item.server}, where the site is managed from` }, svgIcon("server"), `On ${item.server}`)] : [])),
 			el("small", { textContent: [`${(item.environments || []).length} environment${(item.environments || []).length === 1 ? "" : "s"}`, item.size ? bytesText(item.size) : "", when(item.at), item.by].filter(Boolean).join(" · ") }),
 			el("small", { className: item.downloaded ? "export-countdown" : "", textContent: state }),
 			...(item.deleted ? [el("small", { className: "export-deleted", textContent: `${item.site} was deleted from Harbor with it: Restore puts it back as it was` })] : [])),
 		el("span", { className: "export-actions" },
 			// A button as its neighbours are. Its own address, not the customer's link: it does not start its time
-			...(item.link ? [tonedButton("Download", "download", "green", () => { el("a", { href: `/api/exports/${item.id}/zip`, download: item.file || "" }).click(); }),
+			...(item.link ? [tonedButton("Download", "download", "green", () => {
+				// One kept on the server the site is managed from is read from there as it comes
+				const from = item.server ? `?server=${encodeURIComponent(item.server)}&file=${encodeURIComponent(item.file || "")}` : "";
+				el("a", { href: `/api/exports/${item.id}/zip${from}`, download: item.file || "" }).click();
+			}),
 				tonedButton("Copy link", "copy", "blue", copyLink)] : []),
 			...(item.restorable ? [tonedButton("Restore…", "undo", "teal", () => restoreExport(item))] : []),
 			tonedButton("Delete…", "trash", "red", () => deleteExport(item))));
@@ -8474,7 +8487,7 @@ function exportLine(item) {
 async function deleteExport(item) {
 	if (!(await ask({ title: `Delete the export of ${item.site}?`, input: false, danger: true, ok: "Delete",
 		message: `Its zip is deleted, and its link stops working${item.deleted ? `. So is the snapshot Restore puts ${item.site} back from: it cannot be restored after this` : ""}.` }))) return;
-	await api(`/api/exports/${item.id}`, { method: "DELETE" });
+	await api(`/api/exports/${item.id}${item.server ? "?server=" + encodeURIComponent(item.server) : ""}`, { method: "DELETE" });
 	return openExportSettings();
 }
 async function restoreExport(item) {
@@ -8536,14 +8549,20 @@ function askExport(site) {
 		el("p", { className: "hint", textContent: "Its databases are backed up into databases/ in the zip when this server has a connection to their servers; SQLite files are in the environments' own folders." }),
 	];
 	const error = el("p", { className: "error", role: "alert" });
-	const box = el("div", { className: "convert-form" }, ...(built ? [el("div", { className: "ns-section", textContent: "For" }), oses] : []),
+	// Managed from another server: built there, where its project is, and kept there (listed here too). It is deleted
+	// from that server, never with its export from here
+	const managed = site.managed ? el("div", { className: "sync-option action-option prompt-option-note off tone-blue convert-missing" },
+		el("span", { className: "sync-option-icon", ariaHidden: "true" }, svgIcon("server")),
+		el("span", { className: "sync-option-text" }, el("span", { className: "sync-option-title", textContent: `Built on ${site.manager}` }),
+			el("span", { className: "sync-option-sub", textContent: `Its project is there: the export is made and kept on ${site.manager}, and listed here too` }))) : null;
+	const box = el("div", { className: "convert-form" }, ...(managed ? [managed] : []), ...(built ? [el("div", { className: "ns-section", textContent: "For" }), oses] : []),
 		el("div", { className: "ns-section", textContent: "What goes" }), envs,
 		el("div", { className: "ns-section", textContent: "Its link lives, after its first download" }), lifetime,
-		el("div", { className: "ns-section", textContent: "Afterwards" }), remove, warning, databases, ...notes, error);
+		...(managed ? [] : [el("div", { className: "ns-section", textContent: "Afterwards" }), remove, warning, databases, ...notes]), error);
 	openFormDialog({ icon: "download", title: `Export ${site.site}`, text: "For a customer, without VNS Harbor", ok: "Export", fields: [box], submit: async (form) => {
 		const targets = exportable.filter((env) => form.elements["env_" + env.target]?.checked).map((env) => env.target);
 		if (!targets.length) { error.textContent = "Choose what goes."; return false; }
-		const deleting = form.elements.delete_site.checked;
+		const deleting = Boolean(form.elements.delete_site?.checked);
 		if (deleting && !(await ask({ title: `Delete ${site.site} from Harbor?`, danger: true, ok: "Export and delete", match: site.site,
 			message: `${site.site} and every environment of it stop running and are deleted once the export is made. Restore puts it back until the zip is deleted.\nType "${site.site}" to confirm.` }))) return false;
 		const dropping = deleting ? offeredDatabases.filter((item) => form.elements["drop_" + item.database]?.checked).map((item) => item.database) : [];
@@ -8554,13 +8573,14 @@ function askExport(site) {
 	const form = $("#form-dialog");
 	const ready = () => {
 		if (!box.isConnected) return;
-		warning.hidden = !form.elements.delete_site.checked;
-		databases.hidden = !form.elements.delete_site.checked;
-		if (form.elements.delete_site.checked && !databasesRead) {
+		const deleting = Boolean(form.elements.delete_site?.checked);
+		warning.hidden = !deleting;
+		databases.hidden = !deleting;
+		if (deleting && !databasesRead) {
 			databases.replaceChildren(loadingState("Reading its databases…"));
 			readDatabases();
 		}
-		$("#form-dialog-ok").replaceChildren(svgIcon("check"), form.elements.delete_site.checked ? "Export and delete" : "Export");
+		$("#form-dialog-ok").replaceChildren(svgIcon("check"), deleting ? "Export and delete" : "Export");
 		error.textContent = "";
 	};
 	box.addEventListener("change", ready);

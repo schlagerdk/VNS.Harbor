@@ -49,3 +49,23 @@ class ServerPageTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SiteToolsTests(unittest.TestCase):
+    def test_convert_and_export_only_on_a_server_with_sites(self):
+        """Without sites there is nothing to convert or export: the Sites group is not shown. Export Site stays while
+        exports are kept here (one of a site deleted with its export is restored from there)"""
+        from jinja2 import Environment, FileSystemLoader
+        template = Environment(loader=FileSystemLoader(str(ROOT_DIR / "admin/templates"))).get_template("index.html")
+        values = dict(csrf="x", admin_site="admin.example.com", hostname="web-01", user="Admin", start_view="sites", role="admin",
+                      header={"search": True, "addresses": True, "files": True, "terminal": True}, asset_version="1")
+        def shown(tools):
+            page = template.render(**values, site_tools=tools)
+            hidden = lambda ident: re.search(rf'id="{ident}"[^>]*\shidden[\s>]', page) is not None
+            group = re.search(r'<div class="server-nav-group"( hidden)?>Sites</div>', page)
+            return not group[1], not hidden("server-tab-convert"), not hidden("server-tab-export")
+        self.assertEqual(shown({"convert": True, "export": True}), (True, True, True))
+        self.assertEqual(shown({"convert": False, "export": True}), (True, False, True))
+        self.assertEqual(shown({"convert": False, "export": False}), (False, False, False))
+        # An address to a tab that is not shown leads to General
+        self.assertIn('SERVER_TABS.includes(arg) && !$("#server-tab-" + arg)?.hidden ? arg', SOURCE)

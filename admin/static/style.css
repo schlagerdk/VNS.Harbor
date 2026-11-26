@@ -2604,6 +2604,9 @@ dialog.newsite label.sync-option.action-option { flex-direction: row; align-item
 .export-os svg, .export-os-icon svg { width: 18px; height: 18px; }
 .export-text { display: grid; gap: 2px; min-width: 0; }
 .export-text strong { color: var(--text); font-size: 14px; }
+/* One made and kept on the server the site is managed from says so beside its name */
+.export-text strong.export-title { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.export-text strong.export-title .convert-where { font-weight: 500; }
 .export-text small { overflow: hidden; color: var(--muted); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .export-text small.export-countdown { color: #d29922; }
 .export-text small.export-deleted { color: #ff7b72; white-space: normal; }
