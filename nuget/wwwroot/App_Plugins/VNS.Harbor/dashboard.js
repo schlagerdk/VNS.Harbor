@@ -27,6 +27,28 @@ export default class VnsHarborDashboard extends UmbElementMixin(LitElement) {
 		});
 	}
 
+	// The status is asked again when the tab is looked at again, and every half minute while it is: a change saved in
+	// another section (a document type) shows as something to sync without reloading the page. Not while a sync runs.
+	#refresh = () => {
+		if (document.visibilityState === "visible" && this._auth && !this._busy) this.#load();
+	};
+
+	connectedCallback() {
+		super.connectedCallback();
+		document.addEventListener("visibilitychange", this.#refresh);
+		window.addEventListener("focus", this.#refresh);
+		this._timer = setInterval(this.#refresh, 30000);
+		// Opened again from another section: as it is now
+		if (this._auth) this.#load();
+	}
+
+	disconnectedCallback() {
+		document.removeEventListener("visibilitychange", this.#refresh);
+		window.removeEventListener("focus", this.#refresh);
+		clearInterval(this._timer);
+		super.disconnectedCallback();
+	}
+
 	async #call(path, options = {}) {
 		const token = await this._auth.getLatestToken();
 		const response = await fetch(API + path, {

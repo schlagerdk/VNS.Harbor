@@ -135,6 +135,7 @@ const phoneWidth = {matches: false};
 const svgIcon = () => el("svg");
 const unfoldedPackages = new Set();
 const pruneButtons = () => {};
+const showFixPermissions = () => {};
 const canAnywhere = () => true;
 const envKeyOf = env => env.key === "main" ? "main" : env.target || "prod";
 const applyEnvLayout = () => {};

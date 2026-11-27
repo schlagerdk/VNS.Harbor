@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.93] - Unreleased
+
+### Fixes
+
+- Harbor Sync in Umbraco asks again whether there is something to sync when its tab is looked at again, and every half minute while it is: a document type changed in another section showed as up to date until the page was reloaded (VNS.Harbor, the next version after 18.3.3.1).
+
 ## [1.0.92] - 2026-11-27
 
 ### Features
