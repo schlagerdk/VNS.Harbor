@@ -2,6 +2,17 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.95] - Unreleased
+
+### Features
+
+- Settings' menu is grouped by what each part is for: Harbor (General, Top menu, Updates, Admin site), Monitoring (Health, Usage, Notifications), Users (Users, Templates, each a part of its own), Sites, This server, Software and Servers. The arrow keys follow the menu as it is shown.
+- A site or environment past its size limit shows in Needs attention on Web Server for an administrator, with how much it uses of what it may and Change limit… (the server's limit in its dialog, a user's in their window); a database past its limit in the banner on the SQL page. An administrator was not told in the admin at all.
+- Usage shows every environment, how big it is where it runs (this server, another server; not IIS) and its limit; a limit can be set on an environment too, and on a new site or environment as it is made (Size limit in the dialog).
+- Usage: an administrator can set a limit of the server's own on any site or database, whoever's it is (Limit… beside it): past it, it shows in Usage, is mailed with the usage alerts (Notifications), and each user with access to it is warned in the admin as for their own limits.
+- A site given to a user, not only one they made, can have a size limit of its own (the user's window, Size of this site): set, it is theirs in Usage, warned and mailed past it, until it is taken from them, and an administrator's site again. Empty, it has no limit: the size every site of theirs gets holds only for those they made.
+- The admin site's page has no New script… (nor custom scripts): Harbor itself runs there.
+
 ## [1.0.94] - 2026-11-27
 
 ### Features

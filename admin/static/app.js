@@ -1522,6 +1522,12 @@ function siteProblems(site) {
 		found.push({ env, tone: problem.check === "certificate_soon" ? "warn" : "bad", why: `${KEEP_ALIVE_WORDS[problem.check] || problem.check}: ${problem.message}`,
 			since: problem.since, check: problem.check });
 	}
+	// Past a size limit (Usage): the site's, an environment's, or its user's
+	for (const item of currentUser.usage_over || []) {
+		const env = item.kind === "site" && item.name === site.name ? site.environments.find((other) => !isTarget(other))
+			: item.kind === "environment" && item.site === site.name ? site.environments.find((other) => envKeyOf(other) === item.target) : null;
+		if (env) found.push({ env, tone: "warn", check: "usage", usage: item, why: `Uses ${usageSize(item.size_mb)} of the ${usageSize(item.limit_mb)} it may` + (item.user_id ? ` (${item.user}'s limit)` : "") });
+	}
 	for (const env of site.environments) {
 		if (env.state === "failed" && !found.some((item) => item.env === env && item.check === "service")) found.push({ env, tone: "bad", why: "Its service has failed" });
 		if (isMissingEnv(env)) found.push({ env, tone: "bad", why: `Not found on ${env.host || "its server"}` });
@@ -1548,7 +1554,9 @@ function renderSiteAttention(sites) {
 				el("span", { className: "badge env-" + label.toLowerCase(), textContent: label }),
 				el("span", { className: "site-attention-why", textContent: row.why, title: row.why }),
 				...(row.since ? [el("small", { textContent: "since " + formatDate(row.since * 1000) })] : []),
-				tonedButton("Open", "chevron", "blue", open));
+				el("span", { className: "site-attention-actions" },
+					...(row.usage ? [tonedButton("Change limit…", "sliders", "amber", () => changeUsageLimit(row.usage))] : []),
+					tonedButton("Open", "chevron", "blue", open)));
 		}),
 		...(rows.length > 8 ? [el("p", { className: "site-attention-more", textContent: `${rows.length - 8} more: the Problem filter shows the sites` })] : []));
 }
@@ -2331,7 +2339,8 @@ function envPanel(site, env) {
 	// Custom scripts: the main site's, or an environment's own (not on Windows); an administrator has the menu also
 	// without one, to make the first
 	const ownScripts = isTarget(env) ? env.custom_scripts || [] : customScripts(site);
-	if (!missing && env.mode !== "windows" && (ownScripts.length || currentUser.admin)) quick.append(scriptSelect(site, env));
+	// Not on the admin site: Harbor itself runs there, and it has no scripts of its own
+	if (!missing && env.mode !== "windows" && !site.admin && (ownScripts.length || currentUser.admin)) quick.append(scriptSelect(site, env));
 	if (env.mode === "windows") {
 		// web.config is the IIS site's config, appsettings.json its application settings
 		const tools = actionRow("Config");
@@ -3669,15 +3678,18 @@ function showUsageBanner() {
 	const part = location.hash.startsWith("#sql") ? "sql" : location.hash.startsWith("#server") ? "server"
 		: document.body.dataset.view || (location.hash.length > 1 ? "sites" : document.querySelector("meta[name=start-view]")?.content || "sites");
 	const kind = part === "sql" ? "database" : part === "server" ? null : "site";
-	const over = (currentUser.usage_over || []).filter((item) => item.kind === kind);
+	// An environment is told with the sites
+	// An administrator has the sites' and environments' in Needs attention on Web Server; the databases here as everyone
+	const over = (currentUser.usage_over || []).filter((item) => item.kind === kind || (kind === "site" && item.kind === "environment"))
+		.filter((item) => !(currentUser.admin && item.kind !== "database"));
 	const banner = $("#usage-banner");
 	banner.hidden = !over.length;
 	if (!over.length) return banner.replaceChildren();
-	const what = (item) => `${item.kind === "site" ? "Site" : "Database"} ${item.name} uses ${usageSize(item.size_mb)} of the ${usageSize(item.limit_mb)} it may`;
+	const what = (item) => `${item.kind === "site" ? "Site" : item.kind === "environment" ? "Environment" : "Database"} ${item.name} uses ${usageSize(item.size_mb)} of the ${usageSize(item.limit_mb)} it may`;
 	banner.replaceChildren(
 		el("span", { className: "usage-banner-icon" }, svgIcon("alert")),
 		el("div", { className: "usage-banner-text" },
-			el("strong", { textContent: over.length === 1 ? `A ${kind} over your limit` : `${over.length} ${kind}s over your limits` }),
+			el("strong", { textContent: over.length === 1 ? `A ${kind} over its limit` : `${over.length} ${kind}s over their limits` }),
 			el("span", { textContent: over.map(what).join(" · ") + ". Make room, or ask an administrator for more." })),
 		tonedButton("See usage", "archive", "red", () => showUsage("/api/usage/mine", "Your usage")));
 }
@@ -3903,13 +3915,30 @@ $("#setup-site-dns").replaceChildren(dnsCard($("#form-setup-site").binding, { on
 // The binding's message is about the certificate choice as well: any change clears it, or the browser keeps
 // refusing the form before it is checked again
 for (const type of ["input", "change"]) siteForm.addEventListener(type, () => siteForm.binding.setCustomValidity(""));
-$("#btn-new-site").onclick = () => { siteForm.reset(); siteForm.elements.template.setCustomValidity(""); siteForm.binding.setCustomValidity(""); delete siteForm.binding.dataset.edited; delete siteForm.elements.publish.dataset.edited; tempDomain = null; showTempDomains(); syncSiteForm(); dialog.showModal(); siteForm.site.focus(); };
+$("#btn-new-site").onclick = () => { siteForm.reset(); siteForm.elements.template.setCustomValidity(""); siteForm.binding.setCustomValidity(""); delete siteForm.binding.dataset.edited; delete siteForm.elements.publish.dataset.edited; tempDomain = null; showTempDomains(); syncSiteForm(); limitFieldIn(siteForm, "Size limit of the site"); dialog.showModal(); siteForm.site.focus(); };
 $("#btn-new-site").addEventListener("click", () => {
 	siteHttps.reset();
 	siteDnsState = "empty";
 	showTempChoice();
 });
 $("#btn-empty-new-site").onclick = () => $("#btn-new-site").click();
+// A size limit of the server's own, optional, when a site or an environment is made: past it, Usage tells and mails it
+// (an administrator's alone). Put above the form's buttons once; empty each time the dialog opens.
+function limitFieldIn(form, label) {
+	let holder = form.querySelector(".create-limit");
+	if (!holder) {
+		holder = el("div", { className: "create-limit user-limits" });
+		form.querySelector(":scope > menu").before(holder);
+	}
+	const field = sizeField(label, null, "No limit", "MB");
+	holder.replaceChildren(field, el("p", { className: "hint", textContent: "Optional. Past it, Usage tells, and it is mailed with the usage alerts. Changed later under Settings, Usage." }));
+	holder.hidden = !currentUser.admin;
+	form.limitField = field;
+}
+async function saveCreatedLimit(kind, name, target, limit) {
+	if (limit == null || !currentUser.admin) return;
+	await api("/api/usage/limit", { method: "PUT", json: { kind, name, connection: target || "", limit_mb: limit } });
+}
 $("#site-cancel").onclick = (e) => { e.preventDefault(); dialog.close(); };
 siteForm.onsubmit = (event) => {
 	event.preventDefault();
@@ -3928,6 +3957,7 @@ siteForm.onsubmit = (event) => {
 			field.value = name ? match?.short_name || "umbraco" : "";
 		}
 		const data = formValues(siteForm);
+		for (const key of Object.keys(data)) if (key.startsWith("size_unit_")) delete data[key];
 		// No binding: the site answers any name no other site has, with this server's own name as its binding
 		data.binding = data.binding.trim() || "*";
 		if (data.type === "csharp" && data.template?.toLowerCase() === "umbraco" && !data.version?.trim()) {
@@ -3936,15 +3966,18 @@ siteForm.onsubmit = (event) => {
 		if (data.type === "csharp" && data.external) {
 			// Made and running now from an empty project's build; the script to publish to it is shown when it is done
 			data.kind = "create_site";
+			const limit = siteForm.limitField?.read();
 			const t = await openTask(data);
 			dialog.close();
 			const options = { site: data.site.trim(), binding: data.binding, https: data.certificate === "y" ? "y" : "n", environment: data.environment || "Production" };
-			if (t) t.afterTask = () => { if (t.taskState !== "failed") showLocalPublish(options); };
+			if (t) t.afterTask = () => { if (t.taskState !== "failed") { showLocalPublish(options); run(() => saveCreatedLimit("site", options.site, "", limit)); } };
 			return;
 		}
 		data.kind = "create_site";
-		await openTask(data);
+		const limit = siteForm.limitField?.read();
+		const t = await openTask(data);
 		dialog.close();
+		if (t && limit != null) t.afterTask = () => { if (t.taskState !== "failed") return run(() => saveCreatedLimit("site", data.site.trim(), "", limit)); };
 	});
 };
 
@@ -4423,6 +4456,9 @@ function openCreateProdDialog(site, moveEnv, copying = false) {
 	if (!moveEnv) applyProdSuggestion();
 	syncProdForm();
 	prodForm.dataset.site = site.name;
+	// A new environment can have a limit of its own; one moved keeps its own (Settings, Usage)
+	limitFieldIn(prodForm, "Size limit of the environment");
+	prodForm.querySelector(".create-limit").hidden = !currentUser.admin || Boolean(moveEnv && !copying);
 	prodDialog.showModal();
 	// The dialog opens without a card in focus, so only the chosen one is marked
 	document.activeElement?.blur();
@@ -4525,10 +4561,20 @@ prodForm.onsubmit = (event) => {
 	}
 	for (const key of ["conn_server", "conn_database", "conn_username", "conn_password", "change_connection", "remove_here", "https_card"]) delete data[key];
 	data.site = prodForm.dataset.site;
+	const limit = prodForm.dataset.moveTarget ? null : prodForm.limitField?.read();
+	const before = new Set((allSites.find((item) => item.name === data.site)?.environments || []).filter(isTarget).map(envKeyOf));
+	for (const key of Object.keys(data)) if (key.startsWith("size_unit_")) delete data[key];
 	run(async () => {
-		await openTask(data);
+		const t = await openTask(data);
 		prodForm.reset();
 		prodDialog.close();
+		// Its limit once it is there: the environment the site did not have before (a copy too)
+		if (t && limit != null) t.afterTask = () => run(async () => {
+			if (t.taskState === "failed") return;
+			await loadSites();
+			const made = (allSites.find((item) => item.name === data.site)?.environments || []).filter(isTarget).map(envKeyOf).find((key) => !before.has(key));
+			if (made) await saveCreatedLimit("environment", data.site, made, limit);
+		});
 	});
 };
 
@@ -9628,8 +9674,10 @@ async function openUsageSettings() {
 			openUserEditor(user);
 			focusUserLimit(target);
 		};
-		const meter = (item, open, target) => usageMeter(item.name, item.size_mb, item.limit_mb,
-			(item.limit_mb == null ? usageSize(item.size_mb) : `${usageSize(item.size_mb)} of ${usageSize(item.limit_mb)}`), item.user, open,
+		// The limit it is measured against: its user's, else the server's own (set here)
+		const limitOf = (item) => item.limit_mb ?? item.server_limit_mb ?? null;
+		const meter = (item, open, target) => usageMeter(item.name, item.size_mb, limitOf(item),
+			(limitOf(item) == null ? usageSize(item.size_mb) : `${usageSize(item.size_mb)} of ${usageSize(limitOf(item))}`), item.user, open,
 			item.user_id ? openUser(item.user_id, target) : null);
 		// A part: its total, a stripe of what each takes of it (in its kind's colour), and a line each with its share
 		const section = (icon, title, items, empty, open, target) => {
@@ -9672,6 +9720,12 @@ async function openUsageSettings() {
 					// The size, its share of the part under it; without a limit, a stripe of that share in its colour
 					const size = line.querySelector(".usage-meter-head > span");
 					size.replaceWith(el("span", { className: "usage-size" }, el("strong", { textContent: size.textContent }), el("small", { textContent: shareText(item) })));
+					// The server's own limit on it, whoever's it is: a link that sets it
+					const limitTarget = target(item);
+					line.querySelector(".usage-meter-head strong")?.append(el("button", { type: "button", className: "usage-limit-link" + (item.server_limit_mb ? " set" : ""),
+						title: "A limit of the server's own: past it, it shows here and is mailed with the usage alerts",
+						onclick: () => run(() => askUsageLimit(limitTarget.site ? "site" : "database", item.name, limitTarget.connection || "", item.server_limit_mb)) },
+						svgIcon("sliders"), item.server_limit_mb ? `Limit ${usageSize(item.server_limit_mb)}` : "Limit…"));
 					if (!line.querySelector(".usage-bar")) line.append(el("div", { className: "usage-share-bar" }, el("span", { style: `width: ${Math.max(share(item), item.size_mb ? 1 : 0)}%` })));
 					return line;
 				}) : [el("p", { className: "muted usage-none", textContent: empty })]));
@@ -9683,6 +9737,34 @@ async function openUsageSettings() {
 			if ($("#sql-connection").querySelector(`option[value="${CSS.escape(connection.id)}"]`)) $("#sql-connection").value = connection.id;
 			go("#sql");
 		};
+		// Every environment, measured where it runs (here, another server; IIS cannot be), with the server's limit to set
+		const environmentsPart = (all.environments || []).length ? [(() => {
+			const items = all.environments;
+			const measured = items.filter((item) => item.size_mb != null);
+			const total = usageSize(Math.round(measured.reduce((sum, item) => sum + item.size_mb, 0) * 10) / 10);
+			return el("section", { className: "tool-card tool-card-wide usage-overview" },
+				el("div", { className: "usage-section-head" }, el("span", { className: "usage-section-icon" }, svgIcon("server")),
+					el("div", { className: "usage-section-title" }, el("strong", { textContent: "Environments" }),
+						el("small", { textContent: `${items.length} ${items.length === 1 ? "environment" : "environments"}, measured where each runs` })),
+					el("span", { className: "usage-total", textContent: measured.length ? total : "" })),
+				...items.map((item) => {
+					const env = allSites.find((site) => site.name === item.site)?.environments.find((other) => envKeyOf(other) === item.target);
+					const label = item.binding || item.folder || `${item.site} (${item.target})`;
+					const where = item.windows ? "Windows" : item.local ? "this server" : env?.host || "another server";
+					const limit = item.server_limit_mb ?? null;
+					const line = usageMeter(label, item.size_mb ?? 0, limit,
+						item.size_mb == null ? (item.windows ? "Not measured on IIS" : "Not reached now") : limit == null ? usageSize(item.size_mb) : `${usageSize(item.size_mb)} of ${usageSize(limit)}`,
+						undefined, () => { siteEnvFocus = { site: item.site, env: item.target }; go(siteLink(item.site)); });
+					const name = line.querySelector(".usage-meter-head strong");
+					name?.append(el("span", { className: "badge usage-kind env-" + String(item.environment || "").toLowerCase(), textContent: item.environment || item.target }),
+						el("small", { className: "usage-owner none", textContent: where }));
+					if (!item.windows) name?.append(el("button", { type: "button", className: "usage-limit-link" + (limit ? " set" : ""),
+						title: "A limit of the server's own: past it, it shows here and is mailed with the usage alerts",
+						onclick: () => run(() => askUsageLimit("environment", item.site, item.target, limit, label)) },
+						svgIcon("sliders"), limit ? `Limit ${usageSize(limit)}` : "Limit…"));
+					return line;
+				}));
+		})()] : [];
 		measuring.replaceWith(section("globe", "Sites", all.sites, "No sites on this server yet.", (item) => go(siteLink(item.name)), (item) => ({ site: item.name })),
 			// A connection with no databases of its own (or none that answered) has nothing to show; each says its engine
 			...all.connections.filter((connection) => connection.databases.length).map((connection) => {
@@ -9692,12 +9774,46 @@ async function openUsageSettings() {
 				const name = part.querySelector(".usage-section-title strong");
 				if (name) name.replaceWith(el("span", { className: "usage-title-row" }, name.cloneNode(true), engineBadge(connection)));
 				return part;
-			}));
+			}), ...environmentsPart);
 	} catch (error) {
 		measuring.replaceChildren(el("p", { className: "error", textContent: error.message }));
 	} finally {
 		list.removeAttribute("aria-busy");
 	}
+}
+
+// The limit something is past, from Needs attention: the server's own in its dialog, a user's in their window at it
+async function changeUsageLimit(item) {
+	if (item.user_id) {
+		usersData = usersData || await api("/api/users");
+		const user = usersData.users.find((other) => other.id === item.user_id);
+		if (!user) throw new Error("That user is gone.");
+		openUserEditor(user);
+		focusUserLimit(item.kind === "database" ? { connection: item.connection, database: item.name } : { site: item.name });
+		return;
+	}
+	if (item.kind === "environment") return askUsageLimit("environment", item.site, item.target, item.limit_mb, item.name);
+	return askUsageLimit(item.kind, item.name, item.connection || "", item.limit_mb);
+}
+
+// The server's own limit on a site or a database: its size, or none
+function askUsageLimit(kind, name, connection, current, shown = name) {
+	const field = sizeField(`Size of this ${kind}`, current ?? null, "No limit", current != null && current % 1024 !== 0 ? "MB" : "GB");
+	openFormDialog({ icon: "sliders", title: `Limit of ${shown}`, ok: "Save",
+		text: "A limit of the server's own, whoever's it is: past it, it shows in Usage and is mailed with the usage alerts (Notifications). Empty: no limit.",
+		fields: [el("div", { className: "user-limits" }, field)],
+		submit: async () => {
+			await api("/api/usage/limit", { method: "PUT", json: { kind, name, connection, limit_mb: field.read() } });
+			toast(field.read() == null ? `${shown} has no limit of the server's now.` : `${shown} may use ${usageSize(field.read())}.`, "ok");
+			// Not over any more at once, where it shows: Needs attention and the banners (the check runs again behind it)
+			const limit = field.read();
+			const key = kind === "site" ? `limit|site|${name}` : kind === "environment" ? `limit|environment|${name}|${connection}` : `limit|database|${connection}|${name}`;
+			currentUser.usage_over = (currentUser.usage_over || []).flatMap((item) => item.key !== key ? [item]
+				: limit == null || item.size_mb <= limit ? [] : [{ ...item, limit_mb: limit }]);
+			if (sitesLoaded) renderSites();
+			showUsageBanner();
+			if (serverTabOpen("usage")) await openUsageSettings();
+		} });
 }
 
 async function showKeepAliveLog() {
@@ -11399,13 +11515,16 @@ function siteGrantRow(name, envKeys, grant, user = null) {
 			...(envKeys.length > 1 ? [el("label", { className: "grant-chip later", title: "Environments added to the site later are given too" }, newEnvs, el("span", { textContent: "Environments added later" }))] : [])),
 		el("div", { className: "grant-label", textContent: "May" }),
 		el("div", { className: "grant-chips" }, ...actionBoxes));
-	// A site they made: its own size, bigger or smaller than every site's; empty, the default set above
+	// Its size: a site they made, bigger or smaller than every site's (empty, the default set above); a site they were
+	// given (an administrator's, lent them a while), only when one is set (empty, no limit): set, it is theirs in Usage
+	// until it is taken from them
 	const made = (user?.made?.sites || []).includes(name);
-	const size = made ? sizeField("Size of this site", grant?.size_mb ?? null, siteSizeDefault(), siteSizeUnit()) : null;
-	if (size) {
-		size.classList.add("site-size-own");
-		body.append(el("div", { className: "user-limits grant-limits site-size-limit" }, size));
-	}
+	const size = sizeField("Size of this site", grant?.size_mb ?? null, made ? siteSizeDefault() : "No limit", siteSizeUnit());
+	size.classList.add("site-size-own");
+	// Only a site they made follows the size every site of theirs gets
+	if (made) size.classList.add("site-size-made");
+	body.append(el("div", { className: "user-limits grant-limits site-size-limit" }, size,
+		...(made ? [] : [el("p", { className: "hint", textContent: "Empty: no limit. Set, the site counts as theirs in Usage, with a warning and a mail past it, until it is taken from them." })])));
 	const row = el("div", { className: "grant-site" },
 		el("div", { className: "grant-head" }, el("label", {}, whole, el("strong", { textContent: site ? siteLabel(site) : name })),
 			el("span", { className: "muted", textContent: envKeys.length > 1 ? `${envKeys.length - 1} environment${envKeys.length === 2 ? "" : "s"}` : "" }), toggle),
@@ -11544,7 +11663,7 @@ userForm.create_sites.addEventListener("change", showUserLimits);
 // The sites' own size fields name the default as it is typed above
 for (const name of ["limit_site_size", "limit_site_unit"]) userForm.addEventListener("input", (event) => {
 	if (event.target.name !== name) return;
-	for (const row of $("#user-sites").children) row.sizeField?.setDefault(siteSizeDefault(), siteSizeUnit());
+	for (const row of $("#user-sites").children) if (row.sizeField?.classList.contains("site-size-made")) row.sizeField.setDefault(siteSizeDefault(), siteSizeUnit());
 });
 let limitFieldsMade = 0;
 // A size in MB or GB, as the limits' fields: empty is none (or the default its placeholder names). read() gives MB.
@@ -11937,7 +12056,7 @@ $("#audit-clear").onclick = () => run(async () => {
 // Each tool is a part of its own in the side menu; they share one pane, drawn from one look at the server
 // SSH and Samba are one part, Access: how the server itself is reached
 const TOOL_TABS = ["sql", "dotnet", "node", "access"];
-const SERVER_TABS = [...TOOL_TABS, "apache", "jobs", "convert", "export", "settings", "notifications", "health", "servers", "users", "usage", "windows", "updates", "menu"];
+const SERVER_TABS = [...TOOL_TABS, "apache", "jobs", "convert", "export", "settings", "notifications", "health", "servers", "users", "templates", "usage", "windows", "updates", "menu"];
 const TOOL_OF_CARD = { "Microsoft SQL Server": "sql", "Microsoft SQL Server tools": "sql", "sa password": "sql", PostgreSQL: "sql", "PostgreSQL tools": "sql", "postgres password": "sql", Backups: "sql", "Node.js": "node", SSH: "access", Samba: "access" };
 // Settings opens on General: what most often is looked for
 let serverTab = "settings";
@@ -11951,7 +12070,7 @@ async function showServerTab(tab) {
 		$("#server-tab-" + name).setAttribute("aria-selected", String(name === tab));
 		$("#server-tab-" + name).classList.toggle("active", name === tab);
 	}
-	for (const pane of ["tools", "apache", "jobs", "convert", "export", "settings", "notifications", "health", "servers", "users", "usage", "windows", "updates", "menu"]) $("#server-pane-" + pane).hidden = pane !== paneOf(tab);
+	for (const pane of ["tools", "apache", "jobs", "convert", "export", "settings", "notifications", "health", "servers", "users", "templates", "usage", "windows", "updates", "menu"]) $("#server-pane-" + pane).hidden = pane !== paneOf(tab);
 	// The admin site's page, when it was open here, is not
 	$("#server-pane-admin").hidden = true;
 	$("#server-tab-admin").classList.remove("active");
@@ -11965,7 +12084,7 @@ async function showServerTab(tab) {
 		// Another tool is shown from what was read already; Refresh, or coming from another part, reads again
 		if (toolsDrawn && before === "tools") return;
 	}
-	await run({ tools: openServerTools, jobs: openCrontab, convert: openConvertSettings, export: openExportSettings, servers: openServers, users: openUsers, usage: openUsageSettings, settings: openServerSettings, notifications: openNotifications, health: openHealth, menu: openMenuSettings, apache: openApacheSettings, windows: openWindowsSettings, updates: openUpdatesSettings }[paneOf(tab)]);
+	await run({ tools: openServerTools, jobs: openCrontab, convert: openConvertSettings, export: openExportSettings, servers: openServers, users: openUsers, templates: openUsers, usage: openUsageSettings, settings: openServerSettings, notifications: openNotifications, health: openHealth, menu: openMenuSettings, apache: openApacheSettings, windows: openWindowsSettings, updates: openUpdatesSettings }[paneOf(tab)]);
 }
 function showToolCards() {
 	// Access is two columns (SSH and Samba, then its shares and users); the other tools three
@@ -11983,7 +12102,9 @@ $(".server-nav").addEventListener("keydown", (event) => {
 	const step = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 }[event.key];
 	if (!step) return;
 	event.preventDefault();
-	const next = SERVER_TABS[(SERVER_TABS.indexOf(serverTab) + step + SERVER_TABS.length) % SERVER_TABS.length];
+	// In the order the menu shows them, the parts hidden here left out
+	const shown = [...$(".server-nav").querySelectorAll("[data-tab]")].map((item) => item.dataset.tab).filter((tab) => SERVER_TABS.includes(tab) && !$("#server-tab-" + tab).hidden);
+	const next = shown[(shown.indexOf(serverTab) + step + shown.length) % shown.length];
 	go("#server/" + next);
 	$("#server-tab-" + next).focus();
 });

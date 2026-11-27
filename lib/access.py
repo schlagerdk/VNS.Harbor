@@ -451,7 +451,8 @@ def clean(data, existing=None, sites=None, connections=None):
         actions = site_actions(grant.get("actions", []))
         if envs:
             entry = {"envs": envs, "new_envs": bool(grant.get("new_envs")), "actions": actions}
-            # A site they made can have its own size limit, in place of the one their limits give every site
+            # A site can have its own size limit: one they made in place of the one their limits give every site, one
+            # they were given (an administrator's) as theirs in Usage while they have it
             size = clean_limits({"site_mb": grant.get("size_mb")}, ("site_mb",)).get("site_mb")
             if size is not None:
                 entry["size_mb"] = size

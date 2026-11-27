@@ -974,7 +974,6 @@ a.btn-link .ico { width: 13px; height: 13px; flex: none; }
 #dlg-user .template-rules .grant-body { padding: 12px 14px 14px; }
 #dlg-user #template-name-field { margin-bottom: 4px; }
 /* The templates under the users, as a list of their own */
-.server-pane-head.templates-head { margin-top: 32px; }
 .user-template button:hover:not(:where(:disabled, .disabled, .off)) { background: rgba(255, 255, 255, .05); }
 .sql-tables-locked .ico { width: 12px; height: 12px; margin: 0; }
 .sql-table-actions { opacity: 1; }
@@ -3326,12 +3325,13 @@ dialog.newsite .convert-form .hint { margin: 4px 0 16px; }
 .site-attention-site, .site-attention-why { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .site-attention-row .badge { justify-self: start; font-size: 10px; }
 .site-attention-row small { color: var(--muted); white-space: nowrap; }
+.site-attention-actions { display: flex; justify-content: flex-end; gap: 6px; }
 .site-attention-row button { padding: 4px 11px; font-size: 12.5px; }
 .site-attention-more { margin: 0; padding: 8px 14px; color: var(--muted); font-size: 12px; }
 @media (max-width: 700px) {
 	.site-attention-row { grid-template-columns: 10px minmax(0, 1fr) auto auto; row-gap: 4px; }
 	.site-attention-row .badge { grid-row: 1; grid-column: 3; }
-	.site-attention-row button { grid-row: 1; grid-column: 4; }
+	.site-attention-actions { grid-row: 1; grid-column: 4; }
 	.site-attention-why { grid-column: 2 / -1; white-space: normal; }
 	.site-attention-row small { grid-column: 2 / -1; }
 }
@@ -3357,3 +3357,9 @@ button.meta-action:hover:not(:where(:disabled, .disabled, .off)), button.meta-ac
 .configtest-lines .ok { color: var(--green); } .configtest-lines .warn { color: #e3b341; } .configtest-lines .bad { color: #ff7b72; }
 /* A row whose only button waits for its check (Fix permissions) is not shown meanwhile */
 .env .actions.only-hidden { display: none; }
+/* Usage: the server's own limit on a site or database, a small link beside its name */
+.usage-limit-link { display: inline-flex; align-items: center; gap: 5px; margin-left: 8px; padding: 1px 8px; border: 1px dashed var(--line); border-radius: 999px;
+	background: none; color: var(--muted); font-size: 11.5px; font-weight: 600; vertical-align: middle; }
+.usage-limit-link .ico { width: 12px; height: 12px; margin: 0; }
+.usage-limit-link.set { border-style: solid; border-color: rgba(210, 153, 34, .45); color: #e3b341; background: rgba(210, 153, 34, .08); }
+.usage-limit-link:hover:not(:where(:disabled, .disabled, .off)) { border-color: var(--muted); color: var(--text); background: none; }

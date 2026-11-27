@@ -413,6 +413,22 @@ def _server_os_update(args, system):
     os_update(system, args.scope)
 
 
+def _env_size(args, system):
+    import json
+    from harbor.core.templates import Site
+    from harbor.environments.settings import environment_size
+    if args.site == "all":
+        from harbor.environments.settings import environment_sizes
+        print(json.dumps(environment_sizes(system)))
+        return
+    try:
+        size = environment_size(system, Site(args.site).site_root, args.target)
+    except Exception as error:  # noqa: BLE001  (an environment not reached says so)
+        print(json.dumps({"size_mb": None, "error": str(error)}))
+        return
+    print(json.dumps({"size_mb": size}))
+
+
 def _env_import_off(args, system):
     from harbor.environments.data import import_at_startup_off
     import_at_startup_off(system, args.site or None)
@@ -1137,6 +1153,11 @@ def parser():
     # --dry-run, or anything else, which is refused as the script refused it
     command.add_argument("option", nargs=argparse.REMAINDER, help="--dry-run")
     command.set_defaults(handler=_data_sync)
+    command = environment.add_parser("size", help="how big an environment's folder is now, in MB (here or on its server), as JSON; "
+                                     "all: every environment of every site, measured several at once")
+    command.add_argument("site")
+    command.add_argument("target", nargs="?", default="")
+    command.set_defaults(handler=_env_size)
     command = environment.add_parser("import-at-startup-off", help="uSync's ImportAtStartup None on every Umbraco site here and its "
                                      "environments, without a restart (Harbor has uSync import what it syncs or publishes); once")
     command.add_argument("site", nargs="*", help="only these sites, and again even when it was done")

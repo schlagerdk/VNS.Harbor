@@ -212,7 +212,8 @@ def api_usage():
     if request.method == "PUT":
         try:
             settings = _usage.validate_settings(request.get_json(silent=True))
-            _usage.write_json(os.path.join(DATA, "usage.json"), settings)
+            # The server's own limits stay as they are
+            _usage.write_json(os.path.join(DATA, "usage.json"), {**settings, "limits": _usage.load_limits(DATA)})
             sync_usage_job()
         except ValueError as exc:
             return error(str(exc))
@@ -226,6 +227,24 @@ def api_usage():
                    mail_error=state.get("mail_error"), mail=bool(_keep_alive_module.report.load_mail().get("host")))
 
 
+@app.route("/api/usage/limit", methods=["PUT"])
+def api_usage_limit():
+    """The server's own limit on a site or a database, whoever's it is: its size in MB, or none (limit_mb null). Past
+    it, it shows in Usage and is mailed with the usage alerts. Checked at once."""
+    require_admin()
+    data = request.get_json(silent=True) or {}
+    try:
+        _usage.set_limit(DATA, data.get("kind"), data.get("name"), data.get("connection") or "", data.get("limit_mb"))
+        sync_usage_job(check_now=True)
+    except ValueError as exc:
+        return error(str(exc))
+    except (OSError, subprocess.SubprocessError):
+        app.logger.exception("Could not save the limit")
+        return error("The limit could not be saved. Inspect the admin app log.", 500)
+    audit(f"Set the limit of {data.get('kind')} {data.get('name')}")
+    return jsonify(limits=_usage.load_limits(DATA))
+
+
 def sync_usage_job(check_now=False):
     """The hourly usage check, while the alerts are on or a user has a size limit (lib/usage.py --sync). check_now: a
     check at once as well, in the background, so a limit just changed shows (and is mailed) without waiting the hour"""
@@ -237,12 +256,24 @@ def sync_usage_job(check_now=False):
 
 
 def usage_over(user):
-    """What of the user's is over its limit at the last check: for the warning they are shown"""
-    if access.is_admin(user):
-        return []
+    """What of the user's is over its limit at the last check: for the warning they are shown. An administrator is
+    shown all of it (Needs attention on Web Server, the banner on the SQL page)"""
     state = _keep_alive_module.report.read_json(Path(DATA) / "usage-state.json", {})
     opened = state.get("open") if isinstance(state.get("open"), dict) else {}
-    return [item for item in opened.values() if isinstance(item, dict) and item.get("user_id") == user.get("id")]
+    if access.is_admin(user):
+        return [item for item in opened.values() if isinstance(item, dict)]
+    def theirs(item):
+        if item.get("user_id") == user.get("id"):
+            return True
+        # Past the server's own limit (an administrator's): told to each user who has the site or database too
+        if str(item.get("key", "")).startswith("limit|"):
+            if item.get("kind") == "site":
+                return access.site_access(user, item.get("name")) is not None
+            if item.get("kind") == "environment":
+                return access.sees_env(user, item.get("site"), item.get("target"))
+            return access.can_sql(user, item.get("connection"), item.get("name"), "view")
+        return False
+    return [item for item in opened.values() if isinstance(item, dict) and theirs(item)]
 
 
 def user_usage(user):

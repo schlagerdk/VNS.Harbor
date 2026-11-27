@@ -122,6 +122,63 @@ class UsageCheckTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             usage.test_report(self.data, ["not an address"], **self.measure())
 
+    def test_a_site_given_with_a_size_of_its_own_is_theirs_while_they_have_it(self):
+        """An administrator's site lent a user with a size (1.0.94): theirs in Usage, warned and mailed past it; without
+        one, or once taken from them, the administrator's again; their default never falls on a site they were given"""
+        config = json.loads((self.data / "config.json").read_text())
+        anna = config["users"][0]
+        anna["sites"] = {"lent.dk": {"envs": ["main"], "actions": ["logs"], "size_mb": 50}, "other.dk": {"envs": ["main"], "actions": ["logs"]}}
+        (self.data / "config.json").write_text(json.dumps(config))
+        self.sites.update({"lent.dk": 80.0, "other.dk": 500.0})
+        over = usage.check(self.data, **self.measure())
+        self.assertIn(("site", "lent.dk", "Anna", 50), [(item["kind"], item["name"], item["user"], item["limit_mb"]) for item in over])
+        self.assertNotIn("other.dk", [item["name"] for item in over], "her 100 MB for every site of hers is not put on it")
+        self.assertTrue(usage.needed(self.data))
+        shown = usage.overview(self.data, ["lent.dk", "other.dk"], {}, measure_site=lambda site: self.sites.get(site), measure_databases=lambda *a, **k: {})
+        self.assertEqual(sorted((item["name"], item["user"] or "") for item in shown["sites"]), [("lent.dk", "Anna"), ("other.dk", "")])
+        del anna["sites"]["lent.dk"]
+        (self.data / "config.json").write_text(json.dumps(config))
+        self.assertNotIn("lent.dk", [item["name"] for item in usage.check(self.data, **self.measure())])
+
+    def test_an_administrator_limits_any_site_or_database_whoever_s_it_is(self):
+        """The server's own limits (1.0.94): past one, it is over and mailed with the usage alerts; kept when the alerts'
+        recipients are saved; taken away, nothing is over"""
+        usage.set_limit(self.data, "site", "free.dk", limit_mb=1000)
+        usage.set_limit(self.data, "database", "Tiny", "c1", 2)
+        over = {(item["kind"], item["name"]): item for item in usage.check(self.data, **self.measure()) if item["key"].startswith("limit|")}
+        self.assertEqual(set(over), {("site", "free.dk"), ("database", "Tiny")})
+        self.assertEqual(over[("site", "free.dk")]["limit_mb"], 1000)
+        self.assertTrue(usage.needed(self.data))
+        shown = usage.overview(self.data, ["free.dk"], {}, measure_site=lambda site: self.sites.get(site), measure_databases=lambda *a, **k: {})
+        self.assertEqual(shown["sites"][0]["server_limit_mb"], 1000)
+        html = usage.mail_html([over[("site", "free.dk")]], [], host="web-01", now=1)
+        self.assertIn("The server&#x27;s own limit", html)
+        # Raised or taken away: not over any more at once, before the next check (1.0.94)
+        (self.data / "usage-state.json").write_text(json.dumps({"open": {"limit|site|free.dk": {**over[("site", "free.dk")]}}}))
+        usage.set_limit(self.data, "site", "free.dk", limit_mb=20000)
+        self.assertEqual(json.loads((self.data / "usage-state.json").read_text())["open"], {})
+        usage.set_limit(self.data, "site", "free.dk", limit_mb=None)
+        self.assertNotIn(("site", "free.dk"), {(item["kind"], item["name"]) for item in usage.check(self.data, **self.measure())})
+        with self.assertRaises(ValueError):
+            usage.set_limit(self.data, "site", "../x", limit_mb=5)
+
+    def test_an_environment_has_a_limit_measured_where_it_runs(self):
+        """A limit on an environment (1.0.94): measured where it runs, here or on its server; every environment shows in
+        Usage with its size and the limit on it"""
+        usage.set_limit(self.data, "environment", "shop.dk", "production", 200)
+        over = usage.check(self.data, **self.measure(), measure_environment=lambda site, target: 250.0)
+        found = [item for item in over if item["kind"] == "environment"]
+        self.assertEqual([(item["site"], item["target"], item["limit_mb"]) for item in found], [("shop.dk", "production", 200)])
+        self.assertEqual(usage.check(self.data, **self.measure(), measure_environment=lambda site, target: None)
+                         and [item for item in usage.check(self.data, **self.measure(), measure_environment=lambda site, target: None) if item["kind"] == "environment"], [],
+                         "not reached: not over")
+        shown = usage.overview(self.data, [], {}, measure_site=lambda site: None, measure_databases=lambda *a, **k: {},
+                               measure_environments=lambda: [{"site": "shop.dk", "target": "production", "size_mb": 250.0},
+                                                             {"site": "shop.dk", "target": "test", "size_mb": 10.0}])
+        self.assertEqual([(item["target"], item["server_limit_mb"]) for item in shown["environments"]], [("production", 200), ("test", None)])
+        with self.assertRaises(ValueError):
+            usage.set_limit(self.data, "environment", "shop.dk", "../x", 5)
+
     def test_a_mail_that_fails_is_tried_again_and_off_mails_nothing(self):
         (self.data / "usage.json").write_text(json.dumps({"enabled": True, "emails": ["ops@example.com"]}))
         with patch.object(usage.report, "send", side_effect=OSError("refused")), patch.object(usage.report, "load_mail", return_value={}):
@@ -194,7 +251,9 @@ class UsageCheckTests(unittest.TestCase):
         over = usage.check(self.data, **self.measure())
         self.assertEqual([(item["name"], item["limit_mb"]) for item in over if item["kind"] == "site"], [("small.dk", 10)])
         self.assertEqual(usage.site_limit(config["users"][0], "big.dk"), 500)
-        self.assertEqual(usage.site_limit(config["users"][0], "other.dk"), 100)
+        # Every site gets the default only when they made it: one they were only given has none unless it is set (1.0.94)
+        self.assertIsNone(usage.site_limit(config["users"][0], "other.dk"))
+        self.assertEqual(usage.site_limit({**config["users"][0], "made": {"sites": ["other.dk"]}}, "other.dk"), 100)
         cleaned = access.clean({"username": "anna", "role": "user", "web": True, "sites": {"shop.dk": {"envs": ["main"], "actions": [], "size_mb": 2048}}},
                                sites={"shop.dk": ["main"]})
         self.assertEqual(cleaned["sites"]["shop.dk"]["size_mb"], 2048)

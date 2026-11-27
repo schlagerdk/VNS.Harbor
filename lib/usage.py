@@ -45,6 +45,51 @@ def load_settings(data_dir):
     return {"enabled": saved.get("enabled") is True, "emails": [item for item in saved.get("emails", []) if isinstance(item, str)]}
 
 
+def load_limits(data_dir):
+    """The server's own limits, set by an administrator on a site or a database whoever's it is (1.0.94):
+    {"site|<site>": mb, "database|<connection>|<name>": mb}"""
+    saved = report.read_json(Path(data_dir) / "usage.json", {}).get("limits")
+    return {key: value for key, value in (saved or {}).items() if isinstance(key, str) and isinstance(value, (int, float))
+            and not isinstance(value, bool) and value > 0} if isinstance(saved, dict) else {}
+
+
+def set_limit(data_dir, kind, name, connection="", limit_mb=None):
+    """A site's or a database's limit set (a number of MB) or taken away (None)"""
+    if kind not in ("site", "database", "environment") or not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9._@ -]{1,128}", name):
+        raise ValueError("Unknown site, environment or database")
+    if kind == "database" and not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", connection or ""):
+        raise ValueError("Unknown connection")
+    # An environment: its site in name, its id in connection
+    if kind == "environment" and not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", connection or ""):
+        raise ValueError("Unknown environment")
+    if limit_mb is not None and (isinstance(limit_mb, bool) or not isinstance(limit_mb, (int, float)) or not 1 <= limit_mb <= 10 ** 8):
+        raise ValueError("The limit is a size in MB")
+    path = Path(data_dir) / "usage.json"
+    saved = report.read_json(path, {})
+    saved = saved if isinstance(saved, dict) else {}
+    limits = saved.get("limits") if isinstance(saved.get("limits"), dict) else {}
+    key = f"site|{name}" if kind == "site" else f"environment|{name}|{connection}" if kind == "environment" else f"database|{connection}|{name}"
+    if limit_mb is None:
+        limits.pop(key, None)
+    else:
+        limits[key] = round(limit_mb)
+    saved["limits"] = limits
+    write_json(path, saved)
+    # What was over it and is not now (no limit, or one above its size): not over any more at once, without waiting for
+    # the check; nothing is mailed for it
+    state_path = Path(data_dir) / "usage-state.json"
+    state = report.read_json(state_path, {})
+    opened = state.get("open") if isinstance(state, dict) and isinstance(state.get("open"), dict) else None
+    item = (opened or {}).get("limit|" + key)
+    if item and (limit_mb is None or (item.get("size_mb") or 0) <= limit_mb):
+        del opened["limit|" + key]
+        write_json(state_path, state)
+    elif item:
+        item["limit_mb"] = round(limit_mb)
+        write_json(state_path, state)
+    return limits
+
+
 def validate_settings(data):
     if not isinstance(data, dict):
         raise ValueError("Expected usage alert settings")
@@ -84,6 +129,27 @@ def site_mb(site, web_root=WEB_ROOT):
         return None
 
 
+def environment_mb(site, target):
+    """An environment's folder in MB, here or on its server (harbor env size), or None when it cannot be told"""
+    harbor = Path(__file__).resolve().parents[1] / "bin" / "harbor"
+    try:
+        result = subprocess.run(["/usr/bin/python3", str(harbor), "env", "size", site, target], capture_output=True, text=True, timeout=300)
+        return json.loads(result.stdout.strip().splitlines()[-1]).get("size_mb")
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+        return None
+
+
+def all_environments_mb():
+    """Every environment of every site with its size, measured where each runs (harbor env size all)"""
+    harbor = Path(__file__).resolve().parents[1] / "bin" / "harbor"
+    try:
+        result = subprocess.run(["/usr/bin/python3", str(harbor), "env", "size", "all"], capture_output=True, text=True, timeout=600)
+        found = json.loads(result.stdout.strip().splitlines()[-1])
+        return found if isinstance(found, list) else []
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+        return []
+
+
 def connection_engine(data_dir, connection):
     """mssql or postgres: what the admin shows beside the connection's name"""
     sql = _load("vns_usage_sql_admin", "sql_admin.py")
@@ -104,7 +170,7 @@ def database_sizes(data_dir, connection, user_only=False):
         return {}
 
 
-def check(data_dir, measure_site=site_mb, measure_databases=database_sizes, everything=None):
+def check(data_dir, measure_site=site_mb, measure_databases=database_sizes, everything=None, measure_environment=None):
     """What has grown past its user's limit now: a list, each with its key, kind, name, user, size and limit. With
     everything (a list), each site and database a user made goes into it as well, with its limit or None."""
     config = report.read_json(Path(data_dir) / "config.json", {})
@@ -114,8 +180,8 @@ def check(data_dir, measure_site=site_mb, measure_databases=database_sizes, ever
             continue
         limits, made = user.get("limits") or {}, user.get("made") or {}
         who = user.get("name") or user.get("username") or user.get("id", "")
-        if everything is not None or any(site_limit(user, site) is not None for site in made.get("sites", [])):
-            for site in made.get("sites", []):
+        if everything is not None or any(site_limit(user, site) is not None for site in user_sites(user)):
+            for site in user_sites(user):
                 size = measure_site(site)
                 if size is None:
                     continue
@@ -140,13 +206,48 @@ def check(data_dir, measure_site=site_mb, measure_databases=database_sizes, ever
                         everything.append(item)
                     if largest is not None and size > largest:
                         over.append(item)
+    # The server's own limits, whoever's each is
+    measure_environment = measure_environment or environment_mb
+    for key, limit in load_limits(data_dir).items():
+        kind, _, rest = key.partition("|")
+        if kind == "environment":
+            site, _, target = rest.partition("|")
+            size = measure_environment(site, target)
+            item = {"key": "limit|" + key, "kind": "environment", "name": f"{site} ({target})", "site": site, "target": target,
+                    "user": "the server's limit", "user_id": None, "size_mb": size, "limit_mb": limit}
+        elif kind == "site":
+            size = measure_site(rest)
+            item = {"key": "limit|" + key, "kind": "site", "name": rest, "user": "the server's limit", "user_id": None, "size_mb": size, "limit_mb": limit}
+        else:
+            connection, _, name = rest.partition("|")
+            if connection not in sizes:
+                sizes[connection] = measure_databases(data_dir, connection)
+            size = sizes[connection].get(name)
+            item = {"key": "limit|" + key, "kind": "database", "name": name, "connection": connection, "user": "the server's limit",
+                    "user_id": None, "size_mb": round(size, 1) if size is not None else None, "limit_mb": limit}
+        if item["size_mb"] is not None and item["size_mb"] > limit:
+            over.append(item)
     return over
 
 
 def site_limit(user, site):
-    """How big a site of the user's may be: its own limit when it has one, else the one their limits give every site"""
+    """How big a site of the user's may be: its own limit when it has one, else, for a site they made, the one their
+    limits give every site. A site they were only given (an administrator's) has a limit only when one is set on it."""
     own = (((user or {}).get("sites") or {}).get(site) or {}).get("size_mb")
-    return own if own is not None else ((user or {}).get("limits") or {}).get("site_mb")
+    if own is not None:
+        return own
+    if site in ((user or {}).get("made") or {}).get("sites", []):
+        return ((user or {}).get("limits") or {}).get("site_mb")
+    return None
+
+
+def user_sites(user):
+    """The sites that are the user's for their usage: those they made, and those they were given with a size of their
+    own (an administrator's site lent them for a while: taken away, it is the administrator's again)"""
+    made = list(((user or {}).get("made") or {}).get("sites", []))
+    given = [site for site, grant in ((user or {}).get("sites") or {}).items()
+             if isinstance(grant, dict) and grant.get("size_mb") is not None and site not in made]
+    return made + given
 
 
 def database_limit(user, connection, name):
@@ -161,7 +262,7 @@ def shows_usage(user):
     if not isinstance(user, dict) or user.get("role") == "admin":
         return False
     made = user.get("made") or {}
-    return bool(user.get("create_sites") or made.get("sites") or any((made.get("databases") or {}).values())
+    return bool(user.get("create_sites") or user_sites(user) or any((made.get("databases") or {}).values())
                 or any({"create", "copy"} & set(grant.get("actions") or []) for grant in (user.get("connections") or {}).values()))
 
 
@@ -170,7 +271,7 @@ def of_user(data_dir, user, names=None, measure_site=site_mb, measure_databases=
     connection where they may make some or have. names gives each connection's name. Measured now."""
     made, limits = user.get("made") or {}, user.get("limits") or {}
     # Each site with its own limit: the one set on it, else the user's for every site
-    sites = [{"name": site, "size_mb": size, "limit_mb": site_limit(user, site)} for site in made.get("sites", []) for size in [measure_site(site)] if size is not None]
+    sites = [{"name": site, "size_mb": size, "limit_mb": site_limit(user, site)} for site in user_sites(user) for size in [measure_site(site)] if size is not None]
     result = {"sites": {"may_make": bool(user.get("create_sites")) or bool(sites), "count_limit": limits.get("sites"),
                         "size_limit_mb": limits.get("site_mb"), "items": sites}, "connections": []}
     for connection, grant in (user.get("connections") or {}).items():
@@ -187,13 +288,20 @@ def of_user(data_dir, user, names=None, measure_site=site_mb, measure_databases=
     return result
 
 
-def overview(data_dir, sites, connections, measure_site=site_mb, measure_databases=database_sizes):
+def overview(data_dir, sites, connections, measure_site=site_mb, measure_databases=database_sizes, measure_environment=None, measure_environments=None):
     """Every site here and every database on each connection (system databases left out), how big each is now, who
     made it and the limit that holds for it: for an administrator. sites: the site folders; connections: {id: name}."""
     config = report.read_json(Path(data_dir) / "config.json", {})
     users = [user for user in config.get("users", []) if isinstance(user, dict) and user.get("role") != "admin"] if isinstance(config.get("users"), list) else []
-    site_owner = {site: user for user in users for site in (user.get("made") or {}).get("sites", [])}
+    # Who a site is: the user who made it, else one it is given to with a size of its own
+    site_owner = {}
+    for user in users:
+        for site in user_sites(user):
+            if site in (user.get("made") or {}).get("sites", []) or site not in site_owner:
+                site_owner[site] = user
     result = {"sites": [], "connections": []}
+    server_limits = load_limits(data_dir)
+    measure_environment = measure_environment or environment_mb
     for site in sites:
         size = measure_site(site)
         if size is None:
@@ -201,7 +309,10 @@ def overview(data_dir, sites, connections, measure_site=site_mb, measure_databas
         owner = site_owner.get(site)
         result["sites"].append({"name": site, "size_mb": size, "user": (owner.get("name") or owner.get("username")) if owner else None,
                                 "user_id": owner.get("id") if owner else None,
-                                "limit_mb": site_limit(owner, site) if owner else None})
+                                "limit_mb": site_limit(owner, site) if owner else None, "server_limit_mb": server_limits.get(f"site|{site}")})
+    # Every environment, measured where it runs (here or on its server), with the server's limit on it
+    result["environments"] = [{**item, "server_limit_mb": server_limits.get(f"environment|{item['site']}|{item['target']}")}
+                              for item in (measure_environments() if measure_environments else all_environments_mb())]
     for connection, label in connections.items():
         sizes = measure_databases(data_dir, connection, user_only=True)
         owners = {name: user for user in users for name in ((user.get("made") or {}).get("databases") or {}).get(connection, [])}
@@ -210,7 +321,8 @@ def overview(data_dir, sites, connections, measure_site=site_mb, measure_databas
             owner = owners.get(name)
             items.append({"name": name, "size_mb": round(size, 1), "user": (owner.get("name") or owner.get("username")) if owner else None,
                           "user_id": owner.get("id") if owner else None,
-                          "limit_mb": database_limit(owner, connection, name) if owner else None})
+                          "limit_mb": database_limit(owner, connection, name) if owner else None,
+                          "server_limit_mb": server_limits.get(f"database|{connection}|{name}")})
         result["connections"].append({"id": connection, "name": label, "unreachable": not sizes, "databases": items,
                                       "engine": connection_engine(data_dir, connection)})
     for part in [result["sites"]] + [item["databases"] for item in result["connections"]]:
@@ -275,11 +387,11 @@ def mail_html(new, solved, everything=None, host=None, now=None, test=False):
     sections = []
     if new:
         sections.append(section("Grown past its limit", "".join(
-            row("red", f"{item['kind']} over", f'<span class="tx">{esc(item["name"])}</span>', f"Made by {item['user']}",
+            row("red", f"{item['kind']} over", f'<span class="tx">{esc(item["name"])}</span>', (f"Made by {item['user']}" if item.get("user_id") else "The server's own limit"),
                 amount(item) + bar(item)) for item in new), len(new)))
     if solved:
         sections.append(section("Under its limit again", "".join(
-            row("green", f"{item['kind']} under", f'<span class="tx">{esc(item["name"])}</span>', f"Made by {item['user']}") for item in solved),
+            row("green", f"{item['kind']} under", f'<span class="tx">{esc(item["name"])}</span>', (f"Made by {item['user']}" if item.get("user_id") else "The server's own limit")) for item in solved),
             len(solved)))
     if everything:
         users = {}
@@ -366,11 +478,15 @@ def needed(data_dir):
     """Whether the hourly check has work: the alerts are on, or a user has a size limit (they are shown what is over)"""
     if load_settings(data_dir)["enabled"]:
         return True
+    if load_limits(data_dir):
+        return True
     config = report.read_json(Path(data_dir) / "config.json", {})
     for user in config.get("users", []) if isinstance(config.get("users"), list) else []:
         if not isinstance(user, dict) or user.get("role") == "admin":
             continue
         if (user.get("limits") or {}).get("site_mb") is not None:
+            return True
+        if any(isinstance(grant, dict) and grant.get("size_mb") is not None for grant in (user.get("sites") or {}).values()):
             return True
         if any(((grant or {}).get("limits") or {}).get("database_mb") is not None for grant in (user.get("connections") or {}).values()):
             return True

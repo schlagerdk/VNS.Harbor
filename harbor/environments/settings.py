@@ -293,3 +293,47 @@ def load_main_site(system, site):
     publish = "." if not working or working == site.site_root else working.rsplit("/", 1)[-1]
     kind = "umbraco" if "Umbraco.Cms" in projects[0].read_text(errors="replace") else "empty"
     return MainSite(projects[0].stem, binding, mail or site.admin_mail, publish, kind)
+
+
+def environment_size(system, site_root, target):
+    """How big an environment's folder is now, in MB, here (du) or on its server over SSH; None on Windows (IIS has no
+    du) or when it cannot be told. For the usage limits (1.0.94)."""
+    import shlex
+    environment = load(system, site_root, target)
+    if environment.windows:
+        return None
+    result = remote_exec(system, environment, f"du -sk {shlex.quote(environment.root)} 2>/dev/null", check=False, capture=True)
+    try:
+        return round(int((result.stdout or "").split()[0]) / 1024, 1)
+    except (IndexError, ValueError):
+        return None
+
+
+def environment_sizes(system, web_root="/var/www", parallel=8):
+    """Every environment of every site here, how big its folder is now and where it runs: measured where each runs, here
+    or on its server over SSH, several at once. [{site, target, environment, host, size_mb}] (size_mb None on Windows
+    or when not reached). For Usage (1.0.94)."""
+    from concurrent.futures import ThreadPoolExecutor
+    web = system.path(web_root)
+    found = []
+    for folder in sorted(web.iterdir()) if web.is_dir() else []:
+        if not folder.is_dir() or folder.is_symlink():
+            continue
+        root = f"{web_root}/{folder.name}"
+        for target in target_ids(system, root):
+            try:
+                environment = load(system, root, target)
+            except SettingsError:
+                continue
+            found.append((folder.name, root, target, environment))
+
+    def one(entry):
+        site, root, target, environment = entry
+        try:
+            size = environment_size(system, root, target)
+        except Exception:  # noqa: BLE001  (an environment not reached has no size now)
+            size = None
+        return {"site": site, "target": target, "environment": environment.other.get("ENVIRONMENT", ""), "binding": environment.BINDING,
+                "local": environment.local, "windows": environment.windows, "folder": environment.FOLDER, "size_mb": size}
+    with ThreadPoolExecutor(max_workers=max(1, min(parallel, len(found) or 1))) as executor:
+        return list(executor.map(one, found))
