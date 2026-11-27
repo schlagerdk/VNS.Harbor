@@ -9,7 +9,7 @@
 <meta name="server-hostname" content="{{ hostname }}">
 <meta name="start-view" content="{{ start_view }}">
 <meta name="role" content="{{ role }}">
-<title>{{ hostname }} · Harbor</title>
+<title>{# The server named Harbor is the master, in the tab too #}{{ 'Harbor Master' if hostname|lower == 'harbor' else hostname ~ ' · Harbor' }}</title>
 <link rel="icon" href="/static/harbor-mark.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/static/vendor/xterm.css">
 <link rel="stylesheet" href="/static/style.css?v={{ asset_version }}">
@@ -1084,11 +1084,15 @@
     </div>
     <!-- Name and email side by side: the email is where Forgot password sends its link (else the username, when it is one) -->
     <div class="ns-grid">
-      <label>Name <span class="muted">(optional)</span>
+      <label><span>Name <span class="muted">(optional)</span></span>
         <input name="name" maxlength="80" autocomplete="off" placeholder="Anna Hansen"></label>
-      <label>Email <span class="muted">(for Forgot password)</span>
+      <label><span>Email <span class="muted">(for Forgot password)</span></span>
         <input name="email" type="email" maxlength="254" autocomplete="off" spellcheck="false" placeholder="anna@example.com"></label>
     </div>
+    <!-- Their login mailed to them: shown where there is a password, an email and a mail server to send it -->
+    <label class="option-row user-send-login" hidden><span class="option-icon send" data-header-icon="send" aria-hidden="true"></span>
+      <span class="option-text"><strong>Mail them their login</strong><small>Username, password and where to log in, to the email above</small></span>
+      <input name="send_login" type="checkbox" class="switch small" aria-label="Mail them their login"></label>
     <div class="ns-section">Role</div>
     <div class="type-cards user-roles">
       <label class="type-card"><input type="radio" name="role" value="user" checked><span class="tc-title">User</span><span class="tc-sub">Only what you choose below. A terminal only in the sites you give it, never the server's.</span></label>

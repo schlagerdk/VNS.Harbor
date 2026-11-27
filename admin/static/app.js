@@ -10266,6 +10266,13 @@ async function openUsageSettings(fresh = false) {
 				el("div", { className: "usage-section-title" }, el("strong", { textContent: "Other environments" }),
 					el("small", { textContent: "Of sites not listed above, measured where each runs" }))),
 			...orphans.map(environmentLine))] : [];
+		// Nothing made yet: the empty state the other pages have, with the first site to make where the user may
+		if (!all.sites.length && !orphans.length && !all.connections.some((connection) => connection.databases.length)) {
+			measuring.replaceWith(el("section", { className: "tool-card tool-card-wide usage-nothing" }, panelEmpty({ icon: "archive", title: "Nothing to measure yet",
+				text: "Sites and databases show here once there are some, with what each takes beside its limit.",
+				button: currentUser.create_sites ? panelEmptyButton("Create the first site", () => $("#btn-new-site").click()) : null })));
+			return;
+		}
 		measuring.replaceWith(section("globe", "Sites", all.sites, "No sites on this server yet.", (item) => go(siteLink(item.name)), (item) => ({ site: item.name })),
 			// A connection with no databases of its own (or none that answered) has nothing to show; each says its engine
 			...all.connections.filter((connection) => connection.databases.length).map((connection) => {
@@ -11490,6 +11497,24 @@ function revealablePassword(input) {
 	input.nextSibling.append(input, button);
 }
 for (const name of ["password", "ssh_password"]) revealablePassword($("#form-sql-connection").elements[name]);
+// A password made at random, 20 characters without those that are mistaken for each other (0 O, 1 l I), shown at once
+const PASSWORD_LETTERS = "abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789-_!?#%+=";
+function randomPassword(length = 20) {
+	const picked = new Uint32Array(length);
+	crypto.getRandomValues(picked);
+	return Array.from(picked, (value) => PASSWORD_LETTERS[value % PASSWORD_LETTERS.length]).join("");
+}
+// A field that shows what is typed (the eye) and makes a random password with a click: put in, and shown
+function generatablePassword(input) {
+	revealablePassword(input);
+	const box = input.parentElement;
+	const reveal = box.querySelector(".password-reveal");
+	box.append(el("button", { type: "button", className: "password-generate", title: "Make a random password", ariaLabel: "Make a random password", onclick: () => {
+		input.value = randomPassword();
+		if (reveal.title === "Show the password") reveal.click();
+		input.dispatchEvent(new Event("input", { bubbles: true }));
+	} }, svgIcon("key")));
+}
 
 function updateSqlSshFields() {
 	const form = $("#form-sql-connection");
@@ -13074,6 +13099,20 @@ function editCfSettingsRule(kind, index, rules, save) {
 // Administrators make users here: a role, and for a user the sites, environments and actions, and SQL Server.
 const userDialog = $("#dlg-user");
 const userForm = $("#form-user");
+// The user's passwords: an eye, and one made at random with a click
+generatablePassword(userForm.password);
+generatablePassword(userForm.sftp_password);
+// Mail them their login: only where there is a password typed, an email (or a username that is one) and a mail server
+function syncSendLogin() {
+	const row = userForm.querySelector(".user-send-login");
+	const to = userForm.email.value.trim() || (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(userForm.username.value.trim()) ? userForm.username.value.trim() : "");
+	// A user changed with no new password: their password is not known, so the mail has a link to choose one
+	const withPassword = Boolean(userForm.password.value);
+	row.hidden = userForm.dataset.mode === "template" || !usersData?.can_mail || (!withPassword && !userForm.dataset.id) || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to);
+	row.querySelector("small").textContent = withPassword ? `Username, password and where to log in, to ${to}` : `Username, where to log in and a link to choose a password, to ${to}`;
+	if (row.hidden) userForm.send_login.checked = false;
+}
+for (const name of ["email", "username", "password"]) userForm.elements[name].addEventListener("input", syncSendLogin);
 let usersData = null;
 // The rules of the template a new user started from: what a site or connection ticked for them gives
 let grantRules = null;
@@ -13113,6 +13152,10 @@ function userCard(user) {
 		...(user.sql ? [toolRow("SQL Server", `${connections} connection${connections === 1 ? "" : "s"}`, { on: Boolean(connections) })] : []),
 		...(user.web || user.sql ? [] : [toolRow("Access", "None yet", { on: false })]),
 	];
+	// When they last signed in: how long ago, the time itself on hover
+	const login = toolRow("Last login", user.last_login ? syncAgo(user.last_login * 1000) : "Never", { on: Boolean(user.last_login) });
+	if (user.last_login) login.querySelector(".tool-row-detail").title = formatDate(user.last_login * 1000);
+	rows.push(login);
 	if (user.linux) rows.push(toolRow("Linux user", user.linux, { code: true }));
 	const card = toolCard({ icon: "user", tone: admin ? "purple" : "blue", title: user.name || user.username, detail: user.name ? user.username : admin ? "Administrator" : "User",
 		state: user.disabled ? "Locked" : admin ? "Administrator" : "User", stateClass: user.disabled ? "bad" : admin ? "role admin" : "role",
@@ -13535,6 +13578,8 @@ function openUserEditor(user = null, template = null, editTemplate = undefined) 
 	showUserTemplates(editing || asTemplate ? null : template || undefined);
 	userForm.querySelector(`input[name=role][value=${asTemplate ? "user" : user?.role || "user"}]`).checked = true;
 	userForm.disabled.checked = Boolean(user?.disabled);
+	userForm.send_login.checked = false;
+	syncSendLogin();
 	// A new user has nothing chosen: each part is turned on as it is wanted
 	userForm.web.checked = Boolean(user?.web);
 	userForm.create_sites.checked = Boolean(user?.create_sites);
@@ -13736,6 +13781,7 @@ function saveUserForm(close) {
 		const id = userForm.dataset.id;
 		const body = { username: userForm.username.value.trim(), name: userForm.elements.name.value.trim(), email: userForm.email.value.trim(), disabled: userForm.disabled.checked, ...userAccess() };
 		if (userForm.password.value) body.password = userForm.password.value;
+		if (userForm.send_login.checked && !userForm.querySelector(".user-send-login").hidden) body.send_login = true;
 		const sftp = {};
 		if (userForm.sftp.checked && userForm.sftp_password.value) sftp.password = userForm.sftp_password.value;
 		if (userForm.sftp.checked && userForm.sftp_keys.value.trim() !== (userForm.sftp_keys.dataset.loaded || "").trim()) sftp.keys = userForm.sftp_keys.value;
@@ -13750,6 +13796,8 @@ function saveUserForm(close) {
 			return;
 		}
 		toast(id ? "User saved" : "User added", "ok");
+		if (saved.mailed) toast(`Their login is mailed to ${saved.mailed}.`, "ok");
+		if (saved.mail_error) toast(saved.mail_error, "error");
 		// A part sent on with nothing in it was turned off: said, so the switch that moved is understood
 		const off = [body.web && !saved.user.web && "Web Server (no site, and they may not make one)", body.sql && !saved.user.sql && "SQL Server (no connection, and they may not add one)"].filter(Boolean);
 		if (off.length) toast(`Turned off, as nothing is given in it: ${off.join("; ")}.`);
@@ -14639,6 +14687,8 @@ function askCronAlerts() {
 	const choices = jobs.map(([entry, index]) => {
 		const watch = cronWatched(entry) ? { ...entry.watch } : { exit: true, missed: entry.schedule !== "@reboot" };
 		const option = checkOption("watch_" + index, cronName(entry), entry.command, cronWatched(entry), HARBOR_JOBS[entry.harbor] ? "database" : "clock", "pink");
+		// The command cut short in a dialog of normal width: all of it on hover
+		option.querySelector(".sync-option-sub").title = entry.command;
 		const minutes = el("input", { type: "number", min: 1, max: 1440, value: typeof watch.long === "number" ? watch.long : 60, className: "cron-watch-minutes", ariaLabel: "Minutes" });
 		const longField = el("label", { className: "cron-watch-long", hidden: !watch.long }, "More than", minutes, "min");
 		const chips = CRON_CONDITIONS.map(([key, name, icon, sub]) => {
@@ -14677,7 +14727,7 @@ function askCronAlerts() {
 		}
 		return watch;
 	};
-	openFormDialog({ icon: "clock", title: "Job alerts", text: "A mail when a scheduled job fails, and when it works again", fields, ok: "Save", wide: true,
+	openFormDialog({ icon: "clock", title: "Job alerts", text: "A mail when a scheduled job fails, and when it works again", fields, ok: "Save",
 		extra: alerts.mail ? [Object.assign(tonedButton("Send test", "send", "purple", () => testCronAlerts(typedEmails($("#form-dialog")))),
 			{ title: "Mail how each watched job is now to the addresses above: nothing is saved" })] : [],
 		submit: async (form) => {

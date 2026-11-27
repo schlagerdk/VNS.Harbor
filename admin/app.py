@@ -1094,6 +1094,33 @@ def asset_version():
 # ---- the sign-in page: where it was before (an address Harbor took over), and a forgotten password
 
 RESET_LINKS = os.path.join(DATA, "password-resets.json")
+# When each user last signed in: kept apart from the config, which is not written at every sign-in
+LOGINS = os.path.join(DATA, "logins.json")
+LOGINS_LOCK = threading.Lock()
+
+
+def last_logins():
+    """{user id: when they last signed in (seconds)}"""
+    try:
+        found = json.loads(Path(LOGINS).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return {key: value for key, value in found.items() if isinstance(value, (int, float))} if isinstance(found, dict) else {}
+
+
+def note_login(user_id):
+    """A sign-in noted for the user's card (Users): a failure to write it never stops the sign-in"""
+    try:
+        with LOGINS_LOCK:
+            logins = last_logins()
+            logins[user_id] = int(time.time())
+            temporary = f"{LOGINS}.{os.getpid()}"
+            descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+                json.dump(logins, stream)
+            os.replace(temporary, LOGINS)
+    except OSError:
+        app.logger.exception("Could not note the sign-in")
 RESET_ASKED = {}
 RESET_PER_IP = 5           # asked from one address in WINDOW
 RESET_PER_USER = 3         # mails to one user in an hour
@@ -1241,6 +1268,7 @@ def login():
                 csrf_token()
                 with FAIL_LOCK:
                     FAILS.pop(ip, None)
+                note_login(found[0])
                 return redirect("/")
             record_failure(ip)
             time.sleep(1)
@@ -5057,16 +5085,49 @@ def api_user_template(template_id):
     return jsonify(templates=cfg["user_templates"])
 
 
+def mail_login(user, password, asked):
+    """A user's login mailed to them, when it was asked for as they were made or changed: {mailed: to} or {mail_error:
+    why}, nothing when it was not asked. The user is saved either way. With no password given now (a user changed, an
+    email added later), their password is not known: the mail has a link to choose one, as Forgot password's, for days"""
+    if not asked:
+        return {}
+    to = access.mail_of(user)
+    if not to:
+        return {"mail_error": "There is no email to send it to."}
+    if not can_mail():
+        return {"mail_error": "Harbor cannot send mail yet: set up the mail server under Notifications."}
+    host = ADMIN_SITE or request.host
+    link = f"https://{ADMIN_SITE}/" if ADMIN_SITE else request.host_url
+    if user.get("disabled"):
+        return {"mail_error": "The user is locked: unlock them first."}
+    report = _keep_alive_module.report
+    days = _password_reset.WELCOME_MINUTES // (24 * 60)
+    choose = "" if password else reset_link(_password_reset.make(RESET_LINKS, user["id"], minutes=_password_reset.WELCOME_MINUTES))
+    body = (f"{'Hi ' + user['name'] + '. ' if user.get('name') else ''}An account on Harbor ({host}) is ready for you.\n\n"
+            f"Address: {link}\nUsername: {user['username']}\n"
+            + (f"Password: {password}\n\nChange the password under Profile once you are in, and delete this mail.\n" if password
+               else f"\nChoose your password with this link. It works once, within {days} days:\n{choose}\n"))
+    try:
+        report.send(report.load_mail(), [to], "Your login for Harbor", body,
+                    html=report.login_mail_html(host, user.get("name", ""), user["username"], password, link, choose=choose or None, days=days))
+    except Exception as exc:  # noqa: BLE001  (smtplib, ssl and socket each have their own: said, the user is saved)
+        app.logger.exception("Could not mail the login")
+        return {"mail_error": f"The user is saved, but the mail was not sent: {exc}"}
+    audit(f"Mailed the login of {user['username']} to them")
+    return {"mailed": to}
+
+
 @app.route("/api/users", methods=["GET", "POST"])
 def api_users():
     require_admin()
     if request.method == "GET":
         sites = site_environments()
         names = linux_names()
-        listed = [dict(user, linux=names.get(user.get("id"), "")) for user in access.visible_users(cfg, me())]
+        logins = last_logins()
+        listed = [dict(user, linux=names.get(user.get("id"), ""), last_login=logins.get(user.get("id"))) for user in access.visible_users(cfg, me())]
         return jsonify(users=listed, sites=sites, connections=sql_connections_public(),
                        site_actions=access.SITE_ACTIONS, sql_actions=access.SQL_ACTIONS, templates=access.templates(cfg),
-                       dns_zones=dns_zone_names())
+                       dns_zones=dns_zone_names(), can_mail=can_mail())
     data = request.get_json(silent=True) or {}
     password = data.get("password") or ""
     if len(password) < 12:
@@ -5089,7 +5150,7 @@ def api_users():
         sync_usage_job(check_now=True)
     except (OSError, subprocess.SubprocessError):
         app.logger.exception("Could not set the usage check's cron job")
-    return jsonify(user=access.public(user))
+    return jsonify(user=access.public(user), **mail_login(user, password, data.get("send_login") is True))
 
 
 @app.route("/api/users/<user_id>", methods=["PUT", "DELETE"])
@@ -5136,7 +5197,7 @@ def api_user(user_id):
         sync_usage_job(check_now=True)
     except (OSError, subprocess.SubprocessError):
         app.logger.exception("Could not set the usage check's cron job")
-    return jsonify(user=access.public(user))
+    return jsonify(user=access.public(user), **mail_login(user, password, data.get("send_login") is True))
 
 
 # ------------------------------------------------------------- terminal API

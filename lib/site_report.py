@@ -579,6 +579,28 @@ def reset_mail_html(host, username, link, minutes, now=None):
                 f"Sent from <strong>{esc(host)}</strong> {stamp(now)}.", "Sign-in")
 
 
+def login_mail_html(host, name, username, password, link, now=None, choose=None, days=7):
+    """A user's login, mailed when they are made or changed: where to log in, the username, and the password given
+    them, or (choose) a link to choose one themselves, as their password is not known; a button to either"""
+    now = now or time.time()
+    cell = 'style="padding:6px 0;font-size:14px;line-height:20px;color:#111827"'
+    label = 'style="padding:6px 16px 6px 0;font-size:13px;line-height:20px;color:#6b7280;white-space:nowrap"'
+    code = 'style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:14px;background:#f3f4f6;border-radius:6px;padding:2px 6px"'
+    details = (f'<table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-bottom:18px">'
+               f'<tr><td {label}>Address</td><td {cell}><a href="{esc(link)}" style="color:#7c3aed">{esc(link)}</a></td></tr>'
+               f'<tr><td {label}>Username</td><td {cell}><span {code}>{esc(username)}</span></td></tr>'
+               + (f'<tr><td {label}>Password</td><td {cell}><span {code}>{esc(password)}</span></td></tr>' if password else "") + '</table>'
+               f'<a href="{esc(choose or link)}" style="display:inline-block;padding:12px 22px;border-radius:10px;background:#7c3aed;color:#ffffff;'
+               f'font-size:15px;font-weight:700;text-decoration:none">{"Choose your password" if choose else "Log in to Harbor"}</a>'
+               + (f'<div class="mu" style="margin-top:14px;font-size:12px;line-height:18px;color:#6b7280;word-break:break-all">'
+                  f'Or open this link: {esc(choose)}</div>' if choose else ""))
+    return page(host, "blue", "Your login for Harbor",
+                f"{'Hi ' + name + '. ' if name else ''}An account on Harbor is ready for you. This is how you log in.",
+                [section("Your account", details, note=f"Choose your password with the link: it works once, within {days} days." if choose
+                         else "Change the password under Profile once you are in, and delete this mail.")],
+                f"Sent from <strong>{esc(host)}</strong> {stamp(now)}.", "Sign-in")
+
+
 def test_mail_html(host, now=None):
     """The test of the mail server, from Settings"""
     now = now or time.time()

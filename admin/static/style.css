@@ -137,10 +137,20 @@ dialog.sql-query-dialog[open] { display: flex; flex-direction: column; }
 .sql-result-table th.sql-fit { width: 1%; }
 .sql-result-table th.sql-grow { min-width: 18ch; }
 .password-field { position: relative; display: block; }
+/* Safari's own AutoFill key in a dialog's password field: it covers the eye, and offers the admin's own login for
+   another's password. The sign-in page is not a dialog and keeps it */
+dialog input::-webkit-credentials-auto-fill-button, dialog input::-webkit-contacts-auto-fill-button, dialog input::-webkit-strong-password-auto-fill-button {
+	visibility: hidden; display: none !important; position: absolute; right: 0; width: 0; height: 0; margin: 0; pointer-events: none; }
 .password-field input { width: 100%; padding-right: 40px; }
 .password-field .password-reveal { position: absolute; top: 50%; right: 6px; transform: translateY(-50%); display: inline-grid; place-items: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted); }
 .password-field .password-reveal:hover:not(:where(:disabled, .disabled, .off)) { color: var(--text); background: rgba(255, 255, 255, .06); }
 .password-field .password-reveal .ico { width: 16px; height: 16px; }
+/* With a random password beside the eye: room for both */
+.password-field:has(.password-generate) input { padding-right: 72px; }
+.password-field .password-generate { position: absolute; top: 50%; right: 36px; transform: translateY(-50%); display: inline-grid; place-items: center; width: 28px; height: 28px;
+	padding: 0; border: 0; border-radius: 6px; background: transparent; color: #d2a8ff; }
+.password-field .password-generate:hover:not(:where(:disabled, .disabled, .off)) { background: rgba(163, 113, 247, .14); }
+.password-field .password-generate .ico { width: 16px; height: 16px; margin: 0; }
 .sql-result-table .sql-null { color: var(--muted); font-style: italic; opacity: .7; }
 .sql-result-message, .sql-query-output > pre { margin: 0; padding: 10px 12px; background: rgba(0, 0, 0, .25); border: 1px solid var(--line); border-radius: 8px; font-size: 12px; white-space: pre-wrap; }
 .sql-result-empty { margin: 0; }
@@ -2105,6 +2115,10 @@ dialog .switch:focus-visible { outline: 2px solid rgba(88, 166, 255, .6); outlin
 .option-icon { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px; color: #b9d8ff; background: rgba(88, 166, 255, .14); }
 .option-icon.sql { color: #c9b6ff; background: rgba(163, 113, 247, .14); }
 .option-icon.lock { color: #ffa198; background: rgba(248, 81, 73, .14); }
+.option-icon.send { color: #d2a8ff; background: rgba(163, 113, 247, .14); }
+#dlg-user .user-send-login { margin: 2px 0 12px; }
+#dlg-user .user-send-login[hidden] { display: none; }
+#dlg-user .user-send-login:has(.switch:checked) { border-color: rgba(163, 113, 247, .5); background: rgba(163, 113, 247, .08); }
 .option-icon .ico { width: 15px; height: 15px; margin: 0; }
 .option-text { display: grid; gap: 1px; min-width: 0; }
 #dlg-user .option-text strong { color: var(--text); font-size: 13px; font-weight: 600; }

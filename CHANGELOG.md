@@ -2,6 +2,16 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.100] - Unreleased
+
+### Features
+
+- Usage with no sites or databases yet shows the empty state the other pages have, with Create the first site where the user may make sites.
+- Job alerts is a dialog of normal width, each job's command in full on hover.
+- The server named Harbor says Harbor Master in the browser's tab too, not HARBOR · Harbor.
+- A user's password can be made at random with a click (the key beside the eye), and Mail them their login sends a new user (or one given a new password) their username, password and where to log in, where there is an email and a mail server; a user changed later (an email added or changed) gets a link to choose their password, good for 7 days, as their password is not known. Safari's AutoFill key no longer covers the eye in a dialog's password field. Name and Email say (optional) and (for Forgot password) on the same line.
+- A user's card says when they last signed in (such as 2 h ago, the time itself on hover), or Never.
+
 ## [1.0.99] - 2026-11-27
 
 ### Features

@@ -27,6 +27,17 @@ class SiteReportTests(unittest.TestCase):
         at = at or datetime(2026, 11, 24, 10, 0).timestamp()
         return report.record(results, settings, self.state, now=at, mail=MAIL, sender=self.send, hostname="web-01")
 
+    def test_a_new_users_login_mail_has_what_they_need_escaped(self):
+        html = report.login_mail_html("admin.example.com", "Anna <b>", "anna", "p<4ss&word", "https://admin.example.com/")
+        for shown in ("https://admin.example.com/", ">anna<", "p&lt;4ss&amp;word", "Anna &lt;b&gt;", "Log in to Harbor"):
+            self.assertIn(shown, html)
+        self.assertNotIn("p<4ss", html)
+        # Changed later with no password given: a link to choose one, and no password line
+        chosen = report.login_mail_html("admin.example.com", "", "anna", "", "https://admin.example.com/", choose="https://admin.example.com/reset?token=x", days=7)
+        self.assertIn("Choose your password", chosen)
+        self.assertIn("within 7 days", chosen)
+        self.assertNotIn(">Password<", chosen)
+
     def test_a_problem_is_logged_when_it_starts_and_when_it_ends_once_each(self):
         on = {"enabled": True, "emails": ["ops@example.com"], "when": "change", "checks": list(report.CHECKS)}
         self.run_with([{"name": "shop.example.com", "problems": {"down": "HTTP 502"}}], on)

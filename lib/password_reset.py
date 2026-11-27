@@ -10,6 +10,8 @@ import threading
 import time
 
 TRY_MINUTES = 30
+# A link mailed with a user's login, to choose their own password: they may not read it at once
+WELCOME_MINUTES = 7 * 24 * 60
 LOCK = threading.Lock()
 
 
@@ -36,13 +38,13 @@ def _save(path, links):
 	os.replace(temporary, path)
 
 
-def make(path, user_id, now=None):
-	"""A new link's secret for the user: the one before it no longer works"""
+def make(path, user_id, now=None, minutes=TRY_MINUTES):
+	"""A new link's secret for the user, good for minutes: the one before it no longer works"""
 	now = now or time.time()
 	token = secrets.token_urlsafe(32)
 	with LOCK:
 		links = {key: item for key, item in _load(path, now).items() if item.get("user") != user_id}
-		links[_key(token)] = {"user": user_id, "expires": now + TRY_MINUTES * 60}
+		links[_key(token)] = {"user": user_id, "expires": now + minutes * 60}
 		_save(path, links)
 	return token
 
