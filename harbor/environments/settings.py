@@ -309,6 +309,48 @@ def environment_size(system, site_root, target):
         return None
 
 
+def own_ssh_port(system):
+    """The port this server's SSH listens on (its sshd config, 22 when none is set): sent with a limit, so the other
+    server can add this one under Servers with it"""
+    for path in [system.path("/etc/ssh/sshd_config"), *sorted(system.path("/etc/ssh/sshd_config.d").glob("*.conf"))] if system.path("/etc/ssh/sshd_config.d").is_dir() else [system.path("/etc/ssh/sshd_config")]:
+        try:
+            for line in path.read_text(errors="replace").splitlines():
+                parts = line.split()
+                if len(parts) == 2 and parts[0].lower() == "port" and parts[1].isdigit():
+                    return int(parts[1])
+        except OSError:
+            continue
+    return 22
+
+
+def mails_here(system):
+    """Whether this server mails its usage limits: the server an environment runs on mails it when this one does not"""
+    from harbor.server.tools import usage_alerts_on
+    return usage_alerts_on(system)
+
+
+def push_limit(system, site_root, target, limit_mb):
+    """An environment's limit (set under Usage here) sent to the server it runs on, as the limit of that site's folder
+    there, marked as set from here: its own admin shows it too (1.0.97). {sent, error}; nothing to send for one here
+    or on Windows."""
+    import shlex
+    import socket
+    environment = load(system, site_root, target)
+    if environment.local or environment.windows:
+        return {"sent": False, "error": ""}
+    folder = str(environment.root).rstrip("/").rsplit("/", 1)[-1]
+    value = "none" if limit_mb is None else str(int(limit_mb))
+    # This site and environment go with it, so a change made there can be sent back here (harbor server usage-limit-back)
+    site = str(site_root).rstrip("/").rsplit("/", 1)[-1]
+    command = ('h=/usr/local/bin/harbor; [ -x "$h" ] || h=/opt/harbor/current/bin/harbor; '
+               f"$h server usage-limit {shlex.quote(folder)} {value} --from {shlex.quote(socket.gethostname())} "
+               f"--site {shlex.quote(site)} --target {shlex.quote(target)} --mails {'y' if mails_here(system) else 'n'} "
+               f"--port {own_ssh_port(system)}")
+    result = remote_exec(system, environment, command, check=False, capture=True)
+    error = "" if result.ok else ((result.stderr or result.stdout or "").strip().splitlines() or ["It could not be sent."])[-1][:300]
+    return {"sent": result.ok, "error": error}
+
+
 def environment_sizes(system, web_root="/var/www", parallel=8):
     """Every environment of every site here, how big its folder is now and where it runs: measured where each runs, here
     or on its server over SSH, several at once. [{site, target, environment, host, size_mb}] (size_mb None on Windows

@@ -132,6 +132,17 @@ class SettingsTests(unittest.TestCase):
             found = {item["target"]: item["in_site"] for item in settings.environment_sizes(self.system, str(self.folder / "www"))}
         self.assertEqual(found, {"production": True, "staging": False, "test": False})
 
+    def test_an_environments_limit_is_sent_to_its_server(self):
+        """Its limit set here reaches the server it runs on, as the limit of its folder there (1.0.97)"""
+        (self.site / "scripts/targets/production/publish_prod.sh").write_text("PROD_IP='10.0.0.5'\nPROD_USER=root\nPROD_FOLDER='shop.dk'\nPROD_BINDING='shop.dk'\n")
+        with patch("socket.gethostname", return_value="test-01"):
+            result = settings.push_limit(self.system, str(self.site), "production", 20480)
+        self.assertTrue(result["sent"])
+        self.assertIn("server usage-limit shop.dk 20480 --from test-01", self.system.commands[-1])
+        self.assertIn("root@10.0.0.5", self.system.commands[-1])
+        (self.site / "scripts/targets/production/publish_prod.sh").write_text(f"PROD_LOCAL_PATH='{self.site}/_production'\nPROD_FOLDER='p'\nPROD_BINDING='p.dk'\n")
+        self.assertEqual(settings.push_limit(self.system, str(self.site), "production", None), {"sent": False, "error": ""})
+
     def test_environments_in_the_order_the_script_lists_them(self):
         (self.site / "scripts/publish_prod.sh").write_text("PROD_FOLDER=a\n")
         for name in ("staging", "production-2", "test"):

@@ -3,7 +3,9 @@ password in sql/, the backup and log shrink cron jobs, .NET and Node.js. The adm
 and runs the rest as tasks.
 """
 import json
+import math
 import os
+from pathlib import Path
 import re
 import shutil
 import tempfile
@@ -732,6 +734,187 @@ def logrotate(system, on, entries=None, quiet=False):
     os.chmod(config, 0o644)
     if not quiet:
         system.say(f"{len(files)} log{'' if len(files) == 1 else 's'} rotated weekly, the last 8 kept compressed.")
+
+
+# ---- a limit set from another server
+def _usage_module():
+    import importlib.util
+    from harbor.core.paths import LIB
+    spec = importlib.util.spec_from_file_location("vns_tools_usage", Path(LIB) / "usage.py")
+    usage = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(usage)
+    return usage
+
+
+def _admin_data(system):
+    from harbor.sites.export import admin_site
+    admin = admin_site(system)
+    if not admin:
+        raise Stop("There is no admin site here to keep the limit.")
+    return system.path(f"/var/www/{admin}/app")
+
+
+def _check_usage_now(system, data, told=False):
+    """After a limit came in: the hourly check put in place (it may have had nothing to check before), and a check run
+    now behind it, so the admin here warns at once (Needs attention), as after a limit set in it. told: the other server
+    asked for it, so this check does not tell it back"""
+    from harbor.core.paths import LIB
+    script = str(Path(LIB) / "usage.py")
+    system.run("/usr/bin/python3", script, "--sync", str(data), check=False, capture=True)
+    # setsid -f: on its own, so the command (and the SSH login it came over) does not wait for the measuring
+    system.run("setsid", "-f", "env", *(["HARBOR_USAGE_TOLD=1"] if told else []), "/usr/bin/python3", script, "--data", str(data), check=False, capture=True)
+
+
+def usage_check(system):
+    """A check of the usage limits now, asked by the other server, which found a shared limit gone past or under again"""
+    _check_usage_now(system, _admin_data(system), told=True)
+    system.say("The usage limits are checked now.")
+
+
+def usage_tell(system, keys):
+    """What changed at a check here, told to the other server where a limit is shared, so it checks at once too: an
+    environment on another server (its limit set here), or a site here that is an environment of one there (1.0.97)"""
+    from harbor.environments.settings import load, remote_exec
+    from harbor.server.servers import remote
+    usage = _usage_module()
+    data = _admin_data(system)
+    sources = {**usage.load_environment_of(data), **usage.load_limit_sources(data)}
+    command = 'h=/usr/local/bin/harbor; [ -x "$h" ] || h=/opt/harbor/current/bin/harbor; $h server usage-check'
+    told = set()
+    for key in keys:
+        kind, _, rest = key.removeprefix("limit|").partition("|")
+        try:
+            if kind == "environment":
+                site, _, target = rest.partition("|")
+                if target == "main":
+                    continue
+                environment = load(system, f"/var/www/{site}", target)
+                if environment.local or environment.windows or environment.IP in told:
+                    continue
+                told.add(environment.IP)
+                remote_exec(system, environment, command, check=False, capture=True)
+            elif kind == "site" and f"site|{rest}" in sources:
+                source = {"address": "", "port": 22, **sources[f"site|{rest}"]}
+                _, entry = origin_server(system, source)
+                if entry and entry["host"] not in told:
+                    told.add(entry["host"])
+                    remote(system, entry, command, check=False)
+        except Exception as error:  # noqa: BLE001  (the other server checks at its own hour anyway)
+            system.warn(f"Could not tell the other server about {key}: {error}")
+
+
+def usage_limit(system, site, limit_mb, origin, origin_site="", origin_target="", origin_mails=True, origin_port=22):
+    """A site's limit here, sent from the server that has it as an environment (harbor env push-limit there): kept as
+    this server's limit on it, marked as set from there with that server's site, environment and address (from the
+    SSH login it came over), so this admin shows it, and a change made here can be sent back (1.0.97)"""
+    data = _admin_data(system)
+    if not system.path(f"/var/www/{site}").is_dir():
+        raise Stop(f"There is no site {site} here.")
+    address = (os.environ.get("SSH_CONNECTION") or "").split(" ")[0]
+    try:
+        _usage_module().set_limit(data, "site", site, limit_mb=limit_mb,
+                                  origin={"host": origin, "address": address, "site": origin_site, "target": origin_target,
+                                          "mails": origin_mails, "port": origin_port})
+    except ValueError as error:
+        raise Stop(str(error))
+    _check_usage_now(system, data)
+    system.say(f"{site}: {'no limit' if limit_mb is None else f'{limit_mb} MB'}, as set on {origin}.")
+
+
+def origin_server(system, source):
+    """The server Harbor knows (Settings, Servers) that a limit came from: by its address, else by its name"""
+    from harbor.server.servers import servers
+    for name, entry in servers(system, "linux").items():
+        if (source.get("address") and entry.get("host") == source["address"]) or name == source.get("host", "").lower():
+            return name, entry
+    return None, None
+
+
+def usage_limit_back(system, site, limit_mb, raise_site=False):
+    """A limit that came from another server, changed here: sent back to that server (its environment's limit there),
+    then kept here, so the two tell the same. Only when Harbor here can reach it (Settings, Servers) (1.0.97)"""
+    import shlex
+    from harbor.server.servers import remote
+    data = _admin_data(system)
+    usage = _usage_module()
+    source = usage.load_limit_sources(data).get(f"site|{site}") or usage.load_environment_of(data).get(f"site|{site}")
+    if not source:
+        raise Stop(f"{site} is not an environment of a site on another server.")
+    source = {"address": "", "site": "", "target": "", "port": 22, **source}
+    _, entry = origin_server(system, source)
+    if not entry or not source.get("site") or not source.get("target"):
+        raise Stop(f"Harbor here cannot reach {source['host']}: add it under Settings, Servers, or change the limit on {source['host']}.")
+    value = "none" if limit_mb is None else str(int(limit_mb))
+    result = remote(system, entry, 'h=/usr/local/bin/harbor; [ -x "$h" ] || h=/opt/harbor/current/bin/harbor; '
+                    f"$h env set-limit {shlex.quote(source['site'])} {shlex.quote(source['target'])} {value}" + (" --raise" if raise_site else ""), check=False)
+    if not result.ok:
+        raise Stop(f"{source['host']} did not take the limit: " + (((result.stderr or result.stdout or "").strip().splitlines() or ["no answer"])[-1]))
+    usage.set_limit(data, "site", site, limit_mb=limit_mb, origin=source if limit_mb is not None else None)
+    _check_usage_now(system, data)
+    system.say(f"{site}: {'no limit' if limit_mb is None else f'{limit_mb} MB'}, here and on {source['host']}.")
+
+
+def usage_alerts_on(system):
+    """Whether this server mails the usage limits (its usage alerts on, with someone to mail)"""
+    try:
+        settings = _usage_module().load_settings(_admin_data(system))
+    except Stop:
+        return False
+    return bool(settings["enabled"] and settings["emails"])
+
+
+def environment_room(system, site, target):
+    """The room for an environment's share here, as JSON: asked by the server it runs on before its limit is typed"""
+    import json
+    print(json.dumps(_usage_module().limit_room(_admin_data(system), site, target)))
+
+
+def usage_room(system, site):
+    """The room for a site here that is an environment of a site on another server: asked there (env limit-room), as
+    JSON with its host; {"error": …} when it cannot be"""
+    import json
+    import shlex
+    from harbor.server.servers import remote
+    usage = _usage_module()
+    data = _admin_data(system)
+    source = usage.load_limit_sources(data).get(f"site|{site}") or usage.load_environment_of(data).get(f"site|{site}")
+    if not source:
+        print(json.dumps({"error": f"{site} is not an environment of a site on another server."}))
+        return
+    source = {"address": "", "site": "", "target": "", "port": 22, **source}
+    _, entry = origin_server(system, source)
+    if not entry or not source["site"]:
+        print(json.dumps({"error": f"Harbor here cannot reach {source['host']}."}))
+        return
+    result = remote(system, entry, 'h=/usr/local/bin/harbor; [ -x "$h" ] || h=/opt/harbor/current/bin/harbor; '
+                    f"$h env limit-room {shlex.quote(source['site'])} {shlex.quote(source['target'])}", check=False)
+    try:
+        found = json.loads((result.stdout or "").strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        print(json.dumps({"error": f"{source['host']} did not say: " + (((result.stderr or "").strip().splitlines() or ["no answer"])[-1])}))
+        return
+    print(json.dumps({**found, "host": source["host"], "site": source["site"]}))
+
+
+def environment_limit(system, site, target, limit_mb, raise_site=False):
+    """An environment's limit here, sent back from the server it runs on (harbor server usage-limit-back there): held to
+    the site's limit here as one set in this admin is, so a share that does not fit is refused, and the other server
+    says why"""
+    usage = _usage_module()
+    # Asked to (raise): more than the room the site's limit leaves raises it by what is missing first
+    if raise_site and limit_mb is not None:
+        room = usage.limit_room(_admin_data(system), site, target)
+        if room["budget"] is not None and room["max"] is not None and limit_mb > room["max"]:
+            usage.set_limit(_admin_data(system), "site", site, limit_mb=room["budget"] + math.ceil(limit_mb - room["max"]))
+    conflict = usage.limit_conflict(_admin_data(system), "environment", site, target, limit_mb)
+    if conflict:
+        raise Stop(conflict)
+    try:
+        usage.set_limit(_admin_data(system), "environment", site, target, limit_mb=limit_mb)
+    except ValueError as error:
+        raise Stop(str(error))
+    _check_usage_now(system, _admin_data(system))
+    system.say(f"{site} ({target}): {'no limit' if limit_mb is None else f'{limit_mb} MB'}.")
 
 
 # ---- the OS updates

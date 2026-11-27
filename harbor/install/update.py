@@ -79,6 +79,8 @@ def update(system, ref=""):
             versions = release_versions(system)
             raise Stop("There is no release to update to yet." if not versions else f"Harbor is up to date ({installed_version() or versions[0]}).")
         ref = "v" + found[0]
+    # One update at a time: one started in the admin, and the daily one when Harbor updates itself (autoupdate)
+    lock = lock_update(system)
     folder = Path(tempfile.mkdtemp(prefix="harbor-update-"))
     # The fetched code's own steps come under Install
     system.plan([f"Fetch {ref} from github.com/{REPOSITORY}", f"Install {ref}"])
@@ -97,6 +99,27 @@ def update(system, ref=""):
             raise Stop("", result.returncode or 1)
     finally:
         shutil.rmtree(folder, ignore_errors=True)
+        if lock:
+            lock.close()
+
+
+def lock_update(system):
+    """The lock every update of Harbor holds while it runs (the open file, closed to let it go); a Stop when another
+    update runs now"""
+    import fcntl
+    from harbor.install.autoupdate import LOCK
+    path = system.path(LOCK)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        stream = open(path, "a")
+    except OSError:
+        return None
+    try:
+        fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        stream.close()
+        raise Stop("Another update of Harbor runs now. Try again when it is done.")
+    return stream
 
 
 def finish_update(system, source):

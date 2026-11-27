@@ -212,9 +212,13 @@ def api_usage():
     if request.method == "PUT":
         try:
             settings = _usage.validate_settings(request.get_json(silent=True))
-            # The server's own limits stay as they are
-            _usage.write_json(os.path.join(DATA, "usage.json"), {**settings, "limits": _usage.load_limits(DATA)})
+            # The server's own limits stay as they are, with where each came from
+            saved = _usage.report.read_json(Path(DATA) / "usage.json", {})
+            _usage.write_json(os.path.join(DATA, "usage.json"), {**settings, "limits": _usage.load_limits(DATA),
+                                                                 "limits_from": saved.get("limits_from") or {}})
             sync_usage_job()
+            # The servers its environments run on are told whether it mails their limits now: they mail them when it does not
+            resend_environment_limits()
         except ValueError as exc:
             return error(str(exc))
         except (OSError, subprocess.SubprocessError):
@@ -233,16 +237,75 @@ def api_usage_limit():
     it, it shows in Usage and is mailed with the usage alerts. Checked at once."""
     require_admin()
     data = request.get_json(silent=True) or {}
+    # A limit set from the server that has the site as an environment: changed there too (over SSH, when Harbor here
+    # knows that server), so the two never tell different limits
+    # Also one whose limit was taken away there, but which is known as an environment of a site there, where Harbor here
+    # can reach that server: a limit set here is sent there, and so shared
+    origin = None
+    if data.get("kind") == "site":
+        origin = _usage.load_limit_origins(DATA).get(f"site|{data.get('name')}")
+        if not origin:
+            known = _usage.load_environment_of(DATA).get(f"site|{data.get('name')}")
+            try:
+                from harbor.core.system import System
+                from harbor.server.tools import origin_server
+                if known and origin_server(System(), {"address": "", **known})[1]:
+                    origin = known["host"]
+            except (ImportError, OSError):
+                pass
+    if origin:
+        limit = data.get("limit_mb")
+        if limit is not None and (isinstance(limit, bool) or not isinstance(limit, (int, float)) or not 1 <= limit <= 10 ** 8):
+            return error("The limit is a size in MB")
+        result = subprocess.run(["/usr/bin/python3", HARBOR_COMMAND, "server", "usage-limit-back", str(data.get("name")),
+                                 "none" if limit is None else str(int(limit)), *(["--raise"] if data.get("raise") is True else [])],
+                                capture_output=True, text=True, timeout=90)
+        if result.returncode:
+            return error(((result.stderr or result.stdout).strip().splitlines() or [f"{origin} did not take the limit."])[-1])
+        sync_usage_job(check_now=True)
+        audit(f"Set the limit of site {data.get('name')} here and on {origin}")
+        return jsonify(limits=_usage.load_limits(DATA), remote={"sent": True, "error": "", "to": origin})
+    # A part of the site's limit is never above it, nor the site's below one of its parts
+    conflict = _usage.limit_conflict(DATA, data.get("kind"), data.get("name"), data.get("connection") or "", data.get("limit_mb")) \
+        if isinstance(data.get("limit_mb"), (int, float)) and not isinstance(data.get("limit_mb"), bool) else ""
+    if conflict:
+        return error(conflict)
     try:
         _usage.set_limit(DATA, data.get("kind"), data.get("name"), data.get("connection") or "", data.get("limit_mb"))
         sync_usage_job(check_now=True)
+        # An environment on another server: its limit sent there too, so that server's admin shows it (1.0.97)
+        remote = push_environment_limit(data) if data.get("kind") == "environment" and data.get("connection") != "main" else None
     except ValueError as exc:
         return error(str(exc))
     except (OSError, subprocess.SubprocessError):
         app.logger.exception("Could not save the limit")
         return error("The limit could not be saved. Inspect the admin app log.", 500)
     audit(f"Set the limit of {data.get('kind')} {data.get('name')}")
-    return jsonify(limits=_usage.load_limits(DATA))
+    return jsonify(limits=_usage.load_limits(DATA), remote=remote)
+
+
+def resend_environment_limits():
+    """Every environment limit sent again to the server it runs on (behind the request: one SSH login each)"""
+    limits = [key.split("|") for key in _usage.load_limits(DATA) if key.startswith("environment|")]
+    if not limits:
+        return
+    def resend():
+        for _, site, target in limits:
+            push_environment_limit({"name": site, "connection": target, "limit_mb": _usage.load_limits(DATA).get(f"environment|{site}|{target}")})
+    threading.Thread(target=resend, daemon=True).start()
+
+
+def push_environment_limit(data):
+    """harbor env push-limit: {sent, error}, or None for an environment here. The limit is kept here either way."""
+    limit = data.get("limit_mb")
+    try:
+        result = subprocess.run(["/usr/bin/python3", HARBOR_COMMAND, "env", "push-limit", str(data.get("name")), str(data.get("connection")),
+                                 "none" if limit is None else str(int(limit))], capture_output=True, text=True, timeout=60)
+        found = json.loads(result.stdout.strip().splitlines()[-1])
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+        app.logger.exception("Could not send the limit")
+        return {"sent": False, "error": "It could not be sent to its server."}
+    return found if found.get("sent") or found.get("error") else None
 
 
 def sync_usage_job(check_now=False):
@@ -278,7 +341,14 @@ def usage_over(user):
 
 def user_usage(user):
     names = {item["id"]: item.get("name") for item in _sql_module.public_connections(SQL_CONNECTIONS)} if os.path.isfile(SQL_CONNECTIONS) else {}
-    measure_site = lambda site: _usage.site_mb(site, WEB_ROOT)
+    # A site's size is its solution: its folder and its environments elsewhere, as measured last for Usage
+    kept = {}
+    def measure_site(site):
+        if "environments" not in kept:
+            kept["environments"] = _usage.kept_environments(DATA)
+            if kept["environments"] is None:
+                kept["environments"] = _usage.all_environments_mb()
+        return _usage.solution_mb(site, WEB_ROOT, kept["environments"])
     return _usage.of_user(DATA, user, names, measure_site=measure_site)
 
 
@@ -289,8 +359,58 @@ def api_usage_all():
     stale; ?fresh=1 measures now, and keeps it"""
     require_admin()
     connections = {item["id"]: item.get("name") or item["id"] for item in _sql_module.public_connections(SQL_CONNECTIONS)} if os.path.isfile(SQL_CONNECTIONS) else {}
-    return jsonify(_usage.kept_overview(DATA, site_dirs(), connections, fresh=request.args.get("fresh") == "1",
-                                        measure_site=lambda site: _usage.site_mb(site, WEB_ROOT)))
+    # The admin site is Harbor itself: never a site with a size to watch
+    sites = [site for site in site_dirs() if site != ADMIN_SITE]
+    result = _usage.kept_overview(DATA, sites, connections, fresh=request.args.get("fresh") == "1",
+                                  measure_site=lambda site: _usage.site_mb(site, WEB_ROOT))
+    # Measured now: what is over is checked at once too, so Needs attention and the mail follow what Usage shows
+    if request.args.get("fresh") == "1":
+        try:
+            sync_usage_job(check_now=True)
+        except (OSError, subprocess.SubprocessError):
+            app.logger.exception("Could not start the usage check")
+    # A limit from another server can be changed here when Harbor here knows that server (Settings, Servers)
+    sources = _usage.load_limit_sources(DATA)
+    # A site that is an environment of a site on another server, with no limit now: said so, as its limit is a share there
+    known = _usage.load_environment_of(DATA)
+    for item in result["sites"]:
+        if not item.get("server_limit_from") and f"site|{item['name']}" in known:
+            item["environment_of"] = known[f"site|{item['name']}"].get("host")
+            sources.setdefault(f"site|{item['name']}", {"address": "", **known[f"site|{item['name']}"]})
+    if any(item.get("server_limit_from") or item.get("environment_of") for item in result["sites"]):
+        try:
+            from harbor.core.system import System
+            from harbor.server.tools import origin_server
+            system = System()
+            for item in result["sites"]:
+                source = sources.get(f"site|{item['name']}")
+                item["server_limit_back"] = bool(source and source.get("site") and origin_server(system, source)[1])
+                item["server_limit_address"] = (source or {}).get("address", "")
+                item["server_limit_port"] = (source or {}).get("port", 22)
+        except (ImportError, OSError):
+            pass
+    return jsonify(result)
+
+
+@app.route("/api/usage/room/<site>")
+def api_usage_room(site):
+    """The room for a site here that is an environment of a site on another server, asked there: its limit dialog
+    knows the least and most it may be before it is typed"""
+    require_admin()
+    if site not in site_dirs():
+        abort(404, "No such site.")
+    # A part of a site here (?target=): its room from this server's own limits and sizes
+    target = request.args.get("target", "")
+    if target:
+        if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", target):
+            abort(400, "Unknown environment")
+        return jsonify(**_usage.limit_room(DATA, site, target), site=site, host="")
+    try:
+        result = subprocess.run(["/usr/bin/python3", HARBOR_COMMAND, "server", "usage-room", site], capture_output=True, text=True, timeout=60)
+        return jsonify(json.loads(result.stdout.strip().splitlines()[-1]))
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+        app.logger.exception("usage room")
+        return jsonify(error="The room could not be asked for.")
 
 
 @app.route("/api/usage/site/<site>")
@@ -299,7 +419,16 @@ def api_usage_site(site):
     require_admin()
     if site not in site_dirs():
         abort(404, "No such site.")
-    return jsonify(_usage.site_limits(DATA, site, measure_site=lambda name: _usage.site_mb(name, WEB_ROOT)))
+    environments = _usage.kept_environments(DATA)
+    return jsonify(_usage.site_limits(DATA, site, measure_site=lambda name: _usage.solution_mb(
+        name, WEB_ROOT, environments if environments is not None else _usage.all_environments_mb())))
+
+
+@app.route("/api/usage/over")
+def api_usage_over():
+    """What is past its limit at the last check, as /api/me has it: the page follows a check that ran since it loaded
+    (behind a change here, or a limit sent from another server)"""
+    return jsonify(over=usage_over(me()))
 
 
 @app.route("/api/usage/mine")
@@ -2625,6 +2754,19 @@ def api_system_update():
         return jsonify(**response)
 
 
+@app.route("/api/system-update/auto")
+def api_system_update_auto():
+    """Whether Harbor updates itself, when, and how its last run ended (harbor/install/autoupdate.py)"""
+    require_admin()
+    try:
+        from harbor.core.system import System
+        from harbor.install import autoupdate
+        return jsonify(autoupdate.status(System()))
+    except (ImportError, OSError) as exc:
+        app.logger.error("Could not read the automatic updates: %s", exc)
+        return jsonify(on=False, time="04:00", last=None, unavailable=True)
+
+
 def rollback_release():
     """The release a rollback goes back to ({version, name}), or None: only one installed before the one in use, from
     VNS Harbor (harbor self rollback)"""
@@ -3335,6 +3477,15 @@ def server_tool_command(data):
     if tool in ("unattended_on", "unattended_off"):
         on = tool == "unattended_on"
         return ("Turn on" if on else "Turn off") + " automatic security updates", harbor + ["server", "unattended-upgrades", "on" if on else "off"], env
+    if tool in ("harbor_autoupdate_on", "harbor_autoupdate_off"):
+        # Harbor updated by itself each day at the time chosen (harbor/install/autoupdate.py)
+        if tool == "harbor_autoupdate_off":
+            return "Stop updating Harbor by itself", harbor + ["self", "auto-update", "off"], env
+        at = str(data.get("at", ""))
+        if at != "soon" and not re.fullmatch(r"([01][0-9]|2[0-3]):[0-5][0-9]", at):
+            abort(400, "Choose the time of day")
+        return ("Update Harbor as soon as a release is out" if at == "soon" else f"Update Harbor by itself at {at}"), \
+            harbor + ["self", "auto-update", "on", "--at", at], env
     if tool in ("logrotate_on", "logrotate_off"):
         return ("Rotate the jobs' logs" if tool == "logrotate_on" else "Stop rotating the jobs' logs"), harbor + ["server", "crontab", tool.replace("_", "-")], env
     if tool == "cron_run":

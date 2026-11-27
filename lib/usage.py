@@ -16,6 +16,7 @@ under again. What is over is kept (usage-state.json), and the admin shows each u
 import argparse
 import importlib.util
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -53,8 +54,139 @@ def load_limits(data_dir):
             and not isinstance(value, bool) and value > 0} if isinstance(saved, dict) else {}
 
 
-def set_limit(data_dir, kind, name, connection="", limit_mb=None):
-    """A site's or a database's limit set (a number of MB) or taken away (None)"""
+def load_limit_sources(data_dir):
+    """The limits set from another server (the Harbor that manages the site as one of its environments), each with where
+    it came from: {key: {host, address, site, target}} (address, site and target: that server's own, to send a change
+    back to it)"""
+    saved = report.read_json(Path(data_dir) / "usage.json", {}).get("limits_from")
+    found = {}
+    for key, value in (saved.items() if isinstance(saved, dict) else []):
+        if isinstance(value, str):
+            value = {"host": value}
+        if isinstance(key, str) and isinstance(value, dict) and isinstance(value.get("host"), str):
+            found[key] = {"host": value["host"], **{name: str(value.get(name) or "") for name in ("address", "site", "target")},
+                          "port": value.get("port") if isinstance(value.get("port"), int) else 22,
+                          # Whether the server it was set on mails it (its usage alerts on): else this one does
+                          "mails": value.get("mails") is not False}
+    return found
+
+
+def load_environment_of(data_dir):
+    """The sites here that are an environment of a site on another server, as that server told when it sent a limit
+    (kept when the limit is taken away): {key: {host, address, site, target, port}}, so a limit set here later is sent
+    there too (1.0.97)"""
+    saved = report.read_json(Path(data_dir) / "usage.json", {}).get("environment_of")
+    return {key: value for key, value in saved.items() if isinstance(key, str) and isinstance(value, dict) and value.get("host")} if isinstance(saved, dict) else {}
+
+
+def load_limit_origins(data_dir):
+    """The limits set from another server: {key: its host name}"""
+    return {key: value["host"] for key, value in load_limit_sources(data_dir).items()}
+
+
+def part_limits(limits, site):
+    """The limits given to a site's parts (the site itself as main, and each environment): {target: mb}"""
+    prefix = f"environment|{site}|"
+    return {key[len(prefix):]: value for key, value in limits.items() if key.startswith(prefix)}
+
+
+def limit_conflict(data_dir, kind, name, connection="", limit_mb=None, measure_environment=None):
+    """Why a limit does not add up, or "" (1.0.97): a site's limit is the budget of its solution (the site itself and
+    every environment, wherever it runs), and the limits given to its parts are shares of it. Together they are never
+    more than it, so a part's is at most what the others leave, and the site's at least what its parts were given."""
+    if limit_mb is None or kind not in ("site", "environment"):
+        return ""
+    limits = load_limits(data_dir)
+    size = lambda mb: f"{mb / 1024:.1f} GB" if mb >= 1024 else f"{mb:g} MB"
+    # A bound as it can be typed: an upper one rounded down, a lower one up (2105 MB as 2.05 GB)
+    down = lambda mb: f"{math.floor(mb / 1024 * 100) / 100:g} GB" if mb >= 1024 else f"{math.floor(mb)} MB"
+    up = lambda mb: f"{math.ceil(mb / 1024 * 100) / 100:g} GB" if mb >= 1024 else f"{math.ceil(mb)} MB"
+    # What each part uses now, as measured last (the part itself measured again): a limit it is past at once is not set
+    uses = part_sizes(data_dir, name)
+    if kind == "environment":
+        now = part_now(data_dir, name, connection, uses.get(connection), measure_environment)
+        if now is not None:
+            uses[connection] = now
+    if kind == "environment":
+        budget = limits.get(f"site|{name}")
+        others = {target: mb for target, mb in part_limits(limits, name).items() if target != connection}
+        given = sum(others.values())
+        rest = sum(mb for target, mb in uses.items() if target != connection and target not in others)
+        if connection in uses and limit_mb < uses[connection]:
+            return f"At least {up(uses[connection])}, what it uses now: a limit below that is past at once."
+        if budget is not None and given + limit_mb + rest > budget and given + limit_mb <= budget:
+            return (f"At most {down(max(0, budget - given - rest))}: the site's other parts with no share of their own use {size(rest)} now, "
+                    f"and they would be past {name}'s {size(budget)} at once.")
+        if budget is not None and given + limit_mb > budget:
+            left = max(0, budget - given)
+            return (f"Only {size(left)} is left of {name}'s {size(budget)}: {size(given)} is given to its other parts "
+                    f"({', '.join(f'{target} {size(mb)}' for target, mb in others.items())}). Give the site more, or another part less."
+                    if others else f"At most {size(budget)}, {name}'s limit for the site and all its environments.")
+        return ""
+    given = part_limits(limits, name)
+    if given and sum(given.values()) > limit_mb:
+        return (f"At least {size(sum(given.values()))}: that is given to its parts "
+                f"({', '.join(f'{target} {size(mb)}' for target, mb in given.items())}). Give them less first.")
+    need = sum(given.values()) + sum(mb for target, mb in uses.items() if target not in given)
+    if uses and limit_mb < need:
+        return f"At least {up(need)}: the site and its environments need that now (their shares, and what the rest uses). Below it, it is past at once."
+    return ""
+
+
+def limit_room(data_dir, site, target, measure_environment=None):
+    """The room for a part's share of its site's limit, as limit_conflict holds it to: {budget, uses, min, max, given,
+    rest} in MB (max None without a limit on the site). For the server the part runs on, to say before it is typed (1.0.97)"""
+    limits = load_limits(data_dir)
+    uses = part_sizes(data_dir, site)
+    now = part_now(data_dir, site, target, uses.get(target), measure_environment)
+    if now is not None:
+        uses[target] = now
+    budget = limits.get(f"site|{site}")
+    others = {name: mb for name, mb in part_limits(limits, site).items() if name != target}
+    given = sum(others.values())
+    rest = sum(mb for name, mb in uses.items() if name != target and name not in others)
+    least = math.ceil(uses.get(target, 0))
+    return {"budget": budget, "uses": uses.get(target), "min": least, "given": given, "rest": round(rest, 1),
+            "max": None if budget is None else max(0, math.floor(budget - given - rest))}
+
+
+def part_now(data_dir, site, target, kept=None, measure_environment=None):
+    """What a part uses now: measured again (an environment, here or on its server), or as the last check found it,
+    whichever is more, as the check holds it to that and the sizes kept for Usage may be older"""
+    found = [kept] if kept is not None else []
+    if target != "main":
+        try:
+            found.append((measure_environment or environment_mb)(site, target))
+        except Exception:  # noqa: BLE001  (not reached now: the sizes known are used)
+            pass
+    state = report.read_json(Path(data_dir) / "usage-state.json", {})
+    item = ((state.get("open") or {}) if isinstance(state, dict) else {}).get(f"limit|environment|{site}|{target}")
+    if isinstance(item, dict):
+        found.append(item.get("size_mb"))
+    found = [mb for mb in found if isinstance(mb, (int, float))]
+    return max(found) if found else None
+
+
+def part_sizes(data_dir, site):
+    """What each part of a site uses, as measured last for Usage: {"main": the site itself, target: environment}; empty
+    when it has not been measured"""
+    kept = report.read_json(Path(data_dir) / "usage-sizes.json", {})
+    sizes = kept.get("sizes") if isinstance(kept, dict) else None
+    if not isinstance(sizes, dict):
+        return {}
+    environments = sizes.get("environments") or []
+    found = solution_of(site, (sizes.get("sites") or {}).get(site), environments)
+    if not found:
+        return {}
+    parts = {"main": found["main_mb"]}
+    parts.update({item["target"]: item["size_mb"] for item in environments if isinstance(item, dict) and item.get("site") == site and item.get("size_mb") is not None})
+    return parts
+
+
+def set_limit(data_dir, kind, name, connection="", limit_mb=None, origin=None):
+    """A site's or a database's limit set (a number of MB) or taken away (None). origin: the server it was set from,
+    when it is an environment of a site there (its limit sent here, 1.0.97): its host name, or {host, address, site,
+    target}; a limit set here has none"""
     if kind not in ("site", "database", "environment") or not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9._@ -]{1,128}", name):
         raise ValueError("Unknown site, environment or database")
     if kind == "database" and not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", connection or ""):
@@ -74,6 +206,17 @@ def set_limit(data_dir, kind, name, connection="", limit_mb=None):
     else:
         limits[key] = round(limit_mb)
     saved["limits"] = limits
+    origins = saved.get("limits_from") if isinstance(saved.get("limits_from"), dict) else {}
+    if limit_mb is not None and origin:
+        origins[key] = origin
+    else:
+        origins.pop(key, None)
+    saved["limits_from"] = origins
+    # Whose environment it is stays known after its limit is taken away
+    if isinstance(origin, dict) and origin.get("site"):
+        known = saved.get("environment_of") if isinstance(saved.get("environment_of"), dict) else {}
+        known[key] = {name: origin.get(name) for name in ("host", "address", "site", "target", "port") if origin.get(name) is not None}
+        saved["environment_of"] = known
     write_json(path, saved)
     # What was over it and is not now (no limit, or one above its size): not over any more at once, without waiting for
     # the check; nothing is mailed for it
@@ -129,6 +272,32 @@ def site_mb(site, web_root=WEB_ROOT):
         return None
 
 
+def solution_of(site, folder_mb, environments):
+    """A site as a whole (1.0.97): {solution_mb, main_mb}. Its folder here holds the site itself and the environments in
+    it; the solution is that and every environment of it elsewhere (another server, a folder of its own) as measured.
+    The site itself (main) is its folder without the environments in it. None when its folder is gone."""
+    if folder_mb is None:
+        return None
+    mine = [item for item in environments or [] if isinstance(item, dict) and item.get("site") == site and item.get("size_mb") is not None]
+    inside = sum(item["size_mb"] for item in mine if item.get("in_site"))
+    outside = sum(item["size_mb"] for item in mine if not item.get("in_site"))
+    return {"solution_mb": round(folder_mb + outside, 1), "main_mb": round(max(0.0, folder_mb - inside), 1)}
+
+
+def kept_environments(data_dir):
+    """The environments as measured last for Usage (usage-sizes.json), or None: a site's solution without measuring them
+    over SSH again"""
+    kept = report.read_json(Path(data_dir) / "usage-sizes.json", {})
+    found = ((kept.get("sizes") or {}).get("environments")) if isinstance(kept, dict) else None
+    return found if isinstance(found, list) else None
+
+
+def solution_mb(site, web_root=WEB_ROOT, environments=None):
+    """A site's solution in MB: its folder here and its environments elsewhere"""
+    found = solution_of(site, site_mb(site, web_root), environments if environments is not None else all_environments_mb())
+    return found["solution_mb"] if found else None
+
+
 def environment_mb(site, target):
     """An environment's folder in MB, here or on its server (harbor env size), or None when it cannot be told"""
     harbor = Path(__file__).resolve().parents[1] / "bin" / "harbor"
@@ -145,9 +314,10 @@ def all_environments_mb():
     try:
         result = subprocess.run(["/usr/bin/python3", str(harbor), "env", "size", "all"], capture_output=True, text=True, timeout=600)
         found = json.loads(result.stdout.strip().splitlines()[-1])
-        return found if isinstance(found, list) else []
+        return found if isinstance(found, list) else None
     except (OSError, subprocess.SubprocessError, ValueError, IndexError):
-        return []
+        # Not measured: None, so a check takes it as not known, never as nothing there
+        return None
 
 
 def connection_engine(data_dir, connection):
@@ -170,11 +340,36 @@ def database_sizes(data_dir, connection, user_only=False):
         return {}
 
 
-def check(data_dir, measure_site=site_mb, measure_databases=database_sizes, everything=None, measure_environment=None):
+def check(data_dir, measure_site=site_mb, measure_databases=database_sizes, everything=None, measure_environment=None,
+          measure_environments=None, unknown=None):
     """What has grown past its user's limit now: a list, each with its key, kind, name, user, size and limit. With
-    everything (a list), each site and database a user made goes into it as well, with its limit or None."""
+    everything (a list), each site and database a user made goes into it as well, with its limit or None. A site's
+    size is its solution: the site and every environment of it, wherever it runs (1.0.97)."""
     config = report.read_json(Path(data_dir) / "config.json", {})
     over, sizes = [], {}
+    measured = {}
+
+    def environments():
+        if "environments" not in measured:
+            measured["environments"] = measure_environments() if measure_environments else all_environments_mb()
+        return measured["environments"]
+
+    def whole(site):
+        if ("site", site) not in measured:
+            folder = measure_site(site)
+            found = environments()
+            # A part not measured now (its server not reached): the site's size is not known, rather than less
+            if found is None or any(item.get("site") == site and item.get("size_mb") is None and not item.get("windows") for item in found):
+                measured[("site", site)] = None
+                if unknown is not None:
+                    unknown.add(f"site|{site}")
+            else:
+                measured[("site", site)] = solution_of(site, folder, found) if folder is not None else None
+        return measured[("site", site)]
+
+    def solution(site):
+        found = whole(site)
+        return found["solution_mb"] if found else None
     for user in config.get("users", []) if isinstance(config.get("users"), list) else []:
         if not isinstance(user, dict) or user.get("role") == "admin":
             continue
@@ -182,7 +377,7 @@ def check(data_dir, measure_site=site_mb, measure_databases=database_sizes, ever
         who = user.get("name") or user.get("username") or user.get("id", "")
         if everything is not None or any(site_limit(user, site) is not None for site in user_sites(user)):
             for site in user_sites(user):
-                size = measure_site(site)
+                size = solution(site)
                 if size is None:
                     continue
                 item = {"key": f"site|{site}", "kind": "site", "name": site, "user": who, "user_id": user.get("id"), "size_mb": size, "limit_mb": site_limit(user, site)}
@@ -208,15 +403,19 @@ def check(data_dir, measure_site=site_mb, measure_databases=database_sizes, ever
                         over.append(item)
     # The server's own limits, whoever's each is
     measure_environment = measure_environment or environment_mb
+    sources = load_limit_sources(data_dir)
     for key, limit in load_limits(data_dir).items():
         kind, _, rest = key.partition("|")
         if kind == "environment":
             site, _, target = rest.partition("|")
-            size = measure_environment(site, target)
+            # The site itself is a part as its environments are: its folder without the environments in it
+            size = (whole(site) or {}).get("main_mb") if target == "main" else measure_environment(site, target)
+            if size is None and unknown is not None:
+                unknown.add(key)
             item = {"key": "limit|" + key, "kind": "environment", "name": f"{site} ({target})", "site": site, "target": target,
                     "user": "the server's limit", "user_id": None, "size_mb": size, "limit_mb": limit}
         elif kind == "site":
-            size = measure_site(rest)
+            size = solution(rest)
             item = {"key": "limit|" + key, "kind": "site", "name": rest, "user": "the server's limit", "user_id": None, "size_mb": size, "limit_mb": limit}
         else:
             connection, _, name = rest.partition("|")
@@ -225,6 +424,11 @@ def check(data_dir, measure_site=site_mb, measure_databases=database_sizes, ever
             size = sizes[connection].get(name)
             item = {"key": "limit|" + key, "kind": "database", "name": name, "connection": connection, "user": "the server's limit",
                     "user_id": None, "size_mb": round(size, 1) if size is not None else None, "limit_mb": limit}
+        # Set from the server that manages it as an environment: shown here, mailed from there
+        if key in sources:
+            item.update({"from": sources[key]["host"], "user": f"the limit set on {sources[key]['host']}", "mailed_there": sources[key]["mails"]})
+        if item["size_mb"] is None and unknown is not None:
+            unknown.add(key)
         if item["size_mb"] is not None and item["size_mb"] > limit:
             over.append(item)
     return over
@@ -308,7 +512,9 @@ def site_limits(data_dir, site, measure_site=site_mb):
     """The limits a site is held to and how big it is now (its folder, with the environments in it): for Add
     environment, which tells whether a new environment counts in them (1.0.95)"""
     owner = site_owners(plain_users(data_dir)).get(site)
-    return {"size_mb": measure_site(site), "server_limit_mb": load_limits(data_dir).get(f"site|{site}"),
+    limits = load_limits(data_dir)
+    return {"size_mb": measure_site(site), "server_limit_mb": limits.get(f"site|{site}"),
+            "given_mb": sum(part_limits(limits, site).values()),
             "limit_mb": site_limit(owner, site) if owner else None, "user": (owner.get("name") or owner.get("username")) if owner else None}
 
 
@@ -316,7 +522,7 @@ def measure_all(data_dir, sites, connections, measure_site=site_mb, measure_data
     """How big every site here, every environment and every database on each connection is now: what takes time in
     Usage, kept apart from who has what and their limits, so it can be kept a while (usage-sizes.json, 1.0.95)"""
     return {"sites": {site: measure_site(site) for site in sites},
-            "environments": measure_environments() if measure_environments else all_environments_mb(),
+            "environments": (measure_environments() if measure_environments else all_environments_mb()) or [],
             "databases": {connection: measure_databases(data_dir, connection, user_only=True) for connection in connections},
             "engines": {connection: connection_engine(data_dir, connection) for connection in connections}}
 
@@ -328,13 +534,19 @@ def overview_of(data_dir, sizes, connections):
     site_owner = site_owners(users)
     result = {"sites": [], "connections": []}
     server_limits = load_limits(data_dir)
-    for site, size in sizes["sites"].items():
-        if size is None:
+    origins = load_limit_origins(data_dir)
+    for site, folder in sizes["sites"].items():
+        found = solution_of(site, folder, sizes["environments"])
+        if found is None:
             continue
         owner = site_owner.get(site)
-        result["sites"].append({"name": site, "size_mb": size, "user": (owner.get("name") or owner.get("username")) if owner else None,
+        # Its size is its solution: the site itself (main) and every environment, wherever it runs
+        result["sites"].append({"name": site, "size_mb": found["solution_mb"], "folder_mb": folder, "main_mb": found["main_mb"],
+                                "main_limit_mb": server_limits.get(f"environment|{site}|main"),
+                                "user": (owner.get("name") or owner.get("username")) if owner else None,
                                 "user_id": owner.get("id") if owner else None,
-                                "limit_mb": site_limit(owner, site) if owner else None, "server_limit_mb": server_limits.get(f"site|{site}")})
+                                "limit_mb": site_limit(owner, site) if owner else None, "server_limit_mb": server_limits.get(f"site|{site}"),
+                                "server_limit_from": origins.get(f"site|{site}")})
     # Every environment, measured where it runs (here or on its server), with the server's limit on it
     result["environments"] = [{**item, "server_limit_mb": server_limits.get(f"environment|{item['site']}|{item['target']}")}
                               for item in sizes["environments"]]
@@ -364,7 +576,44 @@ def overview(data_dir, sites, connections, measure_site=site_mb, measure_databas
 SIZES_KEPT = 600
 
 
-def kept_overview(data_dir, sites, connections, fresh=False, now=None, **measure):
+def environment_ids(site, web_root=WEB_ROOT, state=Path("/var/lib/harbor/sites")):
+    """The environments a site has now, as Harbor reads them (harbor/environments/settings.target_ids): from its
+    scripts while it has any, else Harbor's copy. A cheap look at files, no measuring"""
+    root = Path(web_root) / site
+    ids = ["prod"] if (root / "scripts/publish_prod.sh").is_file() else []
+    targets = root / "scripts/targets"
+    if targets.is_dir():
+        ids += [path.name for path in targets.iterdir() if path.is_dir() and (path / "publish_prod.sh").is_file()]
+    if ids:
+        return set(ids)
+    copy = Path(state) / site / "environments"
+    return {path.stem for path in copy.glob("*.json")} if copy.is_dir() else set()
+
+
+def drop_gone_environments(data_dir, sites, web_root=WEB_ROOT, ids=environment_ids):
+    """Limits of environments that are gone (deleted, or their site gone): taken away, so a share of one does not stay in
+    its site's limit. The environments a site has now: [(site, target)]"""
+    gone = []
+    for key in load_limits(data_dir):
+        kind, _, rest = key.partition("|")
+        # A site gone: its limit with it
+        if kind == "site" and rest not in sites:
+            set_limit(data_dir, "site", rest, limit_mb=None)
+            continue
+        if kind != "environment":
+            continue
+        site, _, target = rest.partition("|")
+        if target == "main":
+            if site not in sites:
+                gone.append((site, target))
+        elif site not in sites or target not in ids(site, web_root):
+            gone.append((site, target))
+    for site, target in gone:
+        set_limit(data_dir, "environment", site, target, limit_mb=None)
+    return gone
+
+
+def kept_overview(data_dir, sites, connections, fresh=False, now=None, web_root=WEB_ROOT, ids=environment_ids, **measure):
     """Usage at once from the sizes measured last (usage-sizes.json), with measured (when) and stale (older than ten
     minutes, or sites or connections have come or gone since): the page shows it, and asks for fresh sizes after.
     fresh, or nothing kept yet: measured now, and kept. Who has what and the limits are always as they are now."""
@@ -379,7 +628,13 @@ def kept_overview(data_dir, sites, connections, fresh=False, now=None, **measure
         kept = {"measured": now, "sizes": sizes}
         write_json(path, kept)
     measured = kept.get("measured") or 0
-    stale = now - measured > SIZES_KEPT or sorted(sizes["sites"]) != sorted(sites) or sorted(sizes["databases"]) != sorted(connections)
+    # An environment deleted (or made) since: shown as it is now at once, and measured again behind it
+    have = {site: ids(site, web_root) for site in sites}
+    kept_envs = [item for item in sizes["environments"] if isinstance(item, dict) and item.get("target") in have.get(item.get("site"), set())]
+    changed = len(kept_envs) != len(sizes["environments"]) or sum(len(found) for found in have.values()) != len(kept_envs)
+    sizes = {**sizes, "environments": kept_envs}
+    drop_gone_environments(data_dir, sites, web_root, ids)
+    stale = changed or now - measured > SIZES_KEPT or sorted(sizes["sites"]) != sorted(sites) or sorted(sizes["databases"]) != sorted(connections)
     # A site gone since is not shown, though its size is kept until the next measuring
     shown = {**sizes, "sites": {site: size for site, size in sizes["sites"].items() if site in sites}}
     return {**overview_of(data_dir, shown, connections), "measured": measured, "stale": bool(stale)}
@@ -505,13 +760,29 @@ def run(data_dir, mail=True, now=None, **measure):
     # Everything a user made is measured too: Check now shows it, and a mail has it under what changed, databases with
     # no size limit as well
     everything = []
-    over = check(data_dir, everything=everything, **measure)
+    unknown = set()
+    # Limits of what is gone (a site or environment deleted) taken away first: gone is not "not measured now"
+    if "measure_site" not in measure:
+        web = Path(WEB_ROOT)
+        drop_gone_environments(data_dir, [path.name for path in web.iterdir() if path.is_dir() and not path.is_symlink()] if web.is_dir() else [])
+    over = check(data_dir, everything=everything, unknown=unknown, **measure)
     state_path = data_dir / "usage-state.json"
     state = report.read_json(state_path, {})
     before = state.get("open") if isinstance(state.get("open"), dict) else {}
     current = {item["key"]: item for item in over}
-    new = [item for key, item in current.items() if key not in before]
+    # Not measured now (a server not reached): what was over stays over, and is not said to be fine again
+    for key, item in before.items():
+        if key not in current and (key.removeprefix("limit|") in unknown or key in unknown):
+            current[key] = item
+    # Not mailed last time (the mail could not be sent): mailed as new now, while it is still over
+    unmailed = set(state.get("unmailed") or [])
+    new = [item for key, item in current.items() if key not in before or key in unmailed]
     solved = [item for key, item in before.items() if key not in current]
+    # A limit set from the server that manages the site is mailed from there while its usage alerts are on: here it is
+    # then only shown. With them off there, it is mailed from here, so it is mailed once, from one of the two.
+    mailed_there = lambda item: item.get("from") and item.get("mailed_there", True)
+    new = [item for item in new if not mailed_there(item)]
+    solved = [item for item in solved if not mailed_there(item)]
     mail_error = state.get("mail_error")
     if mail:
         settings = load_settings(data_dir)
@@ -523,10 +794,29 @@ def run(data_dir, mail=True, now=None, **measure):
                 mail_error = None
             except Exception as exc:  # noqa: BLE001  (smtplib, ssl and socket each have their own)
                 mail_error = str(exc)
-                # Not mailed: it is tried again next time, as if it were new
-                current = {key: item for key, item in current.items() if key in before}
-        write_json(state_path, {"checked": now, "open": current, "mail_error": mail_error})
+                # Not mailed: still shown (Needs attention, Usage), and mailed next time, as if it were new
+                unmailed |= {item["key"] for item in new}
+            else:
+                unmailed = set()
+        unmailed &= set(current)
+        write_json(state_path, {"checked": now, "open": current, "mail_error": mail_error, "unmailed": sorted(unmailed)})
+        tell_others(set(current) ^ set(before))
     return {"checked": now, "over": over, "mail_error": mail_error, "all": everything}
+
+
+def tell_others(changed):
+    """What went past a limit or under it again, where the limit is shared with another server (an environment there, or
+    a site here that is one of a site there): that server told to check at once too, so both show it (1.0.97). Not when
+    this check was asked by that server, so they never tell each other round"""
+    keys = sorted(key for key in changed if key.startswith(("limit|environment|", "limit|site|")))
+    if not keys or os.environ.get("HARBOR_USAGE_TOLD") == "1":
+        return
+    harbor = Path(__file__).resolve().parents[1] / "bin" / "harbor"
+    try:
+        subprocess.Popen(["/usr/bin/python3", str(harbor), "server", "usage-tell", *keys], stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, start_new_session=True)
+    except OSError:
+        pass
 
 
 def needed(data_dir):

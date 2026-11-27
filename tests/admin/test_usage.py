@@ -77,10 +77,15 @@ class UsageCheckTests(unittest.TestCase):
                  {"id": "a", "username": "root", "role": "admin", "made": {"sites": ["big.dk"]}, "limits": {"site_mb": 1}}]
         (self.data / "config.json").write_text(json.dumps({"users": users}))
         self.sites = {"big.dk": 250.0, "small.dk": 20.0, "free.dk": 9999.0}
+        # The other server is never told from a test
+        teller = patch.object(usage, "tell_others")
+        self.told = teller.start()
+        self.addCleanup(teller.stop)
         self.databases = {"Shop": 2048.0, "Tiny": 3.0}
 
     def measure(self):
-        return {"measure_site": lambda site: self.sites.get(site), "measure_databases": lambda data, connection: self.databases}
+        return {"measure_site": lambda site: self.sites.get(site), "measure_databases": lambda data, connection: self.databases,
+                "measure_environments": lambda: []}
 
     def test_what_has_grown_past_its_limit(self):
         over = usage.check(self.data, **self.measure())
@@ -184,7 +189,15 @@ class UsageCheckTests(unittest.TestCase):
         with patch.object(usage.report, "send", side_effect=OSError("refused")), patch.object(usage.report, "load_mail", return_value={}):
             result = usage.run(self.data, now=1, **self.measure())
         self.assertEqual(result["mail_error"], "refused")
-        self.assertEqual(json.loads((self.data / "usage-state.json").read_text())["open"], {}, "tried again as new")
+        # Still shown at once (Needs attention), and mailed next time, as if it were new (1.0.97)
+        state = json.loads((self.data / "usage-state.json").read_text())
+        self.assertEqual(len(state["open"]), 2)
+        self.assertEqual(sorted(state["unmailed"]), sorted(state["open"]))
+        sent = []
+        with patch.object(usage.report, "send", lambda *args, **kwargs: sent.append(args)), patch.object(usage.report, "load_mail", return_value={}):
+            usage.run(self.data, now=2, **self.measure())
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(json.loads((self.data / "usage-state.json").read_text())["unmailed"], [])
         (self.data / "usage.json").write_text(json.dumps({"enabled": False, "emails": ["ops@example.com"]}))
         with patch.object(usage.report, "send") as send:
             usage.run(self.data, now=2, **self.measure())
@@ -204,7 +217,7 @@ class UsageCheckTests(unittest.TestCase):
         """What a user has made and how big each is, for them to see (1.0.70)"""
         anna = json.loads((self.data / "config.json").read_text())["users"][0]
         anna["create_sites"] = True
-        shown = usage.of_user(self.data, anna, {"c1": "Local SQL Server"}, **self.measure())
+        shown = usage.of_user(self.data, anna, {"c1": "Local SQL Server"}, measure_site=lambda site: self.sites.get(site), measure_databases=lambda data, connection: self.databases)
         self.assertEqual(shown["sites"], {"may_make": True, "count_limit": None, "size_limit_mb": 100,
                                           "items": [{"name": "big.dk", "size_mb": 250.0, "limit_mb": 100}, {"name": "small.dk", "size_mb": 20.0, "limit_mb": 100}]})
         self.assertEqual([(item["name"], item["size_limit_mb"], [db["name"] for db in item["items"]]) for item in shown["connections"]],
@@ -264,14 +277,172 @@ class UsageCheckTests(unittest.TestCase):
         fresh = usage.kept_overview(self.data, ["big.dk"], {}, fresh=True, now=1800, **measure)
         self.assertEqual((fresh["sites"][0]["size_mb"], fresh["stale"], fresh["measured"]), (999.0, False, 1800))
 
+    def test_a_limit_sent_from_the_server_that_manages_the_site(self):
+        """An environment's limit set on the server that manages it reaches the server it runs on: kept there as the
+        site's limit, marked as from there, shown, and mailed only from where it was set (1.0.97)"""
+        usage.set_limit(self.data, "site", "free.dk", limit_mb=100, origin="test-01")
+        self.assertEqual(usage.load_limit_origins(self.data), {"site|free.dk": "test-01"})
+        shown = usage.overview(self.data, ["free.dk"], {}, measure_site=lambda site: self.sites.get(site),
+                               measure_databases=lambda *a, **k: {}, measure_environments=lambda: [])
+        self.assertEqual((shown["sites"][0]["server_limit_mb"], shown["sites"][0]["server_limit_from"]), (100, "test-01"))
+        over = [item for item in usage.check(self.data, **self.measure()) if item["key"] == "limit|site|free.dk"]
+        self.assertEqual((over[0]["from"], over[0]["user"]), ("test-01", "the limit set on test-01"))
+        sent = []
+        with patch.object(usage, "load_settings", return_value={"enabled": True, "emails": ["ops@example.com"]}), \
+                patch.object(usage.report, "send", lambda *args, **kwargs: sent.append(args)):
+            usage.run(self.data, **self.measure())
+        self.assertFalse(any("free.dk" in str(args) and "limit set on" in str(args) for args in sent))
+        self.assertIn("limit|site|free.dk", json.loads((self.data / "usage-state.json").read_text())["open"])
+        # The server it was set on does not mail (its usage alerts off): this one does, so it is mailed once (1.0.97)
+        (self.data / "usage-state.json").unlink()
+        usage.set_limit(self.data, "site", "free.dk", limit_mb=100, origin={"host": "test-01", "mails": False})
+        with patch.object(usage, "load_settings", return_value={"enabled": True, "emails": ["ops@example.com"]}), \
+                patch.object(usage.report, "send", lambda *args, **kwargs: sent.append(args)):
+            usage.run(self.data, **self.measure())
+        self.assertTrue(any("limit set on test-01" in str(args) for args in sent))
+        # Set here again, it is this server's own
+        usage.set_limit(self.data, "site", "free.dk", limit_mb=200)
+        self.assertEqual(usage.load_limit_origins(self.data), {})
+
+    def test_a_limit_from_another_server_is_changed_there_too(self):
+        """Changed on the server it was sent to, it is sent back to the server it was set on (harbor server
+        usage-limit-back), so the two never tell different limits; when that cannot be done, nothing changes (1.0.97)"""
+        import ast
+        from types import SimpleNamespace
+        from flask import Flask, jsonify, request
+        usage.set_limit(self.data, "site", "free.dk", limit_mb=100, origin="LINUX-01")
+        source = (ROOT_DIR / "admin/app.py").read_text()
+        node = next(n for n in ast.parse(source).body if isinstance(n, ast.FunctionDef) and n.name == "api_usage_limit")
+        app = Flask(__name__)
+        ran = []
+        answer = {"code": 1, "err": "Harbor here cannot reach LINUX-01: add it under Settings, Servers, or change the limit on LINUX-01."}
+        def run(argv, **kwargs):
+            ran.append(argv)
+            return SimpleNamespace(returncode=answer["code"], stdout="", stderr=answer["err"])
+        ns = {"app": app, "request": request, "jsonify": jsonify, "require_admin": lambda: None, "_usage": usage, "DATA": self.data,
+              "error": lambda message, status=400: (jsonify(error=message), status), "audit": lambda message: None,
+              "sync_usage_job": lambda check_now=False: None, "push_environment_limit": lambda data: None,
+              "subprocess": SimpleNamespace(run=run), "HARBOR_COMMAND": "/opt/harbor/current/bin/harbor"}
+        exec(compile(ast.Module(body=[node], type_ignores=[]), "usage limit api", "exec"), ns)
+        client = app.test_client()
+        refused = client.put("/api/usage/limit", json={"kind": "site", "name": "free.dk", "limit_mb": None})
+        self.assertEqual(refused.status_code, 400)
+        self.assertIn("cannot reach LINUX-01", refused.json["error"])
+        self.assertEqual(ran[-1][-3:], ["usage-limit-back", "free.dk", "none"])
+        answer.update(code=0, err="")
+        sent = client.put("/api/usage/limit", json={"kind": "site", "name": "free.dk", "limit_mb": 2048})
+        self.assertEqual((sent.status_code, sent.json["remote"]["to"]), (200, "LINUX-01"))
+        self.assertEqual(ran[-1][-1], "2048")
+        # A limit of this server's own is kept here, as before
+        self.assertEqual(client.put("/api/usage/limit", json={"kind": "site", "name": "big.dk", "limit_mb": 50}).status_code, 200)
+        self.assertEqual(usage.load_limits(self.data)["site|big.dk"], 50)
+
+    def test_a_sites_limit_is_the_budget_of_its_solution(self):
+        """A site's limit holds the site itself and every environment of it, wherever it runs; the limits given to its
+        parts are shares of it, never more together than it (1.0.97)"""
+        usage.set_limit(self.data, "site", "shop.dk", limit_mb=2048)
+        self.assertEqual(usage.limit_conflict(self.data, "environment", "shop.dk", "test", 2048), "")
+        self.assertIn("At most 2.0 GB", usage.limit_conflict(self.data, "environment", "shop.dk", "test", 4096))
+        usage.set_limit(self.data, "environment", "shop.dk", "production", limit_mb=1024)
+        usage.set_limit(self.data, "environment", "shop.dk", "main", limit_mb=512)
+        found = usage.limit_conflict(self.data, "environment", "shop.dk", "test", 1024)
+        self.assertIn("Only 512 MB is left of shop.dk's 2.0 GB: 1.5 GB is given to its other parts", found)
+        self.assertEqual(usage.limit_conflict(self.data, "environment", "shop.dk", "test", 512), "")
+        # The same part changed: its own share is not counted twice
+        self.assertEqual(usage.limit_conflict(self.data, "environment", "shop.dk", "production", 1536), "")
+        self.assertIn("At least 1.5 GB", usage.limit_conflict(self.data, "site", "shop.dk", limit_mb=1024))
+        self.assertEqual(usage.limit_conflict(self.data, "site", "shop.dk", limit_mb=1536), "")
+
+    def test_a_limit_past_at_once_is_not_set(self):
+        """A limit below what is used now, measured last, would be past at once: refused, for the site and its parts (1.0.97)"""
+        (self.data / "usage-sizes.json").write_text(json.dumps({"measured": 1, "sizes": {"sites": {"shop.dk": 967.0}, "databases": {}, "environments": [
+            {"site": "shop.dk", "target": "production", "in_site": True, "size_mb": 235.0},
+            {"site": "shop.dk", "target": "staging", "in_site": True, "size_mb": 233.0},
+            {"site": "shop.dk", "target": "staging-2", "in_site": False, "size_mb": 233.0},
+            {"site": "shop.dk", "target": "test", "in_site": True, "size_mb": 232.0}]}}))
+        # The solution uses 1200 MB: below it, refused
+        self.assertIn("At least 1.18 GB", usage.limit_conflict(self.data, "site", "shop.dk", limit_mb=1000))
+        self.assertEqual(usage.limit_conflict(self.data, "site", "shop.dk", limit_mb=1200), "")
+        # staging-2 given 5 GB: the site needs that and what the rest (967 MB) uses
+        usage.set_limit(self.data, "environment", "shop.dk", "staging-2", limit_mb=5120)
+        self.assertIn("At least 5.95 GB", usage.limit_conflict(self.data, "site", "shop.dk", limit_mb=5120))
+        usage.set_limit(self.data, "environment", "shop.dk", "staging-2", limit_mb=None)
+        # A part below what it uses, or leaving the rest no room
+        usage.set_limit(self.data, "site", "shop.dk", limit_mb=2048)
+        self.assertIn("At least 233 MB", usage.limit_conflict(self.data, "environment", "shop.dk", "staging-2", 200))
+        self.assertIn("At most 1.05 GB", usage.limit_conflict(self.data, "environment", "shop.dk", "staging-2", 1500))
+        self.assertEqual(usage.limit_conflict(self.data, "environment", "shop.dk", "staging-2", 1000), "")
+
+    def test_the_other_server_is_told_of_a_shared_limit_that_changed(self):
+        """What goes past a shared limit or under it again: the other server is told to check too (1.0.97)"""
+        usage.set_limit(self.data, "environment", "big.dk", "staging-2", limit_mb=50)
+        common = {"measure_site": lambda site: self.sites.get(site), "measure_databases": lambda data, connection: {},
+                  "measure_environments": lambda: [{"site": "big.dk", "target": "staging-2", "in_site": False, "size_mb": 60.0}],
+                  "measure_environment": lambda site, target: 60.0}
+        usage.run(self.data, now=1, **common)
+        self.assertIn("limit|environment|big.dk|staging-2", self.told.call_args.args[0])
+        usage.run(self.data, now=2, **common)
+        self.assertEqual(self.told.call_args.args[0], set(), "nothing changed")
+
+    def test_a_part_not_measured_keeps_what_was_over(self):
+        """A server not reached now is not known, not fine: what was over stays over, and no mail says it is under again (1.0.97)"""
+        usage.set_limit(self.data, "site", "big.dk", limit_mb=260)
+        usage.set_limit(self.data, "environment", "big.dk", "staging-2", limit_mb=50)
+        measured = [{"site": "big.dk", "target": "staging-2", "in_site": False, "size_mb": 60.0}]
+        common = {"measure_site": lambda site: 250.0 if site == "big.dk" else self.sites.get(site), "measure_databases": lambda data, connection: {}}
+        usage.run(self.data, mail=True, now=1, measure_environments=lambda: measured, measure_environment=lambda site, target: 60.0, **common)
+        opened = json.loads((self.data / "usage-state.json").read_text())["open"]
+        self.assertIn("limit|site|big.dk", opened)
+        self.assertIn("limit|environment|big.dk|staging-2", opened)
+        sent = []
+        with patch.object(usage, "load_settings", return_value={"enabled": True, "emails": ["ops@example.com"]}), \
+                patch.object(usage.report, "send", lambda *args, **kwargs: sent.append(args)), patch.object(usage.report, "load_mail", return_value={}):
+            usage.run(self.data, now=2, measure_environments=lambda: None, measure_environment=lambda site, target: None, **common)
+        opened = json.loads((self.data / "usage-state.json").read_text())["open"]
+        self.assertIn("limit|site|big.dk", opened)
+        self.assertIn("limit|environment|big.dk|staging-2", opened)
+        self.assertFalse(any("under again" in str(args) for args in sent))
+
+    def test_a_sites_size_is_its_solution(self):
+        """The site itself (its folder without the environments in it) and every environment, also on another server"""
+        environments = [{"site": "big.dk", "target": "production", "in_site": True, "size_mb": 100.0},
+                        {"site": "big.dk", "target": "staging-2", "in_site": False, "size_mb": 60.0},
+                        {"site": "big.dk", "target": "iis", "in_site": False, "windows": True, "size_mb": None}]
+        self.assertEqual(usage.solution_of("big.dk", 250.0, environments), {"solution_mb": 310.0, "main_mb": 150.0})
+        shown = usage.overview(self.data, ["big.dk"], {}, measure_site=lambda site: 250.0, measure_databases=lambda *a, **k: {},
+                               measure_environments=lambda: environments)
+        self.assertEqual((shown["sites"][0]["size_mb"], shown["sites"][0]["folder_mb"], shown["sites"][0]["main_mb"]), (310.0, 250.0, 150.0))
+        # Anna's site may be 100 MB: its solution is checked, and the site itself as a part of its own
+        usage.set_limit(self.data, "environment", "big.dk", "main", limit_mb=140)
+        over = usage.check(self.data, measure_site=lambda site: 250.0 if site == "big.dk" else self.sites.get(site),
+                           measure_databases=lambda data, connection: {}, measure_environments=lambda: environments)
+        self.assertEqual({(item["key"], item["size_mb"]) for item in over if "big.dk" in item["key"]},
+                         {("site|big.dk", 310.0), ("limit|environment|big.dk|main", 150.0)})
+
+    def test_an_environment_deleted_goes_from_usage_at_once_with_its_limit(self):
+        """Usage shows the sizes kept, but not of an environment that is gone: it goes at once, its share with it, and the
+        rest is measured again behind it (1.0.97)"""
+        environments = [{"site": "big.dk", "target": "staging-2", "in_site": False, "size_mb": 305.0},
+                        {"site": "big.dk", "target": "test", "in_site": True, "size_mb": 20.0}]
+        ids = {"big.dk": {"staging-2", "test"}}
+        measure = {"measure_site": lambda site: self.sites.get(site), "measure_databases": lambda data, connection, user_only=False: {},
+                   "measure_environments": lambda: environments, "ids": lambda site, web_root: ids.get(site, set())}
+        usage.kept_overview(self.data, ["big.dk"], {}, now=1000, **measure)
+        usage.set_limit(self.data, "environment", "big.dk", "staging-2", limit_mb=366)
+        ids["big.dk"] = {"test"}
+        shown = usage.kept_overview(self.data, ["big.dk"], {}, now=1010, **measure)
+        self.assertEqual([item["target"] for item in shown["environments"]], ["test"])
+        self.assertTrue(shown["stale"])
+        self.assertNotIn("environment|big.dk|staging-2", usage.load_limits(self.data))
+
     def test_the_limits_a_site_is_held_to_for_add_environment(self):
         """Add environment tells whether a new environment counts in the site's limits: the server's own and its user's,
         with the site's size now (1.0.95)"""
         usage.set_limit(self.data, "site", "big.dk", limit_mb=2048)
         shown = usage.site_limits(self.data, "big.dk", measure_site=lambda site: self.sites.get(site))
-        self.assertEqual(shown, {"size_mb": 250.0, "server_limit_mb": 2048, "limit_mb": 100, "user": "Anna"})
+        self.assertEqual(shown, {"size_mb": 250.0, "server_limit_mb": 2048, "given_mb": 0, "limit_mb": 100, "user": "Anna"})
         self.assertEqual(usage.site_limits(self.data, "admin.example.com", measure_site=lambda site: 5.0),
-                         {"size_mb": 5.0, "server_limit_mb": None, "limit_mb": None, "user": None})
+                         {"size_mb": 5.0, "server_limit_mb": None, "given_mb": 0, "limit_mb": None, "user": None})
 
     def test_a_site_can_have_its_own_size_limit(self):
         """Each site a user made takes the size their limits give every site, unless it has its own, bigger or smaller
@@ -320,3 +491,14 @@ class UsageCheckTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TellOthersTests(unittest.TestCase):
+    def test_told_with_the_shared_keys_and_never_back(self):
+        """Only shared limits are told, and a check the other server asked for tells nothing back"""
+        with patch.object(usage.subprocess, "Popen") as popen, patch.dict("os.environ", {"HARBOR_USAGE_TOLD": ""}):
+            usage.tell_others({"limit|environment|a.dk|staging-2", "site|b.dk", "limit|database|c1|Shop"})
+        self.assertEqual(popen.call_args.args[0][-3:], ["server", "usage-tell", "limit|environment|a.dk|staging-2"])
+        with patch.object(usage.subprocess, "Popen") as popen, patch.dict("os.environ", {"HARBOR_USAGE_TOLD": "1"}):
+            usage.tell_others({"limit|environment|a.dk|staging-2"})
+        popen.assert_not_called()

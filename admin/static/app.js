@@ -1523,7 +1523,10 @@ function siteProblems(site) {
 			since: problem.since, check: problem.check });
 	}
 	// Past a size limit (Usage): the site's, an environment's, or its user's
+	// A part past its own share is what is wrong: the site past its limit then is not said as well
+	const partOver = (currentUser.usage_over || []).some((item) => item.kind === "environment" && item.site === site.name);
 	for (const item of currentUser.usage_over || []) {
+		if (partOver && item.kind === "site" && item.name === site.name) continue;
 		const env = item.kind === "site" && item.name === site.name ? site.environments.find((other) => !isTarget(other))
 			: item.kind === "environment" && item.site === site.name ? site.environments.find((other) => envKeyOf(other) === item.target) : null;
 		if (env) found.push({ env, tone: "warn", check: "usage", usage: item, why: `Uses ${usageSize(item.size_mb)} of the ${usageSize(item.limit_mb)} it may` + (item.user_id ? ` (${item.user}'s limit)` : "") });
@@ -3698,6 +3701,35 @@ $("#menu-usage").onclick = () => {
 	$("#user-menu").hidden = true;
 	run(() => showUsage("/api/usage/mine", "Your usage"));
 };
+// A bound as it can be typed and saved: an upper one rounded down, a lower one up (2105 MB as 2.05 GB, not 2.1 GB)
+const sizeDown = (mb) => mb >= 1024 ? `${Math.floor(mb / 1024 * 100) / 100} GB` : `${Math.floor(mb)} MB`;
+const sizeUp = (mb) => mb >= 1024 ? `${Math.ceil(mb / 1024 * 100) / 100} GB` : `${Math.ceil(mb)} MB`;
+// A size used, beside a limit: rounded up, so the number shown is the least a limit may be (235.4 MB as 236 MB)
+const exactSize = (mb) => sizeUp(mb);
+// A limit to recommend: what is used now and half again, to grow in, rounded up to a plain size (50 MB, from 1 GB a
+// quarter GB), within what it may be
+const RECOMMEND_GROWTH = 0.5;
+function recommendedSize(uses, least = null, most = null) {
+	if (!uses) return null;
+	const want = uses * (1 + RECOMMEND_GROWTH);
+	let size = want >= 1024 ? Math.ceil(want / 256) * 256 : Math.ceil(want / 50) * 50;
+	if (most != null) size = Math.min(size, most);
+	if (least != null) size = Math.max(size, least);
+	return most != null && size > most ? null : size;
+}
+// A part's share to recommend, under a site's limit: its part of what the limit leaves after the others' shares, by
+// what it and the parts with no share use now, so every part has room in the same measure; rounded down to a plain
+// size, within what it may be
+function recommendedShare(uses, budget, given, rest, least, most) {
+	if (budget == null) return recommendedSize(uses, least, most);
+	const left = budget - given;
+	if (!uses || left <= 0) return null;
+	const fair = left * uses / (uses + (rest || 0));
+	let size = fair >= 1024 ? Math.floor(fair / 256) * 256 : Math.floor(fair / 50) * 50;
+	if (most != null) size = Math.min(size, most);
+	if (least != null) size = Math.max(size, least);
+	return most != null && size > most ? null : size;
+}
 function usageMeter(label, used, limit, text, who = undefined, open = null, openWho = null) {
 	// Full at the limit; amber from 80 %, red past it
 	const share = limit ? used / limit : 0;
@@ -3915,7 +3947,7 @@ $("#setup-site-dns").replaceChildren(dnsCard($("#form-setup-site").binding, { on
 // The binding's message is about the certificate choice as well: any change clears it, or the browser keeps
 // refusing the form before it is checked again
 for (const type of ["input", "change"]) siteForm.addEventListener(type, () => siteForm.binding.setCustomValidity(""));
-$("#btn-new-site").onclick = () => { siteForm.reset(); siteForm.elements.template.setCustomValidity(""); siteForm.binding.setCustomValidity(""); delete siteForm.binding.dataset.edited; delete siteForm.elements.publish.dataset.edited; tempDomain = null; showTempDomains(); syncSiteForm(); limitFieldIn(siteForm, "Size limit of the site"); siteForm.limitNote.textContent = "Optional. The site's folder, with the environments later put in it. Past it, it shows in Usage and is mailed with the usage alerts. Changed later under Settings, Usage."; dialog.showModal(); siteForm.site.focus(); };
+$("#btn-new-site").onclick = () => { siteForm.reset(); siteForm.elements.template.setCustomValidity(""); siteForm.binding.setCustomValidity(""); delete siteForm.binding.dataset.edited; delete siteForm.elements.publish.dataset.edited; tempDomain = null; showTempDomains(); syncSiteForm(); limitFieldIn(siteForm, "Size limit of the site"); siteForm.limitNote.textContent = "Optional. The site and every environment it gets later, wherever they run. Past it, it shows in Usage and is mailed with the usage alerts. Changed later under Settings, Usage."; dialog.showModal(); siteForm.site.focus(); };
 $("#btn-new-site").addEventListener("click", () => {
 	siteHttps.reset();
 	siteDnsState = "empty";
@@ -3960,18 +3992,15 @@ function showProdLimitNote() {
 	const site = prodForm.dataset.siteName;
 	// IIS has no du: an environment on Windows is not measured, so it has no limit to set
 	if (currentUser.admin && !(prodForm.dataset.moveTarget && !prodForm.dataset.copy)) holder.hidden = target === "windows";
-	const path = prodForm.local_path.value.trim().replace(/\/+$/, "");
-	const inside = target === "local" && (!path.startsWith("/") || path.startsWith(`/var/www/${site}/`));
+	// Every environment is in the site's limit, wherever it runs: the site's limit is for the site and all of them
 	const limits = prodSiteLimits?.site === site ? prodSiteLimits : null;
 	const held = limits ? [limits.server_limit_mb && `the server's limit of ${usageSize(limits.server_limit_mb)}`,
 		limits.limit_mb && `${limits.user}'s limit of ${usageSize(limits.limit_mb)}`].filter(Boolean) : [];
-	const now = limits?.size_mb != null ? ` (${usageSize(limits.size_mb)} now)` : "";
-	const where = target === "local" ? "In a folder of its own" : "On another server";
+	const now = limits?.size_mb != null ? ` (${usageSize(limits.size_mb)} now, with all its environments)` : "";
+	const left = limits?.server_limit_mb ? Math.max(0, limits.server_limit_mb - (limits.given_mb || 0)) : null;
 	note.textContent = held.length
-		? inside ? `In ${site}'s folder: it counts in the site's size${now}, and so in ${held.join(" and ")}. A limit of its own as well is optional.`
-			: `${where}: it is not in ${site}'s size or ${held.join(" and ")}. Only a limit of its own here holds it.`
-		: inside ? `Optional. In ${site}'s folder it is in the site's size too, and in a limit set on the site later. Past its own, it shows in Usage and is mailed with the usage alerts.`
-			: CREATE_LIMIT_NOTE;
+		? `It counts in ${site}'s size${now}, and so in ${held.join(" and ")}. A share of its own is optional${left != null ? `: up to ${usageSize(left)} is not given to other parts` : ""}.`
+		: `Optional. It counts in ${site}'s size too, wherever it runs, and in a limit set on the site later. Past its own, it shows in Usage and is mailed with the usage alerts.`;
 }
 async function saveCreatedLimit(kind, name, target, limit) {
 	if (limit == null || !currentUser.admin) return;
@@ -9059,10 +9088,53 @@ async function deleteConverted(item, name) {
 // Updates, a part of Settings: the version here, Check for updates, the update with its notes, and going back
 let lastUpdateCheck = null;
 let osUpdates;
+let harborAutoUpdate = null;
 async function openUpdatesSettings() {
-	const [os] = await Promise.all([api("/api/health/updates").catch(() => null), lastUpdateCheck ? null : checkSystemUpdate(false)]);
+	const [os, auto] = await Promise.all([api("/api/health/updates").catch(() => null), api("/api/system-update/auto").catch(() => null),
+		lastUpdateCheck ? null : checkSystemUpdate(false)]);
 	osUpdates = os;
+	harborAutoUpdate = auto;
 	drawUpdates();
+}
+// How Harbor's own daily run ended last: said under its card
+function autoUpdateLast(last) {
+	if (!last) return "It has not run yet.";
+	const when = formatDate(last.at * 1000);
+	return { updated: `Last run ${when}: updated to v${last.to}.`, current: `Last run ${when}: already up to date.`,
+		busy: `Last run ${when}: another update was running, so it waited.`,
+		failed: `Last run ${when}: could not update${last.to ? ` to v${last.to}` : ""}${last.error ? ` (${last.error})` : ""}.` }[last.result] || "";
+}
+// Harbor updated by itself each day: the time chosen as the backups' and jobs' times are, from a row of chips
+async function turnOnHarborAutoUpdate() {
+	const times = ["01:00", "02:00", "03:00", "04:00", "05:00", "06:00", "22:00", "23:00"];
+	const current = harborAutoUpdate?.time || "04:00";
+	const chip = (value, label) => el("label", { className: "design-chip" }, el("input", { type: "radio", name: "autoupdate_at", value, checked: value === current }), el("span", { textContent: label }));
+	const chips = el("div", { className: "design-chips autoupdate-times", role: "radiogroup", ariaLabel: "Time of day" }, ...times.map((at) => chip(at, at)));
+	// Or each hour, installed as soon as it is out: the fixes come first, though the admin may restart while it is used
+	const soon = el("div", { className: "design-chips autoupdate-times", role: "radiogroup", ariaLabel: "As soon as it is out" }, chip("soon", "As soon as it is out"));
+	const note = el("p", { className: "hint" });
+	const showNote = () => {
+		note.textContent = (chips.querySelector("input:checked") || soon.querySelector("input:checked"))?.value === "soon"
+			? "Harbor looks each hour, and installs a release within the hour it is out. The admin restarts then, also when someone is using it."
+			: "At a quiet time, when no one is using the admin: a release that does not suit shows then, and not in the middle of the day.";
+	};
+	// One choice across both rows
+	for (const input of [...chips.querySelectorAll("input"), ...soon.querySelectorAll("input")]) input.addEventListener("change", showNote);
+	showNote();
+	openFormDialog({ icon: "package", title: "Update Harbor by itself?", ok: "Turn on",
+		text: "Harbor installs its newest release by itself, as Update does here. The sites keep running; the admin is away for a moment. The Server health recipients are mailed when it updates or cannot (when those alerts are on). Roll back goes back if a release does not suit.",
+		fields: [el("div", { className: "ns-section", textContent: "Each day at" }), chips, el("div", { className: "ns-section", textContent: "Or" }), soon, note],
+		submit: async () => {
+			const at = (chips.querySelector("input:checked") || soon.querySelector("input:checked"))?.value || current;
+			const t = await openTask({ kind: "server_tool", tool: "harbor_autoupdate_on", at });
+			if (t) t.afterTask = () => { if (serverTabOpen("updates")) return openUpdatesSettings(); };
+		} });
+}
+async function turnOffHarborAutoUpdate() {
+	if (!await ask({ title: "Stop updating Harbor by itself?", message: "Harbor is then updated only when someone chooses Update here. Nothing else changes.",
+		input: false, danger: true, ok: "Turn off" })) return;
+	const t = await openTask({ kind: "server_tool", tool: "harbor_autoupdate_off" });
+	if (t) t.afterTask = () => { if (serverTabOpen("updates")) return openUpdatesSettings(); };
 }
 function drawUpdates() {
 	const result = lastUpdateCheck || {};
@@ -9080,6 +9152,19 @@ function drawUpdates() {
 		actions: [check, ...(available || unknown ? [toolButton(unknown ? "Initialize / update…" : `Update to ${latest}…`, openSystemUpdateDialog, "primary")] : []),
 			...(available && result.mode === "release" ? [tonedButton("What changed", "file", "blue", () => showWhatChanged(result))] : [])] });
 	version.classList.add("actions-below");
+	// Whether Harbor updates itself, as the OS updates card says it for the security updates
+	const auto = harborAutoUpdate;
+	if (auto && !auto.unavailable) {
+		const failed = auto.last?.result === "failed";
+		version.querySelector(".tool-actions")?.append(auto.on
+			? tonedButton("Turn off automatic updates…", "stop", "red", turnOffHarborAutoUpdate)
+			: tonedButton("Turn on automatic updates…", "shield", "purple", turnOnHarborAutoUpdate));
+		version.querySelector(".tool-actions")?.before(el("div", { className: "health-update-chips" },
+			el("span", { className: "crontab-chip " + (auto.on ? "ok" : "warn") }, svgIcon(auto.on ? "check" : "alert"),
+				auto.on ? (auto.time === "soon" ? "Updates itself as soon as a release is out" : `Updates itself at ${auto.time}`) : "Automatic updates off"),
+			...(auto.on || auto.last ? [el("span", { className: "crontab-chip" + (failed ? " bad" : ""), title: autoUpdateLast(auto.last) }, svgIcon(failed ? "alert" : "clock"),
+				autoUpdateLast(auto.last).replace(/^Last run /, "").replace(/\.$/, ""))] : [])));
+	}
 	const earlier = result.rollback;
 	const back = toolCard({ icon: "undo", tone: "amber", title: "Roll back", detail: earlier ? `To v${earlier.version}` : "Nothing to go back to",
 		text: earlier ? `Harbor goes back to the release installed before this one (${earlier.name}). The sites keep running; a later update brings the newest back.`
@@ -9716,7 +9801,7 @@ async function openUsageSettings(fresh = false) {
 	const measuring = el("div", { className: "tool-card tool-card-wide usage-overview" }, loadingState("Measuring the sites and databases…"));
 	// Fresh sizes are measured behind what is shown; only an empty page shows the measuring
 	if (!fresh || !list.querySelector(".usage-overview:not(:has(.loading-state))")) list.replaceChildren(measuring);
-	let all, known;
+	let all, known, servers;
 	try {
 		const request = api("/api/usage/all" + (fresh ? "?fresh=1" : ""));
 		if (fresh) {
@@ -9724,7 +9809,9 @@ async function openUsageSettings(fresh = false) {
 			showUsageMeasured(null);
 		}
 		try {
-			[all, known] = await Promise.all([request, sitesLoaded ? Promise.resolve({ sites: allSites }) : api("/api/sites").catch(() => ({ sites: [] }))]);
+			[all, known, servers] = await Promise.all([request, sitesLoaded ? Promise.resolve({ sites: allSites }) : api("/api/sites").catch(() => ({ sites: [] })),
+				// The servers Harbor knows: a remote environment is named by its server's name, where it is one of them
+				api("/api/servers/kept").catch(() => ({ servers: [] }))]);
 		} finally {
 			if (fresh) usageMeasuring = null;
 		}
@@ -9733,6 +9820,7 @@ async function openUsageSettings(fresh = false) {
 		if (!list.contains(measuring)) list.replaceChildren(measuring);
 		showUsageMeasured(all);
 		if (all.stale && !fresh) setTimeout(() => { if (serverTabOpen("usage")) run(() => openUsageSettings(true)); });
+		const serverName = (host) => (servers?.servers || []).find((server) => server.host === host)?.name || host;
 		// Each site's kind beside its name, as its card on Web Server has it
 		const kindOf = Object.fromEntries((known.sites || []).map((site) => [site.name, site.kind]));
 		const total = (items) => usageSize(Math.round(items.reduce((sum, item) => sum + item.size_mb, 0) * 10) / 10);
@@ -9747,8 +9835,185 @@ async function openUsageSettings(fresh = false) {
 		// The limit it is measured against: its user's, else the server's own (set here)
 		const limitOf = (item) => item.limit_mb ?? item.server_limit_mb ?? null;
 		const meter = (item, open, target) => usageMeter(item.name, item.size_mb, limitOf(item),
-			(limitOf(item) == null ? usageSize(item.size_mb) : `${usageSize(item.size_mb)} of ${usageSize(limitOf(item))}`), item.user, open,
+			(limitOf(item) == null ? usageSize(item.size_mb) : `${exactSize(item.size_mb)} of ${usageSize(limitOf(item))}`), item.user, open,
 			item.user_id ? openUser(item.user_id, target) : null);
+		// A site's limit is the budget of its solution: the site itself (main) and every environment, wherever it runs. The
+		// limits given to its parts are shares of it, never more together than it
+		const partLimits = (site) => {
+			const given = (all.environments || []).filter((env) => env.site === site.name && env.server_limit_mb).map((env) => ({ target: env.target, label: env.environment || env.target, mb: env.server_limit_mb }));
+			return site.main_limit_mb ? [{ target: "main", label: "the site itself", mb: site.main_limit_mb }, ...given] : given;
+		};
+		// A site that is an environment of a site on another server: the least and most its share may be, asked there, so
+		// the dialog holds to them before it is saved (null when that server cannot be asked: it then says so on save)
+		const roomThere = async (item) => {
+			const room = await api(`/api/usage/room/${encodeURIComponent(item.name)}`).catch(() => null);
+			return room && !room.error ? roomBounds(room, "remote") : null;
+		};
+		// Each part of a site with what it uses now and the share it was given: the site itself, then its environments
+		const partsOf = (site) => [{ target: "main", label: "the site itself", mb: site.main_mb ?? 0, share: site.main_limit_mb || null },
+			...(all.environments || []).filter((env) => env.site === site.name)
+				.map((env) => ({ target: env.target, label: env.environment || env.target, binding: env.binding || env.folder, windows: env.windows, mb: env.size_mb ?? 0, share: env.server_limit_mb || null }))];
+		const listParts = (parts) => parts.map((part) => `${part.label} ${usageSize(part.mb)}`).join(", ");
+		// The site's limit shared out among its parts (not on Windows: IIS cannot be measured), so they add up to it, and
+		// none less than it uses now: evenly (one using more than an even share gets what it uses, the rest share what is
+		// left), or by what each uses now. Whole MB, the remainder to the biggest
+		const shareOut = (budget, parts, how) => {
+			const uses = parts.map((part) => Math.ceil(part.mb));
+			let shares;
+			if (how === "use") {
+				const total = uses.reduce((sum, mb) => sum + mb, 0) || 1;
+				shares = uses.map((mb) => Math.max(mb, Math.floor(mb / total * budget)));
+			} else {
+				shares = uses.map(() => 0);
+				let open = parts.map((_, index) => index), left = budget;
+				for (;;) {
+					const level = Math.floor(left / open.length);
+					const above = open.filter((index) => uses[index] > level);
+					if (!above.length) {
+						for (const index of open) shares[index] = level;
+						break;
+					}
+					for (const index of above) { shares[index] = uses[index]; left -= uses[index]; }
+					open = open.filter((index) => !above.includes(index));
+					if (!open.length) break;
+				}
+			}
+			const rest = budget - shares.reduce((sum, mb) => sum + mb, 0);
+			const biggest = shares.indexOf(Math.max(...shares));
+			// Over by rounding up to what each uses: taken from the biggest, which has room above its use
+			shares[biggest] += rest > 0 ? rest : Math.max(rest, uses[biggest] - shares[biggest]);
+			return shares;
+		};
+		// Every share of a site's parts taken away: the site's limit alone holds them again
+		const clearShares = async (site, quiet = false) => {
+			const shared = partsOf(site).filter((part) => part.share);
+			for (const part of shared) await api("/api/usage/limit", { method: "PUT", json: { kind: "environment", name: site.name, connection: part.target, limit_mb: null } });
+			if (!quiet) toast(`The shares of ${site.name}'s parts are cleared.`, "ok");
+			if (serverTabOpen("usage")) await openUsageSettings();
+		};
+		const askShareOut = (site) => {
+			const budget = site.server_limit_mb;
+			const parts = partsOf(site).filter((part) => !part.windows);
+			const choice = el("div", { className: "design-chips share-out-how", role: "radiogroup", ariaLabel: "How" },
+				...[["even", "Evenly"], ["use", "By what each uses"]].map(([value, label], index) => el("label", { className: "design-chip" },
+					el("input", { type: "radio", name: "share_out_how", value, checked: index === 0 }), el("span", { textContent: label }))));
+			const rows = el("div", { className: "share-out-rows" });
+			const draw = () => {
+				const how = choice.querySelector("input:checked").value;
+				const shares = shareOut(budget, parts, how);
+				rows.replaceChildren(...parts.map((part, index) => el("div", { className: "share-out-row" },
+					el("span", { className: "share-out-name" }, el("strong", { textContent: part.target === "main" ? site.name : part.binding || part.label }),
+						el("span", { className: "badge usage-kind env-" + String(part.label).toLowerCase(), textContent: part.target === "main" ? "Site" : part.label })),
+					el("span", { className: "share-out-uses", textContent: `uses ${usageSize(part.mb)}` }),
+					el("strong", { className: "share-out-share", textContent: usageSize(shares[index]) }))));
+				return shares;
+			};
+			for (const input of choice.querySelectorAll("input")) input.onchange = draw;
+			draw();
+			const hasShares = partsOf(site).some((part) => part.share);
+			openFormDialog({ icon: "sliders", title: `Share out ${usageSize(budget)}`, ok: "Save shares",
+				extra: hasShares ? [tonedButton("Clear all shares", "trash", "red", () => run(async () => {
+					await clearShares(site);
+					formDialog.close();
+				}))] : [],
+				text: `${site.name}'s limit given out among the site and its environments, so their shares add up to it and none is less than it uses now. Each is then past its own share before the site is past its limit. Shares set before are replaced.`,
+				fields: [el("div", { className: "ns-section", textContent: "How" }), choice, rows],
+				submit: async () => {
+					const shares = draw();
+					// The shares set before taken away first, so no step on the way is more than the limit
+					for (const part of partsOf(site).filter((other) => other.share)) {
+						await api("/api/usage/limit", { method: "PUT", json: { kind: "environment", name: site.name, connection: part.target, limit_mb: null } });
+					}
+					for (const [index, part] of parts.entries()) {
+						await api("/api/usage/limit", { method: "PUT", json: { kind: "environment", name: site.name, connection: part.target, limit_mb: shares[index] } });
+					}
+					toast(`${usageSize(budget)} shared out among ${parts.length} parts of ${site.name}.`, "ok");
+					if (serverTabOpen("usage")) await openUsageSettings();
+				} });
+		};
+		// The site's limit: at least what its parts were given; and said at once when what it uses now is past what is
+		// typed (the site as a whole, or the parts with no share of their own in what is left for them)
+		const siteFloor = (item) => {
+			const parts = partsOf(item);
+			const shared = parts.filter((part) => part.share);
+			const given = shared.reduce((sum, part) => sum + part.share, 0);
+			const rest = parts.filter((part) => !part.share);
+			const restUses = rest.reduce((sum, part) => sum + part.mb, 0);
+			const sharedText = shared.map((part) => `${part.label} ${usageSize(part.share)}`).join(", ");
+			// At least what its parts were given and what the rest uses now, and never below what it uses: below it, it would
+			// be past its limit at once
+			const need = Math.ceil(Math.max(given + restUses, item.size_mb));
+			return { min: need, shares: shared.length, clearShares: () => clearShares(item, true), uses: item.size_mb,
+				recommend: recommendedSize(Math.max(item.size_mb, need / (1 + RECOMMEND_GROWTH)), need),
+				text: "The limit of the site and all its environments, wherever they run: past it, it shows in Usage and is mailed with the usage alerts (Notifications). Empty: no limit.",
+				note: `It uses ${exactSize(item.size_mb)} now, the site and all its environments` + (given ? `; ${usageSize(given)} is given to its parts (${sharedText}).` : ".") + ` At least ${sizeUp(need)}.`,
+				live: (typed) => typed < need
+					? (given ? `Too little: at least ${sizeUp(need)}. ${usageSize(given)} is given to its parts (${sharedText}), and the rest (${listParts(rest)}) uses ${usageSize(restUses)} now: below it, it is past its limit at once.`
+						: `Too little: at least ${sizeUp(need)}, as it uses ${exactSize(item.size_mb)} now: below that, it is past its limit at once.`)
+					: given ? `${usageSize(given)} of it is given to its parts (${sharedText}): ${usageSize(typed - given)} is left for the rest, which uses ${usageSize(restUses)} now.`
+					: `It uses ${exactSize(item.size_mb)} now: ${usageSize(Math.max(0, typed - item.size_mb))} is left to grow.` };
+		};
+		// A part's share: at least what it uses now, and at most what the site's limit leaves after its other parts' shares
+		// and what the parts with no share use now: either way past, it would be past at once
+		const partRoom = (site, target) => {
+			const parts = partsOf(site);
+			const part = parts.find((other) => other.target === target) || { mb: 0 };
+			const least = Math.ceil(part.mb);
+			const budget = site.server_limit_mb;
+			if (!budget) return { min: least, uses: part.mb, recommend: recommendedSize(part.mb, least), note: `It uses ${exactSize(part.mb)} now.`,
+				live: (typed) => typed < least ? `Too little: at least ${sizeUp(least)}, what it uses now: below that, it is past it at once.`
+					: `It uses ${exactSize(part.mb)} now: ${usageSize(Math.max(0, typed - part.mb))} is left to grow.` };
+			const others = parts.filter((other) => other.target !== target && other.share);
+			const given = others.reduce((sum, other) => sum + other.share, 0);
+			const rest = parts.filter((other) => other.target !== target && !other.share);
+			const restUses = rest.reduce((sum, other) => sum + other.mb, 0);
+			const most = Math.max(0, Math.floor(budget - given - restUses));
+			const othersText = others.length ? `${usageSize(given)} is given to its other parts (${others.map((other) => `${other.label} ${usageSize(other.share)}`).join(", ")})` : "";
+			const restText = rest.length ? `the parts with no share (${listParts(rest)}) use ${usageSize(restUses)} now` : "";
+			const why = [othersText, restText].filter(Boolean).join(", and ");
+			return { min: least, max: most, uses: part.mb, recommend: recommendedShare(part.mb, budget, given, restUses, least, most) ?? recommendedSize(part.mb, least),
+				// More than there is room for: the site's limit raised by what is missing, then the share saved
+				raise: { site: site.name, budget, room: most },
+				recommendWhy: `Its part of the ${usageSize(budget - given)} the site's limit leaves after the other parts' shares, by what it (${usageSize(part.mb)}) and the parts with no share (${usageSize(restUses)}) use now`,
+				text: `A share of ${site.name}'s ${usageSize(budget)}, its limit for the site and all its environments: past it, it shows in Usage and is mailed with the usage alerts. Empty: no share of its own.`,
+				note: most < least ? `There is no room: it uses ${usageSize(part.mb)} now, and at most ${sizeDown(most)} is left of the ${usageSize(budget)}${why ? ` (${why})` : ""}. Give the site more first.`
+					: `It uses ${exactSize(part.mb)} now: from ${sizeUp(least)} to ${sizeDown(most)} of the ${usageSize(budget)}${why ? ` (${why})` : ""}.`,
+				live: (typed) => typed < least ? `Too little: at least ${sizeUp(least)}, what it uses now: below that, it is past it at once.`
+					: typed > most ? `More than the ${sizeDown(most)} there is room for in the ${usageSize(budget)}: ${site.name}'s limit goes up by ${usageSize(Math.ceil(typed - most))}, to ${usageSize(budget + Math.ceil(typed - most))}, with it.`
+					: `${usageSize(typed)} of the ${usageSize(budget)}: ${usageSize(budget - given - typed)} is left for the rest${rest.length ? `, which uses ${usageSize(restUses)} now` : ""}.` };
+		};
+		// What a site's solution is made of: its bar in parts (the site itself, then each environment in its colour, one on
+		// another server striped) up to its limit, and under it each part with its size
+		const showSiteParts = (line, item, limit, sectionSum) => {
+			const mine = (all.environments || []).filter((env) => env.site === item.name);
+			if (!mine.length) return;
+			const measured = mine.filter((env) => env.size_mb != null);
+			const unmeasured = mine.filter((env) => env.size_mb == null);
+			const total = limit ? Math.max(limit, item.size_mb) : sectionSum;
+			const envName = (env) => env.environment || env.target;
+			const where = (env) => env.in_site ? "" : env.local ? " (own folder)" : env.windows ? " (Windows)" : ` (${allSites.find((site) => site.name === env.site)?.environments.find((other) => envKeyOf(other) === env.target)?.host || "another server"})`;
+			const parts = [{ label: "The site itself", short: "Site", mb: item.main_mb ?? item.size_mb, className: "part-site" },
+				...measured.map((env) => ({ label: `${envName(env)} · ${env.binding || env.folder}${where(env)}`, short: envName(env) + where(env), mb: env.size_mb,
+					className: "env-" + String(env.environment || "").toLowerCase() + (env.in_site ? "" : " elsewhere") }))];
+			const size = (mb) => usageSize(Math.round(mb * 10) / 10);
+			const bar = el("div", { className: "usage-parts-bar" + (limit && item.size_mb > limit ? " over" : ""), role: "img",
+				ariaLabel: parts.map((part) => `${part.label} ${size(part.mb)}`).join(", ") },
+				...parts.filter((part) => part.mb > 0).map((part) => el("span", { className: "usage-part " + part.className,
+					style: `width: ${Math.max(part.mb / total * 100, .6)}%`, title: `${part.label}: ${size(part.mb)}` })));
+			// Past its limit: the bar is as long as what it uses, the limit marked where it is on it, and what is past it dimmed
+			const over = limit && item.size_mb > limit;
+			const at = over ? limit / total * 100 : 0;
+			line.querySelector(".usage-bar, .usage-share-bar")?.replaceWith(over ? el("div", { className: "usage-parts-wrap" }, bar,
+				el("span", { className: "usage-parts-past", style: `left: ${at}%` }),
+				el("span", { className: "usage-limit-mark", style: `left: ${at}%`, title: `The limit: ${usageSize(limit)}` }),
+				el("span", { className: "usage-limit-mark-label", style: `left: ${at}%`, textContent: `Limit ${usageSize(limit)} · ${usageSize(Math.round((item.size_mb - limit) * 10) / 10)} over` })) : bar);
+			line.append(el("div", { className: "usage-parts" },
+				el("span", { className: "usage-parts-title", textContent: limit ? `In the ${usageSize(limit)} limit` : "The site and its environments" }),
+				...parts.map((part) => el("span", { className: "usage-parts-item " + part.className, title: part.label },
+					el("span", { className: "usage-parts-dot" }), el("span", { textContent: part.short }), el("small", { textContent: size(part.mb) }))),
+				...(unmeasured.length ? [el("span", { className: "usage-parts-out", title: "IIS cannot be measured, and a server not reached now has no size" },
+					`Not measured: ${unmeasured.map((env) => envName(env) + where(env)).join(", ")}`)] : [])));
+		};
 		// A part: its total, a stripe of what each takes of it (in its kind's colour), and a line each with its share
 		const section = (icon, title, items, empty, open, target) => {
 			const sum = items.reduce((all, item) => all + item.size_mb, 0);
@@ -9789,18 +10054,37 @@ async function openUsageSettings(fresh = false) {
 					if (icon === "globe" && kindOf[item.name]) line.querySelector(".usage-open")?.after(el("span", { className: "badge usage-kind " + kind, textContent: kindLabel[kind] || kind }));
 					// The size, its share of the part under it; without a limit, a stripe of that share in its colour
 					const size = line.querySelector(".usage-meter-head > span");
-					size.replaceWith(el("span", { className: "usage-size" }, el("strong", { textContent: size.textContent }), el("small", { textContent: shareText(item) })));
+					// Said of what it is a share of: its limit when it has one (as its bar), else everything of its kind here
+					const limited = limitOf(item);
+					const of = limited ? `${Math.round(item.size_mb / limited * 100)} % of its limit` : `${shareText(item)} of all ${icon === "globe" ? "sites" : "databases"}`;
+					size.replaceWith(el("span", { className: "usage-size" }, el("strong", { textContent: size.textContent }),
+						el("small", { textContent: of, title: limited ? `${usageSize(item.size_mb)} of the ${usageSize(limited)} it may use` : "Its share of what they all take" })));
 					// The server's own limit on it, whoever's it is: a link that sets it
 					const limitTarget = target(item);
 					line.querySelector(".usage-meter-head strong")?.append(el("button", { type: "button", className: "usage-limit-link" + (item.server_limit_mb ? " set" : ""),
-						title: "A limit of the server's own: past it, it shows here and is mailed with the usage alerts",
-						onclick: () => run(() => askUsageLimit(limitTarget.site ? "site" : "database", item.name, limitTarget.connection || "", item.server_limit_mb)) },
-						svgIcon("sliders"), item.server_limit_mb ? `Limit ${usageSize(item.server_limit_mb)}` : "Limit…"));
+						title: item.server_limit_from ? `Set on ${item.server_limit_from}, where this is an environment` + (item.server_limit_back ? ": a change here is made there too" : ": change it there")
+							: "A limit of the server's own: past it, it shows here and is mailed with the usage alerts",
+						// One set from the server that has it as an environment is changed there: here it is told where
+						// One that is an environment of a site on another server: its limit is a share there, held to that site's
+						// limit by that server when it is saved
+						onclick: () => (item.server_limit_from || item.environment_of) && !item.server_limit_back ? showLimitFrom({ ...item, server_limit_from: item.server_limit_from || item.environment_of })
+							: run(async () => askUsageLimit(limitTarget.site ? "site" : "database", item.name, limitTarget.connection || "", item.server_limit_mb, item.name, item.server_limit_from || item.environment_of || "",
+								item.server_limit_from || item.environment_of ? await roomThere(item) : siteFloor(item))) },
+						svgIcon("sliders"), item.server_limit_mb ? `Limit ${usageSize(item.server_limit_mb)}${item.server_limit_from ? ` · from ${item.server_limit_from}` : ""}` : "Set limit…"));
+					// Its limit shared out among its parts, where it has one, more than one part, and room for what they use
+					const measurable = icon === "globe" && item.server_limit_mb && !item.server_limit_from ? partsOf(item).filter((part) => !part.windows) : [];
+					if (measurable.length > 1 && item.size_mb <= item.server_limit_mb) line.querySelector(".usage-meter-head strong")?.append(el("button", { type: "button",
+						className: "usage-limit-link share-out", title: "Give each part of the site a share of its limit: evenly, or by what each uses",
+						onclick: () => askShareOut(item) }, svgIcon("rows"), "Share out…"));
 					if (!line.querySelector(".usage-bar")) line.append(el("div", { className: "usage-share-bar" }, el("span", { style: `width: ${Math.max(share(item), item.size_mb ? 1 : 0)}%` })));
 					// A site's environments under it, as Export and Convert DB list them: the site and they framed together,
 					// so one site is told from the next at a glance
 					if (icon !== "globe") return [line];
-					const envs = environmentLines(item.name);
+					// The site's head: its icon in its kind's colour before its name, as its card on Web Server has it
+					line.classList.add("usage-site-line");
+					line.querySelector(".usage-meter-head strong")?.prepend(el("span", { className: "usage-site-icon", ariaHidden: "true" }, svgIcon("globe")));
+					const envs = environmentLines(item, limitOf(item), item.server_limit_mb ?? null);
+					showSiteParts(line, item, limitOf(item), sum);
 					return [el("div", { className: "usage-site-group kind-" + kind + (envs.length ? " has-envs" : "") }, line,
 						...(envs.length ? [el("div", { className: "usage-site-envs" }, ...envs)] : []))];
 				}) : [el("p", { className: "muted usage-none", textContent: empty })]));
@@ -9815,29 +10099,58 @@ async function openUsageSettings(fresh = false) {
 		// Every environment, measured where it runs (here, another server; IIS cannot be), with the server's limit to set:
 		// each under its site, its name after a bend as in Export
 		const environments = all.environments || [];
-		const environmentLine = (item) => {
+		const environmentLine = (item, siteLimit = null, siteServerLimit = null, site = null) => {
 			const env = allSites.find((site) => site.name === item.site)?.environments.find((other) => envKeyOf(other) === item.target);
 			const label = item.binding || item.folder || `${item.site} (${item.target})`;
-			// Where it is, and so whether the site's size above has it: in the site's folder it does, else it is its own
-			const where = item.windows ? "Windows" : item.in_site ? "In the site's size" : item.local ? "Own folder" : env?.host || "another server";
-			const whereTitle = item.windows ? "IIS cannot be measured" : item.in_site ? "In the site's folder: counted in the site's size and limit above"
-				: item.local ? "In a folder of its own on this server: not in the site's size or limit" : "On another server: not in the site's size or limit";
+			// Where it is, and so whether the site's size above has it: in the site's folder it does, else it is its own. With
+			// a limit on the site, said by it: in the limit, or not
+			const place = item.windows ? "Windows" : item.local ? "Own folder" : env?.host || "another server";
+			// Where it runs, short: Local (this server) or Remote, with its server's OS; its address and folder on hover. Every
+			// part is in the site's limit, wherever it runs: the legend above says so
+			const local = item.local && !item.windows;
+			const where = local ? "Local" : env?.host ? serverName(env.host) : item.windows ? "Windows" : "Remote";
+			const inLimit = siteLimit && !item.windows ? `, in the site's ${usageSize(siteLimit)} limit` : "";
+			const whereTitle = item.windows ? `On Windows (${place === "Windows" ? env?.host || "IIS" : place}): IIS cannot be measured`
+				: item.target === "main" ? `This server: the site itself, its folder without the environments in it${inLimit}`
+				: item.in_site ? `This server, in the site's folder${inLimit}`
+				: item.local ? `This server, in a folder of its own${inLimit}` : `${place}, measured there${inLimit}`;
 			const limit = item.server_limit_mb ?? null;
 			const line = usageMeter(label, item.size_mb ?? 0, limit,
-				item.size_mb == null ? (item.windows ? "Not measured on IIS" : "Not reached now") : limit == null ? usageSize(item.size_mb) : `${usageSize(item.size_mb)} of ${usageSize(limit)}`,
+				item.size_mb == null ? (item.windows ? "Not measured on IIS" : "Not reached now") : limit == null ? usageSize(item.size_mb) : `${exactSize(item.size_mb)} of ${usageSize(limit)}`,
 				undefined, () => { siteEnvFocus = { site: item.site, env: item.target }; go(siteLink(item.site)); });
 			line.classList.add("usage-env");
+			// Its size with its percent under it, as the site's: of its share when it has one, else of the whole site
+			const sizeText = line.querySelector(".usage-meter-head > span");
+			if (sizeText && item.size_mb != null) {
+				const whole = site?.size_mb || 0;
+				const percent = (value) => value >= 10 || value === 0 ? `${Math.round(value)} %` : value >= 1 ? `${value.toFixed(1)} %` : "< 1 %";
+				const of = limit ? `${percent(item.size_mb / limit * 100)} of its share` : whole ? `${percent(item.size_mb / whole * 100)} of the site` : "";
+				if (of) sizeText.replaceWith(el("span", { className: "usage-size" }, el("strong", { textContent: sizeText.textContent }), el("small", { textContent: of })));
+			}
 			const name = line.querySelector(".usage-meter-head strong");
 			name?.prepend(el("span", { className: "usage-env-bend", ariaHidden: "true" }, svgIcon("corner")));
 			name?.append(el("span", { className: "badge usage-kind env-" + String(item.environment || "").toLowerCase(), textContent: item.environment || item.target }),
-				el("small", { className: "usage-owner none", textContent: where, title: whereTitle }));
-			if (!item.windows) name?.append(el("button", { type: "button", className: "usage-limit-link" + (limit ? " set" : ""),
-				title: "A limit of the server's own: past it, it shows here and is mailed with the usage alerts",
-				onclick: () => run(() => askUsageLimit("environment", item.site, item.target, limit, label)) },
-				svgIcon("sliders"), limit ? `Limit ${usageSize(limit)}` : "Limit…"));
+				// Local plain; remote in its own colour, with its server's OS and name
+			el("small", { className: "usage-owner none usage-where" + (local ? "" : " remote"), title: whereTitle },
+				...(local ? [] : [el("span", { className: "os-logo", innerHTML: osLogos[item.windows ? "windows" : "linux"] })]), where));
+			// One set above the site's before that was held to: it can never be reached, and says so
+			const unreachable = siteServerLimit && limit && limit > siteServerLimit;
+			if (!item.windows) name?.append(el("button", { type: "button", className: "usage-limit-link" + (limit ? " set" : "") + (unreachable ? " unreachable" : ""),
+				title: unreachable ? `Above the site's ${usageSize(siteServerLimit)}, which it is a part of: the site's limit is met first. Lower it to ${usageSize(siteServerLimit)} or less.`
+					: "A limit of the server's own: past it, it shows here and is mailed with the usage alerts",
+				onclick: () => run(() => askUsageLimit("environment", item.site, item.target, limit, label, "", site ? partRoom(site, item.target) : null)) },
+				svgIcon(unreachable ? "alert" : "sliders"), limit ? `Limit ${usageSize(limit)}${unreachable ? ` · above the site's ${usageSize(siteServerLimit)}` : ""}` : "Set limit…"));
 			return line;
 		};
-		const environmentLines = (site) => environments.filter((item) => item.site === site).map(environmentLine);
+		// The site itself first, as a part as its environments are (its folder without them), then each environment
+		const environmentLines = (site, siteLimit = null, siteServerLimit = null) => {
+			const mine = environments.filter((item) => item.site === site.name);
+			if (!mine.length) return [];
+			const main = allSites.find((other) => other.name === site.name)?.environments.find((env) => !isTarget(env));
+			const itself = { site: site.name, target: "main", environment: main ? (main.environment || main.label || "Main") : "Main",
+				binding: (main && bindingLabel(main)) || site.name, local: true, in_site: true, size_mb: site.main_mb, server_limit_mb: site.main_limit_mb ?? null };
+			return [itself, ...mine].map((item) => environmentLine(item, siteLimit, siteServerLimit, site));
+		};
 		// One whose site is not listed (gone since it was measured) is still shown, on its own
 		const orphans = environments.filter((item) => !all.sites.some((site) => site.name === item.site));
 		const environmentsPart = orphans.length ? [el("section", { className: "tool-card tool-card-wide usage-overview" },
@@ -9867,6 +10180,19 @@ async function openUsageSettings(fresh = false) {
 	}
 }
 
+// What is past its limit, as the checks find it: read again now and then, so Needs attention and the banners follow a
+// check that ran since the page loaded (behind a change, the hourly one, or a limit sent from another server)
+async function refreshUsageOver() {
+	if (!currentUser || document.hidden) return;
+	const { over } = await api("/api/usage/over");
+	if (JSON.stringify(over) === JSON.stringify(currentUser.usage_over || [])) return;
+	currentUser.usage_over = over;
+	if (sitesLoaded) renderSites();
+	showUsageBanner();
+}
+// Quietly: a read that fails now is tried at the next
+setInterval(() => refreshUsageOver().catch(() => {}), 60000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) refreshUsageOver().catch(() => {}); });
 // The limit something is past, from Needs attention: the server's own in its dialog, a user's in their window at it
 async function changeUsageLimit(item) {
 	if (item.user_id) {
@@ -9877,28 +10203,168 @@ async function changeUsageLimit(item) {
 		focusUserLimit(item.kind === "database" ? { connection: item.connection, database: item.name } : { site: item.name });
 		return;
 	}
-	if (item.kind === "environment") return askUsageLimit("environment", item.site, item.target, item.limit_mb, item.name);
-	return askUsageLimit(item.kind, item.name, item.connection || "", item.limit_mb);
+	if (item.kind === "environment") {
+		const room = await api(`/api/usage/room/${encodeURIComponent(item.site)}?target=${encodeURIComponent(item.target)}`).catch(() => null);
+		return askUsageLimit("environment", item.site, item.target, item.limit_mb, item.name, "", room && !room.error ? roomBounds(room, true) : null);
+	}
+	// One set on the server that has it as an environment: its dialog says so, knows the room there, and a change is
+	// made there too
+	const room = item.from ? await api(`/api/usage/room/${encodeURIComponent(item.name)}`).catch(() => null) : null;
+	return askUsageLimit(item.kind, item.name, item.connection || "", item.limit_mb, item.name, item.from || "", room && !room.error ? roomBounds(room, "remote") : null);
 }
 
+// A limit set on the server that has this site as one of its environments: that server checks and mails it, and is the
+// one place it is changed, so the two never tell different limits
+function showLimitFrom(item) {
+	const origin = item.server_limit_from;
+	openFormDialog({ icon: "sliders", title: `Limit of ${item.name}`, closeOnly: true,
+		text: `${item.server_limit_mb ? `${usageSize(item.server_limit_mb)}, set on ${origin}` : `No limit now. ${item.name} is an environment of a site on ${origin}`}: its limit is a share of that site's limit there. To set it here, Harbor here needs to know ${origin}: add it, and it is saved there too.`,
+		fields: [],
+		// Add server, with its name and address put in: once it is added, the limit can be changed here
+		extra: currentUser.admin ? [tonedButton(`Add ${origin}…`, "server", "teal", () => {
+			formDialog.close();
+			askAddServer({ kind: "linux", prefill: { name: origin.toLowerCase().replace(/[^a-z0-9-]+/g, "-"), host: item.server_limit_address || "", port: item.server_limit_port || 22, user: "root" },
+				after: () => { if (serverTabOpen("usage")) return openUsageSettings(); } });
+		})] : [] });
+}
 // The server's own limit on a site or a database: its size, or none
-function askUsageLimit(kind, name, connection, current, shown = name) {
-	const field = sizeField(`Size of this ${kind}`, current ?? null, "No limit", current != null && current % 1024 !== 0 ? "MB" : "GB");
+// The least and most a part's share may be, from the server that holds its site's limit (here or another server):
+// the dialog holds to them before it is saved. raise: here, a share more than the room raises the site's limit with it
+function roomBounds(room, raise) {
+	const where = room.host ? ` on ${room.host}` : "";
+	const of = `${room.site}'s ${room.budget != null ? usageSize(room.budget) : "limit"}${where}`;
+	const most = room.max, least = room.min, uses = room.uses || 0;
+	const why = [room.given ? `${usageSize(room.given)} is given to its other parts` : "", room.rest ? `the rest uses ${usageSize(room.rest)} now` : ""].filter(Boolean).join(", and ");
+	// Where the site's limit can be raised with it and there is no fair room in it: what it uses and half again
+	const recommend = recommendedShare(uses, room.budget, room.given, room.rest, least, most) ?? (raise ? recommendedSize(uses, least) : null);
+	return { min: least, max: most, uses, recommend,
+		// "remote": the site's limit is on another server, raised there when the share is saved
+		raise: raise && room.budget != null ? { site: room.site, budget: room.budget, room: most, remote: raise === "remote" } : null,
+		recommendWhy: room.budget != null ? `Its part of the ${usageSize(room.budget - room.given)} ${room.site}'s limit leaves after the other parts' shares, by what it (${usageSize(uses)}) and the parts with no share (${usageSize(room.rest)}) use now` : "",
+		note: most == null ? `It uses ${exactSize(uses)} now. ${room.site} has no limit${where}.`
+			: `It uses ${exactSize(uses)} now: up to ${sizeDown(most)} of ${of} is free for it${why ? ` (${why})` : ""}.`,
+		live: (typed) => typed < least ? `Too little: at least ${sizeUp(least)}, what it uses now: below that, it is past it at once.`
+			: most != null && typed > most ? (raise ? `More than the ${sizeDown(most)} there is room for in ${of}: ${room.site}'s limit goes up by ${usageSize(Math.ceil(typed - most))}, to ${usageSize(room.budget + Math.ceil(typed - most))}, with it.`
+				: `Too much: at most ${sizeDown(most)} of ${of}${why ? `: ${why}` : ""}.`)
+			: most == null ? `It uses ${exactSize(uses)} now: ${usageSize(Math.max(0, typed - uses))} is left to grow.`
+			: `${usageSize(typed)} of ${of}: ${usageSize(room.budget - room.given - typed)} is left for the rest.` };
+}
+function askUsageLimit(kind, name, connection, current, shown = name, from = "", bounds = null) {
+	const field = sizeField(`Size of this ${kind}`, current ?? null, "No limit", current != null && current < 1024 ? "MB" : "GB");
+	// A part of the site's limit (an environment in its folder) is never above it, nor the site's below one of its parts:
+	// said before it is typed, and held to when it is saved
+	const save = async (limit, more = {}) => {
+		const saved = await api("/api/usage/limit", { method: "PUT", json: { kind, name, connection, limit_mb: limit, ...more } });
+		toast(limit == null ? `${shown} has no limit now.` : `${shown} may use ${usageSize(limit)}.`, "ok");
+		// An environment on another server: its limit is sent there too, so its own admin shows it
+		if (saved.remote && !saved.remote.sent) toast(`Kept here, but not sent to its server: ${saved.remote.error}`, "error");
+		// Not over any more at once, where it shows: Needs attention and the banners (the check runs again behind it)
+		const key = kind === "site" ? `limit|site|${name}` : kind === "environment" ? `limit|environment|${name}|${connection}` : `limit|database|${connection}|${name}`;
+		currentUser.usage_over = (currentUser.usage_over || []).flatMap((item) => item.key !== key ? [item]
+			: limit == null || item.size_mb <= limit ? [] : [{ ...item, limit_mb: limit }])
+			// A part's limit set (its site's raised with it, maybe): the site's own warning waits for the check behind it,
+			// which shows it again if the site is still past its limit, rather than showing it with the limit before
+			.filter((item) => !(kind === "environment" && item.key === `limit|site|${name}`));
+		if (sitesLoaded) renderSites();
+		showUsageBanner();
+		if (serverTabOpen("usage")) await openUsageSettings();
+		// The check behind it: what it finds shown as soon as it is done
+		for (const wait of [4000, 15000]) setTimeout(() => refreshUsageOver().catch(() => {}), wait);
+	};
+	const boundText = el("span", { textContent: bounds?.note || "" });
+	const boundIcon = el("span", { className: "usage-limit-bound-icon" }, svgIcon("check"));
+	const suggest = el("button", { type: "button", className: "usage-limit-suggest", hidden: true }, svgIcon("check"), el("span"));
+
+	// The field keeps the focus: else leaving it redraws the line under the pointer, and the first click is lost
+	suggest.addEventListener("mousedown", (event) => event.preventDefault());
+	// Always there (hidden till used): also where the server that holds the site's limit says why it did not take one
+	const bound = el("div", { className: "hint usage-limit-bound", hidden: !bounds }, boundIcon, el("span", { className: "usage-limit-bound-text" }, boundText));
+	// The size it suggests stands beside the field it puts it in
+	field.querySelector(".size-field").append(suggest);
+
 	openFormDialog({ icon: "sliders", title: `Limit of ${shown}`, ok: "Save",
-		text: "A limit of the server's own, whoever's it is: past it, it shows in Usage and is mailed with the usage alerts (Notifications). Empty: no limit.",
-		fields: [el("div", { className: "user-limits" }, field)],
+		// One set from the server that has it as an environment is changed there too, so the two tell the same
+		text: from ? `${shown} is an environment of a site on ${from}: its limit is a share of that site's limit there. It is saved on ${from} too, which says so when it does not fit. Empty: no limit.`
+			: bounds?.text || "A limit of the server's own, whoever's it is: past it, it shows in Usage and is mailed with the usage alerts (Notifications). Empty: no limit.",
+		fields: [el("div", { className: "user-limits usage-limit-field" }, field), bound],
+		// Remove limit: where there is one, the limit taken away at once, as an empty field and Save would
+		// Remove limit: where there is one. On a site whose parts have shares of it, it asks whether those go too
+		extra: current != null ? [tonedButton("Remove limit", "trash", "red", () => run(async () => {
+			let withShares = false;
+			if (bounds?.shares) {
+				formDialog.close();
+				const answer = await ask({ title: `Remove the limit of ${shown}?`, input: false, danger: true, ok: "Remove limit",
+					message: `${bounds.shares === 1 ? "One of its parts has" : `${bounds.shares} of its parts have`} a share of it. Without the site's limit, a share holds its part alone.`,
+					options: [{ title: `Remove the ${bounds.shares === 1 ? "share" : `${bounds.shares} shares`} too`, sub: "The site itself and its environments have no limit of their own after it", icon: "trash", tone: "red", checked: true }] });
+				if (!answer) return;
+				withShares = answer.options[0];
+			}
+			if (withShares) await bounds.clearShares();
+			await save(null);
+			if (formDialog.open) formDialog.close();
+		}))] : [],
 		submit: async () => {
-			await api("/api/usage/limit", { method: "PUT", json: { kind, name, connection, limit_mb: field.read() } });
-			toast(field.read() == null ? `${shown} has no limit of the server's now.` : `${shown} may use ${usageSize(field.read())}.`, "ok");
-			// Not over any more at once, where it shows: Needs attention and the banners (the check runs again behind it)
-			const limit = field.read();
-			const key = kind === "site" ? `limit|site|${name}` : kind === "environment" ? `limit|environment|${name}|${connection}` : `limit|database|${connection}|${name}`;
-			currentUser.usage_over = (currentUser.usage_over || []).flatMap((item) => item.key !== key ? [item]
-				: limit == null || item.size_mb <= limit ? [] : [{ ...item, limit_mb: limit }]);
-			if (sitesLoaded) renderSites();
-			showUsageBanner();
-			if (serverTabOpen("usage")) await openUsageSettings();
+			const typed = field.read();
+			// More than the room, where it may be: the site's limit raised first by what is missing, so the share fits
+			const raising = bounds?.raise && bounds.max != null && typed != null && typed > bounds.max;
+			if (raising && !bounds.raise.remote) {
+				await api("/api/usage/limit", { method: "PUT", json: { kind: "site", name: bounds.raise.site, connection: "", limit_mb: bounds.raise.budget + Math.ceil(typed - bounds.max) } });
+			} else if (raising) {
+				// Raised on the server that holds the site's limit, with the share
+			} else if (bounds?.max != null && typed != null && typed > bounds.max) throw new Error(bounds.live ? bounds.live(typed) : bounds.note);
+			if (bounds?.min != null && typed != null && typed < bounds.min) throw new Error(bounds.live ? bounds.live(typed) : bounds.note);
+			// Refused where it is saved (the server that holds the site's limit): said here, with the size it does take
+			try {
+				await save(typed, raising && bounds.raise.remote ? { raise: true } : {});
+			} catch (error) {
+				const message = String(error.message || error);
+				bound.hidden = false;
+				bound.classList.add("wrong");
+				boundIcon.replaceChildren(svgIcon("alert"));
+				boundText.textContent = message;
+				const found = message.match(/at (most|least) ([0-9.]+) (GB|MB)/i);
+				suggest.hidden = !found;
+				if (found) {
+					const mb = Number(found[2]) * (found[3].toUpperCase() === "GB" ? 1024 : 1);
+					const way = found[1].toLowerCase() === "most" ? "down" : "up";
+					suggest.lastChild.textContent = `Use ${found[2]} ${found[3]}`;
+					suggest.onclick = () => field.set(mb, way);
+				}
+				return false;
+			}
 		} });
+	// A refusal from where it is saved goes once something else is typed
+	if (!bounds) field.addEventListener("input", () => { bound.hidden = true; suggest.hidden = true; });
+	// The note follows what is typed: what it takes, what is left, or why it cannot be saved (Save off till it can)
+	if (bounds?.live) {
+		const follow = () => {
+			const typed = field.read();
+			// More than the room, where the site's limit is raised with it, is no error: it is said, and Save does both
+			const raises = Boolean(bounds.raise) && typed != null && bounds.max != null && typed > bounds.max;
+			const wrong = typed != null && ((bounds.max != null && typed > bounds.max && !raises) || (bounds.min != null && typed < bounds.min));
+			// Can be saved, but is past it at once: said beside what it takes, in red, so it is not a surprise
+			const soon = typed != null && !wrong && bounds.soon ? bounds.soon(typed) : "";
+			boundText.textContent = typed == null ? bounds.note : bounds.live(typed) + (soon ? " " + soon : "");
+			// Not allowed: the nearest size that is, a click away. Else a recommended size: what it uses and half again
+			const recommend = bounds.recommend != null && (typed == null || Math.abs(typed - bounds.recommend) >= 1) ? ["up", bounds.recommend, true] : null;
+			const nearest = !wrong ? recommend : bounds.max != null && typed > bounds.max ? ["down", bounds.max] : ["up", bounds.min];
+			suggest.hidden = !nearest || (nearest[0] === "down" && bounds.min != null && bounds.max < bounds.min);
+			bound.classList.toggle("raises", raises && !wrong);
+			$("#form-dialog-ok").replaceChildren(svgIcon("check"), raises && !wrong ? "Save and raise" : "Save");
+			if (nearest) {
+				suggest.lastChild.textContent = nearest[2] ? `Use recommended: ${usageSize(nearest[1])}` : `Use ${(nearest[0] === "down" ? sizeDown : sizeUp)(nearest[1])}`;
+				suggest.title = !nearest[2] ? "" : bounds.recommendWhy || `What it uses now (${usageSize(bounds.uses)}) and ${Math.round(RECOMMEND_GROWTH * 100)} % more to grow in, rounded up`;
+				suggest.onclick = () => field.set(nearest[1], nearest[0]);
+			}
+			// Fine: a plain line with a check; past it at once, or not allowed: red with a warning
+			bound.classList.toggle("wrong", wrong || Boolean(soon));
+			boundIcon.replaceChildren(svgIcon(wrong || soon ? "alert" : raises ? "upload" : "check"));
+			$("#form-dialog-ok").disabled = wrong;
+		};
+		field.addEventListener("input", follow);
+		field.addEventListener("change", follow);
+		follow();
+	}
 }
 
 async function showKeepAliveLog() {
@@ -11609,7 +12075,7 @@ function siteGrantRow(name, envKeys, grant, user = null) {
 	// Only a site they made follows the size every site of theirs gets
 	if (made) size.classList.add("site-size-made");
 	body.append(el("div", { className: "user-limits grant-limits site-size-limit" }, size,
-		...(made ? [] : [el("p", { className: "hint", textContent: "Empty: no limit. Set, the site counts as theirs in Usage, with a warning and a mail past it, until it is taken from them. It is the site's folder here, with the environments in it; one in a folder of its own or on another server is not counted." })])));
+		...(made ? [] : [el("p", { className: "hint", textContent: "Empty: no limit. Set, the site counts as theirs in Usage, with a warning and a mail past it, until it is taken from them. It is the site and all its environments, wherever they run." })])));
 	const row = el("div", { className: "grant-site" },
 		el("div", { className: "grant-head" }, el("label", {}, whole, el("strong", { textContent: site ? siteLabel(site) : name })),
 			el("span", { className: "muted", textContent: envKeys.length > 1 ? `${envKeys.length - 1} environment${envKeys.length === 2 ? "" : "s"}` : "" }), toggle),
@@ -11754,13 +12220,23 @@ let limitFieldsMade = 0;
 // A size in MB or GB, as the limits' fields: empty is none (or the default its placeholder names). read() gives MB.
 function sizeField(label, mb = null, placeholder = "No limit", emptyUnit = "GB") {
 	const unitName = "size_unit_" + ++limitFieldsMade;
-	const gb = mb == null ? emptyUnit === "GB" : mb % 1024 === 0;
-	const amount = el("input", { type: "number", min: 0, step: "any", inputMode: "decimal", placeholder, ariaLabel: label, value: mb == null ? "" : gb ? mb / 1024 : mb });
+	// From 1 GB, in GB (1229 MB as 1.2), as it was most likely typed
+	const gb = mb == null ? emptyUnit === "GB" : mb >= 1024;
+	const amount = el("input", { type: "number", min: 0, step: "any", inputMode: "decimal", placeholder, ariaLabel: label, value: mb == null ? "" : gb ? Math.round(mb / 1024 * 100) / 100 : mb });
 	const unit = (value) => el("label", {}, el("input", { type: "radio", name: unitName, value, checked: (gb ? "GB" : "MB") === value }), el("span", { textContent: value }));
 	const element = el("div", { className: "limit-size" }, el("span", { className: "limit-label", textContent: label }),
 		el("div", { className: "size-field" }, amount, el("span", { className: "unit-toggle", role: "radiogroup", ariaLabel: "Unit" }, unit("MB"), unit("GB"))));
+	// Whole MB, rounded up: what is typed is never made less than it (235.4 MB is 236 MB, 1.2 GB is 1229 MB)
 	element.read = () => amount.value.trim() === "" ? null
-		: Math.round(Number(amount.value) * (element.querySelector(`input[name=${unitName}]:checked`)?.value === "GB" ? 1024 : 1));
+		: Math.ceil(Number(amount.value) * (element.querySelector(`input[name=${unitName}]:checked`)?.value === "GB" ? 1024 : 1) - 1e-9);
+	// A size put in, rounded the way it must be held to: down for an upper bound, up for a lower one, so it is saved as shown
+	element.set = (value, direction = "down") => {
+		const inGb = value >= 1024;
+		const round = direction === "up" ? Math.ceil : Math.floor;
+		amount.value = inGb ? round(value / 1024 * 100) / 100 : round(value);
+		element.querySelector(`input[name=${unitName}][value=${inGb ? "GB" : "MB"}]`).checked = true;
+		amount.dispatchEvent(new Event("input", { bubbles: true }));
+	};
 	// The default it stands for: its name in the field, and while the field is empty, its unit as well
 	element.setDefault = (text, unit) => {
 		amount.placeholder = text;
@@ -13655,7 +14131,7 @@ function askRemoveServer(item) {
 // is chosen already, that dialog stays open under it, and after is run once the server is added, to choose it there.
 // kind given (a Windows server for Import from Windows, a Linux server's dashed card): only that kind is offered.
 // Without one, from a place that takes either, Linux and Windows are both there to choose.
-function askAddServer({ kind: given = null, after = null } = {}) {
+function askAddServer({ kind: given = null, after = null, prefill = null } = {}) {
 	const chosenKind = given || "linux";
 	const form = $("#form-server-action");
 	$("#server-action-icon").replaceChildren(given === "windows" ? svgIcon("windows") : svgIcon("server"));
@@ -13700,6 +14176,11 @@ function askAddServer({ kind: given = null, after = null } = {}) {
 		field("Name", { name: "name", required: true, pattern: "[a-z0-9][a-z0-9\\-]{0,62}", placeholder: "A short name for it, such as web-01", maxLength: 63 }),
 		linux, windows);
 	showKind();
+	// Known already where it is asked for (a limit set on that server): its name and address put in
+	if (prefill?.name) form.elements.name.value = prefill.name;
+	if (prefill?.host) form.elements.host.value = prefill.host;
+	if (prefill?.port) form.elements.port.value = String(prefill.port);
+	if (prefill?.user) form.elements.user.value = prefill.user;
 	// A name as the server knows it: lower case, letters, digits and -, made so as it is typed (KIKAYO becomes kikayo)
 	const name = form.elements.name;
 	name.title = "Lower case letters, digits and -, such as web-01";
@@ -13727,5 +14208,5 @@ function askAddServer({ kind: given = null, after = null } = {}) {
 		} else run(() => runServers(payload));
 	};
 	serverActionDialog.showModal();
-	form.elements.name.focus();
+	(prefill?.host ? form.elements.password : form.elements.name).focus();
 }

@@ -434,6 +434,60 @@ def _env_import_off(args, system):
     import_at_startup_off(system, args.site or None)
 
 
+def _limit_value(text):
+    from harbor.core.system import Stop
+    if text == "none":
+        return None
+    if not text.isdigit():
+        raise Stop("The limit is a number of MB, or none.")
+    return int(text)
+
+
+def _server_usage_limit(args, system):
+    from harbor.server.tools import usage_limit
+    usage_limit(system, args.site, _limit_value(args.limit), args.origin, args.origin_site, args.origin_target, args.mails != "n", args.origin_port)
+
+
+def _server_usage_check(args, system):
+    from harbor.server.tools import usage_check
+    usage_check(system)
+
+
+def _server_usage_tell(args, system):
+    from harbor.server.tools import usage_tell
+    usage_tell(system, args.keys)
+
+
+def _server_usage_limit_back(args, system):
+    from harbor.server.tools import usage_limit_back
+    usage_limit_back(system, args.site, _limit_value(args.limit), args.raise_site)
+
+
+def _env_limit_room(args, system):
+    from harbor.server.tools import environment_room
+    environment_room(system, args.site, args.target)
+
+
+def _server_usage_room(args, system):
+    from harbor.server.tools import usage_room
+    usage_room(system, args.site)
+
+
+def _env_set_limit(args, system):
+    from harbor.server.tools import environment_limit
+    environment_limit(system, args.site, args.target, _limit_value(args.limit), args.raise_site)
+
+
+def _env_push_limit(args, system):
+    import json
+    from harbor.core.templates import Site
+    from harbor.environments.settings import push_limit
+    try:
+        print(json.dumps(push_limit(system, Site(args.site).site_root, args.target, _limit_value(args.limit))))
+    except Exception as error:  # noqa: BLE001  (the limit is kept here; only sending it failed)
+        print(json.dumps({"sent": False, "error": str(error)}))
+
+
 def _server_unattended(args, system):
     from harbor.server.tools import unattended_off, unattended_on
     (unattended_on if args.state == "on" else unattended_off)(system)
@@ -609,6 +663,17 @@ def _self(args, system):
     elif args.command == "update":
         from harbor.install import update
         update.update(system, args.ref)
+    elif args.command == "auto-update":
+        import json
+        from harbor.install import autoupdate
+        if args.state == "on":
+            autoupdate.turn_on(system, args.at)
+        elif args.state == "off":
+            autoupdate.turn_off(system)
+        elif args.state == "run":
+            autoupdate.run(system)
+        else:
+            print(json.dumps(autoupdate.status(system)))
     elif args.command == "finish-update":
         from harbor.install import update
         update.finish_update(system, args.source)
@@ -674,6 +739,28 @@ def parser():
     command = server.add_parser("os-update", help="install the OS updates now: the security updates, or all of them (none removed)")
     command.add_argument("scope", choices=("security", "all"))
     command.set_defaults(handler=_server_os_update)
+    command = server.add_parser("usage-limit", help="a site's size limit here, sent from the server that has it as an environment (MB, or none)")
+    command.add_argument("site")
+    command.add_argument("limit", help="MB, or none")
+    command.add_argument("--from", dest="origin", required=True, help="the server it was set on")
+    command.add_argument("--site", dest="origin_site", default="", help="the site there it is an environment of")
+    command.add_argument("--target", dest="origin_target", default="", help="its environment there")
+    command.add_argument("--port", dest="origin_port", type=int, default=22, help="that server's SSH port")
+    command.add_argument("--mails", choices=("y", "n"), default="y", help="whether that server mails it (its usage alerts on); n: this one does")
+    command.set_defaults(handler=_server_usage_limit)
+    command = server.add_parser("usage-check", help="check the usage limits now (asked by the other server where a limit is shared)")
+    command.set_defaults(handler=_server_usage_check)
+    command = server.add_parser("usage-tell", help="tell the other server where a limit is shared that it changed, so it checks too")
+    command.add_argument("keys", nargs="+")
+    command.set_defaults(handler=_server_usage_tell)
+    command = server.add_parser("usage-limit-back", help="a limit that came from another server, changed here: sent back there, then kept here (MB, or none)")
+    command.add_argument("site")
+    command.add_argument("limit", help="MB, or none")
+    command.add_argument("--raise", dest="raise_site", action="store_true", help="raise the site's limit there by what the share does not fit in")
+    command.set_defaults(handler=_server_usage_limit_back)
+    command = server.add_parser("usage-room", help="the room for a site here that is an environment of a site on another server, asked there, as JSON")
+    command.add_argument("site")
+    command.set_defaults(handler=_server_usage_room)
     command = server.add_parser("unattended-upgrades", help="the automatic security updates (unattended-upgrades): on (installed if it is not here) or off")
     command.add_argument("state", nargs="?", choices=("on", "off"), default="on")
     command.set_defaults(handler=_server_unattended)
@@ -1087,6 +1174,10 @@ def parser():
     command = own.add_parser("update", help="update to the newest release on GitHub (or --ref vX.Y.Z); the release installs itself")
     command.add_argument("--ref", default="")
     command.set_defaults(handler=_self)
+    command = own.add_parser("auto-update", help="Harbor updated by itself each day (on, with --at HH:MM), or not (off); run: the daily run; status: as JSON")
+    command.add_argument("state", choices=("on", "off", "run", "status"))
+    command.add_argument("--at", default="04:00", help="the time each day, HH:MM (server time), or soon: each hour, as soon as a release is out")
+    command.set_defaults(handler=_self)
     command = own.add_parser("finish-update", help="install this copy of a release (run by self update from the copy it fetched)")
     command.add_argument("source")
     command.set_defaults(handler=_self)
@@ -1158,6 +1249,21 @@ def parser():
     command.add_argument("site")
     command.add_argument("target", nargs="?", default="")
     command.set_defaults(handler=_env_size)
+    command = environment.add_parser("push-limit", help="an environment's size limit sent to the server it runs on (MB, or none), as JSON")
+    command.add_argument("site")
+    command.add_argument("target")
+    command.add_argument("limit", help="MB, or none")
+    command.set_defaults(handler=_env_push_limit)
+    command = environment.add_parser("set-limit", help="an environment's size limit here (MB, or none), sent back from the server it runs on")
+    command.add_argument("site")
+    command.add_argument("target")
+    command.add_argument("limit", help="MB, or none")
+    command.add_argument("--raise", dest="raise_site", action="store_true", help="raise the site's limit by what the share does not fit in")
+    command.set_defaults(handler=_env_set_limit)
+    command = environment.add_parser("limit-room", help="the room for an environment's share of its site's limit (MB), as JSON")
+    command.add_argument("site")
+    command.add_argument("target")
+    command.set_defaults(handler=_env_limit_room)
     command = environment.add_parser("import-at-startup-off", help="uSync's ImportAtStartup None on every Umbraco site here and its "
                                      "environments, without a restart (Harbor has uSync import what it syncs or publishes); once")
     command.add_argument("site", nargs="*", help="only these sites, and again even when it was done")
