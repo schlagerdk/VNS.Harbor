@@ -147,6 +147,68 @@ class CloudflareTests(unittest.TestCase):
         cloudflare.page_rule_state({"token": "t" * 40}, ZONE, "b" * 32, False, opener=fake)
         self.assertEqual((fake.asked[-1][0], json.loads(fake.asked[-1][3])), ("PATCH", {"status": "disabled"}))
 
+    def test_cache_and_configuration_rules_read_and_saved_with_what_harbor_does_not_know(self):
+        cache = {"rules": [{"description": "Images", "enabled": True, "action": "set_cache_settings", "expression": 'http.request.full_uri wildcard r"http*://shop.dk/img/*"',
+                            "action_parameters": {"cache": True, "edge_ttl": {"mode": "override_origin", "default": 86400}, "cache_key": {"cache_deception_armor": True, "cache_by_device_type": True},
+                                                  "serve_stale": {"disable_stale_while_updating": True}}}]}
+        fake = FakeCloudflare({f"/zones/{ZONE}/rulesets/phases/http_request_cache_settings/entrypoint": (cache, 1)})
+        found = cloudflare.settings_rules({"token": "t" * 40}, ZONE, "cache", opener=fake)[0]
+        self.assertEqual((found["mode"], found["pattern"]), ("wildcard", "http*://shop.dk/img/*"))
+        self.assertEqual(found["actions"], [{"id": "cache_level", "value": "cache_everything"}, {"id": "edge_cache_ttl", "value": 86400}, {"id": "cache_deception_armor", "value": "on"}])
+        self.assertEqual(found["extra"], {"cache_key": {"cache_by_device_type": True}, "serve_stale": {"disable_stale_while_updating": True}})
+        # Saved as it was read: the same parameters, the unknown kept
+        cloudflare.save_settings_rules({"token": "t" * 40}, ZONE, "cache", [found], opener=fake)
+        sent = json.loads(fake.asked[-1][3])["rules"][0]
+        self.assertEqual(sent["action_parameters"], cache["rules"][0]["action_parameters"])
+        self.assertEqual((sent["action"], sent["expression"]), ("set_cache_settings", cache["rules"][0]["expression"]))
+        config = cloudflare.settings_build("config", {"mode": "all", "actions": [{"id": "ssl", "value": "strict"}, {"id": "browser_check", "value": "off"}, {"id": "disable_zaraz", "value": None}]})
+        self.assertEqual((config["expression"], config["action"], config["action_parameters"]), ("true", "set_config", {"ssl": "strict", "bic": False, "disable_zaraz": True}))
+        with self.assertRaises(ValueError):
+            cloudflare.settings_build("cache", {"pattern": "http*://shop.dk/*", "actions": [{"id": "ssl", "value": "full"}]})
+        with self.assertRaises(ValueError):
+            cloudflare.settings_build("cache", {"pattern": "http*://shop.dk/*", "actions": [{"id": "cache_level", "value": "basic"}]})
+
+    def test_a_page_rule_converted_as_cloudflare_guides(self):
+        forward = cloudflare.page_rule_plan({"pattern": "www.shop.dk/*", "enabled": True, "actions": [{"id": "forwarding_url", "value": {"url": "https://shop.dk/$1", "status_code": 301}}]})
+        # http*:// before it is the first *, so $1 is ${2}
+        self.assertEqual((forward["redirect"]["pattern"], forward["redirect"]["target"], forward["redirect"]["keep_query"]), ("http*://www.shop.dk/*", "https://shop.dk/${2}", True))
+        https = cloudflare.page_rule_plan({"pattern": "*shop.dk/*", "enabled": True, "actions": [{"id": "always_use_https"}]})
+        self.assertEqual((https["redirect"]["pattern"], https["redirect"]["target"]), ("http://*shop.dk/*", "https://${1}shop.dk/${2}"))
+        mixed = cloudflare.page_rule_plan({"pattern": "shop.dk/img", "enabled": False, "actions": [{"id": "cache_level", "value": "cache_everything"}, {"id": "ssl", "value": "full"},
+                                                                                                   {"id": "rocket_loader", "value": "off"}]})
+        # An address without * at its end is that address, with or without a query string, not every one after it
+        self.assertEqual((mixed["cache"]["mode"], mixed["cache"]["expression"], mixed["cache"]["enabled"]),
+                         ("custom", '(http.request.full_uri wildcard r"http*://shop.dk/img" or http.request.full_uri wildcard r"http*://shop.dk/img?*")', False))
+        exact = cloudflare.page_rule_plan({"pattern": "*.shop.dk/", "actions": [{"id": "forwarding_url", "value": {"url": "https://shop.dk/$1", "status_code": 301}}]})["redirect"]
+        self.assertEqual((exact["mode"], exact["target"], exact["target_expression"]),
+                         ("custom", "", 'wildcard_replace(http.request.full_uri, r"http*://*.shop.dk/*", r"https://shop.dk/${2}")'))
+        cloudflare.redirect_build(exact)
+        self.assertEqual([action["id"] for action in mixed["config"]["actions"]], ["ssl", "rocket_loader"])
+        self.assertEqual(cloudflare.page_rule_plan({"pattern": "shop.dk/*", "actions": [{"id": "cache_level", "value": "aggressive"}]})["dropped"][0]["id"], "cache_level")
+        self.assertEqual([item["id"] for item in cloudflare.page_rule_plan({"pattern": "shop.dk/*", "actions": [{"id": "cache_level", "value": "basic"}, {"id": "ip_geolocation", "value": "on"}]})["left"]],
+                         ["cache_level", "ip_geolocation"])
+
+    def test_converting_puts_the_new_rules_in_order_and_turns_the_page_rule_off(self):
+        rule = {"id": "b" * 32, "status": "active", "priority": 1, "targets": [{"target": "url", "constraint": {"operator": "matches", "value": "shop.dk/img/*"}}],
+                "actions": [{"id": "cache_level", "value": "cache_everything"}, {"id": "security_level", "value": "high"}]}
+        there = {"rules": [{"description": "Old", "enabled": True, "action": "set_cache_settings", "expression": "true", "action_parameters": {"cache": False}}]}
+        fake = FakeCloudflare({f"/zones/{ZONE}/pagerules": ([rule], 1), f"/zones/{ZONE}/rulesets/phases/http_request_cache_settings/entrypoint": (there, 1),
+                               f"/zones/{ZONE}/rulesets/phases/http_config_settings/entrypoint": ({"rules": []}, 1)})
+        cloudflare.convert_page_rule({"token": "t" * 40}, ZONE, "b" * 32, opener=fake)
+        changed = [(method, url.split("/zones/")[1], json.loads(data) if data else None) for method, url, _, data in fake.asked if method != "GET"]
+        cache = next(body for method, url, body in changed if "cache_settings" in url)["rules"]
+        # First of the cache rules, where the last that matches wins: page rules converted from the top keep their order
+        self.assertEqual([item["action_parameters"] for item in cache], [{"cache": True}, {"cache": False}])
+        config = next(body for method, url, body in changed if "config_settings" in url)["rules"]
+        self.assertEqual(config[0]["action_parameters"], {"security_level": "high"})
+        self.assertEqual(changed[-1], ("PATCH", f"{ZONE}/pagerules/{'b' * 32}", {"status": "disabled"}))
+        # Nothing is sent for one with a setting that has no newer rule
+        rule["actions"] = [{"id": "cache_level", "value": "simplified"}]
+        before = len(fake.asked)
+        with self.assertRaises(ValueError):
+            cloudflare.convert_page_rule({"token": "t" * 40}, ZONE, "b" * 32, opener=fake)
+        self.assertTrue(all(method == "GET" for method, *_ in fake.asked[before:]))
+
     def test_analytics_a_day_with_the_empty_ones(self):
         import datetime
         def answer(request, timeout=None):
@@ -189,13 +251,13 @@ class CloudflareTests(unittest.TestCase):
         # The entitlements when they are given, exact
         fake = FakeCloudflare({f"/zones/{ZONE}": (zone, 1), f"/zones/{ZONE}/entitlements": ([{"id": "rulesets.dynamic_redirect_rule_max", "allocation": {"value": 12}},
                                                                                                {"id": "page_rules", "allocation": {"value": 5}}], 1)})
-        self.assertEqual(cloudflare.rule_limits({"token": "t" * 40}, ZONE, opener=fake), {"redirects": 12, "page_rules": 5})
+        self.assertEqual(cloudflare.rule_limits({"token": "t" * 40}, ZONE, opener=fake), {"redirects": 12, "page_rules": 5, "cache": 10, "config": 10})
         # A token that may not read them: the domain's page rules and its plan's redirects
         def refused(request, timeout=None):
             if request.full_url.endswith("/entitlements"):
                 return Answer(json.dumps({"success": False, "errors": [{"message": "Unauthorized"}]}).encode())
             return Answer(json.dumps({"success": True, "result": zone}).encode())
-        self.assertEqual(cloudflare.rule_limits({"token": "t" * 40}, ZONE, opener=refused), {"redirects": 10, "page_rules": 3})
+        self.assertEqual(cloudflare.rule_limits({"token": "t" * 40}, ZONE, opener=refused), {"redirects": 10, "page_rules": 3, "cache": 10, "config": 10})
 
     def test_managed_transforms_read_and_one_turned_on(self):
         current = {"managed_request_headers": [{"id": "remove_visitor_ip_headers", "enabled": False, "has_conflict": True, "conflicts_with": ["add_true_client_ip_headers"]}],

@@ -461,7 +461,7 @@ def save_redirects(settings, zone, rules, opener=None):
 
 # ---- which parts a token may use: what Settings says is missing
 TOKEN_NEEDS = {"dns": "Zone, DNS, Edit", "analytics": "Zone, Analytics, Read", "speed": "Zone, Zone Settings, Edit", "cache": "Zone, Cache Purge, Purge and Zone, Zone Settings, Edit",
-               "ssl": "Zone, Zone Settings, Edit (and Zone, SSL and Certificates, Edit)", "rules": "Zone, Single Redirect, Edit (or Zone, Dynamic Redirect, Edit)",
+               "ssl": "Zone, Zone Settings, Edit (and Zone, SSL and Certificates, Edit)", "rules": "Zone, Single Redirect, Edit (or Zone, Dynamic Redirect, Edit), Zone, Cache Rules, Edit and Zone, Config Rules, Edit",
                "security": "Zone, Zone Settings, Edit"}
 
 
@@ -583,6 +583,250 @@ def delete_page_rule(settings, zone, rule_id, opener=None):
     call(settings, "DELETE", f"/zones/{zone}/pagerules/{rule_id}", opener=opener)
 
 
+# ---- Cache Rules and Configuration Rules: what page rules set for a part of the site, as Cloudflare's newer rules.
+# Each a phase of its own, its rules a list put in place as a whole, as the redirects are. A rule's settings are said
+# with the page rules' names and values, so they are shown and changed as those are; what Harbor does not know of a
+# rule's parameters is kept as it was (extra)
+SETTINGS_PHASES = {"cache": ("http_request_cache_settings", "set_cache_settings"), "config": ("http_config_settings", "set_config")}
+# Configuration Rules: a page rule's setting, its parameter, and its values (bool: on and off as true and false)
+CONFIG_SETTINGS = {"automatic_https_rewrites": ("automatic_https_rewrites", bool), "browser_check": ("bic", bool),
+                   "email_obfuscation": ("email_obfuscation", bool), "opportunistic_encryption": ("opportunistic_encryption", bool),
+                   "rocket_loader": ("rocket_loader", bool), "disable_zaraz": ("disable_zaraz", None),
+                   "security_level": ("security_level", ("off", "essentially_off", "low", "medium", "high", "under_attack")),
+                   "ssl": ("ssl", ("off", "flexible", "full", "strict", "origin_pull"))}
+CACHE_SETTINGS = ("cache_level", "edge_cache_ttl", "browser_cache_ttl", "cache_deception_armor", "explicit_cache_control")
+# A cache rule's eligibility: Cache everything is eligible, Bypass is not; Cloudflare's other levels have no rule
+CACHE_LEVELS = ("bypass", "cache_everything")
+
+
+def match_read(expression):
+    """How a rule matches: {mode, pattern, expression}, mode "wildcard" (a pattern of the whole address), "all" or "custom\""""
+    expression = (expression or "").strip()
+    if expression == "true":
+        return {"mode": "all", "pattern": "", "expression": expression}
+    found = WILDCARD.match(expression)
+    if found:
+        return {"mode": "wildcard", "pattern": found.group(1), "expression": expression}
+    return {"mode": "custom", "pattern": "", "expression": expression}
+
+
+def match_build(rule):
+    """A rule's expression from how it matches: a wildcard pattern of the whole address, every request, or Cloudflare's own"""
+    mode = rule.get("mode") or "wildcard"
+    if mode == "all":
+        return "true"
+    if mode == "wildcard":
+        pattern = str(rule.get("pattern") or "").strip()
+        if not pattern or len(pattern) > 500 or '"' in pattern or "\n" in pattern:
+            raise ValueError("Give the pattern, such as https://www.example.com/images/*")
+        return f'http.request.full_uri wildcard r"{pattern}"'
+    if mode == "custom":
+        expression = str(rule.get("expression") or "").strip()
+        if not expression or len(expression) > 4096:
+            raise ValueError("Give Cloudflare's expression for the rule.")
+        return expression
+    raise ValueError("Unknown kind of match")
+
+
+def _ttl(value):
+    return isinstance(value, dict) and value.get("mode") == "override_origin" and isinstance(value.get("default"), int) and set(value) <= {"mode", "default"}
+
+
+def settings_read(kind, rule):
+    """A cache or configuration rule as Harbor shows it: [{id, value}] with the page rules' names, and the rest kept"""
+    params = json.loads(json.dumps(rule.get("action_parameters") or {}))
+    actions = []
+    if kind == "cache":
+        if isinstance(params.get("cache"), bool):
+            actions.append({"id": "cache_level", "value": "cache_everything" if params.pop("cache") else "bypass"})
+        for key, setting in (("edge_ttl", "edge_cache_ttl"), ("browser_ttl", "browser_cache_ttl")):
+            if _ttl(params.get(key)):
+                actions.append({"id": setting, "value": params.pop(key)["default"]})
+        key = params.get("cache_key")
+        if isinstance(key, dict) and isinstance(key.get("cache_deception_armor"), bool):
+            actions.append({"id": "cache_deception_armor", "value": "on" if key.pop("cache_deception_armor") else "off"})
+            if not key:
+                params.pop("cache_key")
+        if isinstance(params.get("origin_cache_control"), bool):
+            actions.append({"id": "explicit_cache_control", "value": "on" if params.pop("origin_cache_control") else "off"})
+    else:
+        for setting, (key, values) in CONFIG_SETTINGS.items():
+            value = params.get(key)
+            if values is bool and isinstance(value, bool):
+                actions.append({"id": setting, "value": "on" if params.pop(key) else "off"})
+            elif values is None and value is True:
+                params.pop(key)
+                actions.append({"id": setting, "value": None})
+            elif isinstance(values, tuple) and value in values:
+                actions.append({"id": setting, "value": params.pop(key)})
+    return {"description": rule.get("description", ""), "enabled": rule.get("enabled", True), **match_read(rule.get("expression")),
+            "actions": actions, "extra": params}
+
+
+def settings_build(kind, rule):
+    """A cache or configuration rule for Cloudflare from what Harbor shows: its settings, with what was kept of it"""
+    if kind not in SETTINGS_PHASES:
+        raise ValueError("Unknown kind of rule")
+    extra = rule.get("extra") if isinstance(rule.get("extra"), dict) else {}
+    if len(json.dumps(extra)) > 8000:
+        raise ValueError("The rule is too large.")
+    params = json.loads(json.dumps(extra))
+    given = rule.get("actions") if isinstance(rule.get("actions"), list) else []
+    kinds = [str((item or {}).get("id") or "") for item in given]
+    if len(set(kinds)) != len(kinds):
+        raise ValueError("Each setting once in a rule.")
+    for item in given:
+        setting, value = str(item.get("id") or ""), item.get("value")
+        if kind == "cache":
+            if setting == "cache_level":
+                if value not in CACHE_LEVELS:
+                    raise ValueError("A cache rule caches everything there, or bypasses the cache.")
+                params["cache"] = value == "cache_everything"
+            elif setting in ("edge_cache_ttl", "browser_cache_ttl"):
+                if not isinstance(value, int) or isinstance(value, bool) or not 0 < value <= 31536000:
+                    raise ValueError("Choose how long it is kept.")
+                params["edge_ttl" if setting == "edge_cache_ttl" else "browser_ttl"] = {"mode": "override_origin", "default": value}
+            elif setting == "cache_deception_armor" and value in ON_OFF:
+                params.setdefault("cache_key", {})["cache_deception_armor"] = value == "on"
+            elif setting == "explicit_cache_control" and value in ON_OFF:
+                params["origin_cache_control"] = value == "on"
+            else:
+                raise ValueError(f"A cache rule does not set {setting.replace('_', ' ')}.")
+        else:
+            key, values = CONFIG_SETTINGS.get(setting, (None, ()))
+            if key is None:
+                raise ValueError(f"A configuration rule does not set {setting.replace('_', ' ')}.")
+            if values is bool and value in ON_OFF:
+                params[key] = value == "on"
+            elif values is None:
+                params[key] = True
+            elif isinstance(values, tuple) and value in values:
+                params[key] = value
+            else:
+                raise ValueError(f"Choose a value for {setting.replace('_', ' ')}.")
+    if not params:
+        raise ValueError("Choose what the rule does.")
+    return {"expression": match_build(rule), "description": str(rule.get("description") or "")[:500], "enabled": rule.get("enabled", True) is not False,
+            "action": SETTINGS_PHASES[kind][1], "action_parameters": params}
+
+
+def settings_rules(settings, zone, kind, opener=None):
+    """A zone's cache or configuration rules, in order: none when it has no such ruleset yet"""
+    if not ZONE_ID.fullmatch(zone or "") or kind not in SETTINGS_PHASES:
+        raise ValueError("Unknown zone")
+    try:
+        ruleset = call(settings, "GET", f"/zones/{zone}/rulesets/phases/{SETTINGS_PHASES[kind][0]}/entrypoint", opener=opener)["result"]
+    except CloudflareError as error:
+        if "not found" in str(error).lower() or "could not find" in str(error).lower():
+            return []
+        raise
+    return [settings_read(kind, rule) for rule in ruleset.get("rules") or []]
+
+
+def save_settings_rules(settings, zone, kind, rules, opener=None):
+    """A zone's cache or configuration rules as given, in place of those there were"""
+    if not ZONE_ID.fullmatch(zone or "") or kind not in SETTINGS_PHASES:
+        raise ValueError("Unknown zone")
+    built = [settings_build(kind, rule) for rule in rules]
+    call(settings, "PUT", f"/zones/{zone}/rulesets/phases/{SETTINGS_PHASES[kind][0]}/entrypoint", {"rules": built}, opener=opener)
+
+
+# ---- A page rule made into the newer rules, as Cloudflare's own guide does it: Forwarding URL and Always Use HTTPS a
+# redirect, the cache settings a cache rule, the rest a configuration rule. Its pattern becomes one of the whole address
+# (http*:// before it where it has no scheme, which is then the first *, and a * after it for the query string)
+def page_rule_address(pattern):
+    """A page rule's pattern as a wildcard of the whole address, and how many * were put before its own"""
+    pattern = pattern.strip()
+    if pattern.lower().startswith(("http://", "https://")):
+        return pattern, 0
+    return "http*://" + pattern, 1
+
+
+def page_rule_match(full):
+    """How the newer rule matches: a pattern that ends in * as the wildcard it is; one that does not (a page rule's
+    exact address, its query string not looked at) that address alone or with a query string, not every address after it"""
+    if full.endswith("*"):
+        return {"mode": "wildcard", "pattern": full, "expression": ""}
+    return {"mode": "custom", "pattern": "", "expression": f'(http.request.full_uri wildcard r"{full}" or http.request.full_uri wildcard r"{full}?*")'}
+
+
+def page_rule_redirect(named, enabled, full, target, status):
+    """A redirect from a page rule's address: where an exact address gives its * on, the target is Cloudflare's own
+    expression, its last * (the query string) not used, as the query string goes with it anyway"""
+    redirect = {"description": named, "enabled": enabled, "status": status, "keep_query": True, **page_rule_match(full), "target": target, "target_expression": ""}
+    if redirect["mode"] == "custom" and "${" in target:
+        redirect.update(target="", target_expression=f'wildcard_replace(http.request.full_uri, r"{full}*", r"{target}")')
+    return redirect
+
+
+def page_rule_plan(rule):
+    """What a page rule becomes: {redirect, cache, config} (each a rule as Harbor shows it, or None), what Cloudflare's
+    default already does (dropped: [{id, why}]) and what has no newer rule (left: [{id, why}]). With anything left the
+    page rule is kept as it is"""
+    pattern = str(rule.get("pattern") or "")
+    full, before = page_rule_address(pattern)
+    named = f"From page rule {pattern}"[:500]
+    enabled = rule.get("enabled", True) is not False
+    plan = {"redirect": None, "cache": None, "config": None, "dropped": [], "left": []}
+    cache, config = [], []
+    for action in rule.get("actions") or []:
+        kind, value = action.get("id"), action.get("value")
+        if kind == "forwarding_url" and isinstance(value, dict):
+            target = re.sub(r"\$(\d+)", lambda found: "${%d}" % (int(found.group(1)) + before), str(value.get("url") or ""))
+            plan["redirect"] = page_rule_redirect(named, enabled, full, target, value.get("status_code") or 301)
+        elif kind == "always_use_https":
+            # From http:// to the same address at https://, each * of it given on
+            rest = re.sub(r"^https?://", "", pattern.strip(), flags=re.I)
+            at = iter(range(1, rest.count("*") + 1))
+            plan["redirect"] = page_rule_redirect(named, enabled, "http://" + rest, "https://" + re.sub(r"\*", lambda found: "${%d}" % next(at), rest), 301)
+        elif kind == "cache_level" and value in CACHE_LEVELS:
+            cache.append({"id": kind, "value": value})
+        elif kind == "cache_level" and value == "aggressive":
+            plan["dropped"].append({"id": kind, "why": "Standard is how Cloudflare caches anyway"})
+        elif kind == "cache_level":
+            plan["left"].append({"id": kind, "why": "No newer rule caches by these query string levels"})
+        elif kind in CACHE_SETTINGS:
+            cache.append({"id": kind, "value": value})
+        elif kind in CONFIG_SETTINGS:
+            config.append({"id": kind, "value": value})
+        elif kind == "ip_geolocation":
+            plan["left"].append({"id": kind, "why": "Only for the whole domain now: Managed Transforms, Add visitor location headers"})
+        else:
+            plan["left"].append({"id": kind, "why": "No newer rule Harbor knows of"})
+    for key, actions in (("cache", cache), ("config", config)):
+        if actions:
+            plan[key] = {"description": named, "enabled": enabled, **page_rule_match(full), "actions": actions, "extra": {}}
+    # Each is checked now, so nothing is sent before all of it can be
+    if plan["redirect"]:
+        redirect_build(plan["redirect"])
+    for key in ("cache", "config"):
+        if plan[key]:
+            settings_build(key, plan[key])
+    return plan
+
+
+def convert_page_rule(settings, zone, rule_id, opener=None):
+    """A page rule made into the newer rules, and turned off (not deleted: on again, it is as it was). A redirect goes
+    last of the redirects, where the first that matches wins; a cache or configuration rule first of its kind, where
+    the last wins: page rules converted from the top keep the order they had"""
+    if not PAGE_RULE_ID.fullmatch(rule_id or ""):
+        raise ValueError("Unknown page rule")
+    rule = next((item for item in page_rules(settings, zone, opener=opener) if item["id"] == rule_id), None)
+    if rule is None:
+        raise ValueError("Unknown page rule")
+    plan = page_rule_plan(rule)
+    if plan["left"]:
+        raise ValueError("Some of its settings have no newer rule: the page rule is kept.")
+    if plan["redirect"]:
+        save_redirects(settings, zone, redirect_rules(settings, zone, opener=opener) + [plan["redirect"]], opener=opener)
+    for kind in ("cache", "config"):
+        if plan[kind]:
+            save_settings_rules(settings, zone, kind, [plan[kind]] + settings_rules(settings, zone, kind, opener=opener), opener=opener)
+    if rule["enabled"]:
+        page_rule_state(settings, zone, rule_id, False, opener=opener)
+    return plan
+
+
 # ---- Analytics: the zone's traffic a day, from Cloudflare's GraphQL Analytics API (on every plan, the last 30 days)
 ANALYTICS_QUERY = """query ($zone: String!, $since: Date!, $until: Date!) { viewer { zones(filter: {zoneTag: $zone}) {
   httpRequests1dGroups(limit: 31, filter: {date_geq: $since, date_leq: $until}, orderBy: [date_ASC]) {
@@ -689,13 +933,15 @@ REDIRECTS_BY_PLAN = {"free": 10, "pro": 25, "business": 50, "enterprise": 300}
 
 
 def rule_limits(settings, zone, opener=None):
-    """{"redirects": how many redirect rules, "page_rules": how many page rules}: from the domain's entitlements, else
-    the domain itself (page rules) and its plan (redirects); None where it cannot be told"""
+    """{"redirects", "page_rules", "cache", "config"}: how many redirect rules, page rules, cache rules and configuration
+    rules, from the domain's entitlements, else the domain itself (page rules) and its plan (the rest, as many of each);
+    None where it cannot be told"""
     if not ZONE_ID.fullmatch(zone or ""):
         raise ValueError("Unknown zone")
     found = call(settings, "GET", f"/zones/{zone}", opener=opener).get("result") or {}
     plan = str(((found.get("plan") or {}).get("legacy_id")) or "").lower()
-    limits = {"redirects": REDIRECTS_BY_PLAN.get(plan), "page_rules": (found.get("meta") or {}).get("page_rule_quota")}
+    limits = {"redirects": REDIRECTS_BY_PLAN.get(plan), "page_rules": (found.get("meta") or {}).get("page_rule_quota"),
+              "cache": REDIRECTS_BY_PLAN.get(plan), "config": REDIRECTS_BY_PLAN.get(plan)}
     # The entitlements are exact, but not every token may read them
     try:
         for item in call(settings, "GET", f"/zones/{zone}/entitlements", opener=opener).get("result") or []:

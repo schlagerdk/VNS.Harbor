@@ -3770,11 +3770,51 @@ dialog .dns-proxy-row .switch:checked { border-color: #f0883e; background: #f088
 .cf-page-novalue { font-size: 12.5px; }
 .cf-forward { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; }
 @media (max-width: 640px) { .cf-forward { grid-template-columns: minmax(0, 1fr); } }
+/* A page rule converted: what it becomes as cards, its new rule's settings or target in code under each */
+.cf-convert-to { justify-self: start; max-width: 100%; padding: 5px 9px; border-radius: 6px; background: rgba(0, 0, 0, .25); color: var(--text); font-size: 12.5px; overflow-wrap: anywhere; }
+.cf-convert-note { margin: 0; }
+.cf-page-add { display: grid; gap: 10px; }
+.cf-page-add:empty { display: none; }
 .cf-page-add .pselect { width: 100%; }
 .cf-page-add .hint { margin: 0; }
+/* A setting's icon in its colour: in its card, its quick pick, and the rule's on/off */
+.cf-page-icon { display: grid; place-items: center; flex: none; width: 36px; height: 36px; border-radius: 10px; color: var(--blue); background: rgba(88, 166, 255, .12); }
+.cf-page-icon .ico { width: 17px; height: 17px; margin: 0; }
+.cf-page-icon.small { width: 30px; height: 30px; border-radius: 8px; }
+.cf-page-icon.small .ico { width: 15px; height: 15px; }
+.cf-page-icon.tone-green { color: var(--green); background: rgba(63, 185, 80, .13); }
+.cf-page-icon.tone-orange { color: #ffb37a; background: rgba(240, 136, 62, .14); }
+.cf-page-icon.tone-purple { color: #d2a8ff; background: rgba(163, 113, 247, .15); }
+.cf-page-icon.tone-red { color: #ff8a82; background: rgba(248, 81, 73, .13); }
+.cf-page-action-head .cf-setting-text { flex: 1; }
+/* An empty rule's quick picks: two side by side, one under another on a phone */
+.cf-page-quick { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.cf-page-quick-card { display: flex; align-items: flex-start; gap: 12px; min-width: 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px;
+	background: rgba(255, 255, 255, .02); color: var(--text); font: inherit; text-align: left; cursor: pointer; transition: border-color .15s, background .15s; }
+.cf-page-quick-card:hover:not(:where(:disabled, .disabled, .off)) { border-color: rgba(88, 166, 255, .55); background: rgba(88, 166, 255, .05); }
+.cf-page-quick-card:focus-visible { outline: none; border-color: rgba(88, 166, 255, .7); }
+dialog .cf-page-quick-card { white-space: normal; }
+.cf-page-quick-card .cf-setting-text { flex: 1; }
+.cf-page-quick-card .cf-setting-text strong { font-size: 13.5px; }
+.cf-page-quick-card .cf-setting-text small { font-size: 12px; }
+@media (max-width: 640px) { .cf-page-quick { grid-template-columns: minmax(0, 1fr); } }
+@media (prefers-reduced-motion: reduce) { .cf-page-quick-card { transition: none; } }
+/* The rule on or off: a low row with a switch, under a line of its own */
+dialog.newsite label.cf-page-on { display: flex; flex-direction: row; align-items: center; justify-content: flex-start; gap: 12px; margin: 6px 0 0; padding: 12px 14px;
+	border: 1px solid var(--line); border-radius: 10px; background: rgba(255, 255, 255, .02); color: inherit; font-size: inherit; text-align: left; cursor: pointer;
+	transition: border-color .15s, background .15s; }
+.cf-page-on .switch { flex: none; }
+.cf-page-on .cf-setting-text { flex: 1; }
+.cf-page-on .cf-setting-text strong { font-size: 13.5px; }
+.cf-page-on .cf-setting-text small { font-size: 12px; }
+.cf-page-on:has(.switch:checked) { border-color: rgba(63, 185, 80, .4); background: rgba(63, 185, 80, .06); }
+.cf-page-on:not(:has(.switch:checked)) .cf-page-icon { color: var(--muted); background: rgba(255, 255, 255, .06); }
+dialog .cf-page-on .switch:checked { border-color: var(--green); background: var(--green); }
+@media (prefers-reduced-motion: reduce) { .cf-page-on { transition: none; } }
 .cf-group-head { margin-top: 6px; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
 .cf-setting.off .cf-setting-text { opacity: .6; }
 .dns-chip.on { background: rgba(63, 185, 80, .16); color: #56d364; }
+.dns-chip.converted { background: rgba(163, 113, 247, .16); color: #d2a8ff; }
 .cf-none { margin: 0; }
 /* Analytics: the totals as Health's tiles, and a bar a day */
 .cf-tiles { grid-template-columns: repeat(6, minmax(0, 1fr)); }

@@ -732,6 +732,48 @@ def api_cloudflare_page_rules(zone, rule=None):
         return error(str(exc), 502)
 
 
+@app.route("/api/dns/zones/<zone>/pagerules/<rule>/convert", methods=["GET", "POST"])
+def api_cloudflare_page_rule_convert(zone, rule):
+    """A page rule made into the newer rules: what it would become (GET), or made so and the page rule turned off (POST)"""
+    settings = cloudflare_part_of("rules")
+    try:
+        found = dns_zone_of(settings, zone)
+        if request.method == "GET":
+            page_rule = next((item for item in _cloudflare.page_rules(settings, zone) if item["id"] == rule), None)
+            if page_rule is None:
+                return error("Unknown page rule")
+            return jsonify(plan=_cloudflare.page_rule_plan(page_rule))
+        plan = _cloudflare.convert_page_rule(settings, zone, rule)
+        made = [name for name, key in (("a redirect", "redirect"), ("a cache rule", "cache"), ("a configuration rule", "config")) if plan[key]]
+        audit(f"Cloudflare: converted a page rule of {found['name']} to {' and '.join(made) or 'nothing'}, and turned it off")
+        return jsonify(plan=plan)
+    except ValueError as exc:
+        return error(str(exc))
+    except _cloudflare.CloudflareError as exc:
+        return error(str(exc), 502)
+
+
+@app.route("/api/dns/zones/<zone>/rules/<kind>", methods=["GET", "PUT"])
+def api_cloudflare_settings_rules(zone, kind):
+    """A domain's cache rules or configuration rules: read, or put as given"""
+    if kind not in _cloudflare.SETTINGS_PHASES:
+        abort(404)
+    settings = cloudflare_part_of("rules")
+    try:
+        found = dns_zone_of(settings, zone)
+        if request.method == "PUT":
+            rules = (request.get_json(silent=True) or {}).get("rules")
+            if not isinstance(rules, list) or len(rules) > 300:
+                return error("Expected the rules.")
+            _cloudflare.save_settings_rules(settings, zone, kind, rules)
+            audit(f"Cloudflare: saved {len(rules)} {'cache' if kind == 'cache' else 'configuration'} rule{'' if len(rules) == 1 else 's'} of {found['name']}")
+        return jsonify(rules=_cloudflare.settings_rules(settings, zone, kind))
+    except ValueError as exc:
+        return error(str(exc))
+    except _cloudflare.CloudflareError as exc:
+        return error(str(exc), 502)
+
+
 @app.route("/api/dns/zones/<zone>/redirects", methods=["GET", "PUT"])
 def api_cloudflare_redirects(zone):
     """A domain's redirect rules: read, or put as given"""
