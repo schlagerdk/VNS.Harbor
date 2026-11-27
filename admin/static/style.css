@@ -1729,6 +1729,23 @@ body[data-role="user"] #settings-menu, body[data-role="user"] #btn-multi { displ
 .usage-meter-head strong { display: inline-flex; align-items: center; min-width: 0; }
 .usage-meter-head strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
 .usage-meter-head span { flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
+/* A line's name and its chips wrap where the room ends (a phone, a long name), never past the card's edge */
+.usage-overview .usage-meter-head strong { flex: 1 1 auto; flex-wrap: wrap; gap: 6px 8px; overflow: visible; white-space: normal; }
+.usage-overview .usage-meter-head strong > .badge, .usage-overview .usage-meter-head strong > .usage-owner,
+.usage-overview .usage-meter-head strong > .usage-limit-link { margin-left: 0; }
+.usage-overview .usage-open { min-width: 0; white-space: normal; overflow-wrap: anywhere; text-align: left; }
+.usage-overview, .usage-overview > *, .usage-site-group > *, .usage-site-envs > * { min-width: 0; }
+@media (max-width: 640px) {
+	.usage-overview .usage-meter-head { align-items: flex-start; }
+	.usage-overview .usage-site-group { padding: 6px 10px 6px 14px; }
+	.usage-overview .usage-site-envs { margin-left: -4px; margin-right: -4px; }
+	.usage-overview .usage-site-envs .usage-meter.usage-env { padding: 6px 4px; }
+	/* The name on a line of its own, its chips in a row under it; an environment's bend in front, hanging */
+	.usage-overview .usage-meter-head strong > .usage-open { flex-basis: 100%; }
+	.usage-overview .usage-env .usage-meter-head strong { position: relative; padding-left: 22px; }
+	.usage-env-bend { position: absolute; left: 0; top: 1px; margin: 0; }
+	.server-pane-head .usage-measured { width: 100%; justify-content: space-between; }
+}
 .usage-bar { height: 6px; border-radius: 999px; background: rgba(255, 255, 255, .07); overflow: hidden; }
 .usage-bar span { display: block; height: 100%; border-radius: inherit; background: var(--green); }
 .usage-meter.near .usage-bar span { background: #d29922; }
@@ -1804,6 +1821,21 @@ body[data-role="user"] #settings-menu, body[data-role="user"] #btn-multi { displ
 .usage-overview .usage-meter.over .usage-size strong { color: var(--red); }
 .usage-share-bar { height: 4px; overflow: hidden; border-radius: 999px; background: rgba(255, 255, 255, .05); }
 .usage-share-bar span { display: block; height: 100%; border-radius: inherit; background: var(--k); opacity: .75; }
+/* Each site framed with its environments, so one site is told from the next: a frame of its own, a stripe in its
+   kind's colour at its left, and its environments in a darker well inside it */
+.usage-site-group { position: relative; display: grid; gap: 0; margin: 6px 0; padding: 8px 14px 8px 18px; overflow: hidden;
+	border: 1px solid rgba(255, 255, 255, .09); border-radius: 12px; background: rgba(255, 255, 255, .035); box-shadow: 0 1px 2px rgba(0, 0, 0, .25); }
+.usage-site-group::before { content: ""; position: absolute; inset: 0 auto 0 0; width: 4px; background: var(--k); opacity: .85; }
+.usage-overview .usage-site-group > .usage-meter { margin: 0 -6px; padding: 8px 6px; }
+.usage-overview .usage-site-group > .usage-meter:hover:not(:where(:disabled, .disabled, .off)) { background: transparent; }
+.usage-site-envs { display: grid; gap: 0; margin: 6px -6px 4px; padding: 4px 6px; border-radius: 9px; background: rgba(0, 0, 0, .22); }
+.usage-overview .usage-site-envs .usage-meter.usage-env { margin: 0; padding: 6px 8px; }
+/* When the sizes were measured, and Measure now: at the right of the page's head */
+.usage-measured { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.usage-measured[hidden] { display: none; }
+.usage-measured-when { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12.5px; white-space: nowrap; }
+.usage-measured-when .ico { width: 14px; height: 14px; margin: 0; }
+.loading-ring.small { width: 14px; height: 14px; filter: none; -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px)); mask: radial-gradient(farthest-side, transparent calc(100% - 2px), #000 calc(100% - 2px)); }
 /* A site's environment under it: in a step, after a bend, as Export lists them */
 .usage-overview .usage-meter.usage-env { margin-left: 8px; padding-top: 4px; padding-bottom: 4px; }
 .usage-env .usage-meter-head strong { font-weight: 500; }

@@ -284,10 +284,13 @@ def user_usage(user):
 
 @app.route("/api/usage/all")
 def api_usage_all():
-    """Every site and database, how big each is now, who made it and its limit: Usage under Settings"""
+    """Every site and database, how big each is, who made it and its limit: Usage under Settings. The sizes measured
+    last come at once (measuring environments on other servers over SSH takes a while), with when and whether they are
+    stale; ?fresh=1 measures now, and keeps it"""
     require_admin()
     connections = {item["id"]: item.get("name") or item["id"] for item in _sql_module.public_connections(SQL_CONNECTIONS)} if os.path.isfile(SQL_CONNECTIONS) else {}
-    return jsonify(_usage.overview(DATA, site_dirs(), connections, measure_site=lambda site: _usage.site_mb(site, WEB_ROOT)))
+    return jsonify(_usage.kept_overview(DATA, site_dirs(), connections, fresh=request.args.get("fresh") == "1",
+                                        measure_site=lambda site: _usage.site_mb(site, WEB_ROOT)))
 
 
 @app.route("/api/usage/site/<site>")

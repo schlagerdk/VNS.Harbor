@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.96] - Unreleased
+
+### Features
+
+- Usage opens at once: the sizes measured last are shown (with when, and Measure now), and measured again behind them when they are older than ten minutes or a site or connection has come or gone; limits and who has what are always as they are now. Each site is framed with its environments, a stripe in its kind's colour at its left and its environments in a darker well, so one is told from the next. On a phone each line wraps inside its card: the name on its own line, its chips under it.
+
 ## [1.0.95] - 2026-11-27
 
 ### Features

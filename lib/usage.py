@@ -312,16 +312,23 @@ def site_limits(data_dir, site, measure_site=site_mb):
             "limit_mb": site_limit(owner, site) if owner else None, "user": (owner.get("name") or owner.get("username")) if owner else None}
 
 
-def overview(data_dir, sites, connections, measure_site=site_mb, measure_databases=database_sizes, measure_environment=None, measure_environments=None):
-    """Every site here and every database on each connection (system databases left out), how big each is now, who
-    made it and the limit that holds for it: for an administrator. sites: the site folders; connections: {id: name}."""
+def measure_all(data_dir, sites, connections, measure_site=site_mb, measure_databases=database_sizes, measure_environments=None):
+    """How big every site here, every environment and every database on each connection is now: what takes time in
+    Usage, kept apart from who has what and their limits, so it can be kept a while (usage-sizes.json, 1.0.95)"""
+    return {"sites": {site: measure_site(site) for site in sites},
+            "environments": measure_environments() if measure_environments else all_environments_mb(),
+            "databases": {connection: measure_databases(data_dir, connection, user_only=True) for connection in connections},
+            "engines": {connection: connection_engine(data_dir, connection) for connection in connections}}
+
+
+def overview_of(data_dir, sizes, connections):
+    """Usage from sizes measured (measure_all): with who made each and the limits as they are now, as a limit changed
+    shows at once, also on sizes kept from before"""
     users = plain_users(data_dir)
     site_owner = site_owners(users)
     result = {"sites": [], "connections": []}
     server_limits = load_limits(data_dir)
-    measure_environment = measure_environment or environment_mb
-    for site in sites:
-        size = measure_site(site)
+    for site, size in sizes["sites"].items():
         if size is None:
             continue
         owner = site_owner.get(site)
@@ -330,22 +337,52 @@ def overview(data_dir, sites, connections, measure_site=site_mb, measure_databas
                                 "limit_mb": site_limit(owner, site) if owner else None, "server_limit_mb": server_limits.get(f"site|{site}")})
     # Every environment, measured where it runs (here or on its server), with the server's limit on it
     result["environments"] = [{**item, "server_limit_mb": server_limits.get(f"environment|{item['site']}|{item['target']}")}
-                              for item in (measure_environments() if measure_environments else all_environments_mb())]
+                              for item in sizes["environments"]]
     for connection, label in connections.items():
-        sizes = measure_databases(data_dir, connection, user_only=True)
+        found = sizes["databases"].get(connection) or {}
         owners = {name: user for user in users for name in ((user.get("made") or {}).get("databases") or {}).get(connection, [])}
         items = []
-        for name, size in sizes.items():
+        for name, size in found.items():
             owner = owners.get(name)
             items.append({"name": name, "size_mb": round(size, 1), "user": (owner.get("name") or owner.get("username")) if owner else None,
                           "user_id": owner.get("id") if owner else None,
                           "limit_mb": database_limit(owner, connection, name) if owner else None,
                           "server_limit_mb": server_limits.get(f"database|{connection}|{name}")})
-        result["connections"].append({"id": connection, "name": label, "unreachable": not sizes, "databases": items,
-                                      "engine": connection_engine(data_dir, connection)})
+        result["connections"].append({"id": connection, "name": label, "unreachable": not found, "databases": items,
+                                      "engine": sizes.get("engines", {}).get(connection)})
     for part in [result["sites"]] + [item["databases"] for item in result["connections"]]:
         part.sort(key=lambda item: -item["size_mb"])
     return result
+
+
+def overview(data_dir, sites, connections, measure_site=site_mb, measure_databases=database_sizes, measure_environment=None, measure_environments=None):
+    """Every site here and every database on each connection (system databases left out), how big each is now, who
+    made it and the limit that holds for it: for an administrator. sites: the site folders; connections: {id: name}."""
+    return overview_of(data_dir, measure_all(data_dir, sites, connections, measure_site, measure_databases, measure_environments), connections)
+
+
+SIZES_KEPT = 600
+
+
+def kept_overview(data_dir, sites, connections, fresh=False, now=None, **measure):
+    """Usage at once from the sizes measured last (usage-sizes.json), with measured (when) and stale (older than ten
+    minutes, or sites or connections have come or gone since): the page shows it, and asks for fresh sizes after.
+    fresh, or nothing kept yet: measured now, and kept. Who has what and the limits are always as they are now."""
+    now = time.time() if now is None else now
+    path = Path(data_dir) / "usage-sizes.json"
+    kept = report.read_json(path, {}) if not fresh else {}
+    sizes = kept.get("sizes") if isinstance(kept, dict) else None
+    valid = isinstance(sizes, dict) and all(isinstance(sizes.get(key), want) for key, want in
+                                             (("sites", dict), ("environments", list), ("databases", dict)))
+    if not valid:
+        sizes = measure_all(data_dir, sites, connections, **measure)
+        kept = {"measured": now, "sizes": sizes}
+        write_json(path, kept)
+    measured = kept.get("measured") or 0
+    stale = now - measured > SIZES_KEPT or sorted(sizes["sites"]) != sorted(sites) or sorted(sizes["databases"]) != sorted(connections)
+    # A site gone since is not shown, though its size is kept until the next measuring
+    shown = {**sizes, "sites": {site: size for site, size in sizes["sites"].items() if site in sites}}
+    return {**overview_of(data_dir, shown, connections), "measured": measured, "stale": bool(stale)}
 
 
 def size_text(mb):

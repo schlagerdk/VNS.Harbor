@@ -242,6 +242,28 @@ class UsageCheckTests(unittest.TestCase):
         self.assertEqual(shown["connections"][0]["name"], "Local SQL Server")
         self.assertFalse(shown["connections"][0]["unreachable"])
 
+    def test_usage_shows_the_sizes_kept_at_once_and_limits_as_they_are_now(self):
+        """Usage is slow to measure (environments on other servers over SSH): the sizes measured last come at once,
+        stale after ten minutes, while the limits are always as they are now (1.0.95)"""
+        measured = []
+        def site(name):
+            measured.append(name)
+            return self.sites.get(name)
+        measure = {"measure_site": site, "measure_databases": lambda data, connection, user_only=False: {}, "measure_environments": lambda: []}
+        first = usage.kept_overview(self.data, ["big.dk"], {}, now=1000, **measure)
+        self.assertEqual((first["measured"], first["stale"], measured), (1000, False, ["big.dk"]))
+        self.sites["big.dk"] = 999.0
+        usage.set_limit(self.data, "site", "big.dk", limit_mb=300)
+        kept = usage.kept_overview(self.data, ["big.dk"], {}, now=1500, **measure)
+        self.assertEqual(measured, ["big.dk"])
+        self.assertEqual((kept["sites"][0]["size_mb"], kept["sites"][0]["server_limit_mb"], kept["stale"]), (250.0, 300, False))
+        self.assertTrue(usage.kept_overview(self.data, ["big.dk"], {}, now=1700, **measure)["stale"])
+        # A site made since makes it stale at once; one gone is not shown
+        self.assertTrue(usage.kept_overview(self.data, ["big.dk", "new.dk"], {}, now=1100, **measure)["stale"])
+        self.assertEqual(usage.kept_overview(self.data, [], {}, now=1100, **measure)["sites"], [])
+        fresh = usage.kept_overview(self.data, ["big.dk"], {}, fresh=True, now=1800, **measure)
+        self.assertEqual((fresh["sites"][0]["size_mb"], fresh["stale"], fresh["measured"]), (999.0, False, 1800))
+
     def test_the_limits_a_site_is_held_to_for_add_environment(self):
         """Add environment tells whether a new environment counts in the site's limits: the server's own and its user's,
         with the site's size now (1.0.95)"""

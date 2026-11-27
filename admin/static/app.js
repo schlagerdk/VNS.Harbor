@@ -9697,13 +9697,42 @@ function focusUserLimit(target) {
 
 // Usage under Settings: the alerts, then every site and every database on each connection, biggest first, each with
 // who made it and its limit. Measured as it opens, so it shows what is there now.
-async function openUsageSettings() {
+// The sizes measured last show at once; older than ten minutes, they are measured again behind them, and the page is
+// drawn again when that is done. Measure now asks for it at once.
+let usageMeasuring = null;
+function showUsageMeasured(all) {
+	const box = $("#usage-measured");
+	box.hidden = false;
+	const busy = Boolean(usageMeasuring);
+	box.replaceChildren(el("span", { className: "usage-measured-when" + (busy ? " busy" : ""), title: all?.measured ? `Measured ${formatDate(all.measured * 1000)}` : "" },
+		busy ? el("span", { className: "loading-ring small", ariaHidden: "true" }) : svgIcon("clock"),
+		busy ? "Measuring now…" : all?.measured ? `Measured ${syncAgo(all.measured * 1000)}` : ""),
+		...(busy ? [] : [tonedButton("Measure now", "sync", "blue", () => run(() => openUsageSettings(true)))]));
+}
+async function openUsageSettings(fresh = false) {
 	const list = $("#server-usage-list");
+	if (fresh && usageMeasuring) return usageMeasuring;
 	list.setAttribute("aria-busy", "true");
 	const measuring = el("div", { className: "tool-card tool-card-wide usage-overview" }, loadingState("Measuring the sites and databases…"));
-	list.replaceChildren(measuring);
+	// Fresh sizes are measured behind what is shown; only an empty page shows the measuring
+	if (!fresh || !list.querySelector(".usage-overview:not(:has(.loading-state))")) list.replaceChildren(measuring);
+	let all, known;
 	try {
-		const [all, known] = await Promise.all([api("/api/usage/all"), sitesLoaded ? Promise.resolve({ sites: allSites }) : api("/api/sites").catch(() => ({ sites: [] }))]);
+		const request = api("/api/usage/all" + (fresh ? "?fresh=1" : ""));
+		if (fresh) {
+			usageMeasuring = request;
+			showUsageMeasured(null);
+		}
+		try {
+			[all, known] = await Promise.all([request, sitesLoaded ? Promise.resolve({ sites: allSites }) : api("/api/sites").catch(() => ({ sites: [] }))]);
+		} finally {
+			if (fresh) usageMeasuring = null;
+		}
+		// Gone to another page meanwhile: nothing to draw
+		if (fresh && !serverTabOpen("usage")) return;
+		if (!list.contains(measuring)) list.replaceChildren(measuring);
+		showUsageMeasured(all);
+		if (all.stale && !fresh) setTimeout(() => { if (serverTabOpen("usage")) run(() => openUsageSettings(true)); });
 		// Each site's kind beside its name, as its card on Web Server has it
 		const kindOf = Object.fromEntries((known.sites || []).map((site) => [site.name, site.kind]));
 		const total = (items) => usageSize(Math.round(items.reduce((sum, item) => sum + item.size_mb, 0) * 10) / 10);
@@ -9768,8 +9797,12 @@ async function openUsageSettings() {
 						onclick: () => run(() => askUsageLimit(limitTarget.site ? "site" : "database", item.name, limitTarget.connection || "", item.server_limit_mb)) },
 						svgIcon("sliders"), item.server_limit_mb ? `Limit ${usageSize(item.server_limit_mb)}` : "Limit…"));
 					if (!line.querySelector(".usage-bar")) line.append(el("div", { className: "usage-share-bar" }, el("span", { style: `width: ${Math.max(share(item), item.size_mb ? 1 : 0)}%` })));
-					// A site's environments under it, as Export and Convert DB list them
-					return [line, ...(icon === "globe" ? environmentLines(item.name) : [])];
+					// A site's environments under it, as Export and Convert DB list them: the site and they framed together,
+					// so one site is told from the next at a glance
+					if (icon !== "globe") return [line];
+					const envs = environmentLines(item.name);
+					return [el("div", { className: "usage-site-group kind-" + kind + (envs.length ? " has-envs" : "") }, line,
+						...(envs.length ? [el("div", { className: "usage-site-envs" }, ...envs)] : []))];
 				}) : [el("p", { className: "muted usage-none", textContent: empty })]));
 		};
 		// A database opens the SQL page on its connection, its tab Databases
@@ -9823,6 +9856,11 @@ async function openUsageSettings() {
 				return part;
 			}), ...environmentsPart);
 	} catch (error) {
+		// Measured again behind what is shown: that stays, and the error is told as any other
+		if (!list.contains(measuring)) {
+			showUsageMeasured(all);
+			throw error;
+		}
 		measuring.replaceChildren(el("p", { className: "error", textContent: error.message }));
 	} finally {
 		list.removeAttribute("aria-busy");
