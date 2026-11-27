@@ -51,7 +51,12 @@ Where the work stands, so it can go on from here after any interruption.
 13. **A master Harbor over many servers** (asked 2026-11-27, not started): one Harbor (such as harbor.vns.dk) where users
    log in and everything on every server is administered; users' rights per server (where they may create sites,
    environments and databases); placement and moves decided there; later the master as a load balancer for a site on
-   two servers. See Phase 13 below.
+   two servers. See Phase 13 below. Load balancing may be left out: the master as one place to administer every server
+   and log in is the part that matters first.
+
+14. **DNS in Harbor, from Cloudflare** (asked 2026-11-27, next): what account.vns.dk does today (on test-01,
+   test.account.vns.dk) moved into Harbor, so a customer has DNS, sites and SQL in one place. Works on one Harbor; on
+   the master later. See Phase 14 below.
 
 ## Phase 10: PostgreSQL beside Microsoft SQL Server (asked 2026-11-25)
 Everything the admin does with Microsoft SQL Server, also with PostgreSQL, for C# and Python sites (Umbraco does not
@@ -193,6 +198,37 @@ Steps, roughly in order (each its own release, tried on linux-01 and linux-02 fi
 4. SQL Server and PostgreSQL connections of every member on the master's SQL page, with the users' grants per
    connection as today.
 5. Load balancing: a site on two members, the master (or a balancer it manages) in front, with the steps above.
+
+## Phase 14: DNS in Harbor, from Cloudflare (asked 2026-11-27, next)
+account.vns.dk (an Umbraco site, Views/DNS.cshtml, Users.cshtml) lets customers keep the DNS of their domains that are
+in VNS's Cloudflare account. Harbor takes that over, so DNS sits beside sites and SQL.
+
+What account.vns.dk does today, and Harbor does the same from the first release:
+- A domain is chosen from the zones (account.vns.dk keeps them in a file, cf_zones.json; Harbor reads them from
+  Cloudflare). An administrator sees every zone; a user only the domains given to them.
+- Its records listed by type and name: type, name, content (TXT in a text area), priority (MX), TTL (Auto, 1 min to
+  1 day) and proxied. New record (A, AAAA, CNAME, MX, NS, PTR, TXT; @ for the zone itself), edit, delete.
+- Proxied is an administrator's: only they see and change it, and a proxied record is locked for a user.
+- Purge cache of a zone, for an administrator.
+- Users: the admin's own user dialog (no new one) gets DNS beside Web Server and SQL Server: on or off, and the
+  domains the user may keep. account.vns.dk's CVR on a user is not taken over unless it is asked for.
+
+Not as account.vns.dk:
+- Cloudflare's credentials are kept as Harbor's other secrets (root only, never in a page or a script): under Settings,
+  a Cloudflare account, its auth email and Global API Key, or an API token limited to DNS (recommended). account.vns.dk
+  has the key written in its views; it should be changed in Cloudflare once Harbor has taken over.
+- Each change is in the audit log: who changed which record of which zone.
+
+Later, once the first is in use:
+- A new site or environment with a binding in a zone of the account: its record made in Harbor's dialog (A to the
+  server's address), where today only DNS is checked.
+- On the master (phase 13): DNS there, for every server's customers.
+
+Steps:
+1. Settings: the Cloudflare account (email and key, or a token), tried before it is kept; the zones it has.
+2. DNS in the top menu: zones and records, new, edit, delete, proxied and purge for an administrator.
+3. Users: DNS and the domains given, in the user dialog; a user sees and keeps only those.
+4. New site and Add environment: the record made with the site where its domain is in the account.
 
 ## Phase 8 steps (users on the server)
 Harbor only ever touches the Linux users in its group `harbor-users`; other users of the server are left alone. Which
