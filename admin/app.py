@@ -290,6 +290,15 @@ def api_usage_all():
     return jsonify(_usage.overview(DATA, site_dirs(), connections, measure_site=lambda site: _usage.site_mb(site, WEB_ROOT)))
 
 
+@app.route("/api/usage/site/<site>")
+def api_usage_site(site):
+    """The limits a site is held to and its size now: Add environment tells whether a new environment counts in them"""
+    require_admin()
+    if site not in site_dirs():
+        abort(404, "No such site.")
+    return jsonify(_usage.site_limits(DATA, site, measure_site=lambda name: _usage.site_mb(name, WEB_ROOT)))
+
+
 @app.route("/api/usage/mine")
 def api_usage_mine():
     """What the user logged in has made, and how big each is, beside their limits"""

@@ -242,6 +242,15 @@ class UsageCheckTests(unittest.TestCase):
         self.assertEqual(shown["connections"][0]["name"], "Local SQL Server")
         self.assertFalse(shown["connections"][0]["unreachable"])
 
+    def test_the_limits_a_site_is_held_to_for_add_environment(self):
+        """Add environment tells whether a new environment counts in the site's limits: the server's own and its user's,
+        with the site's size now (1.0.95)"""
+        usage.set_limit(self.data, "site", "big.dk", limit_mb=2048)
+        shown = usage.site_limits(self.data, "big.dk", measure_site=lambda site: self.sites.get(site))
+        self.assertEqual(shown, {"size_mb": 250.0, "server_limit_mb": 2048, "limit_mb": 100, "user": "Anna"})
+        self.assertEqual(usage.site_limits(self.data, "admin.example.com", measure_site=lambda site: 5.0),
+                         {"size_mb": 5.0, "server_limit_mb": None, "limit_mb": None, "user": None})
+
     def test_a_site_can_have_its_own_size_limit(self):
         """Each site a user made takes the size their limits give every site, unless it has its own, bigger or smaller
         (1.0.71)"""

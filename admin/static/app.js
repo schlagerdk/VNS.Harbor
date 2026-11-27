@@ -3915,7 +3915,7 @@ $("#setup-site-dns").replaceChildren(dnsCard($("#form-setup-site").binding, { on
 // The binding's message is about the certificate choice as well: any change clears it, or the browser keeps
 // refusing the form before it is checked again
 for (const type of ["input", "change"]) siteForm.addEventListener(type, () => siteForm.binding.setCustomValidity(""));
-$("#btn-new-site").onclick = () => { siteForm.reset(); siteForm.elements.template.setCustomValidity(""); siteForm.binding.setCustomValidity(""); delete siteForm.binding.dataset.edited; delete siteForm.elements.publish.dataset.edited; tempDomain = null; showTempDomains(); syncSiteForm(); limitFieldIn(siteForm, "Size limit of the site"); dialog.showModal(); siteForm.site.focus(); };
+$("#btn-new-site").onclick = () => { siteForm.reset(); siteForm.elements.template.setCustomValidity(""); siteForm.binding.setCustomValidity(""); delete siteForm.binding.dataset.edited; delete siteForm.elements.publish.dataset.edited; tempDomain = null; showTempDomains(); syncSiteForm(); limitFieldIn(siteForm, "Size limit of the site"); siteForm.limitNote.textContent = "Optional. The site's folder, with the environments later put in it. Past it, it shows in Usage and is mailed with the usage alerts. Changed later under Settings, Usage."; dialog.showModal(); siteForm.site.focus(); };
 $("#btn-new-site").addEventListener("click", () => {
 	siteHttps.reset();
 	siteDnsState = "empty";
@@ -3927,13 +3927,51 @@ $("#btn-empty-new-site").onclick = () => $("#btn-new-site").click();
 function limitFieldIn(form, label) {
 	let holder = form.querySelector(".create-limit");
 	if (!holder) {
-		holder = el("div", { className: "create-limit user-limits" });
+		holder = el("div", { className: "create-limit" });
 		form.querySelector(":scope > menu").before(holder);
 	}
+	// A card as the dialog's other choices are: what it is on the left, the size and its unit together on the right
 	const field = sizeField(label, null, "No limit", "MB");
-	holder.replaceChildren(field, el("p", { className: "hint", textContent: "Optional. Past it, Usage tells, and it is mailed with the usage alerts. Changed later under Settings, Usage." }));
+	const note = el("small", { textContent: CREATE_LIMIT_NOTE });
+	holder.replaceChildren(el("span", { className: "create-limit-icon", ariaHidden: "true" }, svgIcon("archive")),
+		el("span", { className: "create-limit-text" }, el("strong", { textContent: label }), note), field);
 	holder.hidden = !currentUser.admin;
 	form.limitField = field;
+	form.limitNote = note;
+}
+const CREATE_LIMIT_NOTE = "Optional. Past it, it shows in Usage and is mailed with the usage alerts. Changed later under Settings, Usage.";
+// Add environment on a site: whether the new environment counts in the site's limits, by where it is put. In the site's
+// folder here it is in the site's size, and so in its limit; in a folder of its own or on another server it is not,
+// and only a limit of its own holds it
+let prodSiteLimits = null;
+async function readProdSiteLimits(site) {
+	prodSiteLimits = null;
+	if (!currentUser.admin) return;
+	try {
+		const limits = await api(`/api/usage/site/${encodeURIComponent(site)}`);
+		if (prodForm.dataset.site === site) prodSiteLimits = { site, ...limits };
+	} catch (error) { /* told without them */ }
+	showProdLimitNote();
+}
+function showProdLimitNote() {
+	const note = prodForm.limitNote, holder = prodForm.querySelector(".create-limit");
+	if (!note || !holder) return;
+	const target = prodForm.elements.target.value;
+	const site = prodForm.dataset.siteName;
+	// IIS has no du: an environment on Windows is not measured, so it has no limit to set
+	if (currentUser.admin && !(prodForm.dataset.moveTarget && !prodForm.dataset.copy)) holder.hidden = target === "windows";
+	const path = prodForm.local_path.value.trim().replace(/\/+$/, "");
+	const inside = target === "local" && (!path.startsWith("/") || path.startsWith(`/var/www/${site}/`));
+	const limits = prodSiteLimits?.site === site ? prodSiteLimits : null;
+	const held = limits ? [limits.server_limit_mb && `the server's limit of ${usageSize(limits.server_limit_mb)}`,
+		limits.limit_mb && `${limits.user}'s limit of ${usageSize(limits.limit_mb)}`].filter(Boolean) : [];
+	const now = limits?.size_mb != null ? ` (${usageSize(limits.size_mb)} now)` : "";
+	const where = target === "local" ? "In a folder of its own" : "On another server";
+	note.textContent = held.length
+		? inside ? `In ${site}'s folder: it counts in the site's size${now}, and so in ${held.join(" and ")}. A limit of its own as well is optional.`
+			: `${where}: it is not in ${site}'s size or ${held.join(" and ")}. Only a limit of its own here holds it.`
+		: inside ? `Optional. In ${site}'s folder it is in the site's size too, and in a limit set on the site later. Past its own, it shows in Usage and is mailed with the usage alerts.`
+			: CREATE_LIMIT_NOTE;
 }
 async function saveCreatedLimit(kind, name, target, limit) {
 	if (limit == null || !currentUser.admin) return;
@@ -4354,6 +4392,7 @@ function syncProdForm() {
 	prodForm.dataset.target = target;
 	if (previous && previous !== target) applyProdSuggestion();
 	gateProdHttps();
+	showProdLimitNote();
 }
 // What the dialog suggests for a new environment or a copy: its folder, binding and folder here. On this server it is
 // <environment>-<site>; on another server Production keeps the site's own name and binding, the others get their own.
@@ -4459,6 +4498,8 @@ function openCreateProdDialog(site, moveEnv, copying = false) {
 	// A new environment can have a limit of its own; one moved keeps its own (Settings, Usage)
 	limitFieldIn(prodForm, "Size limit of the environment");
 	prodForm.querySelector(".create-limit").hidden = !currentUser.admin || Boolean(moveEnv && !copying);
+	showProdLimitNote();
+	run(() => readProdSiteLimits(site.name));
 	prodDialog.showModal();
 	// The dialog opens without a card in focus, so only the chosen one is marked
 	document.activeElement?.blur();
@@ -9712,7 +9753,7 @@ async function openUsageSettings() {
 					el("div", { className: "usage-section-title" }, el("strong", { textContent: title }), el("small", { textContent: items.length ? `${items.length} ${icon === "globe" ? (items.length === 1 ? "site" : "sites") : (items.length === 1 ? "database" : "databases")}` : "" })),
 					el("span", { className: "usage-total", textContent: items.length ? total(items) : "" })),
 				...(items.length && sum ? [stack, legend] : []),
-				...(items.length ? items.map((item, index) => {
+				...(items.length ? items.flatMap((item, index) => {
 					const line = meter(item, () => open(item), target(item));
 					const kind = kindOfItem(item);
 					line.classList.add("kind-" + kind);
@@ -9727,7 +9768,8 @@ async function openUsageSettings() {
 						onclick: () => run(() => askUsageLimit(limitTarget.site ? "site" : "database", item.name, limitTarget.connection || "", item.server_limit_mb)) },
 						svgIcon("sliders"), item.server_limit_mb ? `Limit ${usageSize(item.server_limit_mb)}` : "Limit…"));
 					if (!line.querySelector(".usage-bar")) line.append(el("div", { className: "usage-share-bar" }, el("span", { style: `width: ${Math.max(share(item), item.size_mb ? 1 : 0)}%` })));
-					return line;
+					// A site's environments under it, as Export and Convert DB list them
+					return [line, ...(icon === "globe" ? environmentLines(item.name) : [])];
 				}) : [el("p", { className: "muted usage-none", textContent: empty })]));
 		};
 		// A database opens the SQL page on its connection, its tab Databases
@@ -9737,34 +9779,39 @@ async function openUsageSettings() {
 			if ($("#sql-connection").querySelector(`option[value="${CSS.escape(connection.id)}"]`)) $("#sql-connection").value = connection.id;
 			go("#sql");
 		};
-		// Every environment, measured where it runs (here, another server; IIS cannot be), with the server's limit to set
-		const environmentsPart = (all.environments || []).length ? [(() => {
-			const items = all.environments;
-			const measured = items.filter((item) => item.size_mb != null);
-			const total = usageSize(Math.round(measured.reduce((sum, item) => sum + item.size_mb, 0) * 10) / 10);
-			return el("section", { className: "tool-card tool-card-wide usage-overview" },
-				el("div", { className: "usage-section-head" }, el("span", { className: "usage-section-icon" }, svgIcon("server")),
-					el("div", { className: "usage-section-title" }, el("strong", { textContent: "Environments" }),
-						el("small", { textContent: `${items.length} ${items.length === 1 ? "environment" : "environments"}, measured where each runs` })),
-					el("span", { className: "usage-total", textContent: measured.length ? total : "" })),
-				...items.map((item) => {
-					const env = allSites.find((site) => site.name === item.site)?.environments.find((other) => envKeyOf(other) === item.target);
-					const label = item.binding || item.folder || `${item.site} (${item.target})`;
-					const where = item.windows ? "Windows" : item.local ? "this server" : env?.host || "another server";
-					const limit = item.server_limit_mb ?? null;
-					const line = usageMeter(label, item.size_mb ?? 0, limit,
-						item.size_mb == null ? (item.windows ? "Not measured on IIS" : "Not reached now") : limit == null ? usageSize(item.size_mb) : `${usageSize(item.size_mb)} of ${usageSize(limit)}`,
-						undefined, () => { siteEnvFocus = { site: item.site, env: item.target }; go(siteLink(item.site)); });
-					const name = line.querySelector(".usage-meter-head strong");
-					name?.append(el("span", { className: "badge usage-kind env-" + String(item.environment || "").toLowerCase(), textContent: item.environment || item.target }),
-						el("small", { className: "usage-owner none", textContent: where }));
-					if (!item.windows) name?.append(el("button", { type: "button", className: "usage-limit-link" + (limit ? " set" : ""),
-						title: "A limit of the server's own: past it, it shows here and is mailed with the usage alerts",
-						onclick: () => run(() => askUsageLimit("environment", item.site, item.target, limit, label)) },
-						svgIcon("sliders"), limit ? `Limit ${usageSize(limit)}` : "Limit…"));
-					return line;
-				}));
-		})()] : [];
+		// Every environment, measured where it runs (here, another server; IIS cannot be), with the server's limit to set:
+		// each under its site, its name after a bend as in Export
+		const environments = all.environments || [];
+		const environmentLine = (item) => {
+			const env = allSites.find((site) => site.name === item.site)?.environments.find((other) => envKeyOf(other) === item.target);
+			const label = item.binding || item.folder || `${item.site} (${item.target})`;
+			// Where it is, and so whether the site's size above has it: in the site's folder it does, else it is its own
+			const where = item.windows ? "Windows" : item.in_site ? "In the site's size" : item.local ? "Own folder" : env?.host || "another server";
+			const whereTitle = item.windows ? "IIS cannot be measured" : item.in_site ? "In the site's folder: counted in the site's size and limit above"
+				: item.local ? "In a folder of its own on this server: not in the site's size or limit" : "On another server: not in the site's size or limit";
+			const limit = item.server_limit_mb ?? null;
+			const line = usageMeter(label, item.size_mb ?? 0, limit,
+				item.size_mb == null ? (item.windows ? "Not measured on IIS" : "Not reached now") : limit == null ? usageSize(item.size_mb) : `${usageSize(item.size_mb)} of ${usageSize(limit)}`,
+				undefined, () => { siteEnvFocus = { site: item.site, env: item.target }; go(siteLink(item.site)); });
+			line.classList.add("usage-env");
+			const name = line.querySelector(".usage-meter-head strong");
+			name?.prepend(el("span", { className: "usage-env-bend", ariaHidden: "true" }, svgIcon("corner")));
+			name?.append(el("span", { className: "badge usage-kind env-" + String(item.environment || "").toLowerCase(), textContent: item.environment || item.target }),
+				el("small", { className: "usage-owner none", textContent: where, title: whereTitle }));
+			if (!item.windows) name?.append(el("button", { type: "button", className: "usage-limit-link" + (limit ? " set" : ""),
+				title: "A limit of the server's own: past it, it shows here and is mailed with the usage alerts",
+				onclick: () => run(() => askUsageLimit("environment", item.site, item.target, limit, label)) },
+				svgIcon("sliders"), limit ? `Limit ${usageSize(limit)}` : "Limit…"));
+			return line;
+		};
+		const environmentLines = (site) => environments.filter((item) => item.site === site).map(environmentLine);
+		// One whose site is not listed (gone since it was measured) is still shown, on its own
+		const orphans = environments.filter((item) => !all.sites.some((site) => site.name === item.site));
+		const environmentsPart = orphans.length ? [el("section", { className: "tool-card tool-card-wide usage-overview" },
+			el("div", { className: "usage-section-head" }, el("span", { className: "usage-section-icon" }, svgIcon("server")),
+				el("div", { className: "usage-section-title" }, el("strong", { textContent: "Other environments" }),
+					el("small", { textContent: "Of sites not listed above, measured where each runs" }))),
+			...orphans.map(environmentLine))] : [];
 		measuring.replaceWith(section("globe", "Sites", all.sites, "No sites on this server yet.", (item) => go(siteLink(item.name)), (item) => ({ site: item.name })),
 			// A connection with no databases of its own (or none that answered) has nothing to show; each says its engine
 			...all.connections.filter((connection) => connection.databases.length).map((connection) => {
@@ -11524,7 +11571,7 @@ function siteGrantRow(name, envKeys, grant, user = null) {
 	// Only a site they made follows the size every site of theirs gets
 	if (made) size.classList.add("site-size-made");
 	body.append(el("div", { className: "user-limits grant-limits site-size-limit" }, size,
-		...(made ? [] : [el("p", { className: "hint", textContent: "Empty: no limit. Set, the site counts as theirs in Usage, with a warning and a mail past it, until it is taken from them." })])));
+		...(made ? [] : [el("p", { className: "hint", textContent: "Empty: no limit. Set, the site counts as theirs in Usage, with a warning and a mail past it, until it is taken from them. It is the site's folder here, with the environments in it; one in a folder of its own or on another server is not counted." })])));
 	const row = el("div", { className: "grant-site" },
 		el("div", { className: "grant-head" }, el("label", {}, whole, el("strong", { textContent: site ? siteLabel(site) : name })),
 			el("span", { className: "muted", textContent: envKeys.length > 1 ? `${envKeys.length - 1} environment${envKeys.length === 2 ? "" : "s"}` : "" }), toggle),

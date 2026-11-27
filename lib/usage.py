@@ -288,17 +288,35 @@ def of_user(data_dir, user, names=None, measure_site=site_mb, measure_databases=
     return result
 
 
+def plain_users(data_dir):
+    """The users who are not administrators: those limits are set for"""
+    config = report.read_json(Path(data_dir) / "config.json", {})
+    return [user for user in config.get("users", []) if isinstance(user, dict) and user.get("role") != "admin"] if isinstance(config.get("users"), list) else []
+
+
+def site_owners(users):
+    """Whose each site is: the user who made it, else one it is given to with a size of its own"""
+    owner = {}
+    for user in users:
+        for site in user_sites(user):
+            if site in (user.get("made") or {}).get("sites", []) or site not in owner:
+                owner[site] = user
+    return owner
+
+
+def site_limits(data_dir, site, measure_site=site_mb):
+    """The limits a site is held to and how big it is now (its folder, with the environments in it): for Add
+    environment, which tells whether a new environment counts in them (1.0.95)"""
+    owner = site_owners(plain_users(data_dir)).get(site)
+    return {"size_mb": measure_site(site), "server_limit_mb": load_limits(data_dir).get(f"site|{site}"),
+            "limit_mb": site_limit(owner, site) if owner else None, "user": (owner.get("name") or owner.get("username")) if owner else None}
+
+
 def overview(data_dir, sites, connections, measure_site=site_mb, measure_databases=database_sizes, measure_environment=None, measure_environments=None):
     """Every site here and every database on each connection (system databases left out), how big each is now, who
     made it and the limit that holds for it: for an administrator. sites: the site folders; connections: {id: name}."""
-    config = report.read_json(Path(data_dir) / "config.json", {})
-    users = [user for user in config.get("users", []) if isinstance(user, dict) and user.get("role") != "admin"] if isinstance(config.get("users"), list) else []
-    # Who a site is: the user who made it, else one it is given to with a size of its own
-    site_owner = {}
-    for user in users:
-        for site in user_sites(user):
-            if site in (user.get("made") or {}).get("sites", []) or site not in site_owner:
-                site_owner[site] = user
+    users = plain_users(data_dir)
+    site_owner = site_owners(users)
     result = {"sites": [], "connections": []}
     server_limits = load_limits(data_dir)
     measure_environment = measure_environment or environment_mb

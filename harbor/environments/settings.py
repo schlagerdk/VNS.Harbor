@@ -334,6 +334,8 @@ def environment_sizes(system, web_root="/var/www", parallel=8):
         except Exception:  # noqa: BLE001  (an environment not reached has no size now)
             size = None
         return {"site": site, "target": target, "environment": environment.other.get("ENVIRONMENT", ""), "binding": environment.BINDING,
-                "local": environment.local, "windows": environment.windows, "folder": environment.FOLDER, "size_mb": size}
+                "local": environment.local, "windows": environment.windows, "folder": environment.FOLDER, "size_mb": size,
+                # In the site's folder here: then it is in the site's size, and in its limit, as well (1.0.95)
+                "in_site": bool(environment.local and not environment.windows and str(environment.root).rstrip("/").startswith(root + "/"))}
     with ThreadPoolExecutor(max_workers=max(1, min(parallel, len(found) or 1))) as executor:
         return list(executor.map(one, found))

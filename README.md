@@ -35,7 +35,7 @@ sandbox of its own, and builds run as the unprivileged user `vns-build`.
 
 <p align="center">
   <img src="assets/screenshots/sql.jpg" alt="SQL Server: a connection, its databases, backups and logins under tabs" width="49%" />
-  <img src="assets/screenshots/usage.jpg" alt="Usage: every site and database, how big it is and who made it" width="49%" />
+  <img src="assets/screenshots/usage.jpg" alt="Usage: every site with its environments under it, and every database, how big each is, who made it and its limit" width="49%" />
 </p>
 
 <p align="center">

@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -118,6 +119,18 @@ class SettingsTests(unittest.TestCase):
             self.assertEqual(ours[0], legacy[0], target)
             if legacy[0] is None:
                 self.assertEqual(ours[1], legacy[1].splitlines()[-1], target)
+
+    def test_sizes_tell_whether_an_environment_is_in_the_sites_folder(self):
+        """Usage: an environment in the site's folder is in the site's size (and limit); one in a folder of its own or
+        on another server is not (1.0.95)"""
+        root = str(self.site)
+        (self.site / "scripts/targets/production/publish_prod.sh").write_text(f"PROD_LOCAL_PATH='{root}/_production'\nPROD_FOLDER='p'\nPROD_BINDING='p.dk'\n")
+        for name, line in (("staging", f"PROD_LOCAL_PATH='{self.folder}/www/staging-shop.dk'"), ("test", "PROD_IP='10.0.0.5'")):
+            (self.site / f"scripts/targets/{name}").mkdir()
+            (self.site / f"scripts/targets/{name}/publish_prod.sh").write_text(f"{line}\nPROD_FOLDER='{name}'\nPROD_BINDING='{name}.dk'\n")
+        with patch.object(settings, "environment_size", return_value=1.0):
+            found = {item["target"]: item["in_site"] for item in settings.environment_sizes(self.system, str(self.folder / "www"))}
+        self.assertEqual(found, {"production": True, "staging": False, "test": False})
 
     def test_environments_in_the_order_the_script_lists_them(self):
         (self.site / "scripts/publish_prod.sh").write_text("PROD_FOLDER=a\n")

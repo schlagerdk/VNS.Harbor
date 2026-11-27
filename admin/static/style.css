@@ -1804,6 +1804,11 @@ body[data-role="user"] #settings-menu, body[data-role="user"] #btn-multi { displ
 .usage-overview .usage-meter.over .usage-size strong { color: var(--red); }
 .usage-share-bar { height: 4px; overflow: hidden; border-radius: 999px; background: rgba(255, 255, 255, .05); }
 .usage-share-bar span { display: block; height: 100%; border-radius: inherit; background: var(--k); opacity: .75; }
+/* A site's environment under it: in a step, after a bend, as Export lists them */
+.usage-overview .usage-meter.usage-env { margin-left: 8px; padding-top: 4px; padding-bottom: 4px; }
+.usage-env .usage-meter-head strong { font-weight: 500; }
+.usage-env-bend { display: inline-flex; flex: none; margin-right: 8px; color: var(--muted); }
+.usage-env-bend .ico { width: 14px; height: 14px; margin-bottom: 4px; }
 .usage-owner { margin-left: 8px; padding: 1px 8px; border-radius: 999px; background: rgba(88, 166, 255, .12); color: var(--blue); font-size: 11px; font-weight: 600; }
 .usage-owner.none { background: rgba(255, 255, 255, .06); color: var(--muted); }
 .usage-meter-head .badge.usage-kind { margin-left: 8px; font-size: 10.5px; }
@@ -1830,12 +1835,31 @@ button.usage-owner:hover:not(:where(:disabled, .disabled, .off)) { background: r
 .size-field { display: flex; gap: 6px; align-items: stretch; }
 /* The number white as in every field, not the grey of the label it stands under */
 .size-field input { flex: 1; min-width: 0; color: var(--text); }
+/* A size is typed, not stepped: no spin arrows beside it */
+.size-field input { appearance: textfield; -moz-appearance: textfield; }
+.size-field input::-webkit-outer-spin-button, .size-field input::-webkit-inner-spin-button { margin: 0; -webkit-appearance: none; }
 .unit-toggle { display: inline-flex; gap: 2px; padding: 3px; border: 1px solid var(--line); border-radius: 9px; background: rgba(0, 0, 0, .2); }
 dialog .unit-toggle label { position: relative; display: grid; place-items: center; margin: 0; padding: 0 10px; border-radius: 6px; color: var(--muted); font-size: 12px; font-weight: 600; cursor: pointer; }
 .unit-toggle input { position: absolute; opacity: 0; pointer-events: none; }
 dialog .unit-toggle label:has(input:checked) { background: rgba(88, 166, 255, .18); color: #cfe3ff; box-shadow: inset 0 0 0 1px rgba(88, 166, 255, .6); }
 dialog .unit-toggle label:has(input:focus-visible) { outline: 2px solid rgba(88, 166, 255, .55); }
 @media (max-width: 560px) { .user-limits { grid-template-columns: 1fr; } }
+/* Size limit in New site and Add environment: a card with an icon, its line, and the size with its unit at the right */
+.create-limit { display: grid; grid-template-columns: 34px minmax(0, 1fr) 210px; align-items: center; gap: 14px; margin: 8px 0 14px; padding: 12px 14px;
+	border: 1px solid var(--line); border-radius: 12px; background: rgba(255, 255, 255, .02); transition: border-color .15s, background .15s; }
+.create-limit[hidden] { display: none; }
+.create-limit:has(input[type=number]:not(:placeholder-shown)) { border-color: rgba(210, 153, 34, .45); background: rgba(210, 153, 34, .06); }
+.create-limit-icon { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 9px; color: #e3b341; background: rgba(210, 153, 34, .14); }
+.create-limit-icon .ico { width: 16px; height: 16px; margin: 0; }
+.create-limit-text { display: grid; gap: 2px; min-width: 0; }
+.create-limit-text strong { color: var(--text); font-size: 13px; font-weight: 600; }
+.create-limit-text small { color: var(--muted); font-size: 12px; line-height: 1.45; }
+.create-limit .limit-label { display: none; }
+.create-limit .size-field input { height: 36px; }
+@media (max-width: 560px) {
+	.create-limit { grid-template-columns: 34px minmax(0, 1fr); }
+	.create-limit > .limit-size { grid-column: 1 / -1; }
+}
 .grant-own-note { margin: 0; }
 @media (max-width: 560px) { .grant-scopes { grid-template-columns: 1fr; } }
 .grant-chip { display: inline-flex; align-items: center; gap: 7px; padding: 5px 10px; border: 1px solid var(--line); border-radius: 999px; background: rgba(0, 0, 0, .15); font-size: 12.5px; cursor: pointer; }
