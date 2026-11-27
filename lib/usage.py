@@ -535,7 +535,11 @@ def overview_of(data_dir, sizes, connections):
     result = {"sites": [], "connections": []}
     server_limits = load_limits(data_dir)
     origins = load_limit_origins(data_dir)
+    # A folder here that is an environment of a site (in a folder of its own) is a part of that site, not a site
+    parts = environment_folders(sizes["environments"])
     for site, folder in sizes["sites"].items():
+        if site in parts:
+            continue
         found = solution_of(site, folder, sizes["environments"])
         if found is None:
             continue
@@ -574,6 +578,18 @@ def overview(data_dir, sites, connections, measure_site=site_mb, measure_databas
 
 
 SIZES_KEPT = 600
+
+
+def environment_folders(environments, web_root=WEB_ROOT):
+    """The folders in web_root that are an environment of another site (its folder of its own here)"""
+    found = set()
+    for item in environments or []:
+        if not isinstance(item, dict) or item.get("in_site") or not item.get("local") or item.get("windows"):
+            continue
+        root = Path(str(item.get("root") or "")).resolve() if item.get("root") else None
+        if root and root.parent == Path(web_root).resolve() and root.name != item.get("site"):
+            found.add(root.name)
+    return found
 
 
 def environment_ids(site, web_root=WEB_ROOT, state=Path("/var/lib/harbor/sites")):

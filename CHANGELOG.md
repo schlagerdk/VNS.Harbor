@@ -2,6 +2,13 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.98] - Unreleased
+
+### Features
+
+- DNS, from Cloudflare (as account.vns.dk did it): under Settings, DNS, the Cloudflare account (an API token limited to DNS, recommended, or the auth email with the Global API Key), tried before it is kept for root only and never shown again. With it, DNS in the top menu: the domains on the left (Find a domain focused as the page opens, the list scrolling on its own), the chosen one's records on the right, grouped by type in frames as the sites' parts on Usage, each a line with its name, what it points to, and its TTL and proxy as chips, made, changed and deleted in a dialog where each type shows its own fields (A, AAAA, CNAME, MX with its priority, TXT, NS, SRV with priority, weight, port and target, CAA with its tag, PTR; @ for the domain itself, TTL Auto to 1 day). Proxied and Purge cache are an administrator's; a proxied record is locked for a user. In the user dialog, DNS beside Web Server and SQL Server: on, and the domains they may keep; a template has DNS on or off. Each change is in the audit log. Settings, Top menu has DNS beside Web Server and SQL Server: in the menu while the account is set up, or out of it for the administrators.
+- Usage: an environment in a folder of its own here is a part of its site's solution only, no longer listed as a site of its own (and counted twice); parts of the same kind are named by their address.
+
 ## [1.0.97] - 2026-11-27
 
 ### Features

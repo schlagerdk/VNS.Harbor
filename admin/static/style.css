@@ -1767,6 +1767,11 @@ body[data-role="user"] #settings-menu, body[data-role="user"] #btn-multi { displ
 .pselect-list { position: fixed; z-index: 1000; margin: 0; padding: 5px; overflow-y: auto; list-style: none; border: 1px solid rgba(163, 113, 247, .35); border-radius: 10px;
 	background: #1b2029; box-shadow: 0 14px 40px rgba(0, 0, 0, .55), 0 0 0 1px rgba(0, 0, 0, .3); }
 .pselect-list[hidden] { display: none; }
+/* Scrolled to its end, the list does not scroll the page under it */
+.pselect-list { overscroll-behavior: contain; }
+.pselect-search-row { position: sticky; top: -5px; z-index: 1; margin: -5px -5px 5px; padding: 6px; background: var(--panel2); border-bottom: 1px solid var(--line); }
+.pselect-search { width: 100%; padding: 8px 10px; font-size: 13px; }
+.pselect-option[hidden] { display: none; }
 .pselect-option { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 7px 10px; border-radius: 7px; color: var(--text); font-size: 13.5px; cursor: pointer; white-space: nowrap; }
 .pselect-option .ico { width: 14px; height: 14px; margin: 0; color: #c9a8ff; visibility: hidden; }
 .pselect-option[aria-selected="true"] { color: #e6dcff; font-weight: 600; }
@@ -2036,6 +2041,7 @@ dialog.newsite > form > .ns-head, dialog.newsite > .ns-head { position: sticky; 
 #dlg-user .user-part[hidden] { display: none; }
 #dlg-user .user-part.tone-sftp { --part: #39c5bb; }
 #dlg-user .user-part.tone-sql { --part: var(--purple); }
+#dlg-user .user-part.tone-dns { --part: #f0883e; }
 #dlg-user .user-part > .grant-card, #dlg-user .user-part > .grant-card:has(.switch:checked) { margin: 0; padding: 14px 0; border: 0; border-radius: 0; background: transparent; }
 #dlg-user .user-part > .grant-card:hover:not(:where(:disabled, .disabled, .off, :has(input:disabled))) { border-color: transparent; }
 #dlg-user .user-part:has(> .grant-area:not([hidden])) > .grant-card { border-bottom: 1px solid color-mix(in srgb, var(--part) 22%, var(--line)); }
@@ -2051,17 +2057,21 @@ dialog.newsite > form > .ns-head, dialog.newsite > .ns-head { position: sticky; 
 #dlg-user .grant-card:has(.switch:checked) { border-color: rgba(88, 166, 255, .5); background: linear-gradient(135deg, rgba(88, 166, 255, .1), rgba(163, 113, 247, .07)), var(--panel2); }
 .grant-card-icon { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 10px; color: #b9d8ff; background: linear-gradient(135deg, rgba(88, 166, 255, .2), rgba(163, 113, 247, .2)); }
 .grant-card-icon.sql { color: #c9b6ff; }
+.grant-card-icon.dns { color: #ffb37a; }
+.grant-card-icon.dns svg { width: 18px; height: 18px; }
+.dns-domain-chips { max-height: 260px; overflow-y: auto; }
+#user-dns .grant-search-box { margin-bottom: 10px; }
 .grant-card-icon .ico { width: 19px; height: 19px; margin: 0; }
 .grant-card-text { display: grid; gap: 2px; min-width: 0; }
 .grant-card-text strong { font-size: 14px; }
 .grant-card-text small { color: var(--muted); font-size: 12px; }
 /* A switch from a checkbox */
-#dlg-user .switch { appearance: none; -webkit-appearance: none; position: relative; width: 42px; height: 24px; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 999px; background: rgba(255, 255, 255, .08); cursor: pointer; transition: background .2s, border-color .2s; }
-#dlg-user .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #c9d1d9; box-shadow: 0 1px 3px rgba(0, 0, 0, .4); transition: transform .2s, background .2s; }
-#dlg-user .switch:checked { border-color: var(--blue); background: var(--blue); }
-#dlg-user .switch:checked::after { transform: translateX(18px); background: #fff; }
-#dlg-user .switch:focus-visible { outline: 2px solid rgba(88, 166, 255, .6); outline-offset: 2px; }
-@media (prefers-reduced-motion: reduce) { #dlg-user .switch, #dlg-user .switch::after { transition: none; } }
+dialog .switch { appearance: none; -webkit-appearance: none; position: relative; width: 42px; height: 24px; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 999px; background: rgba(255, 255, 255, .08); cursor: pointer; transition: background .2s, border-color .2s; }
+dialog .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 18px; height: 18px; border-radius: 50%; background: #c9d1d9; box-shadow: 0 1px 3px rgba(0, 0, 0, .4); transition: transform .2s, background .2s; }
+dialog .switch:checked { border-color: var(--blue); background: var(--blue); }
+dialog .switch:checked::after { transform: translateX(18px); background: #fff; }
+dialog .switch:focus-visible { outline: 2px solid rgba(88, 166, 255, .6); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { dialog .switch, dialog .switch::after { transition: none; } }
 #dlg-user .grant-card-text strong { color: var(--text); font-weight: 600; }
 /* An option under a card (May create sites, May add SQL connections) and Locked: a row with an icon, a line and a
    small switch. Under a card it is set in, on a line that joins it to the card. */
@@ -2082,9 +2092,9 @@ dialog.newsite > form > .ns-head, dialog.newsite > .ns-head { position: sticky; 
 .option-text { display: grid; gap: 1px; min-width: 0; }
 #dlg-user .option-text strong { color: var(--text); font-size: 13px; font-weight: 600; }
 .option-text small { color: var(--muted); font-size: 12px; }
-#dlg-user .switch.small { width: 34px; height: 20px; }
-#dlg-user .switch.small::after { width: 14px; height: 14px; }
-#dlg-user .switch.small:checked::after { transform: translateX(14px); }
+dialog .switch.small { width: 34px; height: 20px; }
+dialog .switch.small::after { width: 14px; height: 14px; }
+dialog .switch.small:checked::after { transform: translateX(14px); }
 #dlg-user .switch.danger:checked { border-color: var(--red); background: var(--red); }
 /* The update screen: the progress in the middle, and when it did not finish, a card with what happened and what to do */
 .system-update-card { display: flex; flex-direction: column; align-items: center; width: min(560px, 92vw); }
@@ -3509,3 +3519,142 @@ button.meta-action:hover:not(:where(:disabled, .disabled, .off)), button.meta-ac
 .usage-limit-link:hover:not(:where(:disabled, .disabled, .off)) { border-color: #79b8ff; background: rgba(88, 166, 255, .2); color: #a8d1ff; }
 .usage-limit-link.set:hover:not(:where(:disabled, .disabled, .off)) { border-color: #e3b341; background: rgba(210, 153, 34, .28); color: #ffd772; }
 .usage-limit-link.set.unreachable:hover:not(:where(:disabled, .disabled, .off)) { border-color: var(--red); background: rgba(248, 81, 73, .2); color: #ff8a82; }
+
+/* ---- DNS (phase 14): the domains on the left, the chosen one's records on the right in the SQL page's table */
+.dns-layout { display: grid; grid-template-columns: 290px minmax(0, 1fr); gap: 16px; align-items: start; }
+.dns-zones-panel { position: sticky; top: 84px; display: grid; gap: 12px; padding: 14px; }
+.dns-zones-head { display: flex; align-items: center; gap: 10px; font-size: 14px; }
+.dns-zones-head .tool-icon { width: 32px; height: 32px; border-radius: 9px; }
+.dns-zones-head .tool-icon .ico { width: 16px; height: 16px; }
+.dns-zones-panel .targets-search-box { flex: none; min-width: 0; margin-left: 0; }
+/* The list scrolls on its own: at its end, the page does not scroll with it */
+.dns-zones { display: grid; gap: 2px; max-height: calc(100vh - 250px); overflow-y: auto; overscroll-behavior: contain; margin: 0 -4px; padding: 0 4px; }
+.dns-zone { display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 10px; border: 1px solid transparent; border-radius: 8px;
+	background: none; color: var(--text); font: inherit; font-size: 13px; text-align: left; cursor: pointer; }
+.dns-zone .ico { flex: none; width: 15px; height: 15px; margin: 0; color: var(--muted); }
+.dns-zone span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dns-zone:hover:not(:where(:disabled, .disabled, .off)) { background: var(--hover); }
+.dns-zone.active { border-color: rgba(240, 136, 62, .5); background: rgba(240, 136, 62, .12); }
+.dns-zone.active .ico { color: #ffb37a; }
+.dns-zone-status { margin-left: auto; color: #e3b341; font-size: 11px; }
+.dns-zones-none { padding: 8px 10px; margin: 0; }
+.dns-title { display: grid; gap: 2px; min-width: 0; }
+.dns-panel .sql-databases-actions { flex-wrap: nowrap; align-items: center; }
+.dns-panel .sql-databases-actions .targets-search-box { flex: 0 1 300px; min-width: 160px; margin-left: 0; }
+.dns-panel .sql-databases-actions > button { flex: none; white-space: nowrap; }
+.dns-layout > .dns-zones-panel, .dns-layout > .dns-panel { margin-top: 18px; }
+@media (max-width: 1100px) { .dns-panel .sql-databases-actions { flex-wrap: wrap; } }
+.dns-title h3 { margin: 0; overflow-wrap: anywhere; }
+.dns-title small { font-size: 12.5px; }
+@media (max-width: 900px) {
+	.dns-layout { grid-template-columns: minmax(0, 1fr); }
+	.dns-zones-panel { position: static; }
+	.dns-zones { max-height: 240px; }
+}
+.dns-icon { color: #ffb37a; background: rgba(240, 136, 62, .14); }
+/* The domain's name large at the head, its counts as chips under it */
+.dns-title h2 { margin: 0; font-size: 22px; overflow-wrap: anywhere; }
+.dns-title-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+/* A group per type, framed as the sites' parts on Usage: its head, then a line per record */
+.dns-group { margin: 12px 0; border: 1px solid rgba(255, 255, 255, .1); border-radius: 12px; background: rgba(255, 255, 255, .025); overflow: hidden; }
+.dns-group[hidden] { display: none; }
+.dns-group-head { display: flex; align-items: center; gap: 10px; padding: 11px 16px; border-bottom: 1px solid var(--line); background: rgba(255, 255, 255, .02); }
+.dns-group-head strong { font-size: 14px; }
+.dns-group-head small { color: var(--muted); font-size: 12.5px; }
+.dns-group-count { margin-left: auto; padding: 1px 9px; border-radius: 999px; background: rgba(255, 255, 255, .06); color: var(--muted); font-size: 12px; font-weight: 600; }
+.dns-record { display: grid; grid-template-columns: minmax(140px, 1fr) 18px minmax(0, 2fr) 230px 96px; align-items: center; gap: 12px; padding: 10px 16px; }
+.dns-record[hidden] { display: none; }
+.dns-record + .dns-record { border-top: 1px solid rgba(255, 255, 255, .05); }
+.dns-record:hover:not(:where(:disabled, .disabled, .off)) { background: rgba(255, 255, 255, .025); }
+.dns-record-name { display: grid; min-width: 0; }
+.dns-record-name strong, .dns-record-name small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dns-record-name strong { font-size: 14px; }
+.dns-record-name small { color: var(--muted); font-size: 11.5px; }
+.dns-record-arrow { display: inline-flex; color: var(--muted); }
+.dns-record-arrow { justify-content: center; font-size: 15px; }
+.dns-record-content { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 5px 10px; border-radius: 8px;
+	background: rgba(0, 0, 0, .25); color: #c9d1d9; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+.dns-record-chips { display: flex; flex-wrap: wrap; justify-content: flex-start; gap: 6px; }
+.dns-record-actions { display: flex; justify-content: flex-end; }
+.dns-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 999px; background: rgba(139, 148, 158, .12); color: #c9d1d9;
+	font-size: 12px; font-weight: 600; white-space: nowrap; }
+.dns-chip .ico { width: 13px; height: 13px; margin: 0; color: var(--muted); }
+.dns-chip.proxied { background: rgba(240, 136, 62, .16); color: #ffb37a; }
+.dns-chip.proxied .ico { color: #ffb37a; }
+.dns-none { padding: 18px 4px; }
+@media (max-width: 900px) {
+	.dns-record { grid-template-columns: minmax(0, 1fr) auto; }
+	.dns-record-arrow { display: none; }
+	.dns-record-content { grid-column: 1 / -1; grid-row: 2; }
+	.dns-record-chips { grid-column: 1; justify-content: flex-start; }
+	.dns-record-actions { grid-row: 1; grid-column: 2; min-width: 0; }
+}
+.badge.dns-type { display: inline-block; min-width: 52px; text-align: center; font-size: 11px; background: rgba(139, 148, 158, .16); color: #c9d1d9; }
+.badge.dns-type-a, .badge.dns-type-aaaa { background: rgba(88, 166, 255, .16); color: #79b8ff; }
+.badge.dns-type-cname { background: rgba(163, 113, 247, .16); color: #c9a7ff; }
+.badge.dns-type-mx { background: rgba(57, 197, 187, .16); color: #5fd4cb; }
+.badge.dns-type-txt { background: rgba(210, 153, 34, .16); color: #e3b341; }
+.badge.dns-type-ns, .badge.dns-type-ptr { background: rgba(240, 136, 62, .16); color: #ffb37a; }
+.dns-proxy-chip { display: inline-flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 999px; background: rgba(139, 148, 158, .12); color: var(--muted); font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+.dns-proxy-chip.on { background: rgba(240, 136, 62, .16); color: #ffb37a; }
+.dns-proxy-chip .ico, .dns-locked .ico { width: 13px; height: 13px; margin: 0; }
+.dns-locked { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 12px; white-space: nowrap; }
+@media (max-width: 860px) {
+	.dns-panel .dns-table th:nth-child(4), .dns-panel .dns-table td:nth-child(4) { display: none; }
+	.dns-content code { max-width: 220px; }
+}
+/* The record dialog in two columns, as Settings: the types as a list on the left, the chosen one's fields on the right
+   with what it is at their head. A record changed has its type alone: no list */
+.dns-dialog { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 22px; align-items: start; }
+.dns-dialog.one-type { grid-template-columns: minmax(0, 1fr); }
+.dns-dialog.one-type .dns-type-list { display: none; }
+.dns-type-list { display: grid; gap: 2px; padding: 6px; border: 1px solid var(--line); border-radius: 12px; background: rgba(0, 0, 0, .18); }
+#form-dialog dialog label.dns-type-item, dialog .dns-type-list label.dns-type-item { position: relative; display: flex; flex-direction: row; justify-content: flex-start; text-align: left; align-items: center; gap: 10px; margin: 0; padding: 8px 10px; border: 1px solid transparent; border-radius: 9px;
+	color: var(--muted); font-size: 13px; cursor: pointer; transition: background .15s, color .15s; }
+.dns-type-item input { position: absolute; opacity: 0; pointer-events: none; }
+dialog .dns-type-list label.dns-type-item:hover:not(:where(:disabled, .disabled, .off)) { background: var(--hover); color: var(--text); }
+dialog .dns-type-list label.dns-type-item:not(:has(input:checked)) { background: transparent; }
+dialog .dns-type-list label.dns-type-item:has(input:checked) { border-color: rgba(88, 166, 255, .45); background: rgba(88, 166, 255, .12); color: var(--text); font-weight: 600; }
+dialog .dns-type-list label.dns-type-item:has(input:focus-visible) { outline: 2px solid rgba(88, 166, 255, .55); }
+.dns-type-item .badge.dns-type { min-width: 50px; }
+.dns-dialog-main { display: grid; gap: 16px; min-width: 0; }
+.dns-type-head { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px;
+	background: linear-gradient(135deg, rgba(88, 166, 255, .08), transparent 60%), rgba(255, 255, 255, .02); }
+.dns-type-head .badge.dns-type { min-width: 58px; padding: 5px 8px; font-size: 12px; }
+.dns-type-head-text { display: grid; gap: 2px; }
+.dns-type-head-text strong { color: var(--text); font-size: 15px; }
+.dns-type-head-text small { color: var(--muted); font-size: 12.5px; }
+.dns-field { display: grid; gap: 6px; min-width: 0; }
+.dns-field .hint { margin: 0; }
+.dns-name-row { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); align-items: start; }
+#form-dialog .dns-dialog input:not([type=radio]):not([type=checkbox]) { box-sizing: border-box; height: 42px; }
+.dns-field > .pselect { width: 100%; }
+.dns-type-fields { display: grid; gap: 14px; }
+.dns-grid-narrow { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
+.dns-grid-four { grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 2fr); }
+.dns-ttl-select .pselect-trigger, .dns-caa-tag .pselect-trigger { width: 100%; height: 42px; }
+.dns-name-input { display: flex; align-items: stretch; }
+.dns-name-input input { flex: 1; min-width: 0; border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.dns-name-suffix { display: inline-flex; align-items: center; max-width: 55%; padding: 0 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+	border: 1px solid var(--line); border-left: 0; border-radius: 0 8px 8px 0; background: rgba(255, 255, 255, .03); color: var(--muted); font-size: 13px; }
+#form-dialog textarea[name=dns_text] { resize: none; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+.dns-proxy-row { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: center; gap: 12px; margin-top: 0; padding: 11px 14px;
+	border: 1px solid var(--line); border-radius: 10px; background: rgba(255, 255, 255, .02); cursor: pointer; }
+.dns-proxy-row[hidden] { display: none; }
+.dns-proxy-row:has(input:checked) { border-color: rgba(240, 136, 62, .5); background: rgba(240, 136, 62, .08); }
+dialog .dns-proxy-row .switch:checked { border-color: #f0883e; background: #f0883e; }
+.dns-proxy-icon { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 9px; color: #ffb37a; background: rgba(240, 136, 62, .14); }
+.dns-proxy-icon .ico { width: 16px; height: 16px; margin: 0; }
+.dns-proxy-text { display: grid; gap: 2px; }
+.dns-proxy-text strong { color: var(--text); font-size: 13px; }
+.dns-proxy-text small { color: var(--muted); font-size: 12px; }
+@media (max-width: 640px) {
+	.dns-dialog { grid-template-columns: minmax(0, 1fr); }
+	.dns-type-list { display: flex; overflow-x: auto; overscroll-behavior: contain; }
+	dialog .dns-type-list label.dns-type-item { flex: none; }
+	.dns-type-item .dns-type-title { display: none; }
+	.dns-name-row, .dns-grid-narrow, .dns-grid-four { grid-template-columns: minmax(0, 1fr); }
+}
+/* Settings, DNS: how Harbor logs in to Cloudflare, and its fields */
+.dns-auth-fields { display: grid; gap: 8px; margin-top: 14px; }
+.dns-auth-fields[hidden] { display: none; }

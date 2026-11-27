@@ -92,6 +92,8 @@ function applyAccess() {
 	// Web Server and SQL Server in the menu: for a user while they have them, for an administrator as set in Settings
 	$("#switch-sites").hidden = !currentUser.web || currentUser.menu?.web === false;
 	$("#switch-sql").hidden = !currentUser.sql || currentUser.menu?.sql === false;
+	// DNS: where a Cloudflare account is set up (Settings, DNS), for an administrator and a user given domains
+	$("#switch-dns").hidden = !currentUser.dns;
 	// The server itself (its tools, scheduled jobs and the other servers) is the admins'
 	$("#switch-server").hidden = !currentUser.admin;
 	// Preferences is the start page: an administrator has it in the Server page's Settings
@@ -383,10 +385,19 @@ function certificateDnsCard({ names, expect = "" }, done) {
 	return card;
 }
 
-// Elements are always built with textContent, so file and site names can never inject HTML
+// Elements are always built with textContent, so file and site names can never inject HTML. A data-… or aria-… key
+// (with a dash) is set as an attribute: as a property it would be lost
+// The magnifier in a search field, as the page's own search boxes have it
+function searchIcon() {
+	const box = document.createElement("span");
+	box.innerHTML = '<svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>';
+	return box.firstChild;
+}
 function el(tag, props, ...children) {
 	const node = document.createElement(tag);
-	Object.assign(node, props || {});
+	const attributes = Object.entries(props || {}).filter(([key]) => key.includes("-"));
+	Object.assign(node, Object.fromEntries(Object.entries(props || {}).filter(([key]) => !key.includes("-"))));
+	for (const [key, value] of attributes) node.setAttribute(key, value === true ? "" : String(value));
 	for (const child of children) node.append(child);
 	return node;
 }
@@ -761,7 +772,7 @@ let remoteFilesSite = "";
 let serverFiles = false;
 let localFilesRoot = "";
 let currentView = "sites";
-const views = ["sites", "site", "sql", "server"];
+const views = ["sites", "site", "sql", "server", "dns"];
 
 function showView(name) {
 	currentView = name;
@@ -769,7 +780,7 @@ function showView(name) {
 	document.body.dataset.view = name;
 	// The switch in the header shows which of the two sections is open
 	for (const button of document.querySelectorAll(".view-switch button")) {
-		const active = button.dataset.view === (name === "sql" || name === "server" ? name : "sites");
+		const active = button.dataset.view === (["sql", "server", "dns"].includes(name) ? name : "sites");
 		button.classList.toggle("active", active);
 		button.setAttribute("aria-pressed", String(active));
 	}
@@ -820,6 +831,10 @@ async function route() {
 		if (filesDialog.open) filesDialog.close();
 		showView("sql");
 		await run(loadSqlConnections);
+	} else if (view === "dns" && (currentUser.dns || currentUser.dns_account)) {
+		if (filesDialog.open) filesDialog.close();
+		showView("dns");
+		await run(() => openDns(arg));
 	} else if (view === "site" && arg) {
 		if (filesDialog.open) filesDialog.close();
 		showView("site");
@@ -1106,6 +1121,7 @@ const iconPaths = {
 	upload: "M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12",
 	chevron: "M9 6l6 6-6 6",
 	corner: "M4 4v7a4 4 0 0 0 4 4h12M15 10l5 5-5 5",
+	cloud: "M17.5 19H8a5 5 0 1 1 .9-9.92A6 6 0 0 1 20 11.5a3.75 3.75 0 0 1-2.5 7.5z",
 	"eye-off": "M9.88 9.88a3 3 0 1 0 4.24 4.24M10.73 5.08A10.4 10.4 0 0 1 12 5c7 0 10 7 10 7a13.2 13.2 0 0 1-1.67 2.68M6.61 6.61A13.5 13.5 0 0 0 2 12s3 7 10 7a9.7 9.7 0 0 0 5.39-1.61M2 2l20 20",
 	check: "M20 6 9 17l-5-5",
 	windows: "M3 5.6 10 4.6V11H3ZM12 4.3 21 3v8h-9ZM3 13h7v6.4l-7-1ZM12 13h9v8l-9-1.3Z",
@@ -7567,7 +7583,7 @@ async function sqlDatabaseAction(action, database) {
 // Enter and Escape as a select has them; a click outside closes it. Its value and change event are a select's.
 // A dropdown as the page's own. Options are texts (the value is the text), or {value, label, sub, group}: the value
 // apart from what it shows, a line under it, and a heading over each group (the options of one group together)
-function premiumSelect({ options, value, label = "", className = "" }) {
+function premiumSelect({ options, value, label = "", className = "", search = false }) {
 	const items_ = options.map((option) => typeof option === "string" ? { value: option, label: option } : { label: String(option.value), ...option });
 	const values = items_.map((item) => item.value);
 	const textOf = (wanted) => items_.find((item) => item.value === wanted)?.label ?? "";
@@ -7589,6 +7605,25 @@ function premiumSelect({ options, value, label = "", className = "" }) {
 		list.append(item);
 		return item;
 	});
+	// Many options (search): a field at the top of the list that narrows it as it is typed
+	const find = search ? el("input", { type: "search", className: "pselect-search", placeholder: `Find ${label.toLowerCase() || "one"}…`, autocomplete: "off", spellcheck: false, ariaLabel: `Find ${label.toLowerCase()}` }) : null;
+	if (find) {
+		list.prepend(el("li", { className: "pselect-search-row", role: "presentation" }, find));
+		find.oninput = () => {
+			const words = find.value.toLowerCase().split(/\s+/).filter(Boolean);
+			items.forEach((item, at) => { item.hidden = !words.every((word) => items_[at].label.toLowerCase().includes(word)); });
+			const first = items.findIndex((item) => !item.hidden);
+			if (first >= 0) mark(first);
+		};
+		find.onkeydown = (event) => {
+			const shownAt = items.map((item, at) => item.hidden ? -1 : at).filter((at) => at >= 0);
+			const here = shownAt.indexOf(active);
+			if (event.key === "ArrowDown") { event.preventDefault(); mark(shownAt[Math.min(shownAt.length - 1, here + 1)] ?? active); }
+			else if (event.key === "ArrowUp") { event.preventDefault(); mark(shownAt[Math.max(0, here - 1)] ?? active); }
+			else if (event.key === "Enter") { event.preventDefault(); if (!items[active]?.hidden) choose(active); }
+			else if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); trigger.focus(); }
+		};
+	}
 	const mark = (index) => {
 		active = index;
 		items.forEach((item, at) => item.classList.toggle("active", at === index));
@@ -7621,8 +7656,13 @@ function premiumSelect({ options, value, label = "", className = "" }) {
 		dialog?.addEventListener("close", () => { close(); list.remove(); }, { once: true });
 		list.hidden = false;
 		trigger.setAttribute("aria-expanded", "true");
+		if (find) {
+			find.value = "";
+			for (const item of items) item.hidden = false;
+		}
 		place();
 		mark(Math.max(0, values.indexOf(current)));
+		find?.focus({ preventScroll: true });
 		document.addEventListener("mousedown", outside, true);
 		window.addEventListener("resize", close);
 		document.addEventListener("scroll", onScroll, true);
@@ -7641,6 +7681,13 @@ function premiumSelect({ options, value, label = "", className = "" }) {
 	trigger.onkeydown = (event) => {
 		if (list.hidden) {
 			if (["ArrowDown", "ArrowUp", "Enter", " "].includes(event.key)) { event.preventDefault(); open(); }
+			// With a search: typing opens it, what is typed in the search
+			else if (find && event.key.length === 1 && !event.metaKey && !event.ctrlKey && !event.altKey) {
+				event.preventDefault();
+				open();
+				find.value = event.key;
+				find.oninput();
+			}
 			return;
 		}
 		if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); }
@@ -8097,6 +8144,19 @@ function decorateSql() {
 
 $("#switch-sites").onclick = () => go("#sites");
 $("#switch-sql").onclick = () => go("#sql");
+$("#switch-dns").onclick = () => go("#dns");
+// The DNS page's buttons as the SQL page's: an icon and a colour each
+function decorateDns() {
+	const styles = { "New record": ["plus", "green"], "Purge cache…": ["eraser", "amber"], "Edit…": ["pencil", "blue"] };
+	for (const button of $("#view-dns").querySelectorAll("button:not([data-tone]):not(.pselect-trigger)")) {
+		const style = styles[button.textContent.trim()];
+		if (!style) continue;
+		button.dataset.tone = style[1];
+		button.prepend(svgIcon(style[0]));
+	}
+	decorate($("#view-dns"));
+}
+decorateDns();
 $("#switch-server").onclick = () => go("#server/" + serverTab);
 // With SQL Server as the start page, it is the home: its page has no link back to the sites
 function applyStartView() {
@@ -9200,7 +9260,7 @@ function menuCard() {
 	const shown = currentUser.menu || { web: true, sql: true };
 	const chosen = menuChoice(setting);
 	const card = toolCard({ icon: "grid", tone: "purple", title: "Top menu and start page", detail: "What is beside Settings, and where the admin opens",
-		state: [shown.web && "Web Server", shown.sql && "SQL Server"].filter(Boolean).join(" and "), stateClass: "ok" });
+		state: [shown.web && "Web Server", shown.sql && "SQL Server", currentUser.dns && "DNS"].filter(Boolean).join(", ").replace(/, ([^,]*)$/, " and $1"), stateClass: "ok" });
 	card.append(el("div", { className: "menu-choices", role: "radiogroup", ariaLabel: "In the top menu" },
 		...MENU_CHOICES.map(([key, title, text, value]) => el("button", {
 			type: "button", role: "radio", ariaChecked: String(key === chosen), className: "menu-choice" + (key === chosen ? " active" : ""),
@@ -9235,6 +9295,18 @@ function menuCard() {
 		start.append(el("strong", { textContent: shown.web ? "Web Server" : "SQL Server" }), el("small", { className: "menu-start-note", textContent: "The one in the menu" }));
 	}
 	card.append(start);
+	// DNS in the top menu: automatic (while a Cloudflare account is set up, Settings, DNS), or out of it
+	const dnsSetting = currentUser.menu_setting?.dns || "auto";
+	card.append(el("div", { className: "menu-start" }, el("span", { className: "menu-start-label", textContent: "DNS" }),
+		el("div", { className: "keep-alive-interval", role: "group", ariaLabel: "DNS in the top menu" },
+			...[["auto", "In the menu"], ["hide", "Not in the menu"]].map(([value, label]) => el("button", { type: "button", textContent: label,
+				className: value === dnsSetting ? "active" : "", ariaPressed: String(value === dnsSetting), onclick: () => value !== dnsSetting && run(async () => {
+					await api("/api/preferences", { method: "PUT", json: { dns_menu: value } });
+					await refreshDnsMenu();
+					toast(value === "hide" ? "DNS is out of the top menu." : "DNS is in the top menu.", "ok");
+					await openMenuSettings();
+				}) }))),
+		el("small", { className: "menu-start-note", textContent: currentUser.dns_account ? "While the Cloudflare account is set up. Users given a domain keep it in theirs." : "Once a Cloudflare account is set up (Settings, DNS)." })));
 	// What the header shows beside the menu: each of the three on or off, the administrator's own
 	const header = currentUser.header || { search: true, addresses: true, files: true, terminal: true };
 	const parts = [["search", "Search", "search"], ["addresses", "IP addresses", "globe"], ["files", "Files", "folder"], ["terminal", "Terminal", "terminal"]];
@@ -9992,8 +10064,10 @@ async function openUsageSettings(fresh = false) {
 			const total = limit ? Math.max(limit, item.size_mb) : sectionSum;
 			const envName = (env) => env.environment || env.target;
 			const where = (env) => env.in_site ? "" : env.local ? " (own folder)" : env.windows ? " (Windows)" : ` (${allSites.find((site) => site.name === env.site)?.environments.find((other) => envKeyOf(other) === env.target)?.host || "another server"})`;
+			// Named by its address where its kind is not enough (several Production)
+			const same = (env) => measured.filter((other) => envName(other) === envName(env)).length > 1;
 			const parts = [{ label: "The site itself", short: "Site", mb: item.main_mb ?? item.size_mb, className: "part-site" },
-				...measured.map((env) => ({ label: `${envName(env)} · ${env.binding || env.folder}${where(env)}`, short: envName(env) + where(env), mb: env.size_mb,
+				...measured.map((env) => ({ label: `${envName(env)} · ${env.binding || env.folder}${where(env)}`, short: same(env) ? env.binding || env.folder : envName(env) + where(env), mb: env.size_mb,
 					className: "env-" + String(env.environment || "").toLowerCase() + (env.in_site ? "" : " elsewhere") }))];
 			const size = (mb) => usageSize(Math.round(mb * 10) / 10);
 			const bar = el("div", { className: "usage-parts-bar" + (limit && item.size_mb > limit ? " over" : ""), role: "img",
@@ -11851,6 +11925,290 @@ document.addEventListener("visibilitychange", () => {
 });
 
 
+// ------------------------------------------------------------------ DNS (phase 14: Cloudflare)
+// Settings, DNS: the Cloudflare account. An API token limited to DNS (recommended), or the auth email with the Global
+// API Key. The key or token is never sent back: a kept one is left as it is when its field is left empty
+let dnsSettings = null;
+async function openDnsSettings() {
+	dnsSettings = await api("/api/dns/settings");
+	const configured = dnsSettings.configured;
+	const card = toolCard({ icon: "cloud", tone: "amber", title: "Cloudflare",
+		detail: configured ? (dnsSettings.auth === "token" ? "Logs in with an API token" : `Logs in with the Global API Key of ${dnsSettings.email}`) : "Not set up",
+		state: configured ? "Connected" : "Not set up", stateClass: configured ? "ok" : "",
+		text: configured ? "Its domains are under DNS in the top menu. The key or token is kept for root only, and never shown again."
+			: "Connect the Cloudflare account, and its domains are kept under DNS in the top menu: by administrators, and by the users given a domain.",
+		actions: [tonedButton(configured ? "Change…" : "Connect…", configured ? "pencil" : "cloud", configured ? "blue" : "green", askDnsAccount),
+			...(configured ? [tonedButton("Open DNS", "cloud", "teal", () => go("#dns")), tonedButton("Remove…", "trash", "red", () => run(removeDnsAccount))] : [])] });
+	card.classList.add("tool-card-wide", "actions-below");
+	$("#server-dns-list").replaceChildren(card);
+}
+// The account, in a dialog as the mail server is: how Harbor logs in, and its key or token
+function askDnsAccount() {
+	const auth = dnsSettings.auth || "token";
+	const kinds = el("div", { className: "type-cards dns-auth" },
+		...[["token", "API token", "Limited to DNS and the zones chosen in Cloudflare: recommended"], ["key", "Global API Key", "With the account's email: it reaches all of the account"]]
+			.map(([value, title, text]) => el("label", { className: "type-card" }, el("input", { type: "radio", name: "dns_auth", value, checked: value === auth }),
+				el("span", { className: "tc-title", textContent: title }), el("span", { className: "tc-sub", textContent: text }))));
+	const kept = (kind) => dnsSettings.configured && dnsSettings.auth === kind;
+	// Not a login of the browser's: no field looks like a username or a password it would offer to save (the email a
+	// plain text field of another name, the key and token masked as Harbor's other secrets in a dialog)
+	const ignore = { autocomplete: "off", spellcheck: false, "data-1p-ignore": "", "data-lpignore": "true", "data-bwignore": "true", "data-form-type": "other" };
+	const token = el("input", { name: "cf_api_token", type: "password", ...ignore, placeholder: kept("token") ? "Kept: leave empty to keep it" : "Paste the API token" });
+	const email = el("input", { name: "cf_account", type: "text", inputMode: "email", ...ignore, autocapitalize: "off", placeholder: "The email the account logs in with", value: dnsSettings.email || "" });
+	const key = el("input", { name: "cf_api_key", type: "password", ...ignore, placeholder: kept("key") ? "Kept: leave empty to keep it" : "Paste the Global API Key" });
+	const tokenFields = el("div", { className: "dns-auth-fields" }, el("label", {}, "API token", token),
+		el("p", { className: "hint", textContent: "Cloudflare, My Profile, API Tokens, Create Token: Zone, DNS, Edit (and Zone, Cache Purge, Purge for Purge cache), on the zones Harbor keeps." }));
+	const keyFields = el("div", { className: "dns-auth-fields" }, el("div", { className: "ns-grid" }, el("label", {}, "Email", email), el("label", {}, "Global API Key", key)),
+		el("p", { className: "hint", textContent: "Cloudflare, My Profile, API Tokens, Global API Key." }));
+	const show = () => {
+		const kind = kinds.querySelector("input:checked").value;
+		tokenFields.hidden = kind !== "token";
+		keyFields.hidden = kind !== "key";
+		token.required = kind === "token" && !kept("token");
+		email.required = kind === "key";
+		key.required = kind === "key" && !kept("key");
+	};
+	for (const input of kinds.querySelectorAll("input")) input.onchange = show;
+	show();
+	openFormDialog({ icon: "cloud", title: dnsSettings.configured ? "Cloudflare account" : "Connect Cloudflare", ok: dnsSettings.configured ? "Save" : "Connect",
+		text: "Harbor tries it against Cloudflare before it is kept. The key or token is kept for root only, and never shown again.",
+		fields: [kinds, tokenFields, keyFields],
+		submit: async () => {
+			const kind = kinds.querySelector("input:checked").value;
+			const saved = await api("/api/dns/settings", { method: "PUT", json: kind === "token" ? { auth: kind, token: token.value } : { auth: kind, email: email.value, key: key.value } });
+			toast(`Cloudflare reached: ${saved.zones} domain${saved.zones === 1 ? "" : "s"}.`, "ok");
+			await refreshDnsMenu();
+			await openDnsSettings();
+		} });
+}
+async function removeDnsAccount() {
+	if (!await ask({ title: "Remove the Cloudflare account?", message: "DNS goes from the top menu for everyone, until an account is set up again. The domains and their records in Cloudflare are not touched.",
+		input: false, danger: true, ok: "Remove" })) return;
+	await api("/api/dns/settings", { method: "DELETE" });
+	await refreshDnsMenu();
+	await openDnsSettings();
+}
+// DNS in the top menu follows the account at once
+async function refreshDnsMenu() {
+	try { currentUser = await api("/api/me"); } catch (error) { /* goes on with what it had */ }
+	applyAccess();
+}
+
+// The DNS page, as the SQL page: the domain chosen in the bar, its records in a table under it
+let dnsZones = [];
+let dnsZone = null;
+let dnsRecords = [];
+let dnsAdmin = false;
+// Each type with what it is for, and the fields it has
+const DNS_TYPES = [
+	["A", "IPv4 address", "The name to a server's IPv4 address"],
+	["AAAA", "IPv6 address", "The name to a server's IPv6 address"],
+	["CNAME", "Alias", "The name to another name"],
+	["MX", "Mail server", "Where the domain's mail is delivered"],
+	["TXT", "Text", "SPF, DKIM, DMARC and verifications"],
+	["NS", "Name server", "A part of the domain kept elsewhere"],
+	["SRV", "Service", "A service's server and port, such as SIP"],
+	["CAA", "Certificates", "Who may issue certificates for it"],
+	["PTR", "Reverse", "An address back to its name"]];
+const DNS_TTLS = [[1, "Auto"], [60, "1 min"], [120, "2 min"], [300, "5 min"], [600, "10 min"], [900, "15 min"], [1800, "30 min"],
+	[3600, "1 hr"], [7200, "2 hr"], [18000, "5 hr"], [43200, "12 hr"], [86400, "1 day"]];
+const dnsTtl = (ttl) => (DNS_TTLS.find(([value]) => value === ttl) || [ttl, `${ttl} s`])[1];
+async function openDns(zone = "") {
+	$("#dns-zones").replaceChildren(loadingState("Reading the domains…"));
+	({ zones: dnsZones } = await api("/api/dns/zones"));
+	$("#dns-zones-count").textContent = dnsZones.length ? String(dnsZones.length) : "";
+	// The one asked for, the one chosen last, or the first
+	let last = "";
+	try { last = localStorage.getItem("vns-dns-zone") || ""; } catch (error) { /* none */ }
+	const chosen = dnsZones.find((item) => item.id === zone) || dnsZones.find((item) => item.id === last) || dnsZones[0];
+	dnsZone = chosen || null;
+	$("#dns-zone-filter").value = "";
+	drawDnsZones();
+	// The domain is what is looked for first
+	$("#dns-zone-filter").focus({ preventScroll: true });
+	if (!chosen) {
+		$("#dns-zone-name").textContent = "No domains";
+		$("#dns-new").hidden = $("#dns-purge").hidden = true;
+		$("#dns-records").replaceChildren(el("p", { className: "muted", textContent: currentUser.admin ? "The Cloudflare account has no domains." : "No domain is given to you yet: ask an administrator." }));
+		return;
+	}
+	await showDnsZone(chosen.id);
+}
+function drawDnsZones() {
+	const words = $("#dns-zone-filter").value.toLowerCase().split(/\s+/).filter(Boolean);
+	const shown = dnsZones.filter((item) => words.every((word) => item.name.includes(word)));
+	$("#dns-zones").replaceChildren(...(shown.length ? shown.map((item) => el("button", { type: "button", className: "dns-zone" + (item.id === dnsZone?.id ? " active" : ""),
+		ariaCurrent: item.id === dnsZone?.id ? "true" : "false", onclick: () => run(() => showDnsZone(item.id)) }, svgIcon("globe"), el("span", { textContent: item.name }),
+		...(item.status && item.status !== "active" ? [el("small", { className: "dns-zone-status", textContent: item.status })] : [])))
+		: [el("p", { className: "muted dns-zones-none", textContent: "No domain matches." })]));
+}
+$("#dns-zone-filter").addEventListener("input", drawDnsZones);
+// Enter opens the first domain found
+$("#dns-zone-filter").addEventListener("keydown", (event) => {
+	if (event.key !== "Enter") return;
+	event.preventDefault();
+	$("#dns-zones .dns-zone")?.click();
+});
+$("#dns-new").onclick = () => editDnsRecord();
+$("#dns-purge").onclick = () => run(purgeDnsCache);
+$("#dns-filter").addEventListener("input", () => {
+	const words = $("#dns-filter").value.toLowerCase().split(/\s+/).filter(Boolean);
+	for (const row of document.querySelectorAll("#dns-records .dns-record[data-search]")) row.hidden = !words.every((word) => row.dataset.search.includes(word));
+	// A group with nothing found goes with it
+	for (const group of document.querySelectorAll("#dns-records .dns-group")) group.hidden = !group.querySelector(".dns-record:not([hidden])");
+});
+async function showDnsZone(id) {
+	dnsZone = dnsZones.find((item) => item.id === id);
+	try { localStorage.setItem("vns-dns-zone", id); } catch (error) { /* none */ }
+	if (location.hash !== "#dns/" + id) history.replaceState(null, "", "#dns/" + id);
+	drawDnsZones();
+	$("#dns-zone-name").textContent = dnsZone.name;
+	$("#dns-records-count").textContent = "";
+	$("#dns-new").hidden = false;
+	$("#dns-records").replaceChildren(loadingState(`Reading ${dnsZone.name}…`));
+	const data = await api(`/api/dns/zones/${id}/records`);
+	dnsRecords = data.records;
+	dnsAdmin = data.admin;
+	$("#dns-purge").hidden = !dnsAdmin;
+	drawDnsRecords();
+}
+// The records grouped by type, each group framed as the sites' parts on Usage: its type and what it is for at its head,
+// a line per record under it with its name, what it points to, its TTL and proxy as chips, and Edit
+function drawDnsRecords() {
+	const proxiedCount = dnsRecords.filter((record) => record.proxied).length;
+	$("#dns-records-count").replaceChildren(
+		el("span", { className: "dns-chip", textContent: `${dnsRecords.length} record${dnsRecords.length === 1 ? "" : "s"}` }),
+		...(proxiedCount ? [el("span", { className: "dns-chip proxied" }, svgIcon("cloud"), `${proxiedCount} proxied`)] : []));
+	$("#dns-filter").value = "";
+	if (!dnsRecords.length) return $("#dns-records").replaceChildren(el("p", { className: "muted dns-none", textContent: "No records yet: New record makes the first." }));
+	const order = DNS_TYPES.map(([type]) => type);
+	const types = [...new Set(dnsRecords.map((record) => record.type))].sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99));
+	$("#dns-records").replaceChildren(...types.map((type) => {
+		const [, title, text] = DNS_TYPES.find(([value]) => value === type) || [type, type, ""];
+		const records = dnsRecords.filter((record) => record.type === type);
+		return el("section", { className: "dns-group dns-group-" + type.toLowerCase(), "data-type": type },
+			el("div", { className: "dns-group-head" }, el("span", { className: "badge dns-type dns-type-" + type.toLowerCase(), textContent: type }),
+				el("strong", { textContent: title }), el("small", { textContent: text }), el("span", { className: "dns-group-count", textContent: String(records.length) })),
+			el("div", { className: "dns-group-rows" }, ...records.map(dnsRecordRow)));
+	}));
+	decorateDns();
+}
+// A record's name without the domain (@ for the domain itself), as it is typed
+const dnsShortName = (name) => name === dnsZone.name ? "@" : name.endsWith("." + dnsZone.name) ? name.slice(0, -dnsZone.name.length - 1) : name;
+function dnsRecordRow(record) {
+	// A record through Cloudflare's proxy is an administrator's: locked for a user
+	const locked = record.proxied && !dnsAdmin;
+	const content = record.type === "MX" ? record.content : record.content;
+	const short = dnsShortName(record.name);
+	return el("div", { className: "dns-record", "data-search": `${record.type} ${record.name} ${record.content}`.toLowerCase() },
+		el("div", { className: "dns-record-name", title: record.name }, el("strong", { textContent: short }), ...(short !== record.name ? [el("small", { textContent: record.name })] : [])),
+		el("span", { className: "dns-record-arrow", ariaHidden: "true", textContent: "→" }),
+		el("code", { className: "dns-record-content", title: content, textContent: content }),
+		el("div", { className: "dns-record-chips" },
+			...(record.type === "MX" && record.priority != null ? [el("span", { className: "dns-chip", title: "Priority: lower is tried first", textContent: `Priority ${record.priority}` })] : []),
+			el("span", { className: "dns-chip", title: "TTL" }, svgIcon("clock"), dnsTtl(record.ttl)),
+			...(record.proxiable ? [el("span", { className: "dns-chip" + (record.proxied ? " proxied" : ""), title: record.proxied ? "Through Cloudflare's proxy" : "DNS only" }, svgIcon("cloud"), record.proxied ? "Proxied" : "DNS only")] : [])),
+		el("div", { className: "dns-record-actions" }, locked
+			? el("span", { className: "dns-locked", title: "Through Cloudflare's proxy: only an administrator changes it" }, svgIcon("lock"), "Locked")
+			: el("button", { type: "button", textContent: "Edit…", onclick: () => editDnsRecord(record) })));
+}
+// New record, or one changed: its type (fixed once it is made) and the fields that type has, shown as it is chosen.
+// Proxied for an administrator, on the types Cloudflare can proxy. Delete from the same dialog
+function editDnsRecord(record = null) {
+	const type0 = record?.type || "A";
+	// The types as a list on the left, as Settings' menu: a new record chooses one, a record changed has its own alone
+	const types = el("div", { className: "dns-type-list", role: "radiogroup", ariaLabel: "Type" },
+		...DNS_TYPES.filter(([value]) => !record || value === record.type).map(([value, title]) => el("label", { className: "dns-type-item" },
+			el("input", { type: "radio", name: "dns_type", value, checked: value === type0 }),
+			el("span", { className: "badge dns-type dns-type-" + value.toLowerCase(), textContent: value }), el("span", { className: "dns-type-title", textContent: title }))));
+	const typeHead = el("div", { className: "dns-type-head" });
+	const field = (label, input, hint = "") => el("label", { className: "dns-field" }, label, input, ...(hint ? [el("small", { className: "hint", textContent: hint })] : []));
+	const text = (name, props = {}) => el("input", { name, autocomplete: "off", spellcheck: false, ...props });
+	const number = (name, value, max = 65535) => el("input", { name, type: "number", min: 0, max, step: 1, inputMode: "numeric", value });
+	const data = record?.data || {};
+	// The name, with the domain after it
+	// Not a name the browser fills in (Safari offered a contact on "name")
+	const name = text("dns_host", { required: true, value: record ? dnsShortName(record.name) : "", "data-1p-ignore": "", "data-lpignore": "true", "data-form-type": "other", autocapitalize: "off" });
+	const nameField = el("label", { className: "dns-field" }, "Name", el("span", { className: "dns-name-input" }, name, el("span", { className: "dns-name-suffix", textContent: "." + dnsZone.name })),
+		el("small", { className: "hint dns-name-hint" }));
+	const ttlPick = premiumSelect({ label: "TTL", className: "dns-ttl-select", value: record?.ttl ?? 1, options: DNS_TTLS.map(([value, label]) => ({ value, label })) });
+	const unquote = (value) => value.startsWith('"') && value.endsWith('"') ? value.slice(1, -1) : value;
+	// The fields of each type
+	const address = text("dns_address"), target = text("dns_target"), txt = el("textarea", { name: "dns_text", rows: 4, spellcheck: false });
+	const mxPriority = number("dns_mx_priority", record?.priority ?? 10);
+	const srvPriority = number("dns_srv_priority", data.priority ?? 10), srvWeight = number("dns_srv_weight", data.weight ?? 5);
+	const srvPort = number("dns_srv_port", data.port ?? ""), srvTarget = text("dns_srv_target", { value: data.target || "" });
+	const caaTag = premiumSelect({ label: "Tag", className: "dns-caa-tag", value: data.tag || "issue",
+		options: [{ value: "issue", label: "issue", sub: "May issue certificates" }, { value: "issuewild", label: "issuewild", sub: "May issue wildcard certificates" }, { value: "iodef", label: "iodef", sub: "Where to report a breach" }] });
+	const caaValue = text("dns_caa_value", { value: data.value || "" }), caaFlags = number("dns_caa_flags", data.flags ?? 0, 255);
+	if (record && !["SRV", "CAA"].includes(record.type)) {
+		if (record.type === "TXT") txt.value = unquote(record.content);
+		else if (["A", "AAAA"].includes(record.type)) address.value = record.content;
+		else target.value = record.content;
+	}
+	// Built each time the type is chosen: an input is in one place at a time
+	const partsOf = (kind) => ({
+		A: () => [field("IPv4 address", address, "Such as 203.0.113.10")],
+		AAAA: () => [field("IPv6 address", address, "Such as 2001:db8::10")],
+		CNAME: () => [field("Target", target, "The name it is an alias of, such as www.example.com")],
+		MX: () => [el("div", { className: "ns-grid dns-grid-narrow" }, field("Mail server", target, "Such as mx.example.com"), field("Priority", mxPriority, "Lower is tried first"))],
+		TXT: () => [field("Text", txt, "Quotes are added")],
+		NS: () => [field("Name server", target, "Such as ns1.example.com")],
+		PTR: () => [field("Points to", target, "The name the address belongs to")],
+		SRV: () => [el("div", { className: "ns-grid dns-grid-four" }, field("Priority", srvPriority), field("Weight", srvWeight), field("Port", srvPort), field("Target", srvTarget))],
+		CAA: () => [el("div", { className: "ns-grid dns-grid-narrow" }, el("label", { className: "dns-field" }, "Tag", caaTag), field("Flags", caaFlags, "0 unless you know otherwise")),
+			field("Value", caaValue, "Such as letsencrypt.org, or mailto:security@example.com for iodef")],
+	})[kind]();
+	const typeFields = el("div", { className: "dns-type-fields" });
+	// Proxied: a card with its switch, as the other options in Harbor
+	const proxied = el("input", { type: "checkbox", className: "switch small", checked: Boolean(record?.proxied), ariaLabel: "Proxied" });
+	const proxyRow = el("label", { className: "dns-proxy-row" }, el("span", { className: "dns-proxy-icon", ariaHidden: "true" }, svgIcon("cloud")),
+		el("span", { className: "dns-proxy-text" }, el("strong", { textContent: "Proxied" }), el("small", { textContent: "Through Cloudflare: its cache and protection, the server's address hidden" })), proxied);
+	const nameHints = { SRV: "The service and protocol first, such as _sip._tcp (@ is not one)", CAA: "@ for the domain itself", MX: "@ for the domain's own mail" };
+	const show = () => {
+		const kind = types.querySelector("input:checked").value;
+		const [, title, about] = DNS_TYPES.find(([value]) => value === kind);
+		typeHead.replaceChildren(el("span", { className: "badge dns-type dns-type-" + kind.toLowerCase(), textContent: kind }),
+			el("span", { className: "dns-type-head-text" }, el("strong", { textContent: title }), el("small", { textContent: about })));
+		typeFields.replaceChildren(...partsOf(kind));
+		for (const input of typeFields.querySelectorAll("input:not([type=search]), textarea")) input.required = !["dns_mx_priority", "dns_caa_flags"].includes(input.name);
+		nameField.querySelector(".dns-name-hint").textContent = nameHints[kind] || "@ for the domain itself, * for every name under it";
+		proxyRow.hidden = !dnsAdmin || !["A", "AAAA", "CNAME"].includes(kind);
+	};
+	for (const input of types.querySelectorAll("input")) input.onchange = show;
+	show();
+	openFormDialog({ icon: "cloud", title: record ? `${record.type} ${dnsShortName(record.name)}` : `New record in ${dnsZone.name}`, ok: record ? "Save" : "Create record", wide: true,
+		text: record ? `In ${dnsZone.name}. Its type stays ${record.type}: delete it and make a new one to change that.` : "Changed in Cloudflare at once. It may take its TTL before it is seen everywhere.",
+		fields: [el("div", { className: "dns-dialog" + (record ? " one-type" : "") }, types,
+			el("div", { className: "dns-dialog-main" }, typeHead,
+				el("div", { className: "ns-grid dns-name-row" }, nameField, el("label", { className: "dns-field" }, "TTL", ttlPick)), typeFields, proxyRow))],
+		extra: record ? [tonedButton("Delete…", "trash", "red", () => run(async () => {
+			formDialog.close();
+			if (!await ask({ title: `Delete ${record.type} ${dnsShortName(record.name)}?`, message: `${record.name} → ${record.content}. It is deleted in Cloudflare at once.`, input: false, danger: true, ok: "Delete" })) return;
+			await api(`/api/dns/zones/${dnsZone.id}/records/${record.id}`, { method: "DELETE" });
+			toast(`${record.type} ${dnsShortName(record.name)} deleted.`, "ok");
+			await showDnsZone(dnsZone.id);
+		}))] : [],
+		submit: async () => {
+			const kind = types.querySelector("input:checked").value;
+			const body = { type: kind, name: name.value.trim(), ttl: Number(ttlPick.value), ...(dnsAdmin ? { proxied: proxied.checked } : {}) };
+			if (kind === "A" || kind === "AAAA") body.content = address.value;
+			else if (kind === "TXT") body.content = txt.value;
+			else if (kind === "MX") Object.assign(body, { content: target.value, priority: Number(mxPriority.value) });
+			else if (kind === "SRV") Object.assign(body, { priority: srvPriority.value, weight: srvWeight.value, port: srvPort.value, target: srvTarget.value });
+			else if (kind === "CAA") Object.assign(body, { tag: caaTag.value, value: caaValue.value, flags: caaFlags.value });
+			else body.content = target.value;
+			await api(`/api/dns/zones/${dnsZone.id}/records${record ? "/" + record.id : ""}`, { method: record ? "PUT" : "POST", json: body });
+			toast(record ? `${kind} ${body.name || "@"} saved.` : `${kind} ${body.name || "@"} made.`, "ok");
+			await showDnsZone(dnsZone.id);
+		} });
+}
+async function purgeDnsCache() {
+	if (!await ask({ title: `Purge the cache of ${dnsZone.name}?`, message: "Cloudflare forgets every file it keeps for the domain: the next visits fetch them from the server again.", input: false, danger: true, ok: "Purge cache" })) return;
+	await api(`/api/dns/zones/${dnsZone.id}/purge`, { method: "POST" });
+	toast(`The cache of ${dnsZone.name} is purged.`, "ok");
+}
+
 // ------------------------------------------------------------------ users
 // Administrators make users here: a role, and for a user the sites, environments and actions, and SQL Server.
 const userDialog = $("#dlg-user");
@@ -12279,9 +12637,14 @@ const userSitesSearch = grantSearch($("#user-sites"), "Filter sites…");
 let keepUserFilter = false;
 $("#user-sites").before(userSitesSearch);
 $("#user-sites").after(userSitesSearch.empty);
+// The DNS domains found the same way, with the dialog's own search field
+const userDnsSearch = grantSearch($("#user-dns-domains"), "Find a domain…", ".grant-chip");
+$("#user-dns-domains").before(userDnsSearch);
+$("#user-dns-domains").after(userDnsSearch.empty);
 // A template in the same window as a user: its name and rules in place of who they are and which sites and connections
 function openTemplateEditor(template = null) {
-	const rules = template?.access || { web: true, site_rules: { actions: defaultSiteActions, new_envs: true }, sql_rules: { actions: defaultSqlActions } };
+	// A new template starts with every part off and closed: each is turned on as it is wanted
+	const rules = template?.access || { web: false, sql: false, dns: false, site_rules: { actions: defaultSiteActions, new_envs: true }, sql_rules: { actions: defaultSqlActions } };
 	openUserEditor(rules, null, template || {});
 }
 function openUserEditor(user = null, template = null, editTemplate = undefined) {
@@ -12310,7 +12673,8 @@ function openUserEditor(user = null, template = null, editTemplate = undefined) 
 	showUserTemplates(editing || asTemplate ? null : template || undefined);
 	userForm.querySelector(`input[name=role][value=${asTemplate ? "user" : user?.role || "user"}]`).checked = true;
 	userForm.disabled.checked = Boolean(user?.disabled);
-	userForm.web.checked = user ? Boolean(user.web) : true;
+	// A new user has nothing chosen: each part is turned on as it is wanted
+	userForm.web.checked = Boolean(user?.web);
 	userForm.create_sites.checked = Boolean(user?.create_sites);
 	// Limits: how many they may make, and how big each may be (MB, shown in GB when it is whole GB); empty is none
 	const limits = user?.limits || {};
@@ -12335,6 +12699,9 @@ function openUserEditor(user = null, template = null, editTemplate = undefined) 
 	}
 	userForm.sql.checked = Boolean(user?.sql);
 	userForm.manage_connections.checked = Boolean(user?.manage_connections);
+	// DNS: where a Cloudflare account is set up, the domains of it they may keep
+	userForm.dns.checked = Boolean(user?.dns);
+	fillUserDns(user?.dns_domains || []);
 	// To which SQL Servers: both for one given it before there was a choice
 	const engines = Array.isArray(user?.connection_engines) ? user.connection_engines : ["mssql", "postgres"];
 	for (const box of userForm.querySelectorAll("input[name=connection_engine]")) box.checked = engines.includes(box.value);
@@ -12396,7 +12763,7 @@ function templateSqlRules(rules) {
 // What the template window gives: the parts, the limits and the rules for each site and connection
 function templateAccess() {
 	return { web: userForm.web.checked, create_sites: userForm.create_sites.checked, sftp: userForm.sftp.checked, sql: userForm.sql.checked,
-		manage_connections: userForm.manage_connections.checked, connection_engines: connectionEngines(), limits: userLimits(),
+		manage_connections: userForm.manage_connections.checked, connection_engines: connectionEngines(), limits: userLimits(), dns: userForm.dns.checked,
 		site_rules: $("#template-site-rules").firstChild.read(), sql_rules: $("#template-sql-rules").firstChild.read() };
 }
 function showUserScope() {
@@ -12404,13 +12771,30 @@ function showUserScope() {
 	$("#user-scope").hidden = admin;
 	$("#user-web").hidden = !userForm.web.checked;
 	$("#user-sql").hidden = !userForm.sql.checked;
+	// A template has DNS on or off; the domains are each user's own, chosen when they are made from it
+	const asTemplate = userForm.dataset.mode === "template";
+	$("#user-dns-part").hidden = !usersData?.dns_zones;
+	$("#user-dns").hidden = !userForm.dns.checked;
+	$("#user-dns-domains").hidden = asTemplate;
+	if (asTemplate) userDnsSearch.reset(false);
+	$("#user-dns-hint").textContent = asTemplate ? "A user made from it has DNS on: their domains are chosen in their own window."
+		: "They see and change the records of these domains only. Records that go through Cloudflare's proxy stay an administrator's.";
 	$("#user-connection-engines").hidden = !userForm.manage_connections.checked;
 	// A template has no password or keys: they are each user's own
 	$("#user-sftp").hidden = !userForm.sftp.checked || userForm.dataset.mode === "template";
 	// SFTP reaches their sites' folders: a part of its own while the Web Server is theirs
 	$("#user-sftp-part").hidden = !userForm.web.checked;
 }
-userForm.onchange = (event) => { if (["role", "web", "sql", "sftp", "manage_connections"].includes(event.target.name)) showUserScope(); };
+userForm.onchange = (event) => { if (["role", "web", "sql", "sftp", "manage_connections", "dns"].includes(event.target.name)) showUserScope(); };
+// The domains of the Cloudflare account as chips, those given ticked; a filter where there are many
+function fillUserDns(given) {
+	const zones = usersData?.dns_zones || [];
+	const chosen = new Set(given);
+	$("#user-dns-domains").replaceChildren(...(zones.length ? zones.map((name) => el("label", { className: "grant-chip", "data-search": name },
+		el("input", { type: "checkbox", name: "dns_domain", value: name, checked: chosen.has(name) }), el("span", { textContent: name })))
+		: [el("p", { className: "muted", textContent: "The Cloudflare account has no domains." })]));
+	userDnsSearch.reset(true);
+}
 // The SQL Servers ticked under May add SQL connections
 const connectionEngines = () => [...userForm.querySelectorAll("input[name=connection_engine]:checked")].map((box) => box.value);
 // What the user window gives: their role, the Web Server and its sites, SFTP, SQL Server and its connections, and the
@@ -12428,7 +12812,8 @@ function userAccess() {
 		if (grant) connections[usersData.connections[index].id] = grant;
 	});
 	return { role: userForm.role.value, web: userForm.web.checked, create_sites: userForm.create_sites.checked, sql: userForm.sql.checked,
-		manage_connections: userForm.manage_connections.checked, connection_engines: connectionEngines(), sites, connections, sftp: userForm.sftp.checked, limits: userLimits() };
+		manage_connections: userForm.manage_connections.checked, connection_engines: connectionEngines(), sites, connections, sftp: userForm.sftp.checked, limits: userLimits(),
+		dns: userForm.dns.checked, dns_domains: [...userForm.querySelectorAll("input[name=dns_domain]:checked")].map((box) => box.value) };
 }
 // A new user starts from a template: a chip each above the fields, the one used lit; templates are made under Users
 function showUserTemplates(chosen) {
@@ -12617,7 +13002,7 @@ $("#audit-clear").onclick = () => run(async () => {
 // Each tool is a part of its own in the side menu; they share one pane, drawn from one look at the server
 // SSH and Samba are one part, Access: how the server itself is reached
 const TOOL_TABS = ["sql", "dotnet", "node", "access"];
-const SERVER_TABS = [...TOOL_TABS, "apache", "jobs", "convert", "export", "settings", "notifications", "health", "servers", "users", "templates", "usage", "windows", "updates", "menu"];
+const SERVER_TABS = [...TOOL_TABS, "apache", "jobs", "convert", "export", "settings", "dns", "notifications", "health", "servers", "users", "templates", "usage", "windows", "updates", "menu"];
 const TOOL_OF_CARD = { "Microsoft SQL Server": "sql", "Microsoft SQL Server tools": "sql", "sa password": "sql", PostgreSQL: "sql", "PostgreSQL tools": "sql", "postgres password": "sql", Backups: "sql", "Node.js": "node", SSH: "access", Samba: "access" };
 // Settings opens on General: what most often is looked for
 let serverTab = "settings";
@@ -12631,7 +13016,7 @@ async function showServerTab(tab) {
 		$("#server-tab-" + name).setAttribute("aria-selected", String(name === tab));
 		$("#server-tab-" + name).classList.toggle("active", name === tab);
 	}
-	for (const pane of ["tools", "apache", "jobs", "convert", "export", "settings", "notifications", "health", "servers", "users", "templates", "usage", "windows", "updates", "menu"]) $("#server-pane-" + pane).hidden = pane !== paneOf(tab);
+	for (const pane of ["tools", "apache", "jobs", "convert", "export", "settings", "dns", "notifications", "health", "servers", "users", "templates", "usage", "windows", "updates", "menu"]) $("#server-pane-" + pane).hidden = pane !== paneOf(tab);
 	// The admin site's page, when it was open here, is not
 	$("#server-pane-admin").hidden = true;
 	$("#server-tab-admin").classList.remove("active");
@@ -12645,7 +13030,7 @@ async function showServerTab(tab) {
 		// Another tool is shown from what was read already; Refresh, or coming from another part, reads again
 		if (toolsDrawn && before === "tools") return;
 	}
-	await run({ tools: openServerTools, jobs: openCrontab, convert: openConvertSettings, export: openExportSettings, servers: openServers, users: openUsers, templates: openUsers, usage: openUsageSettings, settings: openServerSettings, notifications: openNotifications, health: openHealth, menu: openMenuSettings, apache: openApacheSettings, windows: openWindowsSettings, updates: openUpdatesSettings }[paneOf(tab)]);
+	await run({ tools: openServerTools, jobs: openCrontab, convert: openConvertSettings, export: openExportSettings, servers: openServers, dns: openDnsSettings, users: openUsers, templates: openUsers, usage: openUsageSettings, settings: openServerSettings, notifications: openNotifications, health: openHealth, menu: openMenuSettings, apache: openApacheSettings, windows: openWindowsSettings, updates: openUpdatesSettings }[paneOf(tab)]);
 }
 function showToolCards() {
 	// Access is two columns (SSH and Samba, then its shares and users); the other tools three

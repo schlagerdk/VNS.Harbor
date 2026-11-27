@@ -40,6 +40,7 @@
   <nav class="view-switch" aria-label="Section">
     <button type="button" id="switch-sites" data-view="sites"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20ZM2 12h20M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg><span>Web<span class="desktop-only"> Server</span></span></button>
     <button type="button" id="switch-sql" data-view="sql"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zM4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg><span>SQL<span class="desktop-only"> Server</span></span></button>
+    <button type="button" id="switch-dns" data-view="dns" hidden><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.5 19H8a5 5 0 1 1 .9-9.92A6 6 0 0 1 20 11.5a3.75 3.75 0 0 1-2.5 7.5z"/></svg><span>DNS</span></button>
     <button type="button" id="switch-server" data-view="server" hidden><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span>Settings</span></button>
   </nav>
   <div class="search-box">
@@ -115,6 +116,7 @@
       <nav class="server-nav" role="tablist" aria-label="Server" aria-orientation="vertical">
         <div class="server-nav-group">Harbor</div>
         <button type="button" role="tab" id="server-tab-settings" data-tab="settings" aria-controls="server-pane-settings" aria-selected="false"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M2 14h4M10 8h4M18 16h4"/></svg><span>General</span></button>
+        <button type="button" role="tab" id="server-tab-dns" data-tab="dns" aria-controls="server-pane-dns" aria-selected="false"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.5 19H8a5 5 0 1 1 .9-9.92A6 6 0 0 1 20 11.5a3.75 3.75 0 0 1-2.5 7.5z"/></svg><span>DNS</span></button>
         <button type="button" role="tab" id="server-tab-menu" data-tab="menu" aria-controls="server-pane-menu" aria-selected="false"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"/></svg><span>Top menu</span></button>
         <button type="button" role="tab" id="server-tab-updates" data-tab="updates" aria-controls="server-pane-updates" aria-selected="false"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8M21 3v5h-5"/></svg><span>Updates</span></button>
         <button type="button" id="server-tab-admin" class="server-nav-link" hidden><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2l8 4v6c0 5-3.5 8.5-8 10-4.5-1.5-8-5-8-10V6z"/></svg><span>Admin site</span></button>
@@ -190,6 +192,10 @@
           <div class="server-pane-head"><div><h3>Top menu</h3><p>What is beside Settings at the top, and where the admin opens</p></div></div>
           <div id="server-menu-list" class="server-tools"></div>
         </div>
+        <div id="server-pane-dns" class="server-pane" role="tabpanel" aria-labelledby="server-tab-dns" hidden>
+          <div class="server-pane-head"><div><h3>DNS</h3><p>The Cloudflare account whose domains are kept under DNS in the top menu, by administrators and the users given a domain</p></div></div>
+          <div id="server-dns-list" class="server-tools"></div>
+        </div>
         <div id="server-pane-usage" class="server-pane" role="tabpanel" aria-labelledby="server-tab-usage" hidden>
           <div class="server-pane-head"><div><h3>Usage</h3><p>What the sites and databases take, and who made each. Its mail is under Notifications.</p></div><div id="usage-measured" class="usage-measured" hidden></div></div>
           <div id="server-usage-list" class="server-tools"></div>
@@ -202,6 +208,27 @@
           <div class="server-pane-head"><div><h3>Templates <span id="templates-count" class="server-pane-count"></span></h3><p>Rules for new users: what they may do on each site and SQL connection you give them. A new user starts from one with a click.</p></div></div>
           <div id="templates-list" class="server-tools users-list"></div>
         </div>
+      </div>
+    </div>
+  </section>
+  <section id="view-dns" hidden>
+    <!-- The domains on the left, found by typing; the chosen one's records on the right, as the SQL page's tables -->
+    <div class="dns-layout">
+      <aside class="panel dns-zones-panel">
+        <div class="dns-zones-head"><span class="tool-icon dns-icon" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.5 19H8a5 5 0 1 1 .9-9.92A6 6 0 0 1 20 11.5a3.75 3.75 0 0 1-2.5 7.5z"/></svg></span><strong>Domains</strong><span id="dns-zones-count" class="server-pane-count"></span></div>
+        <div class="targets-search-box sql-filter-box dns-zone-filter-box"><svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="dns-zone-filter" class="sql-filter" type="search" placeholder="Find a domain…" autocomplete="off" spellcheck="false" aria-label="Find a domain"></div>
+        <nav id="dns-zones" class="dns-zones" aria-label="Domains"></nav>
+      </aside>
+      <div id="dns-panel" class="panel sql-table dns-panel">
+        <div class="sql-databases-header">
+          <div class="dns-title"><h2 id="dns-zone-name">DNS</h2><div id="dns-records-count" class="dns-title-chips"></div></div>
+          <div class="sql-databases-actions">
+            <div class="targets-search-box sql-filter-box"><svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="dns-filter" class="sql-filter" type="search" placeholder="Filter records…" autocomplete="off" spellcheck="false" aria-label="Filter records"></div>
+            <button id="dns-purge" type="button" hidden>Purge cache…</button>
+            <button id="dns-new" type="button" hidden>New record</button>
+          </div>
+        </div>
+        <div id="dns-records"></div>
       </div>
     </div>
   </section>
@@ -1106,6 +1133,15 @@
         </div>
         <div id="user-connections" class="grant-list"></div>
         <div id="template-sql-rules" hidden></div>
+      </div>
+      </section>
+      <section id="user-dns-part" class="user-part tone-dns" hidden>
+      <label class="grant-card"><span class="grant-card-icon dns" aria-hidden="true"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.5 19H8a5 5 0 1 1 .9-9.92A6 6 0 0 1 20 11.5a3.75 3.75 0 0 1-2.5 7.5z"/></svg></span>
+        <span class="grant-card-text"><strong>DNS</strong><small>The records of the domains given, in the Cloudflare account</small></span>
+        <input name="dns" type="checkbox" class="switch" aria-label="DNS"></label>
+      <div id="user-dns" class="grant-area">
+        <div id="user-dns-domains" class="grant-chips dns-domain-chips"></div>
+        <p id="user-dns-hint" class="hint">They see and change the records of these domains only. Records that go through Cloudflare's proxy stay an administrator's.</p>
       </div>
       </section>
     </div>

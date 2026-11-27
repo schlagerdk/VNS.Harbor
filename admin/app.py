@@ -81,6 +81,9 @@ _keep_alive_spec = importlib.util.spec_from_file_location(
     "vns_keep_alive", os.path.join(LIB_DIR, "keep_alive.py"))
 _keep_alive_module = importlib.util.module_from_spec(_keep_alive_spec)
 _keep_alive_spec.loader.exec_module(_keep_alive_module)
+_cloudflare_spec = importlib.util.spec_from_file_location("vns_cloudflare", os.path.join(LIB_DIR, "cloudflare.py"))
+_cloudflare = importlib.util.module_from_spec(_cloudflare_spec)
+_cloudflare_spec.loader.exec_module(_cloudflare)
 _usage_spec = importlib.util.spec_from_file_location("vns_usage", os.path.join(LIB_DIR, "usage.py"))
 _usage = importlib.util.module_from_spec(_usage_spec)
 _usage_spec.loader.exec_module(_usage)
@@ -422,6 +425,127 @@ def api_usage_site(site):
     environments = _usage.kept_environments(DATA)
     return jsonify(_usage.site_limits(DATA, site, measure_site=lambda name: _usage.solution_mb(
         name, WEB_ROOT, environments if environments is not None else _usage.all_environments_mb())))
+
+
+# ---- DNS, from Cloudflare (phase 14, lib/cloudflare.py)
+
+@app.route("/api/dns/settings", methods=["GET", "PUT", "DELETE"])
+def api_dns_settings():
+    """The Cloudflare account DNS uses: its kind and email (never its key or token), tried before it is kept"""
+    require_admin()
+    current = _cloudflare.load()
+    if request.method == "DELETE":
+        _cloudflare.remove()
+        audit("Removed the Cloudflare account")
+        return jsonify(_cloudflare.shown({}))
+    if request.method == "PUT":
+        try:
+            settings = _cloudflare.validate(request.get_json(silent=True), current)
+            count = _cloudflare.verify(settings)
+        except ValueError as exc:
+            return error(str(exc))
+        except _cloudflare.CloudflareError as exc:
+            return error(f"Cloudflare did not take it: {exc}")
+        _cloudflare.save(settings)
+        audit("Set the Cloudflare account")
+        return jsonify(**_cloudflare.shown(settings), zones=count)
+    return jsonify(_cloudflare.shown(current))
+
+
+def dns_zone_names():
+    """The domains of the Cloudflare account, by name, for the user dialog; None without an account (no DNS part)"""
+    settings = _cloudflare.load()
+    if not settings:
+        return None
+    try:
+        return [item["name"] for item in _cloudflare.zones(settings)]
+    except _cloudflare.CloudflareError:
+        app.logger.exception("Could not read the Cloudflare zones")
+        return []
+
+
+def dns_account():
+    settings = _cloudflare.load()
+    if not settings:
+        abort(404, "No Cloudflare account is set up.")
+    if not access.has_dns(me()):
+        abort(403, "DNS is not yours.")
+    return settings
+
+
+def dns_zone_of(settings, zone):
+    """The zone, by its id, where the user may keep it: {id, name}"""
+    found = next((item for item in _cloudflare.zones(settings) if item["id"] == zone), None)
+    if not found or not access.dns_zone(me(), found["name"]):
+        abort(404, "No such domain.")
+    return found
+
+
+@app.route("/api/dns/zones")
+def api_dns_zones():
+    """The domains of the account the user may keep: every one for an administrator"""
+    settings = dns_account()
+    try:
+        found = _cloudflare.zones(settings)
+    except _cloudflare.CloudflareError as exc:
+        return error(str(exc), 502)
+    user = me()
+    return jsonify(zones=[item for item in found if access.dns_zone(user, item["name"])])
+
+
+@app.route("/api/dns/zones/<zone>/records", methods=["GET", "POST"])
+def api_dns_records(zone):
+    """A domain's records; POST: a new one. Proxied is an administrator's"""
+    settings = dns_account()
+    try:
+        found = dns_zone_of(settings, zone)
+        if request.method == "POST":
+            body = _cloudflare.record_body(request.get_json(silent=True), found["name"], is_admin())
+            made = _cloudflare.create(settings, zone, body)
+            audit(f"DNS: made {body['type']} {body['name']} in {found['name']}")
+            return jsonify(id=made.get("id"))
+        return jsonify(zone=found, records=_cloudflare.records(settings, zone), admin=is_admin())
+    except ValueError as exc:
+        return error(str(exc))
+    except _cloudflare.CloudflareError as exc:
+        return error(str(exc), 502)
+
+
+@app.route("/api/dns/zones/<zone>/records/<record>", methods=["PUT", "DELETE"])
+def api_dns_record(zone, record):
+    """A record changed or deleted. A proxied record is an administrator's: a user cannot change or delete it"""
+    settings = dns_account()
+    try:
+        found = dns_zone_of(settings, zone)
+        current = _cloudflare.record(settings, zone, record)
+        if current["proxied"] and not is_admin():
+            return error("This record goes through Cloudflare's proxy: only an administrator changes it.", 403)
+        if request.method == "DELETE":
+            _cloudflare.delete(settings, zone, record)
+            audit(f"DNS: deleted {current['type']} {current['name']} in {found['name']}")
+            return jsonify(ok=True)
+        body = _cloudflare.record_body(request.get_json(silent=True), found["name"], is_admin(), current)
+        _cloudflare.update(settings, zone, record, body)
+        audit(f"DNS: changed {body['type']} {body['name']} in {found['name']}")
+        return jsonify(ok=True)
+    except ValueError as exc:
+        return error(str(exc))
+    except _cloudflare.CloudflareError as exc:
+        return error(str(exc), 502)
+
+
+@app.route("/api/dns/zones/<zone>/purge", methods=["POST"])
+def api_dns_purge(zone):
+    """Cloudflare's cache of a domain emptied: an administrator's"""
+    require_admin()
+    settings = dns_account()
+    try:
+        found = dns_zone_of(settings, zone)
+        _cloudflare.purge(settings, zone)
+    except _cloudflare.CloudflareError as exc:
+        return error(str(exc), 502)
+    audit(f"DNS: purged the cache of {found['name']}")
+    return jsonify(ok=True)
 
 
 @app.route("/api/usage/over")
@@ -803,6 +927,15 @@ def sql_in_use():
 @app.route("/api/preferences", methods=["PUT"])
 def api_preferences():
     data = request.get_json(silent=True) or {}
+    if "dns_menu" in data:
+        # DNS in the top menu for administrators: while a Cloudflare account is set up (auto), or not (hide)
+        require_admin()
+        if data["dns_menu"] not in ("auto", "hide"):
+            return error("DNS in the menu is auto or hide.")
+        with CONFIG_LOCK:
+            cfg["dns_menu"] = data["dns_menu"]
+            save_config()
+        return jsonify(dns=data["dns_menu"])
     if "sql_menu" in data or "web_menu" in data:
         # Whether Web Server and SQL Server are in the top menu: the server's, for its administrators
         require_admin()
@@ -4324,7 +4457,12 @@ def api_me():
                    connections={} if admin else {connection: dict(grant, full=bool(access.may_make(user, "databases", connection=connection)))
                                                   for connection, grant in (user.get("connections") or {}).items()},
                    menu=menu_shown() if admin else {"web": access.has_web(user), "sql": access.has_sql(user)},
-                   menu_setting={"web": cfg.get("web_menu", "auto"), "sql": cfg.get("sql_menu", "auto")})
+                   menu_setting={"web": cfg.get("web_menu", "auto"), "sql": cfg.get("sql_menu", "auto"), "dns": cfg.get("dns_menu", "auto")},
+                   # DNS in the menu: where a Cloudflare account is set up, for a user given domains, and for an
+                   # administrator unless it is taken out of the menu (Settings, Top menu)
+                   dns=bool(_cloudflare.load()) and access.has_dns(user) and not (admin and cfg.get("dns_menu") == "hide"),
+                   dns_account=admin and bool(_cloudflare.load()),
+                   dns_domains=[] if admin else user.get("dns_domains", []))
 
 
 LINUX_USERS_LOCK = threading.Lock()
@@ -4528,7 +4666,8 @@ def api_users():
         names = linux_names()
         listed = [dict(user, linux=names.get(user.get("id"), "")) for user in access.visible_users(cfg, me())]
         return jsonify(users=listed, sites=sites, connections=sql_connections_public(),
-                       site_actions=access.SITE_ACTIONS, sql_actions=access.SQL_ACTIONS, templates=access.templates(cfg))
+                       site_actions=access.SITE_ACTIONS, sql_actions=access.SQL_ACTIONS, templates=access.templates(cfg),
+                       dns_zones=dns_zone_names())
     data = request.get_json(silent=True) or {}
     password = data.get("password") or ""
     if len(password) < 12:

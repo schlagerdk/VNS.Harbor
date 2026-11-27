@@ -403,6 +403,14 @@ class UsageCheckTests(unittest.TestCase):
         self.assertIn("limit|environment|big.dk|staging-2", opened)
         self.assertFalse(any("under again" in str(args) for args in sent))
 
+    def test_an_environment_in_a_folder_of_its_own_is_not_a_site_of_its_own(self):
+        """/var/www/<production folder> is a part of its site's solution: listed under it, never also as a site (1.0.98)"""
+        environments = [{"site": "big.dk", "target": "prod", "in_site": False, "local": True, "windows": False,
+                         "root": str(usage.WEB_ROOT / "www.big.dk"), "size_mb": 100.0}]
+        shown = usage.overview(self.data, ["big.dk", "www.big.dk"], {}, measure_site=lambda site: {"big.dk": 50.0, "www.big.dk": 100.0}[site],
+                               measure_databases=lambda *a, **k: {}, measure_environments=lambda: environments)
+        self.assertEqual([(item["name"], item["size_mb"]) for item in shown["sites"]], [("big.dk", 150.0)])
+
     def test_a_sites_size_is_its_solution(self):
         """The site itself (its folder without the environments in it) and every environment, also on another server"""
         environments = [{"site": "big.dk", "target": "production", "in_site": True, "size_mb": 100.0},

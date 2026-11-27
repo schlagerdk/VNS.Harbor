@@ -286,6 +286,23 @@ def has_web(user):
     return bool(user and user.get("web") and ((user.get("sites") or {}) or user.get("create_sites")))
 
 
+DOMAIN_RE = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+")
+
+
+def has_dns(user):
+    """Whether DNS is a user's: on, with domains given. An administrator keeps every zone of the account"""
+    if is_admin(user):
+        return True
+    return bool(user and user.get("dns") and user.get("dns_domains"))
+
+
+def dns_zone(user, name):
+    """Whether the user may keep a zone (a domain) of the Cloudflare account"""
+    if is_admin(user):
+        return True
+    return has_dns(user) and str(name or "").lower() in (user.get("dns_domains") or [])
+
+
 def has_sql(user):
     """Whether SQL Server is a user's: on, and a connection given (or the right to add one to a SQL Server). On with
     nothing in it is no access: it is not shown."""
@@ -370,7 +387,7 @@ def template_rules(given):
         sql = {"actions": [action for grant in grants for action in grant.get("actions") or []] if grants else DEFAULT_SQL_ACTIONS,
                "own": bool(grants) and all(grant.get("own") for grant in grants),
                "limits": next((grant["limits"] for grant in grants if isinstance(grant.get("limits"), dict)), None)}
-    rules = {key: bool(given.get(key, key == "web")) for key in ("web", "create_sites", "sftp", "sql", "manage_connections")}
+    rules = {key: bool(given.get(key, key == "web")) for key in ("web", "create_sites", "sftp", "sql", "manage_connections", "dns")}
     rules["connection_engines"] = clean_engines(given.get("connection_engines"))
     rules["limits"] = clean_limits(given.get("limits"))
     rules["site_rules"] = {"actions": site_actions(site.get("actions") or []), "new_envs": bool(site.get("new_envs", True))}
@@ -490,6 +507,15 @@ def clean(data, existing=None, sites=None, connections=None):
             # A connection the user made stays theirs to change
             if ((existing.get("connections") or {}).get(connection) or {}).get("owned"):
                 user["connections"][connection]["owned"] = True
+    # DNS (phase 14): the domains in the Cloudflare account they may keep, by name
+    user["dns"] = bool(data.get("dns", existing.get("dns", False)))
+    domains = data.get("dns_domains", existing.get("dns_domains", [])) or []
+    if not isinstance(domains, list):
+        raise ValueError("Invalid DNS domains.")
+    user["dns_domains"] = sorted({str(name).strip().lower().rstrip(".") for name in domains
+                                  if isinstance(name, str) and DOMAIN_RE.fullmatch(str(name).strip().lower().rstrip("."))})
+    if not user["dns_domains"]:
+        user["dns"] = False
     # A part with nothing in it is turned off as it is saved: SQL Server without a connection or a SQL Server they may add
     # one to, the Web Server without a site or the right to make one. On with nothing in it would be no access.
     if user["sql"] and not user["connections"] and not (user["manage_connections"] and user["connection_engines"]):
