@@ -971,6 +971,53 @@ async function loadSites() {
 	renderSites();
 	if (currentView === "site") renderSite(decodeURIComponent(location.hash.slice(6)));
 	if (currentView === "sql") await refreshSql();
+	// A master's members are asked over SSH: behind the page's own sites, so these are not kept waiting
+	if (currentUser.master) loadMemberSites();
+}
+// A master's members and their sites (phase 13): null until asked, then [{server, admin, reachable, error, sites}]
+let memberSites = null;
+let memberSitesAsked = null;
+async function loadMemberSites() {
+	if (memberSitesAsked) return memberSitesAsked;
+	memberSitesAsked = api("/api/master/sites").then((data) => { memberSites = data.members; })
+		.catch((error) => { memberSites = [{ server: "Members", reachable: false, error: error.message, sites: [] }]; })
+		.finally(() => { memberSitesAsked = null; renderMemberSites(); });
+	return memberSitesAsked;
+}
+// Each member's sites under this server's, a group a server: a line a site, opened in that server's own admin, where
+// what is done to it is done by its own Harbor. The search above finds them too
+function renderMemberSites() {
+	const box = $("#member-sites");
+	box.hidden = !currentUser?.master || !memberSites;
+	if (box.hidden) return;
+	let shown = 0;
+	// A member with no sites may be a SQL server only (its connections come on the master's SQL page): not listed here
+	box.replaceChildren(...memberSites.filter((member) => !member.reachable || member.sites.length).map((member) => {
+		const sites = member.sites.filter(matchesQuery).sort((a, b) => siteLabel(a).localeCompare(siteLabel(b), undefined, { numeric: true, sensitivity: "base" }));
+		shown += sites.length;
+		const head = el("div", { className: "member-head" },
+			el("span", { className: "member-icon" + (member.reachable ? "" : " bad") }, svgIcon("server")),
+			el("div", { className: "member-title" }, el("strong", {}, member.server, el("span", { className: "member-count", textContent: String(member.sites.length) })),
+				el("small", { textContent: member.reachable ? `${member.host} · its own Harbor acts on its sites` : member.error || "Not reachable" })),
+			...(member.reachable && member.admin ? [el("a", { className: "button-link tool-open-admin", href: `${member.admin}/`, target: "_blank", rel: "noopener noreferrer",
+				title: `The admin of ${member.server}, in a new tab` }, svgIcon("external"), "Open admin")] : []));
+		const line = (site) => {
+			const state = siteState(site);
+			const envs = [...site.environments].sort((a, b) => environmentRank(a) - environmentRank(b));
+			const body = [el("span", { className: "member-dot " + (state || "static"), title: state === "active" ? "Running" : state === "inactive" ? "Stopped" : "Static" }),
+				el("span", { className: "member-site-name" }, el("strong", { textContent: siteLabel(site) }), el("small", { textContent: bindingLabel(envs[0] || {}) || site.name })),
+				el("span", { className: "member-envs" }, ...envs.map((env) => el("span", { className: "badge usage-kind env-" + String(env.environment || "").toLowerCase(),
+					title: `${bindingLabel(env) || site.name}${env.host ? " @ " + env.host : ""}`, textContent: env.environment || (env.key === "main" ? "Main" : env.target) }))),
+				...(member.admin ? [svgIcon("external")] : [])];
+			return member.admin ? el("a", { className: "member-site", href: `${member.admin}/${siteLink(site.name)}`, target: "_blank", rel: "noopener noreferrer",
+				title: `${siteLabel(site)} in the admin of ${member.server}` }, ...body) : el("div", { className: "member-site" }, ...body);
+		};
+		return el("section", { className: "member-group" }, head,
+			...(sites.length ? [el("div", { className: "member-list" }, ...sites.map(line))]
+				: member.reachable ? [el("p", { className: "muted member-none", textContent: "None that matches the search." })] : []));
+	}));
+	// Sites on the members: the page is not empty, though this server has none of its own
+	if (shown) $("#no-sites").hidden = true;
 }
 
 // A site is running when any of its services is; sites without a service are static
@@ -1292,6 +1339,7 @@ function renderSites() {
 	updateSiteActivity();
 	renderCardUpdateChecks();
 	decorate(box);
+	renderMemberSites();
 }
 
 function updateSiteActivity() {
@@ -13128,6 +13176,7 @@ function userSummary(user) {
 	const parts = [];
 	if (user.web) parts.push(`${Object.keys(user.sites || {}).length} site${Object.keys(user.sites || {}).length === 1 ? "" : "s"}${user.create_sites ? " · creates sites" : ""}`);
 	if (user.sql) parts.push(`${Object.keys(user.connections || {}).length} SQL connection${Object.keys(user.connections || {}).length === 1 ? "" : "s"}`);
+	if (user.dns) parts.push(`${(user.dns_domains || []).length} Cloudflare domain${(user.dns_domains || []).length === 1 ? "" : "s"}`);
 	return parts.join(" · ") || "No access yet";
 }
 // A card's buttons under it, at the bottom right: where cards stand three beside each other
@@ -13150,13 +13199,17 @@ function userCard(user) {
 	const rows = admin ? [toolRow("Access", "Everything on this server", { on: true })] : [
 		...(user.web ? [toolRow("Web Server", `${sites} site${sites === 1 ? "" : "s"}` + (user.create_sites ? " · creates sites" : ""), { on: Boolean(sites || user.create_sites) })] : []),
 		...(user.sql ? [toolRow("SQL Server", `${connections} connection${connections === 1 ? "" : "s"}`, { on: Boolean(connections) })] : []),
-		...(user.web || user.sql ? [] : [toolRow("Access", "None yet", { on: false })]),
+		// Cloudflare: their domains, by name while they are few
+		...(user.dns ? [toolRow("Cloudflare", (user.dns_domains || []).length > 2 ? `${user.dns_domains.length} domains` : (user.dns_domains || []).join(", ") || "No domain yet",
+			{ on: Boolean(user.dns_domains?.length) })] : []),
+		...(user.web || user.sql || user.dns ? [] : [toolRow("Access", "None yet", { on: false })]),
 	];
 	// When they last signed in: how long ago, the time itself on hover
 	const login = toolRow("Last login", user.last_login ? syncAgo(user.last_login * 1000) : "Never", { on: Boolean(user.last_login) });
 	if (user.last_login) login.querySelector(".tool-row-detail").title = formatDate(user.last_login * 1000);
 	rows.push(login);
-	if (user.linux) rows.push(toolRow("Linux user", user.linux, { code: true }));
+	// A dot as the rows above have, so their names stand in a line
+	if (user.linux) rows.push(toolRow("Linux user", user.linux, { code: true, on: true }));
 	const card = toolCard({ icon: "user", tone: admin ? "purple" : "blue", title: user.name || user.username, detail: user.name ? user.username : admin ? "Administrator" : "User",
 		state: user.disabled ? "Locked" : admin ? "Administrator" : "User", stateClass: user.disabled ? "bad" : admin ? "role admin" : "role",
 		rows, actions: [
@@ -15298,6 +15351,7 @@ function serverCard(item, release) {
 	const state = !item.reachable ? ["Not reachable", "bad"] : !item.compatible ? ["Cannot run Harbor", "bad"]
 		: !harbor ? ["No Harbor", "warn"] : order < 0 ? ["Newer than this server", "ok"] : current ? ["Up to date", "ok"] : ["Update available", "warn"];
 	const rows = item.reachable ? [
+		...(item.member ? [toolRow("Member", "Its sites are shown and administered here", { on: true })] : []),
 		toolRow("System", `${item.os || "—"} · Python ${item.python || "—"}`),
 		toolRow("Harbor", harbor || "Not installed", { on: Boolean(harbor) }),
 		...(item.vns ? [toolRow("Old installation", item.vns + (item.admin ? ` · admin ${item.admin}` : ""))] : []),
@@ -15325,6 +15379,16 @@ function serverCard(item, release) {
 	const admin = item.reachable && harbor && (item.admin_names?.[0] || item.admin);
 	if (admin) actions.unshift(el("a", { className: "button-link tool-open-admin", href: `https://${admin}/`, target: "_blank", rel: "noopener noreferrer",
 		title: `The admin of ${item.name}, in a new tab` }, svgIcon("external"), "Open admin"));
+	// A member of this master (phase 13): its sites shown here. Joined once it runs this server's Harbor, which answers
+	if (item.member) {
+		actions.push(tonedButton("Leave…", "x", "amber", () => run(async () => {
+			if (!(await ask({ title: `${item.name} no longer a member?`, message: `Its sites are no longer shown here. Nothing changes on ${item.name}: its sites keep running.`,
+				input: false, ok: "Leave" }))) return;
+			await runServers({ action: "leave", name: item.name });
+		})));
+	} else if (item.reachable && harbor && current) {
+		actions.push(tonedButton("Make member", "users", "purple", () => runServers({ action: "join", name: item.name })));
+	}
 	actions.push(toolButton("Edit…", () => askEditServer(item)));
 	actions.push(toolButton("Remove…", () => askRemoveServer(item), "tool-danger"));
 	return toolCard({ icon: "server", tone: item.reachable ? "blue" : "amber", title: item.name, detail: `${item.user}@${item.host}${item.port !== 22 ? ":" + item.port : ""}`,

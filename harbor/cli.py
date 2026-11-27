@@ -355,6 +355,9 @@ def _servers(args, system):
         servers.adopt_environment_servers(system)
     elif args.command == "list":
         print(json.dumps(servers.servers(system), indent=2))
+    elif args.command in ("join", "leave"):
+        from harbor.server import master
+        (master.join if args.command == "join" else master.leave)(system, args.name)
     elif args.command == "add-windows":
         servers.add_windows(system, args.name, args.share, args.user, os.environ.get("VNS_SMB_PASSWORD", ""), args.domain)
     elif args.command == "install":
@@ -378,6 +381,17 @@ def _servers(args, system):
         # Every server: this one first
         found = ([] if args.name else [servers.here(system)]) + [servers.status(system, name) for name in names]
         print(json.dumps(found, indent=2))
+
+
+def _master(args, system):
+    import json
+    import sys
+    from harbor.server import master
+    if args.command == "call":
+        body = json.loads(sys.stdin.read() or "null") if args.body else None
+        print(json.dumps(master.call(system, args.method, args.path, body)))
+    else:
+        print(json.dumps(master.sites(system), indent=2))
 
 
 def _users_list(args, system):
@@ -1124,6 +1138,22 @@ def parser():
     command.set_defaults(handler=_servers)
     command = other.add_parser("list", help="the servers, as JSON")
     command.set_defaults(handler=_servers)
+    command = other.add_parser("join", help="make a server a member of this master: its sites are shown and administered here")
+    command.add_argument("name")
+    command.set_defaults(handler=_servers)
+    command = other.add_parser("leave", help="a member back to an ordinary server in Servers; nothing changes on it")
+    command.add_argument("name")
+    command.set_defaults(handler=_servers)
+
+    master = groups.add_parser("master", help="a master Harbor over many servers: what it asks its members, and what they answer").add_subparsers(
+        dest="command", required=True, metavar="<command>")
+    command = master.add_parser("call", help="(on a member) ask the admin here as the master: METHOD PATH, the body as JSON on stdin with --body")
+    command.add_argument("method")
+    command.add_argument("path")
+    command.add_argument("--body", action="store_true")
+    command.set_defaults(handler=_master)
+    command = master.add_parser("sites", help="(on the master) every member's sites, as JSON")
+    command.set_defaults(handler=_master)
     command = other.add_parser("status", help="the version handshake with a server, or every server, as JSON")
     command.add_argument("name", nargs="?", default="")
     command.set_defaults(handler=_servers)

@@ -110,9 +110,9 @@ class UserTests(unittest.TestCase):
         return users.passwd(RecordingSystem(root=self.root))
 
     def test_a_linux_user_for_each_admin_user(self):
-        system = self.sync([{"id": "u_1", "username": "mhs@vns.dk", "role": "admin"}, {"id": "u_2", "username": "Anna.B", "role": "user"},
+        system = self.sync([{"id": "u_1", "username": "mhs", "role": "admin"}, {"id": "u_2", "username": "Anna.B", "role": "user"},
                             {"id": "root", "username": "martin"}])
-        # mhs is taken by a user Harbor does not manage, so the admin user mhs@vns.dk gets mhs-2
+        # mhs is taken by a user Harbor does not manage, so the admin user mhs gets mhs-2
         self.assertEqual(users.mapping(system)["u_1"]["linux"], "mhs-2")
         self.assertEqual(users.mapping(system)["u_2"]["linux"], "anna-b")
         self.assertNotIn("root", users.mapping(system))
@@ -120,7 +120,7 @@ class UserTests(unittest.TestCase):
         self.assertIn("useradd --create-home --user-group --groups harbor-users --shell /bin/bash --comment Harbor Anna.B anna-b", system.commands)
         self.assertFalse(any("sudo" in command for command in system.commands))
         # Again: nothing to do
-        again = self.sync([{"id": "u_1", "username": "mhs@vns.dk"}, {"id": "u_2", "username": "Anna.B"}])
+        again = self.sync([{"id": "u_1", "username": "mhs"}, {"id": "u_2", "username": "Anna.B"}])
         self.assertFalse(any(command.startswith(("useradd", "usermod", "userdel")) for command in again.commands), again.commands)
 
     def test_disabled_renamed_and_removed(self):
@@ -148,11 +148,19 @@ class UserTests(unittest.TestCase):
         self.assertEqual(self.accounts()["mhs"][1], "/home/mhs")
 
     def test_names(self):
-        self.assertEqual(users.base_name("Martin.H.Schläger@vns.dk"), "martin-h-schl-ger")
+        # The whole login, so two with the same name before the @ are not info and info-2
+        self.assertEqual(users.base_name("info@anden.dk"), "info_anden-dk")
+        self.assertEqual(users.base_name("info@hf-forsikring.com"), "info_hf-forsikring-com")
+        self.assertEqual(users.base_name("Martin.H.Schläger@vns.dk"), "martin-h-schl-ger_vns-dk")
+        self.assertEqual(users.base_name("anna"), "anna")
         self.assertEqual(users.base_name("123"), "u123")
         self.assertEqual(users.base_name("_x_"), "x")
-        self.assertEqual(len(users.base_name("a" * 64)), 28)
-        self.assertEqual(users.free_name("root@x", set()), "root-2")
+        # Linux's 32 at most, two long ones still apart
+        long_one, other = users.base_name("a" * 40 + "@example.com"), users.base_name("a" * 40 + "@example.org")
+        self.assertLessEqual(len(long_one), 32)
+        self.assertNotEqual(long_one, other)
+        self.assertRegex(long_one, r"^[a-z_][a-z0-9_-]{0,31}$")
+        self.assertEqual(users.free_name("root", set()), "root-2")
 
 
 

@@ -983,8 +983,32 @@ def csrf_token():
     return session["csrf"]
 
 
+MASTER_TOKEN = "/etc/harbor/secrets/master-token"
+
+
+def master_call():
+    """Whether this request is the master's (harbor master call, run here over SSH by the master): from this server
+    itself, not through Apache (which adds X-Forwarded-For), with the token only root here can read"""
+    sent = request.headers.get("X-Harbor-Master", "")
+    if not sent or request.remote_addr not in ("127.0.0.1", "::1") or request.headers.get("X-Forwarded-For"):
+        return False
+    try:
+        with open(MASTER_TOKEN, encoding="utf-8") as stream:
+            expected = stream.read().strip()
+    except OSError:
+        return False
+    return len(expected) >= 32 and hmac.compare_digest(sent, expected)
+
+
 @app.before_request
 def protect():
+    # The master asking a member (phase 13): as root here, no session or CSRF token, its token instead
+    if request.headers.get("X-Harbor-Master") is not None:
+        if not master_call():
+            return jsonify(error="Not the master"), 401
+        g.user = access.root_user(cfg)
+        g.from_master = True
+        return None
     # The VNS.Harbor package in a site: its own token, no session (harbor_api below)
     if request.path.startswith("/api/harbor/v1/"):
         g.harbor_site = harbor_token_site(request.headers.get("Authorization", ""))
@@ -3664,6 +3688,19 @@ def api_servers():
     return jsonify(servers=found, release=os.path.basename(current) if os.path.islink("/opt/harbor/current") else "")
 
 
+@app.route("/api/master/sites")
+def api_master_sites():
+    """The master's members and their sites, each as its own admin lists them (harbor master sites)"""
+    require_admin()
+    try:
+        result = subprocess.run(["/usr/bin/python3", HARBOR_COMMAND, "master", "sites"], capture_output=True, text=True, timeout=180)
+        found = json.loads(result.stdout or "[]")
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        app.logger.error("harbor master sites: %s", exc)
+        return error("The members could not be asked.", 502)
+    return jsonify(members=found)
+
+
 def servers_command(data):
     """A Servers action as a harbor command, and its variables (the password never on the command line)"""
     action, name = data.get("action"), data.get("name", "")
@@ -3687,6 +3724,10 @@ def servers_command(data):
         return f"Add Windows server {name}", harbor + ["add-windows", name, share, "--user", user, *(["--domain", domain] if domain else [])], {"VNS_SMB_PASSWORD": data["password"]}
     if action == "rollback":
         return f"Roll back Harbor on {name}", harbor + ["rollback", name], {}
+    if action == "join":
+        return f"Make {name} a member", harbor + ["join", name], {}
+    if action == "leave":
+        return f"{name} no longer a member", harbor + ["leave", name], {}
     if action == "edit":
         # Its name, and for a Linux server its address (harbor servers edit): what is left empty stays
         new_name, host = data.get("new_name", "") or "", data.get("host", "") or ""
@@ -4859,12 +4900,24 @@ def api_audit():
     return jsonify(entries=entries)
 
 
+def has_members():
+    """Whether this Harbor is a master: a server in Servers has joined it as a member"""
+    try:
+        with open("/var/lib/harbor/servers.json", encoding="utf-8") as stream:
+            found = json.load(stream)
+    except (OSError, ValueError):
+        return False
+    return isinstance(found, dict) and any(isinstance(entry, dict) and entry.get("member") for entry in found.values())
+
+
 @app.route("/api/me")
 def api_me():
     """Who is logged in and what they may do: the page shows only what can be used"""
     user = me()
     admin = access.is_admin(user)
     return jsonify(id=user["id"], username=user["username"], name=user.get("name", ""), admin=admin, root=user["id"] == access.ROOT,
+                   # A master (phase 13): its members' sites on Web Server, for an administrator
+                   master=admin and has_members(),
                    # On with nothing in it (no site, no connection, nothing they may make) is no access: not shown
                    web=access.has_web(user), sql=access.has_sql(user),
                    # Made as many as they may: the buttons that make one more are not shown (the server refuses it too)

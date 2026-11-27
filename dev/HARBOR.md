@@ -48,7 +48,7 @@ Where the work stands, so it can go on from here after any interruption.
      signs that user in with Umbraco's own sign-in and opens /umbraco. Only users with access to the site in Harbor get
      the button, and each login is logged (who, when).
 
-13. **A master Harbor over many servers** (asked 2026-11-27, not started): one Harbor (such as harbor.vns.dk) where users
+13. **A master Harbor over many servers** (asked 2026-11-27, started 2026-11-27 on harbor.vns.dk): one Harbor (such as harbor.vns.dk) where users
    log in and everything on every server is administered; users' rights per server (where they may create sites,
    environments and databases); placement and moves decided there; later the master as a load balancer for a site on
    two servers. See Phase 13 below. Load balancing may be left out: the master as one place to administer every server
@@ -154,7 +154,7 @@ Steps:
 - A copy's vns-harbor.json is written again for the Harbor where it runs (harbor site connect --here): it came with
   its files and named the original.
 
-## Phase 13: A master Harbor over many servers, and later a load balancer (asked 2026-11-27, not started)
+## Phase 13: A master Harbor over many servers, and later a load balancer (asked 2026-11-27, started 2026-11-27)
 Many servers run Harbor; one of them is chosen as the **master** (such as harbor.vns.dk). From the master everything is
 administered on every server, users live and log in there only, and the master decides where sites, environments and
 databases are. The first step towards load balancing: the same site on two servers, with the master in front.
@@ -180,17 +180,31 @@ databases are. The first step towards load balancing: the same site on two serve
   storage), the database on one SQL server they share (or replicated), sessions that do not depend on one member
   (Umbraco: its distributed cache and a load-balanced setup with one backoffice server), certificates on the master.
 
-Open questions, to be decided before the steps:
+Decided (2026-11-27), the master being harbor.vns.dk:
+- **SSH as today**: the master reaches a member with Harbor's own key, as Servers does. There it runs `harbor master
+  call METHOD PATH`, which asks the member's own admin at 127.0.0.1 with a token only root there reads
+  (/etc/harbor/secrets/master-token; the admin takes it only from this server itself, not through Apache). So the
+  master is answered by the member's own API, and keeps nothing of it. An HTTPS API can replace the SSH later.
+- **A member's own admin is for administrators only** once users are on the master (step 2): the fallback when the
+  master is down.
+- **Users on members are imported once** to the master, their grants mapped to (server, site).
+- **linux-01 and linux-02 are the first members**; test-01, prod-01 and kikayo when it works.
+- **A member is not always a web server**: one may be a SQL Server only (as sql-01). Web Server lists a member only
+  with sites there (or one that does not answer); its connections come on the master's SQL page (step 4), and a
+  member's Usage, Health and Servers card show what it is.
+- **Linux names from the whole login** (1.0.101): info@anden.dk is info_anden-dk, not info (and the next info-2).
+  On the master, users are made once (step 2), and the same Linux name is given on every member they reach.
+
+Open questions, still to be decided:
 - The master is a single point for logins and administration: what if it is down (members run on; a second master
   standing by; or a member's own admin for administrators as the fallback)?
-- How the master talks to members: SSH as today (simple, already there), or an HTTPS API with a token per member (no
-  root SSH from the master to every server).
-- Users that exist on members today: imported to the master once, with their grants mapped to (server, site).
 - The DNS and certificate side of a site on two servers, and whether the master proxies all traffic or only balances.
 
 Steps, roughly in order (each its own release, tried on linux-01 and linux-02 first):
-1. A server is chosen as master; the others join it as members (from today's Servers), and the master's Web Server
-   lists every member's sites, each marked with the server it is on.
+1. [x] A server is chosen as master; the others join it as members (from today's Servers), and the master's Web Server
+   lists every member's sites, each marked with the server it is on. (1.0.101: `harbor servers join|leave`, Make
+   member in Servers; `harbor master sites`; a group a member under the master's own sites, each opened in the
+   member's admin. A server is a master once one has joined it.)
 2. Users on the master only: login there, the members' admins for administrators; grants per (server, site,
    environment) and per server (create sites, environments, databases), with limits per server.
 3. Creating and moving from the master: the server chosen for a new site, environment or database; Copy site and

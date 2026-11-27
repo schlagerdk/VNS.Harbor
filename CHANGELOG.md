@@ -2,6 +2,16 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.101] - Unreleased
+
+### Features
+
+- Harbor Master, the first step: a server in Servers that runs this release can be made a member (Make member; harbor servers join), and the master's Web Server lists every member's sites under its own, a group a server, each opened in that server's own admin. The master asks a member over SSH, and the member's admin answers it with a token only root there can read (harbor master call).
+- A user card's rows stand in a line, Linux user with its dot as the rows above.
+- A user card shows their Cloudflare access: their domains by name (or how many), not None yet.
+- A new user's Linux user is named from the whole of their login (info@anden.dk is info_anden-dk), so two with the same name before the @ are not info and info-2. Those made before keep their names.
+- The master's Web Server lists a member only where it has sites: one may be a SQL server only.
+
 ## [1.0.100] - 2026-11-27
 
 ### Features

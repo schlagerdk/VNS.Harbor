@@ -57,11 +57,17 @@ def group_exists(system, group):
 
 
 def base_name(username):
-    """A valid Linux name from an admin username: the part before @, lower case, letters, digits, _ and -"""
-    name = re.sub(r"[^a-z0-9_-]+", "-", username.split("@")[0].lower()).strip("-_")
+    """A valid Linux name from the whole of an admin username, so info@anden.dk and info@shop.dk are not info and
+    info-2: lower case letters, digits and -, the @ as _ (info_anden-dk). Samba's users take no dot. One longer than
+    Linux's 32 keeps its start and a short hash of the whole, so two long ones stay apart"""
+    local, at, domain = username.lower().partition("@")
+    clean = lambda part: re.sub(r"[^a-z0-9]+", "-", part).strip("-")
+    name = "_".join(part for part in (clean(local), clean(domain) if at else "") if part)
     if not name or not name[0].isalpha():
         name = "u" + name
-    return name[:28].rstrip("-_")
+    if len(name) > 32:
+        name = name[:26].rstrip("-_") + "-" + hashlib.sha1(username.lower().encode()).hexdigest()[:5]
+    return name
 
 
 def free_name(username, taken):
