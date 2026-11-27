@@ -1,52 +1,52 @@
 {
-  "$schema": "../../umbraco-package-schema.json",
-  "name": "VNS.Harbor",
-  "version": "18.3.2.3",
-  "allowPublicAccess": false,
-  "extensions": [
-    {
-      "type": "localization",
-      "alias": "VNS.Harbor.Localization.En",
-      "name": "VNS Harbor Sync: English",
-      "meta": {
-        "culture": "en"
-      },
-      "js": "/App_Plugins/VNS.Harbor/lang/en.js?v=18.3.2.3"
-    },
-    {
-      "type": "localization",
-      "alias": "VNS.Harbor.Localization.Da",
-      "name": "VNS Harbor Sync: Danish",
-      "meta": {
-        "culture": "da"
-      },
-      "js": "/App_Plugins/VNS.Harbor/lang/da.js?v=18.3.2.3"
-    },
-    {
-      "type": "condition",
-      "alias": "VNS.Harbor.Condition.HasDestinations",
-      "name": "VNS Harbor Sync: something to sync",
-      "api": "/App_Plugins/VNS.Harbor/condition.js?v=18.3.2.3"
-    },
-    {
-      "type": "dashboard",
-      "alias": "VNS.Harbor.Dashboard",
-      "name": "VNS Harbor Sync",
-      "element": "/App_Plugins/VNS.Harbor/dashboard.js?v=18.3.2.3",
-      "weight": 5,
-      "meta": {
-        "label": "VNS Harbor Sync",
-        "pathname": "vns-harbor"
-      },
-      "conditions": [
-        {
-          "alias": "Umb.Condition.SectionAlias",
-          "match": "Umb.Section.Content"
-        },
-        {
-          "alias": "VNS.Harbor.Condition.HasDestinations"
-        }
-      ]
-    }
-  ]
+	"$schema": "../../umbraco-package-schema.json",
+	"name": "VNS.Harbor",
+	"version": "18.3.3.1",
+	"allowPublicAccess": false,
+	"extensions": [
+		{
+			"type": "localization",
+			"alias": "VNS.Harbor.Localization.En",
+			"name": "Harbor Sync: English",
+			"meta": {
+				"culture": "en"
+			},
+			"js": "/App_Plugins/VNS.Harbor/lang/en.js?v=18.3.3.1"
+		},
+		{
+			"type": "localization",
+			"alias": "VNS.Harbor.Localization.Da",
+			"name": "Harbor Sync: Danish",
+			"meta": {
+				"culture": "da"
+			},
+			"js": "/App_Plugins/VNS.Harbor/lang/da.js?v=18.3.3.1"
+		},
+		{
+			"type": "condition",
+			"alias": "VNS.Harbor.Condition.HasDestinations",
+			"name": "Harbor Sync: something to sync",
+			"api": "/App_Plugins/VNS.Harbor/condition.js?v=18.3.3.1"
+		},
+		{
+			"type": "dashboard",
+			"alias": "VNS.Harbor.Dashboard",
+			"name": "Harbor Sync",
+			"element": "/App_Plugins/VNS.Harbor/dashboard.js?v=18.3.3.1",
+			"weight": 5,
+			"meta": {
+				"label": "Harbor Sync",
+				"pathname": "vns-harbor"
+			},
+			"conditions": [
+				{
+					"alias": "Umb.Condition.SectionAlias",
+					"match": "Umb.Section.Content"
+				},
+				{
+					"alias": "VNS.Harbor.Condition.HasDestinations"
+				}
+			]
+		}
+	]
 }

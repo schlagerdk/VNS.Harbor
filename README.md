@@ -19,23 +19,28 @@ sandbox of its own, and builds run as the unprivileged user `vns-build`.
 </p>
 
 <p align="center">
-  <img src="assets/screenshots/site.jpg" alt="An Umbraco site with its environments" width="49%" />
-  <img src="assets/screenshots/settings.jpg" alt="Settings: the server's address, its mail server and the sites' keep-alive, with its tools, jobs, servers and users in the menu" width="49%" />
+  <img src="assets/screenshots/site.jpg" alt="An Umbraco site with its environments and its NuGet packages" width="49%" />
+  <img src="assets/screenshots/settings.jpg" alt="Settings: the server's address, its temporary addresses and the sites' keep-alive, with every part of Harbor and the server in the menu" width="49%" />
 </p>
 
 <p align="center">
-  <img src="assets/screenshots/scheduled-jobs.jpg" alt="Scheduled jobs: root's crontab, a job at a time" width="49%" />
+  <img src="assets/screenshots/notifications.jpg" alt="Notifications: the mail server, and a mail when a site has a problem, a user's site grows past its limit, a scheduled job fails or the server needs someone" width="49%" />
+  <img src="assets/screenshots/health.jpg" alt="Health: memory, swap, disks and load now and over the last day or week" width="49%" />
+</p>
+
+<p align="center">
+  <img src="assets/screenshots/scheduled-jobs.jpg" alt="Scheduled jobs: root's crontab, a job at a time, with how its last run ended and its log kept small" width="49%" />
   <img src="assets/screenshots/user.jpg" alt="A user: Web Server, SFTP and SQL Server each a part, with the sites they may use, what they may do and how big a site of theirs may grow" width="49%" />
 </p>
 
 <p align="center">
   <img src="assets/screenshots/sql.jpg" alt="SQL Server: a connection, its databases, backups and logins under tabs" width="49%" />
-  <img src="assets/screenshots/usage.jpg" alt="Usage: every site and database, who made it and its limit, with a mail when one grows past it" width="49%" />
+  <img src="assets/screenshots/usage.jpg" alt="Usage: every site and database, how big it is and who made it" width="49%" />
 </p>
 
 <p align="center">
   <img src="assets/screenshots/convert.jpg" alt="Convert DB: each site's database, moved between SQLite and Microsoft SQL Server or PostgreSQL, here or on another server" width="49%" />
-  <img src="assets/screenshots/export.jpg" alt="Export Site: a site and its environments for a customer, built for Windows or Linux with its source and databases, without VNS Harbor" width="49%" />
+  <img src="assets/screenshots/export.jpg" alt="Export Site: a site and its environments for a customer, built for Windows or Linux with its source and databases, without Harbor" width="49%" />
 </p>
 
 ## Installation

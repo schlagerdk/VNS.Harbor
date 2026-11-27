@@ -676,6 +676,16 @@ dialog.files-dialog { padding: 18px; }
 	#view-sql td:not([colspan]) { display: grid; grid-template-columns: 76px minmax(0, 1fr); gap: 10px; width: 100%; padding: 6px 0; border: 0; white-space: normal; text-align: left; overflow-wrap: anywhere; }
 	#view-sql td[data-label]::before { content: attr(data-label); color: var(--muted); font-weight: 400; }
 	#view-sql td[colspan] { display: block; padding: 0; border: 0; }
+	/* A database's or a backup's name is its card's head: the whole width, without a label, its badges and chips on
+	   the line below, never squeezed into a letter a line beside them */
+	#view-sql tbody > tr > td[data-label="Name"], #view-sql tbody > tr > td[data-label="Database"] { grid-template-columns: minmax(0, 1fr);
+		margin-bottom: 4px; padding: 2px 0 10px; border-bottom: 1px solid var(--line); }
+	#view-sql tbody > tr > td:is([data-label="Name"], [data-label="Database"])::before { display: none; }
+	#view-sql .sql-database-name { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 6px 8px; min-width: 0; }
+	#view-sql .sql-database-name:has(> .sql-tables-toggle) { grid-template-columns: auto auto minmax(0, 1fr); }
+	#view-sql .sql-database-name > :not(.sql-tables-toggle, .sql-name-icon) { grid-column: -2; justify-self: start; max-width: 100%; min-width: 0; margin-left: 0; }
+	#view-sql .sql-database-name > span:not(.sql-name-icon, .badge, .who-chips) { justify-self: stretch; font-size: 14.5px; font-weight: 600; overflow-wrap: anywhere; }
+	#view-sql .sql-database-name .who-chip { max-width: 100%; min-width: 0; }
 	#view-sql .actions { flex-wrap: wrap; justify-content: flex-start; min-width: 0; margin: 0; }
 	/* An older backup is a card set in under the latest */
 	#view-sql tbody > tr.sql-backup-older { margin: 6px 0 0 16px; }
@@ -941,7 +951,10 @@ a.btn-link .ico { width: 13px; height: 13px; flex: none; }
 .sql-tab-count:empty { display: none; }
 .sql-tabs button[aria-selected="true"] .sql-tab-count { background: rgba(88, 166, 255, .22); color: #cfe3ff; }
 .panel.tab-off { display: none !important; }
-@media (max-width: 560px) { .sql-tabs { display: flex; } .sql-tabs button { flex: 1; justify-content: center; padding: 8px 10px; } }
+/* On a phone the tabs fill the row and share it, each at least as wide as its name and count */
+@media (max-width: 560px) { .sql-tabs, .sql-tabs-row .sql-tabs { display: flex; flex: 1 1 100%; width: 100%; } .sql-tabs button { flex: 1 1 auto; justify-content: center; padding: 8px 10px; } }
+/* On a narrow phone the three tabs stay on one row: their icons give way, their names and counts stay */
+@media (max-width: 420px) { .sql-tabs { flex-wrap: nowrap; } .sql-tabs button { gap: 6px; padding: 8px 6px; font-size: 13px; } .sql-tabs button .ico { display: none; } }
 .sql-login.editable { cursor: pointer; transition: background .15s; }
 .sql-login.editable:hover:not(:where(:disabled, .disabled, .off)) { background: rgba(255, 255, 255, .055); }
 #dlg-sql-database label.sql-make-login { margin: 2px 0 14px; }
@@ -1754,6 +1767,9 @@ body[data-role="user"] #settings-menu, body[data-role="user"] #btn-multi, body[d
 .confirm-field-label { color: var(--muted); font-size: 12.5px; }
 /* Usage under Settings: the alerts, then the sites and each connection's databases, each across the width */
 #server-usage-list > .tool-card { grid-column: 1 / -1; }
+/* Notifications: each card the whole width, so its title, state and buttons have room side by side */
+#server-notifications-list { grid-template-columns: minmax(0, 1fr); }
+#server-notifications-list > .tool-card { grid-column: 1 / -1; min-height: 0; }
 .usage-total { margin-left: auto; color: var(--text); font-size: 14px; font-weight: 600; font-variant-numeric: tabular-nums; }
 /* In the overview a line is lit under the pointer, so its name and its size are seen together; the size larger */
 .usage-overview .usage-meter { margin: 0 -10px; padding: 7px 10px; border-radius: 9px; transition: background .12s; }
@@ -2063,7 +2079,7 @@ button.primary.danger-primary:disabled { opacity: .5; }
 	/* A login: its icon, name and state on the first line, its buttons on the line below */
 	.sql-login { flex-wrap: wrap; row-gap: 8px; }
 	.sql-login .access-line-text { flex: 1 1 0; }
-	.sql-login .access-line-text strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+	.sql-login .access-line-text :is(strong, small) { overflow: visible; white-space: normal; overflow-wrap: anywhere; }
 	.sql-login .access-line-actions { flex: 1 1 100%; justify-content: flex-end; }
 	.sql-login .access-line-actions:empty { display: none; }
 	/* A card with its buttons in its head: the icon, the name and the state on the first line, the buttons on a line
@@ -2071,8 +2087,9 @@ button.primary.danger-primary:disabled { opacity: .5; }
 	.tool-head:has(> .tool-actions) { flex-wrap: wrap; row-gap: 10px; }
 	.tool-head:has(> .tool-actions) .tool-title { flex: 1 1 0; }
 	.tool-head:has(> .tool-actions) .tool-title small { white-space: normal; }
-	.tool-head > .tool-actions { flex: 1 1 100%; }
-	.tool-head > .tool-actions > :is(button, a) { flex: 1 1 auto; justify-content: center; }
+	/* As strong as .tool-head .tool-actions further down, which would keep them beside the title */
+	.tool-card .tool-head > .tool-actions { flex: 1 1 100%; }
+	.tool-card .tool-head > .tool-actions > :is(button, a) { flex: 1 1 auto; justify-content: center; }
 	/* The user editor: its parts as wide as the dialog, never wider */
 	#dlg-user .user-part { min-width: 0; padding: 0 12px; }
 	#dlg-user .grant-area > .option-row { margin-left: 0; }
@@ -2574,6 +2591,7 @@ dialog.newsite label.sync-option.action-option { flex-direction: row; align-item
 .action-option.tone-red { --option-tone: var(--red); }
 .action-option.tone-green { --option-tone: var(--green); }
 .action-option.tone-purple { --option-tone: var(--purple); }
+.action-option.tone-pink { --option-tone: #db61a2; }
 .action-option.tone-red .sync-option-icon, .action-option.tone-amber .sync-option-icon { color: color-mix(in srgb, var(--option-tone) 70%, var(--muted)); }
 .action-option:has(input:disabled) { opacity: .45; cursor: default; }
 /* What else a confirmation decides, as option cards above the name typed (Delete site: certificates, databases) */
@@ -2752,6 +2770,36 @@ dialog label.samba-chip:has(input:checked) .ico { display: block; color: var(--b
 .crontab-clear-log .ico { width: 14px; height: 14px; }
 .crontab-command { overflow: hidden; color: var(--text); font-size: 12.5px; text-overflow: ellipsis; white-space: nowrap; opacity: .85; }
 .crontab-actions { display: flex; flex: none; gap: 6px; }
+/* Email alerts: their card above the jobs, and under each job whether it is watched and how its last run ended */
+.crontab-alerts { margin: 0 0 12px; }
+.crontab-alerts[hidden] { display: none; }
+.crontab-status { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 2px; }
+.crontab-chip { display: inline-flex; align-items: center; gap: 5px; max-width: 100%; padding: 2px 9px; border: 1px solid var(--line); border-radius: 999px;
+	background: rgba(255, 255, 255, .03); color: var(--muted); font-size: 11.5px; font-weight: 600; line-height: 18px; overflow-wrap: anywhere; }
+.crontab-chip .ico { flex: none; width: 12px; height: 12px; margin: 0; }
+.crontab-chip.watched { border-color: rgba(219, 97, 162, .4); background: rgba(219, 97, 162, .1); color: #f0a6cc; }
+.crontab-chip.ok { border-color: rgba(63, 185, 80, .35); background: rgba(63, 185, 80, .08); color: #7ee787; }
+.crontab-chip.warn { border-color: rgba(210, 153, 34, .4); background: rgba(210, 153, 34, .1); color: #e3b341; }
+.crontab-chip.bad { border-color: rgba(248, 81, 73, .45); background: rgba(248, 81, 73, .1); color: #ff7b72; }
+/* The alerts' dialog: each job a card to choose, what is a failure for it under it once chosen */
+.cron-watch-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.cron-watch-job { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0; min-width: 0; }
+.cron-watch-job > .sync-option { min-width: 0; }
+.cron-watch-job .sync-option-sub { overflow: hidden; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11.5px; text-overflow: ellipsis; white-space: nowrap; }
+.cron-watch-job .sync-option-text { min-width: 0; }
+.cron-watch-job:has(.cron-watch-conditions:not([hidden])) > .sync-option { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.cron-watch-conditions { display: grid; gap: 8px; padding: 12px 14px 12px 60px; border: 1px solid var(--line); border-top: 0; border-radius: 0 0 10px 10px; background: rgba(0, 0, 0, .14); }
+.cron-watch-conditions[hidden] { display: none; }
+.cron-watch-conditions .crontab-field-hint { margin: 0; }
+.cron-watch-title { color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
+.cron-watch-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.cron-watch-chips .cron-watch-chip:not([aria-pressed="true"]) { border-color: var(--line); background: var(--panel2); }
+.cron-watch-chip:disabled { opacity: .4; cursor: not-allowed; }
+
+.cron-watch-long { display: inline-flex !important; flex-direction: row !important; align-items: center; gap: 6px; margin: 0 !important; color: var(--muted); font-size: 12px; }
+.cron-watch-long[hidden] { display: none !important; }
+.cron-watch-long input { width: 72px; height: 28px; padding: 0 8px; }
+@media (max-width: 560px) { .cron-watch-conditions { padding-left: 14px; } .cron-watch-chip { flex: 1 1 calc(50% - 6px); justify-content: center; } }
 /* A job's log, unfolded under it */
 .crontab-log { display: grid; grid-column: 1 / -1; gap: 10px; min-width: 0; margin-top: 4px; padding-top: 12px; border-top: 1px solid var(--line); }
 .crontab-log p { margin: 0; }
@@ -3043,7 +3091,8 @@ input.made-binding, input.made-binding:focus { border-style: dashed; border-colo
 #server-convert-list > .tool-card, #server-export-list > .tool-card { grid-column: 1 / -1; min-height: 0; }
 /* Export Site's rows have Convert DB's first columns: the folder, the environment, the database and what it is */
 #server-export-list .convert-entry { grid-template-columns: minmax(160px, 1fr) 140px 172px minmax(0, 1.6fr); }
-.convert-groups { display: grid; gap: 10px; margin: 4px 0 0; padding: 0; list-style: none; }
+.convert-groups { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; margin: 4px 0 0; padding: 0; list-style: none; }
+.convert-group { min-width: 0; }
 .convert-group { padding: 10px; border: 1px solid var(--line); border-radius: 10px; background: rgba(0, 0, 0, .12); }
 .convert-group-head { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 2px 4px 10px; }
 .convert-group-head .convert-site-link { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
@@ -3186,4 +3235,125 @@ dialog.newsite .convert-form .hint { margin: 4px 0 16px; }
 	.convert-kept-line > .convert-engine { grid-column: 3; }
 	.convert-kept-line > .convert-detail, .convert-kept-line > .convert-kept-actions { grid-column: 1 / -1; }
 	.convert-kept-actions > button { flex: 1; justify-content: center; }
+	/* A site's head: its name and kind on the first line, its exports and Export… on one of their own, sharing it */
+	.convert-group-head { flex-wrap: wrap; row-gap: 10px; }
+	.convert-group-head .convert-site-link { flex: 0 1 auto; }
+	.convert-group-head .export-site-action { flex: 1 1 100%; margin-left: 0; }
+	.convert-group-head .export-site-action > button { flex: 1 1 0; justify-content: center; }
+	.convert-card .tool-title small { white-space: normal; }
 }
+/* Health: the server now (a tile per measure), its charts over the last day or week, and its OS updates */
+#server-health-list { grid-template-columns: minmax(0, 1fr); }
+#server-health-list > .tool-card { grid-column: 1 / -1; min-height: 0; }
+.health-range { display: flex; }
+@media (max-width: 800px) { .health-range { flex: 1; } .health-range .crontab-seg { flex: 1; justify-content: center; } }
+/* The tiles share the card's width, however many disks there are */
+.health-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+.health-tile { display: grid; gap: 6px; min-width: 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: rgba(0, 0, 0, .14); }
+.health-tile-title { display: flex; align-items: center; gap: 7px; min-width: 0; overflow: hidden; color: var(--muted); font-size: 12px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.health-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; }
+.health-tile-value { font-size: 22px; font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.health-tile small { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.health-bar { position: relative; height: 6px; border-radius: 999px; background: var(--hover); }
+.health-bar > span { position: absolute; inset: 0 auto 0 0; border-radius: 999px; }
+.health-bar > i { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--text); opacity: .55; }
+/* Two charts a row; one left over on its own takes the whole row */
+.health-chart-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.health-chart-grid > .health-chart:last-child:nth-child(odd) { grid-column: 1 / -1; }
+@media (max-width: 560px) { .health-chart-grid { grid-template-columns: minmax(0, 1fr); } .health-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.health-chart { display: grid; gap: 8px; min-width: 0; margin: 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: rgba(0, 0, 0, .14); }
+.health-chart figcaption { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; font-size: 13px; }
+.health-chart-now { margin-left: auto; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.health-plot-wrap { position: relative; height: 120px; touch-action: pan-y; cursor: crosshair; }
+.health-plot { display: block; width: 100%; height: 100%; overflow: visible; }
+.health-grid { stroke: var(--line); stroke-width: 1; vector-effect: non-scaling-stroke; opacity: .6; }
+.health-area { opacity: .14; }
+.health-line { fill: none; stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.health-limit { stroke: var(--muted); stroke-width: 1.5; stroke-dasharray: 5 4; vector-effect: non-scaling-stroke; }
+.health-limit-label { position: absolute; right: 0; transform: translateY(-120%); padding: 0 4px; border-radius: 4px; background: var(--panel); color: var(--muted); font-size: 10.5px; pointer-events: none; }
+.health-cross { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--muted); opacity: .7; pointer-events: none; }
+.health-cross[hidden], .health-tip[hidden] { display: none; }
+.health-cross > span { position: absolute; left: -4px; width: 9px; height: 9px; margin-top: -4.5px; border: 2px solid var(--panel); border-radius: 50%; }
+.health-tip { position: absolute; top: -6px; z-index: 2; display: grid; gap: 1px; transform: translate(8px, -100%); padding: 5px 9px; border: 1px solid var(--line); border-radius: 8px;
+	background: var(--panel2); box-shadow: 0 6px 18px rgba(0, 0, 0, .35); font-size: 12px; white-space: nowrap; pointer-events: none; font-variant-numeric: tabular-nums; }
+.health-tip.end { transform: translate(calc(-100% - 8px), -100%); }
+.health-tip span { color: var(--muted); font-size: 11px; }
+.health-axis { display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.health-update-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.health-packages { display: grid; gap: 4px; max-height: 280px; margin: 0; padding: 0; overflow: auto; list-style: none; }
+.health-packages[hidden] { display: none; }
+.health-packages li { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 5px 10px; border-radius: 7px; background: rgba(0, 0, 0, .14); font-size: 12.5px; }
+.health-packages code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.health-packages li > span:not(.crontab-chip) { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* The health alerts' dialog: the three limits side by side, the updates as a segmented control */
+.health-limit-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 560px) { .health-limit-fields { grid-template-columns: minmax(0, 1fr); } }
+.health-limit-field { display: grid; gap: 4px; min-width: 0; }
+.health-limit-field small { margin: 0; }
+.health-percent { display: flex; align-items: center; gap: 6px; }
+.health-percent input { min-width: 0; }
+.health-percent span { color: var(--muted); }
+.health-updates-choice { display: flex; flex-wrap: wrap; margin-bottom: 12px; }
+@media (max-width: 560px) { .health-updates-choice .crontab-seg { flex: 1 1 auto; justify-content: center; } }
+#server-updates-list .convert-kept-toggle { align-self: flex-start; }
+#server-updates-list .tool-card-wide { grid-column: 1 / -1; }
+#server-health-list .tool-title small { white-space: normal; }
+.os-update-scope { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: 8px; }
+@media (max-width: 560px) { .os-update-scope { grid-template-columns: minmax(0, 1fr); } }
+.os-update-scope .type-card.disabled { opacity: .45; pointer-events: none; }
+.os-update-restarts { display: grid; gap: 6px; margin: 0 0 10px; padding: 0; list-style: none; }
+.os-update-restarts li { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 8px; background: rgba(0, 0, 0, .14); font-size: 13px; }
+.os-update-restarts .ico { flex: none; width: 14px; height: 14px; margin: 0; color: var(--muted); }
+.health-tile.past { border-color: rgba(248, 81, 73, .55); background: rgba(248, 81, 73, .06); }
+.health-open { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.health-open li { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; padding: 9px 12px; border: 1px solid rgba(248, 81, 73, .35); border-radius: 9px; background: rgba(248, 81, 73, .07); font-size: 13px; }
+.health-open .ico { flex: none; width: 15px; height: 15px; margin: 0; color: #ff7b72; }
+.health-open li > span { color: var(--text); opacity: .85; }
+.health-open small { margin-left: auto; color: var(--muted); font-size: 12px; }
+.health-open button { padding: 3px 10px; font-size: 12px; }
+/* Needs attention, above the cards: what is wrong now, each with a way straight to it */
+.site-attention { margin: 0 0 14px; border: 1px solid rgba(248, 81, 73, .35); border-radius: 12px; overflow: hidden;
+	background: linear-gradient(110deg, rgba(248, 81, 73, .07), transparent 60%), var(--panel); }
+.site-attention[hidden] { display: none; }
+.site-attention-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); color: #ff7b72; }
+.site-attention-head .ico { width: 16px; height: 16px; margin: 0; }
+.site-attention-head strong { color: var(--text); font-size: 14px; }
+.site-attention-count { padding: 0 7px; border-radius: 999px; background: rgba(248, 81, 73, .18); font-size: 11.5px; font-weight: 700; }
+.site-attention-row { display: grid; grid-template-columns: 10px minmax(120px, 220px) auto minmax(0, 1fr) auto auto; align-items: center; gap: 12px; padding: 8px 14px; border-bottom: 1px solid var(--line); font-size: 13px; }
+.site-attention-row:last-child { border-bottom: 0; }
+.site-attention-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--red); }
+.site-attention-row.warn .site-attention-dot { background: #d29922; }
+.site-attention-site, .site-attention-why { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.site-attention-row .badge { justify-self: start; font-size: 10px; }
+.site-attention-row small { color: var(--muted); white-space: nowrap; }
+.site-attention-row button { padding: 4px 11px; font-size: 12.5px; }
+.site-attention-more { margin: 0; padding: 8px 14px; color: var(--muted); font-size: 12px; }
+@media (max-width: 700px) {
+	.site-attention-row { grid-template-columns: 10px minmax(0, 1fr) auto auto; row-gap: 4px; }
+	.site-attention-row .badge { grid-row: 1; grid-column: 3; }
+	.site-attention-row button { grid-row: 1; grid-column: 4; }
+	.site-attention-why { grid-column: 2 / -1; white-space: normal; }
+	.site-attention-row small { grid-column: 2 / -1; }
+}
+/* A card in the grid of environments is never wider than its column */
+.envs > .env, .env-targets > .env { min-width: 0; }
+/* A fact with an action of its own at its right, as a link in the button's own icon and colour (Backoffice login…
+   beside the backoffice) */
+.meta dd.meta-with-action { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+button.meta-action, button.meta-action[data-tone] { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; padding: 0; border: 0;
+	background: none; color: var(--tone, var(--blue)); font: inherit; font-size: 13px; font-weight: 600; box-shadow: none; }
+button.meta-action .ico { width: 14px; height: 14px; margin: 0; }
+button.meta-action:hover:not(:where(:disabled, .disabled, .off)), button.meta-action[data-tone]:hover:not(:where(:disabled, .disabled, .off)) { background: none; border: 0; text-decoration: underline; }
+/* Apache's config test, as its result: a line that says it, then what apache2ctl said, coloured */
+.configtest-result { --t: var(--green); display: flex; align-items: center; gap: 12px; margin-bottom: 12px; padding: 12px 14px; border: 1px solid color-mix(in srgb, var(--t) 40%, var(--line));
+	border-radius: 10px; background: color-mix(in srgb, var(--t) 9%, var(--panel2)); }
+.configtest-result.warn { --t: #d29922; } .configtest-result.bad { --t: var(--red); }
+.configtest-result strong { display: block; color: var(--text); font-size: 14px; }
+.configtest-result small { color: var(--muted); font-size: 12.5px; }
+.configtest-icon { display: grid; flex: none; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: color-mix(in srgb, var(--t) 18%, transparent); color: var(--t); }
+.configtest-icon .ico { width: 18px; height: 18px; margin: 0; }
+.configtest-lines { max-height: 300px; margin: 0; padding: 10px 12px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; background: rgba(0, 0, 0, .25);
+	color: var(--muted); font: 12px/1.55 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.configtest-lines .ok { color: var(--green); } .configtest-lines .warn { color: #e3b341; } .configtest-lines .bad { color: #ff7b72; }
+/* A row whose only button waits for its check (Fix permissions) is not shown meanwhile */
+.env .actions.only-hidden { display: none; }

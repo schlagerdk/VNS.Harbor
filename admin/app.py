@@ -84,6 +84,12 @@ _keep_alive_spec.loader.exec_module(_keep_alive_module)
 _usage_spec = importlib.util.spec_from_file_location("vns_usage", os.path.join(LIB_DIR, "usage.py"))
 _usage = importlib.util.module_from_spec(_usage_spec)
 _usage_spec.loader.exec_module(_usage)
+_cron_watch_spec = importlib.util.spec_from_file_location("vns_cron_watch", os.path.join(LIB_DIR, "cron_watch.py"))
+_cron_watch = importlib.util.module_from_spec(_cron_watch_spec)
+_cron_watch_spec.loader.exec_module(_cron_watch)
+_health_spec = importlib.util.spec_from_file_location("vns_server_health", os.path.join(LIB_DIR, "server_health.py"))
+_health = importlib.util.module_from_spec(_health_spec)
+_health_spec.loader.exec_module(_health)
 _data_sync_spec = importlib.util.spec_from_file_location("vns_data_sync", os.path.join(LIB_DIR, "data_sync.py"))
 _data_sync_module = importlib.util.module_from_spec(_data_sync_spec)
 _data_sync_spec.loader.exec_module(_data_sync_module)
@@ -285,6 +291,26 @@ def api_usage_check():
         return error("The check could not be made. Inspect the admin app log.", 502)
 
 
+@app.route("/api/usage/test", methods=["POST"])
+def api_usage_test():
+    """A test of the usage alerts: everything measured now, and their mail sent to the addresses typed, not saved"""
+    require_admin()
+    emails = (request.get_json(silent=True) or {}).get("emails")
+    if not isinstance(emails, list) or not emails:
+        return error("Enter the address to send the test to.")
+    try:
+        result = subprocess.run(["/usr/bin/python3", os.path.join(LIB_DIR, "usage.py"), "--data", DATA, "--test-report"],
+                                input=json.dumps(emails), capture_output=True, text=True, timeout=900)
+        found = json.loads(result.stdout.strip().splitlines()[-1])
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+        app.logger.exception("usage test")
+        return error("The test could not be made. Inspect the admin app log.", 502)
+    if "subject" not in found:
+        return error(found.get("error") or "The test could not be made.")
+    audit("Sent a test of the usage alerts")
+    return jsonify(found)
+
+
 @app.route("/api/mail", methods=["GET", "PUT"])
 def api_mail():
     """The mail server all of Harbor's mail goes through (root only on disk): its password is never sent back"""
@@ -320,8 +346,9 @@ def api_mail_test():
     except ValueError as exc:
         return error(str(exc))
     try:
-        site_report.send(settings, [to], f"[{socket.gethostname()}] Test from VNS Harbor",
-                         "This is a test from VNS Harbor. Harbor's mail, such as keep-alive's reports, comes through this mail server.\n")
+        site_report.send(settings, [to], f"[{socket.gethostname()}] \u2705 Test from Harbor",
+                         "This is a test from Harbor. Harbor's mail, such as keep-alive's reports, comes through this mail server.\n",
+                         html=site_report.test_mail_html(socket.gethostname()))
     except Exception as exc:  # noqa: BLE001  (smtplib, ssl and socket each have their own; the user is told which)
         return error(f"The test mail could not be sent: {exc}", 502)
     return jsonify(ok=True)
@@ -2348,7 +2375,7 @@ def api_run_system_update():
         if rollback:
             earlier = rollback_release()
             if not earlier:
-                abort(400, "There is no earlier release of VNS Harbor to go back to.")
+                abort(400, "There is no earlier release of Harbor to go back to.")
             command = ["/usr/bin/python3", HARBOR_COMMAND, "self", "rollback"]
         else:
             _, command, _ = build_command({"kind": "update_system"})
@@ -2948,7 +2975,8 @@ def api_server_crontab():
             # PostgreSQL's backup while PostgreSQL is here and Harbor has its password
             postgres_ready = os.path.isdir("/etc/postgresql") and os.path.isfile("/etc/harbor/secrets/postgres.json")
             # Each of Harbor's jobs that is not in cron: removed, it is suggested again
-            return jsonify(entries=entries, suggest=[job for job in ("backup_everything", "shrink_logs") if sql_ready and job not in harbor_jobs]
+            logrotate = {"on": os.path.isfile("/etc/logrotate.d/vns-harbor-jobs")}
+            return jsonify(entries=entries, logrotate=logrotate, suggest=[job for job in ("backup_everything", "shrink_logs") if sql_ready and job not in harbor_jobs]
                            + (["postgres_backup"] if postgres_ready and "postgres_backup" not in harbor_jobs else []))
         except (OSError, subprocess.SubprocessError, ValueError) as exc:
             app.logger.error("harbor server crontab list: %s", exc)
@@ -2966,6 +2994,117 @@ def api_server_crontab():
         return error((result.stderr or result.stdout).strip().splitlines()[-1] if (result.stderr or result.stdout).strip() else "Root's crontab could not be saved.")
     audit("Saved root's crontab")
     return jsonify(ok=True)
+
+
+@app.route("/api/health")
+def api_health():
+    """How the server is: now, its samples of the last 7 days, its OS updates, what is past its limit (lib/server_health.py)"""
+    require_admin()
+    try:
+        return jsonify(_health.overview())
+    except OSError:
+        app.logger.exception("health")
+        return error("The server's health could not be read.", 502)
+
+
+@app.route("/api/health/updates", methods=["GET", "POST"])
+def api_health_updates():
+    """The OS updates as last read (GET), or read again now from apt's lists (POST)"""
+    require_admin()
+    if request.method == "GET":
+        return jsonify(_health.read_json(_health.STATE / "updates.json", None))
+    try:
+        result = subprocess.run(["/usr/bin/python3", os.path.join(LIB_DIR, "server_health.py"), "--updates"], capture_output=True, text=True, timeout=180)
+        return jsonify(json.loads(result.stdout.strip().splitlines()[-1]))
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+        app.logger.exception("health updates")
+        return error("The updates could not be read. Inspect the admin app log.", 502)
+
+
+@app.route("/api/health/alerts", methods=["GET", "PUT"])
+def api_health_alerts():
+    """The health alerts: who is mailed, and the limits of each check"""
+    require_admin()
+    settings = _health.load_settings()
+    if request.method == "PUT":
+        try:
+            settings = _health.validate_settings(request.get_json(silent=True))
+            _health.write_json(_health.SETTINGS, settings)
+            os.chmod(_health.SETTINGS, 0o600)
+            if not _health.CRON.is_file():
+                _health.install()
+        except ValueError as exc:
+            return error(str(exc))
+        except OSError:
+            app.logger.exception("Could not save the health alerts")
+            return error("The health alerts could not be saved. Inspect the admin app log.", 500)
+        audit("Changed the health alerts")
+    saved = _health.read_json(_health.STATE / "alerts.json", {})
+    return jsonify(**settings, installed=_health.CRON.is_file(), mail=bool(_keep_alive_module.report.load_mail().get("host")),
+                   open=saved.get("open") or {}, mail_error=saved.get("mail_error"))
+
+
+@app.route("/api/health/alerts/test", methods=["POST"])
+def api_health_alerts_test():
+    """A test of the health alerts: how the server is now, by the limits saved, mailed to the addresses typed"""
+    require_admin()
+    emails = (request.get_json(silent=True) or {}).get("emails")
+    if not isinstance(emails, list) or not emails or not all(isinstance(item, str) for item in emails):
+        return error("Enter the address to send the test to.")
+    try:
+        result = subprocess.run(["/usr/bin/python3", os.path.join(LIB_DIR, "server_health.py"), "--test", *emails], capture_output=True, text=True, timeout=60)
+        found = json.loads(result.stdout.strip().splitlines()[-1])
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+        app.logger.exception("health alerts test")
+        return error("The test could not be made. Inspect the admin app log.", 502)
+    if "subject" not in found:
+        return error(found.get("error") or "The test could not be made.")
+    return jsonify(found)
+
+
+@app.route("/api/server/cron-alerts", methods=["GET", "PUT"])
+def api_cron_alerts():
+    """Email alerts for the scheduled jobs (lib/cron_watch.py): who is mailed, and on or off. On, root's crontab runs
+    each job through harbor-cron-shell, which notes how it ended; what of each job is watched is in root's crontab."""
+    require_admin()
+    settings = _cron_watch.load_settings()
+    if request.method == "PUT":
+        try:
+            settings = _cron_watch.validate_settings(request.get_json(silent=True))
+            result = subprocess.run(["/usr/bin/python3", os.path.join(LIB_DIR, "cron_watch.py"), "--enable" if settings["enabled"] else "--disable"],
+                                    capture_output=True, text=True, timeout=30)
+            if result.returncode:
+                raise OSError((result.stderr.strip().splitlines() or ["cron_watch.py failed"])[-1])
+            _cron_watch.write_json(_cron_watch.SETTINGS, settings)
+            os.chmod(_cron_watch.SETTINGS, 0o600)
+        except ValueError as exc:
+            return error(str(exc))
+        except (OSError, subprocess.SubprocessError):
+            app.logger.exception("Could not save the job alerts")
+            return error("The job alerts could not be saved. Inspect the admin app log.", 500)
+        audit("Turned the job alerts " + ("on" if settings["enabled"] else "off"))
+    saved = _cron_watch.read_json(_cron_watch.STATE / "alerts.json", {})
+    return jsonify(**settings, installed=_cron_watch.CHECK.is_file(), mail=bool(_keep_alive_module.report.load_mail().get("host")),
+                   failing=len(saved.get("open") or {}), mail_error=saved.get("mail_error"))
+
+
+@app.route("/api/server/cron-alerts/test", methods=["POST"])
+def api_cron_alerts_test():
+    """A test of the job alerts: how each watched job is now, mailed to the addresses typed, not saved"""
+    require_admin()
+    emails = (request.get_json(silent=True) or {}).get("emails")
+    if not isinstance(emails, list) or not emails or not all(isinstance(item, str) for item in emails):
+        return error("Enter the address to send the test to.")
+    try:
+        result = subprocess.run(["/usr/bin/python3", os.path.join(LIB_DIR, "cron_watch.py"), "--test", *emails],
+                                capture_output=True, text=True, timeout=60)
+        found = json.loads(result.stdout.strip().splitlines()[-1])
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+        app.logger.exception("job alerts test")
+        return error("The test could not be made. Inspect the admin app log.", 502)
+    if "subject" not in found:
+        return error(found.get("error") or "The test could not be made.")
+    return jsonify(found)
 
 
 @app.route("/api/server/crontab/log", methods=["POST"])
@@ -3145,6 +3284,15 @@ def server_tool_command(data):
         return f"Install Node.js {major}", harbor + ["server", "node", "install", major], env
     if tool == "node_remove":
         return "Remove Node.js", harbor + ["server", "node", "remove"], env
+    if tool == "os_update":
+        scope = data.get("scope")
+        if scope not in ("security", "all"):
+            abort(400, "Install the security updates or all of them")
+        return ("Install the security updates" if scope == "security" else "Install the OS updates"), harbor + ["server", "os-update", scope], env
+    if tool == "unattended_on":
+        return "Turn on automatic security updates", harbor + ["server", "unattended-upgrades"], env
+    if tool in ("logrotate_on", "logrotate_off"):
+        return ("Rotate the jobs' logs" if tool == "logrotate_on" else "Stop rotating the jobs' logs"), harbor + ["server", "crontab", tool.replace("_", "-")], env
     if tool == "cron_run":
         # Harbor runs it only when it is a job in root's crontab
         command = str(data.get("command", "")).strip()
@@ -3406,7 +3554,7 @@ def sync_who(entry):
     if user_id:
         label = access.label(cfg, user_id)
         if label:
-            return f"{label} (VNS Harbor)"
+            return f"{label} (Harbor)"
     return (entry or {}).get("who", "")
 
 
@@ -3652,6 +3800,26 @@ def python_outdated(site, refresh=False):
 def api_python_outdated(name):
     site = site_arg({"site": name})
     return jsonify(outdated=python_outdated(site, request.args.get("refresh") == "1"))
+
+
+@app.route("/api/sites/<name>/permissions")
+def api_site_permissions(name):
+    """Whether Fix permissions has anything to fix on the main site (scope test) or an environment (scope prod), so its
+    button is shown only then: a file not owned by www-data, or one it cannot read. Nothing is changed."""
+    site = site_arg({"site": name})
+    scope = request.args.get("scope", "test")
+    if scope not in ("test", "prod") or site == ADMIN_SITE:
+        abort(400, "Invalid permissions target")
+    target = target_arg(site, {"target": request.args.get("target")}) if scope == "prod" else "prod"
+    if not access.can(me(), site, target if scope == "prod" else "main", "files"):
+        abort(403, "No access to its files")
+    argv = with_target(["/usr/bin/python3", HARBOR_COMMAND, "site", "fix-permissions", site, scope, "--check"], target)
+    try:
+        result = subprocess.run(argv, capture_output=True, text=True, timeout=60, cwd=HARBOR_DIR)
+        return jsonify(json.loads(result.stdout.strip().splitlines()[-1]))
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+        app.logger.exception("permissions check")
+        return jsonify(needed=None, error="The check could not be made")
 
 
 @app.route("/api/sites/<name>/backoffice-login")
@@ -4987,7 +5155,11 @@ def build_command(data):
                 payload = {"kind": "script", "site": site, "script": script}
             _, argv, cwd = build_command(payload)
             tasks.append({"site": site, "argv": argv, "cwd": cwd})
-        return "Multi action: " + action, [
+        # One site's package check (its Check button) is named as what it is; several sites are a multi action
+        sites_given = [task["site"] for task in tasks]
+        title = (f"Check the NuGet packages of {sites_given[0]}" if action == "check" and len(sites_given) == 1
+                 else "Check the NuGet packages" if action == "check" else "Multi action: " + action)
+        return title, [
             sys.executable, os.path.join(LIB_DIR, "bulk_tasks.py"), json.dumps(tasks),
         ], WEB_ROOT
     if kind == "remote_tool":
@@ -5848,7 +6020,7 @@ def api_term():
         # By id too: the history shows the user's name as it is now, also after they change it in Profile
         user = me() or {}
         who = user.get("name") or user.get("username", "")
-        extra_env = {**(extra_env or {}), "HARBOR_SYNC_WHO": f"{who} (VNS Harbor)" if who else "VNS Harbor",
+        extra_env = {**(extra_env or {}), "HARBOR_SYNC_WHO": f"{who} (Harbor)" if who else "Harbor",
                      "HARBOR_SYNC_WHO_ID": user.get("id", "")}
     if payload.get("kind") == "move_site":
         host, user, password, port = ssh_login(payload)
@@ -7292,6 +7464,20 @@ def managed_config(site, kind):
 
 
 APACHE_CONF = "/etc/apache2/apache2.conf"
+
+
+@app.route("/api/server/apache-configtest", methods=["POST"])
+def apache_configtest():
+    """apache2ctl configtest, answered as it is: whether Apache would start with the configs as they are, and what it
+    said (Syntax OK, its warnings, or the error with the file and line)"""
+    require_admin()
+    try:
+        test = subprocess.run(["apache2ctl", "configtest"], capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return error(f"apache2ctl could not be run: {exc}", 502)
+    lines = [line for line in (test.stdout + test.stderr).splitlines() if line.strip()]
+    return jsonify(ok=test.returncode == 0, lines=lines[-60:],
+                   warnings=[line for line in lines if re.match(r"^(AH\d+|\[[^\]]*warn)", line) or "Warning" in line])
 
 
 @app.route("/api/server/apache-config", methods=["GET", "POST"])

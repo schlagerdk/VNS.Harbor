@@ -19,7 +19,8 @@ def admin_data(folder):
     return isinstance(config, dict) and bool(config.get("secret_key"))
 
 
-def repair(root, service, uid, gid, web_root=Path("/var/www")):
+def content_folder(root, service, web_root=Path("/var/www")):
+    """The folder a site's content is in: its service's WorkingDirectory inside the site, else the site's folder"""
     root = Path(root)
     if root.is_symlink() or not root.is_dir():
         raise ValueError("Site folder is missing or is a symbolic link")
@@ -47,6 +48,45 @@ def repair(root, service, uid, gid, web_root=Path("/var/www")):
         raise ValueError("App folder found without a service; cannot safely select content")
     if not target.is_dir():
         raise ValueError("Content folder is not a directory")
+    return target
+
+
+def entries(target):
+    """What fixing touches: the folder and everything under it, but scripts, .git, venv, .env, vns-harbor.json and
+    symbolic links"""
+    yield target
+
+    def walk_error(error):
+        raise error
+
+    for directory, folders, files in os.walk(target, followlinks=False, onerror=walk_error):
+        folders[:] = [name for name in folders if name not in ("scripts", ".git", "venv")
+                      and not (Path(directory) / name).is_symlink()]
+        for name in folders + files:
+            # vns-harbor.json stays root:www-data, as Harbor writes it: the site reads its key, and cannot change it
+            if name in ("scripts", ".git", ".env", "vns-harbor.json") or name.startswith(".env."):
+                continue
+            yield Path(directory) / name
+
+
+def needs_fixing(root, service, uid, gid, web_root=Path("/var/www")):
+    """The first entry fixing would change in a way that matters: not owned by www-data, or one www-data cannot read
+    (a folder it cannot enter). None when there is none. A file's mode alone (644 where fixing sets 640) or its group is
+    not counted: every publish leaves those, and they do the site no harm."""
+    for path in entries(content_folder(root, service, web_root)):
+        info = path.lstat()
+        if stat.S_ISLNK(info.st_mode) or not (stat.S_ISDIR(info.st_mode) or stat.S_ISREG(info.st_mode)):
+            continue
+        # Its group is left out: a site's folder may be its builds' (vns-build), which does www-data no harm
+        if info.st_uid != uid:
+            return str(path)
+        if not info.st_mode & stat.S_IRUSR or (stat.S_ISDIR(info.st_mode) and not info.st_mode & stat.S_IXUSR):
+            return str(path)
+    return None
+
+
+def repair(root, service, uid, gid, web_root=Path("/var/www")):
+    target = content_folder(root, service, web_root)
     changed = 0
 
     def update(path):
@@ -61,17 +101,8 @@ def repair(root, service, uid, gid, web_root=Path("/var/www")):
         os.chmod(path, mode)
         changed += 1
 
-    update(target)
-    def walk_error(error):
-        raise error
-
-    for directory, folders, files in os.walk(target, followlinks=False, onerror=walk_error):
-        folders[:] = [name for name in folders if name not in ("scripts", ".git", "venv")
-                      and not (Path(directory) / name).is_symlink()]
-        for name in folders + files:
-            if name in ("scripts", ".git", ".env") or name.startswith(".env."):
-                continue
-            update(Path(directory) / name)
+    for path in entries(target):
+        update(path)
     print("Permissions fixed on %s (%d entries). No service restart required." % (target, changed))
 
 
@@ -82,5 +113,14 @@ if __name__ == "__main__":
 
     site = os.environ["SITE"]
     normalize_site_name(site)
-    repair(Path(os.environ["ROOT"]), Path("/etc/systemd/system") / (service_name(site) + ".service"),
-           pwd.getpwnam("www-data").pw_uid, grp.getgrnam("www-data").gr_gid)
+    arguments = (Path(os.environ["ROOT"]), Path("/etc/systemd/system") / (service_name(site) + ".service"),
+                 pwd.getpwnam("www-data").pw_uid, grp.getgrnam("www-data").gr_gid)
+    if os.environ.get("CHECK") == "1":
+        # Only whether fixing is needed, as JSON: nothing is changed
+        try:
+            found = needs_fixing(*arguments)
+            print(json.dumps({"needed": found is not None, "example": found or ""}))
+        except (OSError, ValueError) as exc:
+            print(json.dumps({"needed": None, "error": str(exc)}))
+    else:
+        repair(*arguments)

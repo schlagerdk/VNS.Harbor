@@ -948,6 +948,10 @@ async function loadSites() {
 		api("/api/windows/imported").then((data) => { windowsServerCount = data.servers.length; showWindowsMenu(); }).catch(() => {});
 	}
 	defaultUmbracoVersion = (data.defaults || {}).umbraco_version || "";
+	// What keep-alive finds wrong now, for Needs attention and each card's state (an administrator's view)
+	if (currentUser.admin) {
+		keepAliveProblems = await api("/api/keep-alive/log").then((log) => log.problems || []).catch(() => []);
+	}
 	renderSites();
 	if (currentView === "site") renderSite(decodeURIComponent(location.hash.slice(6)));
 	if (currentView === "sql") await refreshSql();
@@ -990,6 +994,7 @@ function renderStats() {
 		["all", "All", searched.length],
 		["running", "Running", count((s) => siteState(s) === "active")],
 		["stopped", "Stopped", count((s) => siteState(s) === "inactive")],
+		["problem", "Needs attention", count((s) => siteProblems(s).length > 0)],
 		["prod", "With environments", count(hasProd)],
 		// Environments of sites on another server (managed from there), and the sites that are this server's own
 		["managed", "Managed elsewhere", count((s) => !!s.managed_by)],
@@ -1065,6 +1070,7 @@ function matches(site) {
 	const state = siteState(site);
 	if (filter === "running" && state !== "active") return false;
 	if (filter === "stopped" && state !== "inactive") return false;
+	if (filter === "problem" && !siteProblems(site).length) return false;
 	if (filter === "prod" && !hasProd(site)) return false;
 	if (filter === "managed" && !site.managed_by) return false;
 	if (filter === "own" && site.managed_by) return false;
@@ -1078,6 +1084,7 @@ function matches(site) {
 // ------------------------------------------------------------------ button icons
 // Inline SVG (Lucide-style, 24x24 stroke icons); the CSP does not allow external images
 const iconPaths = {
+	bell: "M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 0 0 3.4 0",
 	plus: "M12 5v14M5 12h14",
 	search: "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-3.5-3.5",
 	x: "M18 6 6 18M6 6l12 12",
@@ -1269,6 +1276,7 @@ function renderSites() {
 		$("#empty-sites-title").textContent = "No sites for you yet";
 		$("#empty-sites-description").textContent = "An administrator gives you access to the sites you work on.";
 	}
+	renderSiteAttention(visible);
 	for (const site of visible) box.append(siteCard(site));
 	updateSiteActivity();
 	renderCardUpdateChecks();
@@ -1500,6 +1508,59 @@ function compactEnvironmentRow(site, env, environment) {
 		row.append(el("span", { className: "muted", textContent: "No binding" }));
 	}
 	return row;
+}
+
+// ---- Needs attention on the overview: what keep-alive finds wrong, a failed service, an environment gone from its server
+let keepAliveProblems = [];
+const KEEP_ALIVE_WORDS = { down: "Not answering", certificate: "Certificate error", certificate_soon: "Certificate expires soon", service: "Service failed", stopped: "Site stopped" };
+
+// The environment keep-alive means by a name: the site itself, site/target for one on another server, or its folder
+function problemEnvironment(site, name) {
+	if (name === site.name) return site.environments.find((env) => !isTarget(env)) || null;
+	const [owner, target] = name.split("/");
+	if (owner === site.name && target) return site.environments.find((env) => envKeyOf(env) === target) || null;
+	return site.environments.find((env) => env.folder === name || env.binding === name) || null;
+}
+
+// What is wrong with a site now, each with the environment it is in: keep-alive's problems, a service that failed, an
+// environment gone from its server. A certificate soon is a warning; the rest is wrong.
+function siteProblems(site) {
+	const found = [];
+	for (const problem of keepAliveProblems) {
+		const env = problemEnvironment(site, problem.name);
+		if (!env) continue;
+		found.push({ env, tone: problem.check === "certificate_soon" ? "warn" : "bad", why: `${KEEP_ALIVE_WORDS[problem.check] || problem.check}: ${problem.message}`,
+			since: problem.since, check: problem.check });
+	}
+	for (const env of site.environments) {
+		if (env.state === "failed" && !found.some((item) => item.env === env && item.check === "service")) found.push({ env, tone: "bad", why: "Its service has failed" });
+		if (isMissingEnv(env)) found.push({ env, tone: "bad", why: `Not found on ${env.host || "its server"}` });
+	}
+	return found;
+}
+
+// Needs attention, above the cards: each problem of the sites shown, the worst first, with a way straight to it
+function renderSiteAttention(sites) {
+	const box = $("#site-attention");
+	const rows = [];
+	for (const site of sites) for (const problem of siteProblems(site)) rows.push({ site, ...problem });
+	rows.sort((a, b) => (a.tone === "bad" ? 0 : 1) - (b.tone === "bad" ? 0 : 1) || (a.since || 0) - (b.since || 0));
+	box.hidden = !rows.length;
+	if (!rows.length) return box.replaceChildren();
+	box.replaceChildren(el("div", { className: "site-attention-head" }, svgIcon("alert"), el("strong", { textContent: "Needs attention" }),
+		el("span", { className: "site-attention-count", textContent: String(rows.length) })),
+		...rows.slice(0, 8).map((row) => {
+			const label = environmentLabel(row.site, row.env);
+			const open = () => { siteEnvFocus = { site: row.site.name, env: envKeyOf(row.env) }; go(siteLink(row.site.name)); };
+			return el("div", { className: "site-attention-row " + row.tone },
+				el("i", { className: "site-attention-dot" }),
+				el("strong", { className: "site-attention-site", textContent: siteTitle(row.site), title: row.site.name }),
+				el("span", { className: "badge env-" + label.toLowerCase(), textContent: label }),
+				el("span", { className: "site-attention-why", textContent: row.why, title: row.why }),
+				...(row.since ? [el("small", { textContent: "since " + formatDate(row.since * 1000) })] : []),
+				tonedButton("Open", "chevron", "blue", open));
+		}),
+		...(rows.length > 8 ? [el("p", { className: "site-attention-more", textContent: `${rows.length - 8} more: the Problem filter shows the sites` })] : []));
 }
 
 function siteCard(site) {
@@ -2043,6 +2104,7 @@ function renderSite(name) {
 		[$("#site-danger"), null], [packagesPanel, "main"]]) pruneButtons(part, site, envKey);
 	updateSiteActivity();
 	decorate(packagesPanel);
+	showFixPermissions(site);
 	if (openMenuState) {
 		const panel = document.querySelector("#envs .script-menu-panel");
 		const menu = panel?.closest(".script-menu");
@@ -2157,7 +2219,17 @@ function envPanel(site, env) {
 				openLink(aliasLabels(env)[index], scheme + "://" + alias + "/"),
 			])));
 	}
-	if (site.kind === "umbraco" && address.url) meta.append(el("dt", { textContent: "Backoffice" }), el("dd", {}, backofficeLogin(openLink((bindingLabel(env) || address.hostname) + "/umbraco", address.url + "umbraco", address.title), site, env, address.url + "umbraco")));
+	if (site.kind === "umbraco" && address.url) {
+		const backoffice = el("dd", { className: "meta-with-action" }, backofficeLogin(openLink((bindingLabel(env) || address.hostname) + "/umbraco", address.url + "umbraco", address.title), site, env, address.url + "umbraco"));
+		// Which Umbraco user the Backend button logs in as: beside the backoffice it is for, as a link at the right
+		// (an administrator's alone; not on a site managed from another server, where it is set)
+		if (currentUser.admin && !site.managed_by && backofficeLoginFits(site)) {
+			// Its icon and colour are the button's own (decorate), shown as a link
+			backoffice.append(el("button", { type: "button", className: "meta-action", textContent: "Backoffice login…", title: "Which Umbraco user the Backend button logs in as",
+				onclick: () => run(() => backofficeLoginDialog(site, env)) }));
+		}
+		meta.append(el("dt", { textContent: "Backoffice" }), backoffice);
+	}
 	// A site with no connection in its settings has no datasource to show
 	if ((site.kind === "csharp" || site.kind === "umbraco") && env.database) {
 		meta.append(el("dt", { textContent: "Datasource" }), el("dd", {
@@ -2218,9 +2290,12 @@ function envPanel(site, env) {
 	settings.setAttribute("role", "group");
 	settings.setAttribute("aria-label", "Environment settings");
 	if (!site.admin && env.mode !== "windows" && !missing) {
-		settings.append(el("button", { textContent: "Fix permissions", className: "small", onclick: () => run(async () => {
+		// Shown only when there is something to fix: asked in the background as the card is drawn (permissionsNeeded)
+		settings.append(el("button", { textContent: "Fix permissions", className: "small fix-permissions", hidden: true, onclick: () => run(async () => {
 			if (await ask({ title: "Fix permissions?", message: "Restore www-data ownership and content access for this environment. Scripts and symbolic links are skipped. No service restart is needed.", input: false, ok: "Fix permissions" })) {
-				await openTask({ kind: "fix_permissions", site: site.name, scope: isTarget(env) ? "prod" : "test", ...targetFields(env) });
+				const t = await openTask({ kind: "fix_permissions", site: site.name, scope: isTarget(env) ? "prod" : "test", ...targetFields(env) });
+				// Asked again once it is done: the button goes when nothing is left to fix
+				if (t) t.afterTask = () => { permissionsChecked.delete(site.name + "/" + envKeyOf(env)); renderSite(site.name); };
 			}
 		}) }));
 	}
@@ -2261,7 +2336,7 @@ function envPanel(site, env) {
 		}
 		// Setup first, at the left: the syncs it allows stand at the right. Only with environments: without one there is
 		// nothing to send or receive
-		if (hasProd(site)) sync.prepend(el("button", { textContent: "Sync setup…", className: "small sync-setup", title: dataSyncSummary(env), onclick: () => run(() => openDataSyncDialog(site, env)) }));
+		if (hasProd(site)) sync.prepend(el("button", { textContent: "Sync setup…", className: "small sync-setup", title: dataSyncSummary(env, site), onclick: () => run(() => openDataSyncDialog(site, env)) }));
 	}
 	// Custom scripts: the main site's, or an environment's own (not on Windows); an administrator has the menu also
 	// without one, to make the first
@@ -2302,7 +2377,7 @@ function envPanel(site, env) {
 	// Each environment has its own Umbraco users, also one on another server or on Windows (its connection is written there)
 	// Not on a site managed from another server: its Backoffice login is set where it is managed, and saving it here
 	// connected the site to this Harbor, which does not know it (aogtillon.dk lost its sync)
-	if (currentUser.admin && site.kind === "umbraco" && !site.managed_by && backofficeLoginFits(site)) addManage("Backoffice login…", () => backofficeLoginDialog(site, env));
+	// Backoffice login… stands beside the backoffice in the list above (1.0.92)
 	// A site published from a developer's machine, or any C# site that is only a build here (no project, not an
 	// environment of a site elsewhere): the script that sends it a new build
 	// Python and static sites too: their files are published the same way
@@ -2357,6 +2432,33 @@ function envPanel(site, env) {
 		if (!/^(Publish|Sync setup…|Sync data…|Sync settings…|Start|Stop|Restart|Logs|Clear logs|Check service|Issue certificate|Change environment|Remove environment)$/.test(node.textContent.trim())) node.classList.add("desktop-only");
 	}
 	return panel;
+}
+
+// Fix permissions only where it has something to fix: each card's button is shown when the check finds a file not owned
+// by www-data, or one it cannot read. Asked once per card while the page is open; a fix asks again.
+const permissionsChecked = new Map();
+function showFixPermissions(site) {
+	for (const button of document.querySelectorAll("#envs .fix-permissions, #env-targets .fix-permissions")) {
+		const panel = button.closest(".env");
+		const key = panel?.dataset.env;
+		if (!key) continue;
+		const row = button.closest(".actions");
+		const rowEmpty = () => row?.classList.toggle("only-hidden", ![...row.children].some((node) => !node.hidden));
+		rowEmpty();
+		const scope = key === "main" ? "test" : "prod";
+		const id = site.name + "/" + key;
+		const ask = permissionsChecked.get(id) || api(`/api/sites/${encodeURIComponent(site.name)}/permissions?scope=${scope}${scope === "prod" ? "&target=" + encodeURIComponent(key) : ""}`)
+			.catch(() => ({ needed: null }));
+		permissionsChecked.set(id, ask);
+		ask.then((result) => {
+			if (!button.isConnected) return;
+			// Not told (another server not reached): shown, so it can still be used
+			button.hidden = result.needed === false;
+			if (result.example) button.title = `Not owned by www-data or not readable by it, such as ${result.example}`;
+			// A row left with nothing but its label is not shown
+			rowEmpty();
+		});
+	}
 }
 
 async function serviceAction(site, env, action) {
@@ -3892,7 +3994,7 @@ function publishBash({ site, binding, https, environment, csharp, source, server
 	const quote = (value) => `'${String(value).replaceAll("'", "'\\''")}'`;
 	const lines = [
 		"#!/usr/bin/env bash",
-		`# Publishes ${site} from this machine to ${server} (VNS Harbor). Run it in the project's folder.`,
+		`# Publishes ${site} from this machine to ${server} (Harbor). Run it in the project's folder.`,
 		csharp ? "# It builds the project for the server's architecture and sends the build, with a scripts folder beside it, as one"
 			: `# It sends the files in ${source === "." ? "this folder" : source} (no .git, node_modules or virtual environment), with a scripts folder beside it, as one`,
 		token ? "# tar over HTTPS to Harbor, with your publish token. Harbor checks it, puts it in place"
@@ -3975,7 +4077,7 @@ function publishCmd({ site, binding, https, environment, csharp, source, server,
 	const lines = [
 		"@echo off",
 		"setlocal EnableExtensions EnableDelayedExpansion",
-		`rem Publishes ${site} from this machine to ${server} (VNS Harbor). Run it in the project's folder.`,
+		`rem Publishes ${site} from this machine to ${server} (Harbor). Run it in the project's folder.`,
 		csharp ? "rem It builds the project for the server's architecture and sends the build, with a scripts folder beside it, as one"
 			: `rem It sends the files in ${source === "." ? "this folder" : source} (no .git, node_modules or virtual environment), with a scripts folder beside it, as one`,
 		token ? "rem tar over HTTPS to Harbor, with your publish token. Harbor checks it and puts it in place."
@@ -4466,11 +4568,12 @@ const dataSyncKinds = (from, to) => {
 function dataSyncDestinations(site, source) {
 	return sortedEnvironments(site.environments).filter((env) => env !== source && !isMissingEnv(env) && dataSyncKinds(source, env).length);
 }
-function dataSyncSummary(env) {
+function dataSyncSummary(env, site = {}) {
 	const settings = env.data_sync || {};
 	const settingsText = [settings.settings_send !== false && "sends", isTarget(env) && settings.settings_receive !== false && "receives"].filter(Boolean).join(" and ");
+	// Import at startup: only a site without the VNS.Harbor package (Umbraco 13) has it; one with it is imported by Harbor
 	const importText = settings.settings_import === true ? ", imports at startup" : settings.settings_import === false ? ", no import at startup" : "";
-	const prefix = `Settings: ${settingsText || "off"}${importText}. `;
+	const prefix = `Settings: ${settingsText || "off"}${site.harbor_package ? "" : importText}. `;
 	if (!settings.enabled) return prefix + "Data sync is off";
 	const direction = [settings.send && "sends", settings.receive && "receives"].filter(Boolean).join(" and ") || "neither sends nor receives";
 	const kinds = ["content", "media"].filter((kind) => settings[kind]).join(" and ") || "nothing";
@@ -4483,11 +4586,12 @@ function updateDataSyncForm() {
 	const on = dataSyncForm.elements.enabled.checked;
 	$("#data-sync-options").classList.toggle("off", !on);
 	for (const name of ["send", "receive", "content", "media"]) dataSyncForm.elements[name].disabled = !on;
+	// Import at startup is only for a site without the VNS.Harbor package (Umbraco 13): with it, Harbor has uSync import
+	// what it syncs, while the site runs. Only a choice for a site that receives something: settings, or data.
 	// A site that receives data imports all as it starts: the data it gets is imported that way
 	const receivesData = on && dataSyncForm.elements.receive.checked;
-	// Import at startup is only a choice for a site that receives something: settings, or data
 	const receivesSettings = !$("#data-sync-settings-receive").hidden && dataSyncForm.elements.settings_receive.checked;
-	$("#data-sync-settings-import").hidden = !receivesSettings && !receivesData;
+	$("#data-sync-settings-import").hidden = dataSyncForm.dataset.package === "1" || (!receivesSettings && !receivesData);
 	const importStart = dataSyncForm.elements.settings_import;
 	if (receivesData) importStart.checked = true;
 	else if (importStart.disabled) importStart.checked = dataSyncForm.dataset.import === "1";
@@ -4503,6 +4607,8 @@ function openDataSyncDialog(site, env) {
 	for (const name of ["enabled", "send", "receive", "content", "media"]) dataSyncForm.elements[name].checked = !!settings[name];
 	// Settings sync is on unless it was turned off. The main site is where settings come from: it never receives them.
 	for (const name of ["settings_send", "settings_receive"]) dataSyncForm.elements[name].checked = settings[name] !== false;
+	// A site with the VNS.Harbor package has no Import at startup: Harbor has uSync import what it syncs
+	dataSyncForm.dataset.package = site.harbor_package ? "1" : "";
 	// Import at startup: unset, on for an environment (it imports what it receives) and off for the main site
 	const importStart = typeof settings.settings_import === "boolean" ? settings.settings_import : isTarget(env);
 	dataSyncForm.dataset.import = importStart ? "1" : "";
@@ -4529,8 +4635,8 @@ dataSyncForm.onsubmit = (event) => {
 	event.preventDefault();
 	const elements = dataSyncForm.elements;
 	const settings = Object.fromEntries(["enabled", "send", "receive", "content", "media", "settings_send", "settings_receive"].map((name) => [name, elements[name].checked]));
-	// What was chosen for Import at startup, also while receiving data turns it on. A site that receives nothing has
-	// no such choice: unset, its appsettings.json keeps what it has
+	// What was chosen for Import at startup, also while receiving data turns it on. A site that receives nothing, or has
+	// the VNS.Harbor package, has no such choice: unset, its appsettings.json keeps what it has
 	if (!$("#data-sync-settings-import").hidden) settings.settings_import = dataSyncForm.dataset.import === "1";
 	if (settings.enabled && !settings.content && !settings.media) {
 		toast("Choose content, media or both.", "error");
@@ -7963,8 +8069,8 @@ async function openServerSettings() {
 		const [server, keepAlive] = await Promise.all([loadServerAddress().catch(() => null),
 			api("/api/keep-alive").catch(() => ({ installed: false, enabled: false, interval_minutes: 5 }))]);
 		const domains = await api("/api/temp-domains").catch(() => ({ domains: [] }));
-		// Two beside each other: the address and the mail server, then the temporary addresses and keep-alive
-		list.replaceChildren(publicAddressCard(server), await mailCard(), tempDomainsCard(domains.domains, server), keepAliveCard(keepAlive));
+		// The address and the temporary addresses, then keep-alive (its mail and the mail server are under Notifications)
+		list.replaceChildren(publicAddressCard(server), tempDomainsCard(domains.domains, server), keepAliveCard(keepAlive));
 	} finally {
 		list.removeAttribute("aria-busy");
 	}
@@ -8424,7 +8530,7 @@ async function openExportSettings() {
 		const sites = el("section", { className: "tool-card tool-card-wide tone-purple convert-card" },
 			el("div", { className: "tool-head" }, el("span", { className: "tool-icon" }, svgIcon("download")),
 				el("div", { className: "tool-title" }, el("strong", { textContent: "Sites" }),
-					el("small", { textContent: "Export… builds a site and the environments chosen for Windows or Linux, with its source and its databases, and takes VNS Harbor out" }))),
+					el("small", { textContent: "Export… builds a site and the environments chosen for Windows or Linux, with its source and its databases, and takes Harbor out" }))),
 			data.sites.length ? el("ul", { className: "convert-groups" }, ...data.sites.map(group)) : el("p", { className: "tool-text", textContent: "No sites here." }));
 		const cards = [sites];
 		// Those of sites that are no longer here (deleted with their export): on their own, where Restore puts one back
@@ -8561,7 +8667,7 @@ function askExport(site) {
 		el("div", { className: "ns-section", textContent: "What goes" }), envs,
 		el("div", { className: "ns-section", textContent: "Its link lives, after its first download" }), lifetime,
 		...(managed ? [] : [el("div", { className: "ns-section", textContent: "Afterwards" }), remove, warning, databases, ...notes]), error);
-	openFormDialog({ icon: "download", title: `Export ${site.site}`, text: "For a customer, without VNS Harbor", ok: "Export", fields: [box], submit: async (form) => {
+	openFormDialog({ icon: "download", title: `Export ${site.site}`, text: "For a customer, without Harbor", ok: "Export", fields: [box], submit: async (form) => {
 		const targets = exportable.filter((env) => form.elements["env_" + env.target]?.checked).map((env) => env.target);
 		if (!targets.length) { error.textContent = "Choose what goes."; return false; }
 		const deleting = Boolean(form.elements.delete_site?.checked);
@@ -8895,8 +9001,10 @@ async function deleteConverted(item, name) {
 
 // Updates, a part of Settings: the version here, Check for updates, the update with its notes, and going back
 let lastUpdateCheck = null;
+let osUpdates;
 async function openUpdatesSettings() {
-	if (!lastUpdateCheck) await checkSystemUpdate(false);
+	const [os] = await Promise.all([api("/api/health/updates").catch(() => null), lastUpdateCheck ? null : checkSystemUpdate(false)]);
+	osUpdates = os;
 	drawUpdates();
 }
 function drawUpdates() {
@@ -8921,7 +9029,9 @@ function drawUpdates() {
 			: "Only the release installed before the one in use can be gone back to, and none is here.",
 		actions: earlier ? [tonedButton(`Roll back to v${earlier.version}…`, "undo", "amber", () => rollbackHarbor(earlier))] : [] });
 	back.classList.add("actions-below");
-	$("#server-updates-list").replaceChildren(version, back);
+	const os = healthUpdatesCard(osUpdates);
+	os.classList.add("tool-card-wide");
+	$("#server-updates-list").replaceChildren(version, back, os);
 }
 $("#header-files").onclick = () => $("#btn-browse").click();
 
@@ -9054,6 +9164,352 @@ function openFormDialog({ icon, title, text = "", fields, ok = "", submit = null
 }
 $("#form-dialog-cancel").onclick = () => formDialog.close();
 
+// ---- Health: how the server is (lib/server_health.py samples it every 5 minutes, and keeps 7 days), and its OS updates
+let healthData = null;
+let healthDays = 1;
+// Each measure its own hue, the same in every chart and tile; past a limit is told by the dashed line, not by colour
+const HEALTH_NAMES = { disk: "Disk almost full", memory: "Memory almost full", swap: "Swap in use", updates: "Updates waiting", reboot: "Restart needed" };
+const HEALTH_TONES = { memory: "var(--blue)", swap: "var(--purple)", load: "#39c5bb", disk: "#db61a2" };
+
+async function openHealth() {
+	const list = $("#server-health-list");
+	list.setAttribute("aria-busy", "true");
+	if (!list.childElementCount) list.replaceChildren(loadingState("Reading the server's health…"));
+	try {
+		const [data, alerts] = await Promise.all([api("/api/health"), api("/api/health/alerts").catch(() => null)]);
+		healthData = { ...data, alerts };
+		drawHealth();
+	} finally {
+		list.removeAttribute("aria-busy");
+	}
+}
+// The time the charts show, in their card's head: the last day or the last week
+function healthRange() {
+	return el("div", { className: "tool-actions" }, el("div", { className: "crontab-output health-range", role: "group", ariaLabel: "Time shown" },
+		...[[1, "24 hours"], [7, "7 days"]].map(([days, label]) => el("button", { type: "button", className: "crontab-seg", textContent: label,
+			ariaPressed: String(days === healthDays), onclick: () => { healthDays = days; drawHealth(); } }))));
+}
+
+function drawHealth() {
+	const data = healthData, now = data.now, limits = data.alerts || data.settings || {};
+	const since = Date.now() / 1000 - healthDays * 86400;
+	const open = Object.entries(data.open || {});
+	const past = new Set(open.map(([key]) => key));
+	const samples = (data.samples || []).filter((item) => item.at >= since);
+	// The disks and what each measure is now: a tile each, the bar filled as far as it is used
+	const tile = (key, title, value, detail, limit, tone) => el("div", { className: "health-tile" + (past.has(key) ? " past" : "") },
+		el("span", { className: "health-tile-title" }, el("span", { className: "health-dot", style: `background:${tone}` }), title),
+		el("strong", { className: "health-tile-value", textContent: value }),
+		el("div", { className: "health-bar" }, el("span", { style: `width:${Math.min(100, Math.max(1, parseFloat(value) || 0))}%;background:${tone}` }),
+			...(limit ? [el("i", { style: `left:${limit}%`, title: `Limit ${limit} %` })] : [])),
+		el("small", { textContent: detail }));
+	const disks = Object.entries(now.disks || {});
+	const tiles = [
+		tile("memory", "Memory", `${now.memory} %`, `of ${(now.memory_mb / 1024).toFixed(1)} GB`, limits.memory, HEALTH_TONES.memory),
+		...(now.swap === null ? [] : [tile("swap", "Swap", `${now.swap} %`, `of ${(now.swap_mb / 1024).toFixed(1)} GB`, limits.swap, HEALTH_TONES.swap)]),
+		...disks.map(([mount, disk]) => tile("disk:" + mount, `Disk ${mount}`, `${disk.used} %`, `${disk.free_gb} GB free of ${disk.size_gb} GB`, limits.disk, HEALTH_TONES.disk)),
+		el("div", { className: "health-tile" },
+			el("span", { className: "health-tile-title" }, el("span", { className: "health-dot", style: `background:${HEALTH_TONES.load}` }), "Load"),
+			el("strong", { className: "health-tile-value", textContent: now.load.toFixed(2) }),
+			el("small", { textContent: `${now.cpus} CPU${now.cpus === 1 ? "" : "s"}: ${now.load / now.cpus >= 1 ? "busy" : "room to spare"}` })),
+	];
+	const overview = el("section", { className: "tool-card tool-card-wide tone-blue health-now" },
+		el("div", { className: "tool-head" }, el("span", { className: "tool-icon" }, svgIcon("activity")),
+			el("div", { className: "tool-title" }, el("strong", { textContent: "Now" }),
+				el("small", { textContent: `Sampled every 5 minutes · ${samples.length ? "since " + formatDate(samples[0].at * 1000) : "the first sample comes within 5 minutes"}` })),
+			...(open.length === 1 ? [el("span", { className: "tool-state bad", textContent: open[0][1].why })]
+				: open.length ? [el("span", { className: "tool-state bad", textContent: `${open.length} things need someone` })]
+				: [el("span", { className: "tool-state ok", textContent: "Fine" })])),
+		el("div", { className: "health-tiles" }, ...tiles),
+		// What is past its limit, each by name, why and since when (the same as the alerts mail)
+		...(open.length ? [el("ul", { className: "health-open" }, ...open.map(([key, item]) => el("li", {}, svgIcon(key === "updates" ? "shield" : key === "reboot" ? "restart" : "alert"),
+			el("strong", { textContent: HEALTH_NAMES[key.split(":")[0]] + (key.startsWith("disk:") ? " " + key.slice(5) : "") }),
+			el("span", { textContent: item.why }), el("small", { textContent: "since " + formatDate(item.since * 1000) }),
+			...(key === "updates" || key === "reboot" ? [tonedButton("Updates", "download", "amber", () => go("#server/updates"))] : []))))] : []),
+		...(data.installed ? [] : [el("p", { className: "server-action-note", textContent: "Nothing samples it yet: Harbor's next update installs the job, or save Server health under Notifications." })]));
+	const charts = el("section", { className: "tool-card tool-card-wide tone-purple health-charts" },
+		el("div", { className: "tool-head" }, el("span", { className: "tool-icon" }, svgIcon("activity")),
+			el("div", { className: "tool-title" }, el("strong", { textContent: healthDays === 1 ? "The last 24 hours" : "The last 7 days" }),
+				el("small", { textContent: "Hover a chart for the time and the value; the dashed line is the limit its alert has" })), healthRange()),
+		samples.length < 2 ? el("p", { className: "hint", textContent: "Not enough samples yet: come back in a little while." })
+			: el("div", { className: "health-chart-grid" },
+				healthChart("Memory", samples, (item) => item.memory, { max: 100, unit: " %", limit: limits.memory, tone: HEALTH_TONES.memory }),
+				...(now.swap === null ? [] : [healthChart("Swap", samples, (item) => item.swap, { max: 100, unit: " %", limit: limits.swap, tone: HEALTH_TONES.swap })]),
+				healthChart(`Load (${now.cpus} CPU${now.cpus === 1 ? "" : "s"})`, samples, (item) => item.load, { max: Math.max(1, ...samples.map((item) => item.load)) * 1.25, unit: "", digits: 2, tone: HEALTH_TONES.load }),
+				...disks.map(([mount]) => healthChart(`Disk ${mount}`, samples, (item) => item.disks?.[mount]?.used, { max: 100, unit: " %", limit: limits.disk, tone: HEALTH_TONES.disk }))));
+	$("#server-health-list").replaceChildren(overview, charts);
+}
+
+// One measure over time: a line with its area, the limit dashed, a crosshair and the value where the pointer is.
+// Points further apart than three samples are a gap (nothing sampled then), not a line across it.
+function healthChart(title, samples, value, { max = 100, unit = "", digits = 1, limit = 0, tone }) {
+	const width = 600, height = 150;
+	const step = healthDays === 1 ? 1 : 6;
+	// Seven days: the highest of each half hour, so a peak is not averaged away
+	const points = [];
+	for (let i = 0; i < samples.length; i += step) {
+		const group = samples.slice(i, i + step).filter((item) => value(item) != null);
+		if (group.length) points.push([group[0].at, Math.max(...group.map(value))]);
+	}
+	const first = samples[0].at, last = samples.at(-1).at, span = Math.max(1, last - first);
+	const x = (at) => (at - first) / span * width, y = (v) => height - Math.min(1, v / max) * height;
+	const gap = 15 * 60 * step;
+	let line = "", area = "", run = [];
+	const flush = () => {
+		if (!run.length) return;
+		line += run.map(([at, v], i) => `${i ? "L" : "M"}${x(at).toFixed(1)},${y(v).toFixed(1)}`).join("");
+		area += `M${x(run[0][0]).toFixed(1)},${height}` + run.map(([at, v]) => `L${x(at).toFixed(1)},${y(v).toFixed(1)}`).join("") + `L${x(run.at(-1)[0]).toFixed(1)},${height}Z`;
+		run = [];
+	};
+	points.forEach((point, i) => { if (i && point[0] - points[i - 1][0] > gap) flush(); run.push(point); });
+	flush();
+	const ns = "http://www.w3.org/2000/svg";
+	const svg = document.createElementNS(ns, "svg");
+	svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+	svg.setAttribute("preserveAspectRatio", "none");
+	svg.setAttribute("class", "health-plot");
+	svg.setAttribute("role", "img");
+	svg.setAttribute("aria-label", `${title} over ${healthDays === 1 ? "the last 24 hours" : "the last 7 days"}`);
+	const shape = (name, attrs) => { const node = document.createElementNS(ns, name); for (const [key, val] of Object.entries(attrs)) node.setAttribute(key, val); svg.append(node); return node; };
+	for (const fraction of [0.25, 0.5, 0.75]) shape("line", { x1: 0, x2: width, y1: height * fraction, y2: height * fraction, class: "health-grid" });
+	shape("path", { d: area, fill: tone, class: "health-area" });
+	shape("path", { d: line, stroke: tone, class: "health-line" });
+	if (limit && limit < max) shape("line", { x1: 0, x2: width, y1: y(limit), y2: y(limit), class: "health-limit" });
+	const latest = points.at(-1);
+	const format = (v) => `${Number(v).toFixed(digits).replace(/\.0+$/, "")}${unit}`;
+	const tip = el("div", { className: "health-tip", hidden: true });
+	const cross = el("div", { className: "health-cross", hidden: true }, el("span", { style: `background:${tone}` }));
+	const plot = el("div", { className: "health-plot-wrap" }, svg, cross, tip,
+		...(limit && limit < max ? [el("span", { className: "health-limit-label", style: `top:${y(limit) / height * 100}%`, textContent: `Limit ${limit}${unit}` })] : []));
+	// The nearest point to the pointer (or a finger), its time and value beside a crosshair
+	const show = (event) => {
+		const box = plot.getBoundingClientRect();
+		const at = first + Math.min(1, Math.max(0, (event.clientX - box.left) / box.width)) * span;
+		let best = points[0];
+		for (const point of points) if (Math.abs(point[0] - at) < Math.abs(best[0] - at)) best = point;
+		const left = x(best[0]) / width * 100, top = y(best[1]) / height * 100;
+		cross.hidden = tip.hidden = false;
+		cross.style.left = `${left}%`;
+		cross.firstChild.style.top = `${top}%`;
+		tip.replaceChildren(el("strong", { textContent: format(best[1]) }), el("span", { textContent: formatDate(best[0] * 1000) }));
+		tip.style.left = `${left}%`;
+		tip.classList.toggle("end", left > 70);
+	};
+	plot.addEventListener("pointermove", show);
+	plot.addEventListener("pointerdown", show);
+	plot.addEventListener("pointerleave", () => { cross.hidden = tip.hidden = true; });
+	const peak = points.reduce((most, point) => point[1] > most ? point[1] : most, 0);
+	return el("figure", { className: "health-chart" },
+		el("figcaption", {}, el("span", { className: "health-dot", style: `background:${tone}` }), el("strong", { textContent: title }),
+			el("span", { className: "health-chart-now", textContent: latest ? `${format(latest[1])} now · highest ${format(peak)}` : "" })),
+		plot,
+		el("div", { className: "health-axis" }, el("span", { textContent: formatDate(first * 1000) }), el("span", { textContent: "Now" })));
+}
+
+// The OS updates: what waits, which are security updates, whether they install by themselves, and a restart asked for
+function healthUpdatesCard(updates) {
+	if (!updates) return el("section", { className: "tool-card tool-card-wide tone-amber" },
+		el("div", { className: "tool-head" }, el("span", { className: "tool-icon" }, svgIcon("download")),
+			el("div", { className: "tool-title" }, el("strong", { textContent: "OS updates" }), el("small", { textContent: "Not read yet" })),
+			el("div", { className: "tool-actions" }, tonedButton("Check now", "search", "blue", checkHealthUpdates))));
+	const security = updates.security, other = updates.count - security;
+	const card = toolCard({ icon: "download", tone: "amber", title: "OS updates",
+		detail: `Checked ${formatDate(updates.checked * 1000)} from apt's lists`,
+		state: security ? `${security} security` : updates.count ? `${updates.count} waiting` : "Up to date", stateClass: security ? "bad" : updates.count ? "" : "ok",
+		text: updates.unattended
+			? "Security updates install by themselves once a day (unattended-upgrades); other updates wait for someone."
+			: "Nothing installs updates by itself here: turn on the automatic security updates, so a hole is closed without waiting for someone.",
+		actions: [tonedButton("Check now", "search", "blue", checkHealthUpdates),
+			...(updates.count ? [tonedButton("Install updates…", "download", "green", () => askOsUpdate(updates))] : []),
+			...(updates.unattended ? [] : [tonedButton("Turn on automatic security updates…", "shield", "purple", turnOnUnattended)])] });
+	card.querySelector(".tool-head").append(...card.querySelectorAll(":scope > .tool-actions"));
+	card.append(el("div", { className: "health-update-chips" },
+		el("span", { className: "crontab-chip " + (updates.unattended ? "ok" : "warn") }, svgIcon(updates.unattended ? "check" : "alert"), updates.unattended ? "Automatic security updates on" : "Automatic security updates off"),
+		el("span", { className: "crontab-chip " + (security ? "bad" : "ok") }, svgIcon("shield"), `${security} security update${security === 1 ? "" : "s"}`),
+		el("span", { className: "crontab-chip" }, svgIcon("package"), `${other} other update${other === 1 ? "" : "s"}`),
+		...(updates.reboot ? [el("span", { className: "crontab-chip warn", title: updates.reboot_packages.join(", ") }, svgIcon("restart"), "Restart needed")] : [])));
+	if (updates.reboot) card.append(el("p", { className: "server-action-note", textContent: "The server asks to be restarted" + (updates.reboot_packages.length ? ` after updating ${updates.reboot_packages.join(", ")}` : "") + ". Restart it when the sites can be away for a minute." }));
+	if (updates.packages.length) {
+		const rows = el("ul", { className: "health-packages", hidden: true }, ...updates.packages.map((item) => el("li", {},
+			el("code", { textContent: item.name }), el("span", { textContent: item.version }),
+			...(item.security ? [el("span", { className: "crontab-chip bad", textContent: "Security" })] : []))));
+		const toggle = el("button", { type: "button", className: "convert-kept-toggle", ariaExpanded: "false" }, svgIcon("package"), `Packages ${updates.packages.length}`, svgIcon("chevron"));
+		toggle.onclick = () => { rows.hidden = !rows.hidden; toggle.setAttribute("aria-expanded", String(!rows.hidden)); };
+		card.append(toggle, rows);
+	}
+	return card;
+}
+// What an update restarts, by the packages it takes: said before it is installed
+const OS_UPDATE_RESTARTS = [[/^apache2/, "Apache: every site is away for a moment"], [/^mssql-server/, "Microsoft SQL Server: the sites on it wait until it is back"],
+	[/^postgresql/, "PostgreSQL: the sites on it wait until it is back"], [/^(dotnet|aspnetcore)-/, "The .NET sites that use it, once they are restarted"],
+	[/^(linux-image|linux-generic|linux-modules)/, "A new kernel: the server asks to be restarted afterwards"], [/^openssh-server/, "SSH"]];
+function askOsUpdate(updates) {
+	const security = updates.packages.filter((item) => item.security);
+	let scope = security.length ? "security" : "all";
+	const restarts = el("ul", { className: "os-update-restarts" });
+	const said = () => {
+		const names = (scope === "security" ? security : updates.packages).map((item) => item.name);
+		const found = OS_UPDATE_RESTARTS.filter(([pattern]) => names.some((name) => pattern.test(name))).map(([, text]) => text);
+		restarts.replaceChildren(...(found.length ? found.map((text) => el("li", {}, svgIcon("restart"), text)) : [el("li", {}, svgIcon("check"), "Nothing the sites need is restarted")]));
+	};
+	const choice = (value, title, sub, count) => el("label", { className: "type-card" + (count ? "" : " disabled") },
+		el("input", { type: "radio", name: "scope", value, checked: value === scope, disabled: !count, onchange: () => { scope = value; said(); } }),
+		el("span", { className: "tc-title", textContent: title }), el("span", { className: "tc-sub", textContent: sub }));
+	said();
+	openFormDialog({ icon: "download", title: "Install updates", text: "The OS updates installed now, in a window that shows each step", ok: "Install",
+		fields: [
+			el("fieldset", { className: "report-when os-update-scope" }, el("legend", { className: "visually-hidden", textContent: "Which" }),
+				choice("security", `Security updates · ${security.length}`, "The ones that close a hole: what unattended-upgrades installs", security.length),
+				choice("all", `All updates · ${updates.count}`, "Every update waiting, the security updates too. Nothing is removed.", updates.count)),
+			el("div", { className: "ns-section", textContent: "What it restarts" }), restarts,
+			el("p", { className: "hint", textContent: "A config file changed here is kept as it is. apt waits if unattended-upgrades is installing just now." })],
+		submit: async () => {
+			const t = await openTask({ kind: "server_tool", tool: "os_update", scope });
+			if (t) t.afterTask = afterOsUpdate;
+		} });
+}
+async function checkHealthUpdates() {
+	toast("Reading the updates…");
+	osUpdates = await api("/api/health/updates", { method: "POST", json: {} });
+	drawUpdates();
+}
+// After updates are installed or turned on: what waits now, where it is shown
+async function afterOsUpdate() {
+	if (serverTabOpen("updates")) await openUpdatesSettings();
+	else if (serverTabOpen("health")) await openHealth();
+}
+async function turnOnUnattended() {
+	if (!await ask({ title: "Turn on automatic security updates?", message: "unattended-upgrades is installed if it is not here, and installs Ubuntu's security updates once a day by itself. Other updates still wait for someone. A security update of a service (such as Apache or SQL Server) restarts it.",
+		input: false, ok: "Turn on" })) return;
+	const t = await openTask({ kind: "server_tool", tool: "unattended_on" });
+	if (t) t.afterTask = async () => { await api("/api/health/updates", { method: "POST", json: {} }).catch(() => null); await afterOsUpdate(); };
+}
+
+// Server health under Notifications: who is mailed, and the limit of each check
+function healthAlertsCard(alerts) {
+	const watched = [alerts.disk && `disk ${alerts.disk} %`, alerts.memory && `memory ${alerts.memory} %`, alerts.swap && `swap ${alerts.swap} %`,
+		alerts.updates !== "off" && (alerts.updates === "security" ? "security updates" : "updates"), alerts.reboot && "restart needed"].filter(Boolean);
+	const open = Object.keys(alerts.open || {}).length;
+	const card = toolCard({ icon: "activity", tone: "blue", title: "Server health",
+		detail: alerts.enabled ? `Mailed to ${alerts.emails.join(", ")}` + (alerts.mail ? "" : " · no mail server yet") : alerts.emails.length ? `Off · set up for ${alerts.emails.join(", ")}` : "Not set up",
+		state: alerts.enabled ? (open ? `${open} past a limit` : "On") : "Off", stateClass: alerts.enabled ? (open ? "bad" : "ok") : "",
+		text: `A mail when the server needs someone, and when it is fine again: ${watched.join(", ") || "nothing chosen"}. Its charts are under Health.`,
+		actions: alerts.enabled
+			? [tonedButton("Edit…", "pencil", "amber", () => askHealthAlerts(alerts)), tonedButton("Turn off", "stop", "red", async () => {
+				await api("/api/health/alerts", { method: "PUT", json: { ...healthSettings(alerts), enabled: false } });
+				toast("The health alerts are off.", "ok");
+				await refreshNotifications();
+			})]
+			: [tonedButton(alerts.emails.length ? "Turn on…" : "Set up…", "bell", "blue", () => askHealthAlerts(alerts))] });
+	card.querySelector(".tool-head").append(...card.querySelectorAll(":scope > .tool-actions"));
+	if (alerts.enabled && alerts.mail_error) card.append(el("p", { className: "server-action-note", textContent: `The last alert could not be sent (${formatDate(alerts.mail_error.at * 1000)}): ${alerts.mail_error.error}` }));
+	return card;
+}
+const healthSettings = (alerts) => ({ enabled: alerts.enabled, emails: alerts.emails, disk: alerts.disk, memory: alerts.memory, swap: alerts.swap, updates: alerts.updates, reboot: alerts.reboot });
+function askHealthAlerts(alerts) {
+	const percent = (name, label, value, hint) => el("div", { className: "health-limit-field" },
+		el("label", {}, label, el("span", { className: "health-percent" }, el("input", { type: "number", name, min: 0, max: 99, value, required: true }), el("span", { textContent: "%" }))),
+		el("small", { className: "hint", textContent: hint }));
+	let updates = alerts.updates;
+	const segments = [["security", "Security updates", "shield"], ["any", "Any update", "package"], ["off", "Not told", "eye-off"]].map(([value, label, icon]) =>
+		Object.assign(el("button", { type: "button", className: "crontab-seg", ariaPressed: String(value === updates) }, svgIcon(icon), label), { onclick: () => {
+			updates = value;
+			for (const other of segments) other.setAttribute("aria-pressed", String(other.textContent === label));
+		} }));
+	const fields = [
+		el("label", {}, "To", el("input", { name: "emails", value: alerts.emails.join(", "), placeholder: "ops@example.com, another@example.com", autocomplete: "off", spellcheck: false, required: true })),
+		el("p", { className: "hint", textContent: "One address or more, with commas between them. Saved, the alerts are on: Turn off on the card stops them." }),
+		el("div", { className: "ns-section", textContent: "Limits" }),
+		el("div", { className: "health-limit-fields" },
+			percent("disk", "Disk", alerts.disk, "A disk used past it"),
+			percent("memory", "Memory", alerts.memory, "Past it twice in a row"),
+			percent("swap", "Swap", alerts.swap, "Swap used past it")),
+		el("p", { className: "hint", textContent: "A percent from 10 to 99, or 0 to leave it out." }),
+		el("div", { className: "ns-section", textContent: "Updates" }),
+		el("div", { className: "crontab-output health-updates-choice", role: "group", ariaLabel: "Updates" }, ...segments),
+		checkOption("reboot", "Restart needed", "When an update asks for the server to be restarted", alerts.reboot, "restart", "amber"),
+		...(alerts.mail ? [] : [el("p", { className: "server-action-note", textContent: "No mail server is set up yet: the alerts are sent once one is (Mail server, under Notifications)." })]),
+	];
+	const typed = (form) => ({ enabled: true, emails: typedEmails(form), disk: parseInt(form.elements.disk.value, 10) || 0, memory: parseInt(form.elements.memory.value, 10) || 0,
+		swap: parseInt(form.elements.swap.value, 10) || 0, updates, reboot: form.elements.reboot.checked });
+	openFormDialog({ icon: "activity", title: "Server health", text: "A mail when the server needs someone, and when it is fine again", fields, ok: "Save",
+		extra: alerts.mail ? [Object.assign(tonedButton("Send test", "send", "purple", async () => {
+			const emails = typedEmails($("#form-dialog"));
+			if (!emails.length) return toast("Enter the address to send the test to.", "error");
+			showMailPreview(await api("/api/health/alerts/test", { method: "POST", json: { emails } }), "The test is sent.");
+		}), { title: "Mail how the server is now, by the limits saved, to the addresses above" })] : [],
+		submit: async (form) => {
+			await api("/api/health/alerts", { method: "PUT", json: typed(form) });
+			toast("The health alerts are on.", "ok");
+			await refreshNotifications();
+		} });
+}
+
+// Scheduled jobs: the log each job writes kept small, rotated weekly, the last 8 kept compressed
+function logrotateCard(state) {
+	const card = toolCard({ icon: "eraser", tone: "teal", title: "Keep the logs small",
+		detail: state.on ? "Each job's log rotated weekly, the last 8 kept compressed" : "Off: each job's log grows as long as the job writes to it",
+		state: state.on ? "On" : "Off", stateClass: state.on ? "ok" : "",
+		actions: [state.on
+			? tonedButton("Turn off", "stop", "red", () => logrotateTask(false))
+			: tonedButton("Turn on", "play", "green", () => logrotateTask(true))] });
+	card.querySelector(".tool-head").append(...card.querySelectorAll(":scope > .tool-actions"));
+	return card;
+}
+async function logrotateTask(on) {
+	const t = await openTask({ kind: "server_tool", tool: on ? "logrotate_on" : "logrotate_off" });
+	if (t) t.afterTask = () => { if (serverTabOpen("jobs")) return openCrontab(); };
+}
+
+// ---- Notifications: the mail Harbor sends, in one place: the mail server, what keep-alive finds wrong with the sites,
+// usage over a limit, and scheduled jobs that fail. Each card is the one its part had; each saves and comes back here.
+async function openNotifications() {
+	const list = $("#server-notifications-list");
+	list.setAttribute("aria-busy", "true");
+	if (!list.childElementCount) list.replaceChildren(loadingState("Reading the notifications…"));
+	try {
+		const [keepAlive, usage, crontab, alerts, health] = await Promise.all([api("/api/keep-alive").catch(() => null), api("/api/usage").catch(() => null),
+			api("/api/server/crontab").catch(() => null), api("/api/server/cron-alerts").catch(() => null), api("/api/health/alerts").catch(() => null)]);
+		if (crontab) crontabEntries = crontab.entries || [];
+		cronAlerts = alerts;
+		list.replaceChildren(await mailCard(), ...(keepAlive?.installed ? [siteReportCard(keepAlive)] : []),
+			...(usage ? [usageCard(usage)] : []), ...(alerts && crontab ? [cronAlertsCard()] : []), ...(health ? [healthAlertsCard(health)] : []));
+	} finally {
+		list.removeAttribute("aria-busy");
+	}
+}
+// After a change in a notification's card or dialog: the pane it was made from, drawn again
+async function refreshNotifications() {
+	if (serverTabOpen("notifications")) await openNotifications();
+	else if (serverTabOpen("settings")) await openServerSettings();
+	else if (serverTabOpen("jobs")) await openCrontab();
+	else if (serverTabOpen("usage")) await openUsageSettings();
+	else if (serverTabOpen("health")) await openHealth();
+}
+
+// What keep-alive finds wrong with the sites, mailed: who gets it, when, and for what
+function siteReportCard(keepAlive) {
+	const report = keepAlive.report;
+	const when = report ? { change: "when something breaks", daily: "once a day", both: "when something breaks, and once a day" }[report.when] : "";
+	const card = toolCard({ icon: "activity", tone: "green", title: "Site problems",
+		detail: report?.enabled ? `Mailed to ${report.emails.join(", ")} · ${when}` + (keepAlive.mail ? "" : " · no mail server yet")
+			: report?.emails?.length ? `Off · set up for ${report.emails.join(", ")}, ${when}` : "Not set up",
+		state: report?.enabled ? "On" : "Off", stateClass: report?.enabled ? "ok" : "",
+		text: "What keep-alive finds wrong with the sites and environments: not answering, a certificate error or one about to expire, a failed service or a site stopped. A mail when it breaks and when it works again, once a day, or both.",
+		actions: [tonedButton("Log", "file", "blue", showKeepAliveLog),
+			...(report?.enabled
+				? [tonedButton("Edit…", "pencil", "amber", () => askReport(keepAlive)),
+					tonedButton("Turn off", "stop", "red", async () => {
+						await api("/api/keep-alive", { method: "PUT", json: { report: { ...report, enabled: false } } });
+						toast("The report is off.", "ok");
+						await refreshNotifications();
+					})]
+				: [tonedButton(report?.emails?.length ? "Turn on…" : "Set up…", "bell", "green", () => askReport(keepAlive))])] });
+	card.querySelector(".tool-head").append(...card.querySelectorAll(":scope > .tool-actions"));
+	if (!keepAlive.enabled) card.append(el("p", { className: "server-action-note", textContent: "Keep-alive is off (General): nothing is checked, so nothing is mailed." }));
+	return card;
+}
+
 // ---- keep-alive's report and log, and the mail server it is sent through
 const REPORT_WHEN = [["change", "When something breaks", "And when it works again: one mail each, not one a run"],
 	["daily", "Once a day", "At 7, what is wrong and what broke in the last day, if anything"],
@@ -9076,7 +9532,7 @@ function askReport(keepAlive) {
 				el("span", { className: "tc-title", textContent: title }), el("span", { className: "tc-sub", textContent: sub })))),
 		el("div", { className: "ns-section", textContent: "About" }),
 		el("div", { className: "report-checks" }, ...REPORT_CHECKS.map(([key, title, sub, icon, tone]) => checkOption("check_" + key, title, sub, report.checks.includes(key), icon, tone))),
-		...(keepAlive.mail ? [] : [el("p", { className: "server-action-note", textContent: "No mail server is set up yet: the report is sent once one is (Mail server, under General)." })]),
+		...(keepAlive.mail ? [] : [el("p", { className: "server-action-note", textContent: "No mail server is set up yet: the report is sent once one is (Mail server, under Notifications)." })]),
 	];
 	// What is typed, for Save and for the test run before it. Saved, it is on: Turn off on the card stops it.
 	const typed = (form) => ({
@@ -9092,7 +9548,7 @@ function askReport(keepAlive) {
 			const next = typed(form);
 			await api("/api/keep-alive", { method: "PUT", json: { report: next } });
 			toast("The report is on.", "ok");
-			await openServerSettings();
+			await refreshNotifications();
 		} });
 }
 
@@ -9112,14 +9568,13 @@ function usageCard(usage) {
 		detail: usage.enabled ? `Mailed to ${usage.emails.join(", ")}` + (usage.mail ? "" : " · no mail server yet") : usage.emails.length ? `Off · set up for ${usage.emails.join(", ")}` : "Not set up",
 		state: usage.enabled ? "On" : "Off", stateClass: usage.enabled ? "ok" : "",
 		text: "A mail when a site or database a user made grows past the size their limits allow, and when it is under again. The limits are set on each user, under Users. Checked once an hour.",
-		actions: [tonedButton("Check now", "search", "blue", checkUsage),
-			...(usage.enabled
+		actions: [...(usage.enabled
 				? [tonedButton("Edit…", "pencil", "amber", () => askUsage(usage)), tonedButton("Turn off", "stop", "red", async () => {
 					await api("/api/usage", { method: "PUT", json: { enabled: false, emails: usage.emails } });
 					toast("The usage alerts are off.", "ok");
-					await openUsageSettings();
+					await refreshNotifications();
 				})]
-				: [toolButton(usage.emails.length ? "Turn on…" : "Set up…", () => askUsage(usage), "primary")])] });
+				: [tonedButton(usage.emails.length ? "Turn on…" : "Set up…", "bell", "amber", () => askUsage(usage))])] });
 	card.querySelector(".tool-head").append(...card.querySelectorAll(":scope > .tool-actions"));
 	if (usage.checked) {
 		card.append(el("ul", { className: "report-problems usage-over" }, ...usageLines(usage.over)),
@@ -9131,13 +9586,24 @@ function askUsage(usage) {
 	openFormDialog({ icon: "archive", title: "Usage alerts", text: "Who is mailed when a user's site or database grows past its limit", ok: "Save",
 		fields: [el("label", {}, "To", el("input", { name: "emails", value: usage.emails.join(", "), placeholder: "ops@example.com, another@example.com", autocomplete: "off", spellcheck: false, required: true })),
 			el("p", { className: "hint", textContent: "One address or more, with commas between them. Saved, the alerts are on: Turn off on the card stops them." }),
-			...(usage.mail ? [] : [el("p", { className: "server-action-note", textContent: "No mail server is set up yet: the alerts are sent once one is (Mail server, under General)." })])],
+			...(usage.mail ? [] : [el("p", { className: "server-action-note", textContent: "No mail server is set up yet: the alerts are sent once one is (Mail server, under Notifications)." })])],
+		// A test mail to the addresses typed, with what is over its limit now: shown over the dialog, which stays as typed
+		extra: usage.mail ? [Object.assign(tonedButton("Send test", "send", "purple", () => testUsage(typedEmails($("#form-dialog")))),
+			{ title: "Measure everything now, and mail a test of the alerts to the addresses above: nothing is saved" })] : [],
 		submit: async (form) => {
-			const emails = form.elements.emails.value.split(/[\s,;]+/).map((item) => item.trim()).filter(Boolean);
+			const emails = typedEmails(form);
 			await api("/api/usage", { method: "PUT", json: { enabled: true, emails } });
 			toast("The usage alerts are on.", "ok");
-			await openUsageSettings();
+			await refreshNotifications();
 		} });
+}
+const typedEmails = (form) => form.elements.emails.value.split(/[\s,;]+/).map((item) => item.trim()).filter(Boolean);
+// As keep-alive's test run: the mail as it was sent, shown over the dialog
+async function testUsage(emails) {
+	if (!emails.length) return toast("Enter the address to send the test to.", "error");
+	toast("Measuring the sites and databases…");
+	const result = await api("/api/usage/test", { method: "POST", json: { emails } });
+	showMailPreview(result, "The test is sent.");
 }
 // In a user's window just opened: the size field of one site ({site}) or database ({connection, database}) of theirs,
 // its card folded out, scrolled to, lit for a moment and ready to type in
@@ -9170,11 +9636,8 @@ function focusUserLimit(target) {
 async function openUsageSettings() {
 	const list = $("#server-usage-list");
 	list.setAttribute("aria-busy", "true");
-	const alerts = await api("/api/usage").catch(() => null);
-	const alertsCard = alerts ? usageCard(alerts) : null;
-	alertsCard?.classList.add("tool-card-wide");
 	const measuring = el("div", { className: "tool-card tool-card-wide usage-overview" }, loadingState("Measuring the sites and databases…"));
-	list.replaceChildren(...(alertsCard ? [alertsCard] : []), measuring);
+	list.replaceChildren(measuring);
 	try {
 		const [all, known] = await Promise.all([api("/api/usage/all"), sitesLoaded ? Promise.resolve({ sites: allSites }) : api("/api/sites").catch(() => ({ sites: [] }))]);
 		// Each site's kind beside its name, as its card on Web Server has it
@@ -9259,19 +9722,6 @@ async function openUsageSettings() {
 		list.removeAttribute("aria-busy");
 	}
 }
-async function checkUsage() {
-	toast("Measuring the sites and databases…", "info");
-	const result = await api("/api/usage/check", { method: "POST", json: {} });
-	// Everything the users made, by user, each beside its limit: what is over is red
-	const byUser = new Map();
-	for (const item of result.all || result.over) byUser.set(item.user, [...(byUser.get(item.user) || []), item]);
-	const sections = [...byUser].map(([user, items]) => el("section", { className: "usage-section" },
-		el("div", { className: "usage-section-head" }, el("span", { className: "usage-section-icon" }, svgIcon("user")), el("strong", { textContent: user })),
-		...items.map((item) => usageMeter(`${item.kind === "site" ? "Site" : "Database"} ${item.name}`, item.size_mb, item.limit_mb,
-			item.limit_mb == null ? `${usageSize(item.size_mb)} · no limit` : `${usageSize(item.size_mb)} of ${usageSize(item.limit_mb)}`))));
-	openFormDialog({ icon: "archive", title: "Usage now", text: `Measured now: ${result.over.length ? result.over.length + " over its limit" : "nothing over its limit"}. Nothing is mailed.`,
-		fields: [el("div", { className: "usage-sections" }, ...(sections.length ? sections : [el("p", { className: "muted", textContent: "No user has made a site or database yet." })]))] });
-}
 
 async function showKeepAliveLog() {
 	const log = await api("/api/keep-alive/log");
@@ -9298,12 +9748,16 @@ async function showKeepAliveLog() {
 async function testKeepAlive(report) {
 	toast("Checking every site…");
 	const result = await api("/api/keep-alive/test", { method: "POST", json: { report } });
+	showMailPreview(result, "The test report is sent.");
+}
+// A test mail as it was sent (its subject and text), or why it was not, over the dialog it came from
+function showMailPreview(result, sent) {
 	$("#mail-preview-text").textContent = result.error || `Sent to ${result.to.join(", ")}`;
 	$("#mail-preview-content").replaceChildren(el("div", { className: "mail-preview" },
 		el("div", { className: "mail-preview-subject" }, el("span", { textContent: "Subject" }), el("strong", { textContent: result.subject })),
 		el("pre", { className: "mail-preview-body", textContent: result.body })));
 	$("#dlg-mail-preview").showModal();
-	if (result.error) toast(result.error, "error"); else toast("The test report is sent.", "ok");
+	if (result.error) toast(result.error, "error"); else toast(sent, "ok");
 }
 
 async function mailCard() {
@@ -9366,7 +9820,7 @@ function askMail(mail) {
 		submit: async (form) => {
 			await api("/api/mail", { method: "PUT", json: typed(form) });
 			toast("The mail server is saved.", "ok");
-			await openServerSettings();
+			await refreshNotifications();
 		} });
 }
 
@@ -9433,28 +9887,16 @@ function keepAliveCard(keepAlive) {
 				ariaPressed: String(value === minutes), onclick: () => value !== minutes && save({ interval_minutes: value }) })),
 			el("label", { className: "keep-alive-custom" }, custom, " min")));
 	}
-	// Its log, and the report of what it finds wrong
+	// Its log, and where its mail is
 	if (keepAlive.installed) {
 		const report = keepAlive.report;
-		// On, set up but off, or not set up: each says so
-		const when = report ? { change: "when something breaks", daily: "once a day", both: "when something breaks, and once a day" }[report.when] : "";
-		const said = report?.enabled ? `Mailed to ${report.emails.join(", ")} · ${when}`
-			: report?.emails?.length ? `Off · set up for ${report.emails.join(", ")}, ${when}` : "Not set up";
 		card.append(el("div", { className: "keep-alive-report" },
-			el("span", { className: "keep-alive-report-icon" }, svgIcon("send")),
+			el("span", { className: "keep-alive-report-icon" }, svgIcon("bell")),
 			el("div", { className: "keep-alive-report-text" }, el("strong", { textContent: "Email report" }),
-				el("small", { textContent: said + (report?.enabled && !keepAlive.mail ? " · no mail server yet" : "") })),
+				el("small", { textContent: (report?.enabled ? `On · mailed to ${report.emails.join(", ")}` : "Off") + " · under Notifications" })),
 			el("div", { className: "keep-alive-report-actions" },
-				// Each its own icon and colour, as the buttons of a site's environment have them
 				tonedButton("Log", "file", "blue", showKeepAliveLog),
-				...(report?.enabled
-					? [tonedButton("Edit…", "pencil", "amber", () => askReport(keepAlive)),
-						tonedButton("Turn off", "stop", "red", async () => {
-							await api("/api/keep-alive", { method: "PUT", json: { report: { ...report, enabled: false } } });
-							toast("The report is off.", "ok");
-							await openServerSettings();
-						})]
-					: [toolButton(report?.emails?.length ? "Turn on…" : "Set up…", () => askReport(keepAlive), "primary")]))));
+				tonedButton("Notifications", "bell", "pink", () => go("#server/notifications")))));
 	}
 	return card;
 }
@@ -10562,7 +11004,21 @@ for (const fold of settingsMenu.querySelectorAll(".menu-fold")) {
 		fold.setAttribute("aria-expanded", String(!sub.hidden));
 	};
 }
-$("#settings-apache-test").onclick = () => run(() => openTask({ kind: "apache", tool: "configtest" }));
+$("#settings-apache-test").onclick = () => run(testApacheConfig);
+// apache2ctl configtest, shown as its result: fine, fine with warnings, or the error with its file and line
+async function testApacheConfig() {
+	toast("Testing the config…");
+	const result = await api("/api/server/apache-configtest", { method: "POST", json: {} });
+	const warned = result.ok && result.warnings.length;
+	const tone = !result.ok ? "bad" : warned ? "warn" : "ok";
+	const summary = el("div", { className: "configtest-result " + tone },
+		el("span", { className: "configtest-icon" }, svgIcon(result.ok ? "check" : "alert")),
+		el("div", {}, el("strong", { textContent: !result.ok ? "Apache would not start with this config" : warned ? "The config is fine, with warnings" : "The config is fine" }),
+			el("small", { textContent: !result.ok ? "Fix the line it names before Apache is restarted or reloaded." : "Apache would start with the configs as they are." })));
+	const lines = el("pre", { className: "configtest-lines" }, ...result.lines.map((line) => el("span", {
+		className: /Syntax OK/.test(line) ? "ok" : result.warnings.includes(line) ? "warn" : !result.ok ? "bad" : "", textContent: line + "\n" })));
+	openFormDialog({ icon: "activity", title: "Test the config", text: "apache2ctl configtest", fields: [summary, ...(result.lines.length ? [lines] : [])], closeOnly: true });
+}
 $("#settings-apache-conf").onclick = () => run(editApacheConfig);
 // Whether an address is a listed address, or in a listed IPv4 range (a.b.c.d/n); an IPv6 address only as it is listed
 function addressIn(address, item) {
@@ -11504,7 +11960,7 @@ $("#audit-clear").onclick = () => run(async () => {
 // Each tool is a part of its own in the side menu; they share one pane, drawn from one look at the server
 // SSH and Samba are one part, Access: how the server itself is reached
 const TOOL_TABS = ["sql", "dotnet", "node", "access"];
-const SERVER_TABS = [...TOOL_TABS, "apache", "jobs", "convert", "export", "settings", "servers", "users", "usage", "windows", "updates", "menu"];
+const SERVER_TABS = [...TOOL_TABS, "apache", "jobs", "convert", "export", "settings", "notifications", "health", "servers", "users", "usage", "windows", "updates", "menu"];
 const TOOL_OF_CARD = { "Microsoft SQL Server": "sql", "Microsoft SQL Server tools": "sql", "sa password": "sql", PostgreSQL: "sql", "PostgreSQL tools": "sql", "postgres password": "sql", Backups: "sql", "Node.js": "node", SSH: "access", Samba: "access" };
 // Settings opens on General: what most often is looked for
 let serverTab = "settings";
@@ -11518,7 +11974,7 @@ async function showServerTab(tab) {
 		$("#server-tab-" + name).setAttribute("aria-selected", String(name === tab));
 		$("#server-tab-" + name).classList.toggle("active", name === tab);
 	}
-	for (const pane of ["tools", "apache", "jobs", "convert", "export", "settings", "servers", "users", "usage", "windows", "updates", "menu"]) $("#server-pane-" + pane).hidden = pane !== paneOf(tab);
+	for (const pane of ["tools", "apache", "jobs", "convert", "export", "settings", "notifications", "health", "servers", "users", "usage", "windows", "updates", "menu"]) $("#server-pane-" + pane).hidden = pane !== paneOf(tab);
 	// The admin site's page, when it was open here, is not
 	$("#server-pane-admin").hidden = true;
 	$("#server-tab-admin").classList.remove("active");
@@ -11532,7 +11988,7 @@ async function showServerTab(tab) {
 		// Another tool is shown from what was read already; Refresh, or coming from another part, reads again
 		if (toolsDrawn && before === "tools") return;
 	}
-	await run({ tools: openServerTools, jobs: openCrontab, convert: openConvertSettings, export: openExportSettings, servers: openServers, users: openUsers, usage: openUsageSettings, settings: openServerSettings, menu: openMenuSettings, apache: openApacheSettings, windows: openWindowsSettings, updates: openUpdatesSettings }[paneOf(tab)]);
+	await run({ tools: openServerTools, jobs: openCrontab, convert: openConvertSettings, export: openExportSettings, servers: openServers, users: openUsers, usage: openUsageSettings, settings: openServerSettings, notifications: openNotifications, health: openHealth, menu: openMenuSettings, apache: openApacheSettings, windows: openWindowsSettings, updates: openUpdatesSettings }[paneOf(tab)]);
 }
 function showToolCards() {
 	// Access is two columns (SSH and Samba, then its shares and users); the other tools three
@@ -12016,9 +12472,11 @@ async function openCrontab() {
 	list.setAttribute("aria-busy", "true");
 	if (!list.querySelector(".crontab-row")) list.replaceChildren(loadingState("Reading root's crontab…", "li"));
 	try {
-		const data = await api("/api/server/crontab");
+		const [data, alerts] = await Promise.all([api("/api/server/crontab"), api("/api/server/cron-alerts").catch(() => null)]);
 		crontabEntries = data.entries || [];
 		cronSuggestions = data.suggest || [];
+		cronAlerts = alerts;
+		crontabLogrotate = data.logrotate || null;
 		renderCrontab();
 	} catch (error) {
 		list.replaceChildren(el("li", { className: "server-tools-loading", textContent: error.message }));
@@ -12073,7 +12531,11 @@ async function showCronLog(row, entry, button) {
 			...(next ? [el("span", { className: "tool-state next", textContent: "Next " + formatDate(next) })] : []),
 			...(byHand ? [el("span", { className: "tool-state " + (byHand.code === 0 ? "ok" : "bad"),
 				textContent: `Run by hand ${formatDate(byHand.at * 1000)}` + (byHand.code === 0 ? "" : ` · exit code ${byHand.code}`) })] : []),
-			el("span", { className: "tool-state " + verdict[0], textContent: verdict[1] })),
+			el("span", { className: "tool-state " + verdict[0], textContent: verdict[1] }),
+			...(log.noted || []).slice(0, 1).map((noted) => el("span", { className: "tool-state " + (noted.code === 0 ? "ok" : "bad"),
+				textContent: `Last run ended ${noted.code === 0 ? "well" : "with exit code " + noted.code} · ${cronDuration(noted.seconds)}` }))),
+		...((log.noted || []).length > 1 ? [el("p", { className: "crontab-log-runs muted", textContent: "Ended before: " + log.noted.slice(1, 6)
+			.map((noted) => `${formatDate(noted.at * 1000)} ${noted.code === 0 ? "well" : "exit code " + noted.code}`).join(" · ") })] : []),
 		...(log.runs.length > 1 ? [el("p", { className: "crontab-log-runs muted", textContent: "Before: " + log.runs.slice(1, 6).map(formatDate).join(" · ") })] : []),
 		...(log.errors.length ? [el("div", { className: "crontab-log-block" }, el("h4", { textContent: "What looks like errors" }),
 			el("pre", { className: "crontab-log-errors", textContent: log.errors.join("\n") }))] : []),
@@ -12086,7 +12548,8 @@ async function showCronLog(row, entry, button) {
 					...(output.kind === "file" && output.lines.length ? [toolButton("Clear log", () => clearCronLog(row, entry, output.where), "ghost crontab-clear-log")] : [])),
 				cronOutput(output.lines, log.errors))
 			: el("p", { className: "hint", textContent: "Its output is not written anywhere. End the command with >> /var/log/name.log 2>&1 to keep it, and see here what went wrong." }),
-		el("p", { className: "hint", textContent: "cron does not record how a job ended: its output is what tells whether it went well." }));
+		el("p", { className: "hint", textContent: log.noted?.length ? "How its last runs ended is noted while Job alerts are on (Notifications)."
+			: "cron does not record how a job ended: its output is what tells whether it went well. With Job alerts on (Notifications), each run's exit code is noted too." }));
 	decorate(panel);
 	const pre = panel.querySelector(".crontab-log-output");
 	if (pre) pre.scrollTop = pre.scrollHeight;
@@ -12192,7 +12655,7 @@ function renderCrontab() {
 	$("#crontab-list").replaceChildren(...(jobs.length ? jobs.map(([entry, index]) => { const row = el("li", { className: "crontab-row" },
 		el("span", { className: "crontab-icon" }, svgIcon(HARBOR_JOBS[entry.harbor] ? "database" : "clock")),
 		el("div", { className: "crontab-text" }, ...cronTitle(entry),
-			el("code", { className: "crontab-command", textContent: entry.command, title: entry.command })),
+			el("code", { className: "crontab-command", textContent: entry.command, title: entry.command }), ...cronStatus(entry)),
 		el("div", { className: "crontab-actions" },
 			Object.assign(toolButton("Run", () => runCronJob(entry), "ghost crontab-run"), { title: "Run it now, as cron runs it, and see its log" }),
 			Object.assign(toolButton("Log", () => showCronLog(row, entry, row.querySelector(".crontab-log-button")), "ghost crontab-log-button"), { ariaExpanded: "false" }),
@@ -12200,6 +12663,134 @@ function renderCrontab() {
 			toolButton("Delete", () => deleteCronJob(index), "ghost tool-danger"))); return row; })
 		: cronSuggestions.length ? [] : [el("li", { className: "server-tools-loading", textContent: "No scheduled jobs yet." })]), ...(cronSuggestions.length ? [el("li", { className: "crontab-suggestions" }, ...cronSuggestions.map(cronSuggestion))] : []));
 	for (const button of $("#crontab-list").querySelectorAll(".crontab-run")) decorate(button.parentElement);
+	$("#crontab-tools").hidden = !crontabLogrotate;
+	$("#crontab-tools").replaceChildren(...(crontabLogrotate ? [logrotateCard(crontabLogrotate)] : []));
+}
+
+// ---- Job alerts: the scheduled jobs (lib/cron_watch.py): a mail when a watched job fails, and when it works
+// again. Who is mailed is the alerts' own; what of each job is watched is a line above it in root's crontab.
+let cronAlerts = null;
+let crontabLogrotate = null;
+const CRON_CONDITIONS = [["exit", "Error code", "x", "It ends with an exit code other than 0"],
+	["output", "Errors in output", "file", "Its output, also in its log file or the journal, has lines such as error, failed or denied"],
+	["missed", "Did not run", "clock", "cron did not run it when its schedule says (checked every 5 minutes)"],
+	["long", "Ran too long", "activity", "It runs longer than the minutes given"]];
+const CRON_CONDITION_NAMES = Object.fromEntries(CRON_CONDITIONS.map(([key, name]) => [key, name]));
+const cronWatched = (entry) => Object.keys(entry.watch || {}).length > 0;
+function cronDuration(seconds) {
+	seconds = Math.round(seconds || 0);
+	if (seconds < 60) return `${seconds} s`;
+	const minutes = Math.floor(seconds / 60);
+	return minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h ${minutes % 60} min`;
+}
+
+// Under a job's command: watched, and how its last run ended (noted while the alerts are on)
+function cronStatus(entry) {
+	const chips = [];
+	if (cronAlerts?.enabled && cronWatched(entry)) chips.push(el("span", { className: "crontab-chip watched", title: "Watched for: " + Object.keys(entry.watch).map((key) => CRON_CONDITION_NAMES[key]).join(", ") }, svgIcon("bell"), "Watched"));
+	if (cronAlerts?.enabled && entry.failing) {
+		chips.push(el("span", { className: "crontab-chip bad", title: Object.values(entry.failing).join(" · ") }, svgIcon("alert"),
+			"Failing: " + Object.keys(entry.failing).map((key) => CRON_CONDITION_NAMES[key]).join(", ")));
+	} else if (entry.last) {
+		const fine = entry.last.code === 0 && !Object.keys(entry.last.failed || {}).length;
+		chips.push(el("span", { className: "crontab-chip " + (fine ? "ok" : "warn") }, svgIcon(fine ? "check" : "alert"),
+			`Last run ${formatDate(entry.last.at * 1000)} · ${cronDuration(entry.last.seconds)}` + (entry.last.code === 0 ? "" : ` · exit code ${entry.last.code}`)));
+	}
+	return chips.length ? [el("div", { className: "crontab-status" }, ...chips)] : [];
+}
+
+function cronAlertsCard() {
+	const alerts = cronAlerts;
+	const watched = crontabEntries.filter((entry) => entry.kind === "job" && cronWatched(entry)).length;
+	const card = toolCard({ icon: "clock", tone: "pink", title: "Job alerts",
+		detail: alerts.enabled ? `${watched} job${watched === 1 ? "" : "s"} watched · mailed to ${alerts.emails.join(", ")}` + (alerts.mail ? "" : " · no mail server yet")
+			: alerts.emails.length ? `Off · set up for ${alerts.emails.join(", ")}` : "Not set up",
+		state: alerts.enabled ? (alerts.failing ? `${alerts.failing} failing` : "On") : "Off", stateClass: alerts.enabled ? (alerts.failing ? "bad" : "ok") : "",
+		text: "A mail when a job you watch fails, and when it works again: choose the jobs, and what is a failure for each.",
+		actions: alerts.enabled
+			? [tonedButton("Edit…", "pencil", "amber", askCronAlerts), tonedButton("Turn off", "stop", "red", async () => {
+				await api("/api/server/cron-alerts", { method: "PUT", json: { enabled: false, emails: alerts.emails } });
+				toast("The job alerts are off.", "ok");
+				await refreshNotifications();
+			})]
+			: [tonedButton(alerts.emails.length ? "Turn on…" : "Set up…", "bell", "pink", askCronAlerts)] });
+	card.querySelector(".tool-head").append(...card.querySelectorAll(":scope > .tool-actions"));
+	if (alerts.enabled && alerts.mail_error) card.append(el("p", { className: "server-action-note", textContent: `The last alert could not be sent (${formatDate(alerts.mail_error.at * 1000)}): ${alerts.mail_error.error}` }));
+	return card;
+}
+
+// Who is mailed, and each job: watched or not, and what is a failure for it. Saved, the alerts are on.
+function askCronAlerts() {
+	const alerts = cronAlerts;
+	const jobs = crontabEntries.map((entry, index) => [entry, index]).filter(([entry]) => entry.kind === "job")
+		.sort(([a], [b]) => cronName(a).localeCompare(cronName(b), undefined, { numeric: true, sensitivity: "base" }));
+	const choices = jobs.map(([entry, index]) => {
+		const watch = cronWatched(entry) ? { ...entry.watch } : { exit: true, missed: entry.schedule !== "@reboot" };
+		const option = checkOption("watch_" + index, cronName(entry), entry.command, cronWatched(entry), HARBOR_JOBS[entry.harbor] ? "database" : "clock", "pink");
+		const minutes = el("input", { type: "number", min: 1, max: 1440, value: typeof watch.long === "number" ? watch.long : 60, className: "cron-watch-minutes", ariaLabel: "Minutes" });
+		const longField = el("label", { className: "cron-watch-long", hidden: !watch.long }, "More than", minutes, "min");
+		const chips = CRON_CONDITIONS.map(([key, name, icon, sub]) => {
+			const chip = el("button", { type: "button", className: "crontab-seg cron-watch-chip", title: sub, ariaPressed: String(!!watch[key]),
+				disabled: key === "missed" && entry.schedule === "@reboot" }, svgIcon(icon), name);
+			chip.onclick = () => {
+				const on = chip.getAttribute("aria-pressed") !== "true";
+				chip.setAttribute("aria-pressed", String(on));
+				if (key === "long") longField.hidden = !on;
+			};
+			return chip;
+		});
+		// A job piped to logger ends as logger does: its exit code says nothing of the job
+		const piped = /\|\s*(?:\/usr\/bin\/)?logger\b/.test(entry.command);
+		const conditions = el("div", { className: "cron-watch-conditions", hidden: !cronWatched(entry) },
+			el("span", { className: "cron-watch-title", textContent: "A failure is" }),
+			el("div", { className: "cron-watch-chips" }, ...chips, longField),
+			...(piped ? [el("p", { className: "crontab-field-hint", textContent: "Its output goes through logger, so its exit code is logger's: choose Errors in output for this one." })] : []));
+		const box = option.querySelector("input");
+		box.addEventListener("change", () => { conditions.hidden = !box.checked; });
+		return { entry, index, box, chips, minutes, node: el("div", { className: "cron-watch-job" }, option, conditions) };
+	});
+	const fields = [
+		el("label", {}, "To", el("input", { name: "emails", value: alerts.emails.join(", "), placeholder: "ops@example.com, another@example.com", autocomplete: "off", spellcheck: false, required: true })),
+		el("p", { className: "hint", textContent: "One address or more, with commas between them. Saved, the alerts are on: Turn off on the card stops them." }),
+		el("div", { className: "ns-section", textContent: "Jobs to watch" }),
+		jobs.length ? el("div", { className: "cron-watch-list" }, ...choices.map((choice) => choice.node)) : el("p", { className: "hint", textContent: "No scheduled jobs yet: add one first." }),
+		el("p", { className: "server-action-note", textContent: "While the alerts are on, root's crontab runs each job through harbor-cron-shell, which runs it as before and notes how it ended. Turn off puts it back as it was." }),
+		...(alerts.mail ? [] : [el("p", { className: "server-action-note", textContent: "No mail server is set up yet: the alerts are sent once one is (Mail server, under Notifications)." })]),
+	];
+	const watchOf = (choice) => {
+		if (!choice.box.checked) return {};
+		const watch = {};
+		for (const [i, [key]] of CRON_CONDITIONS.entries()) {
+			if (choice.chips[i].getAttribute("aria-pressed") === "true" && !choice.chips[i].disabled) watch[key] = key === "long" ? Math.min(1440, Math.max(1, parseInt(choice.minutes.value, 10) || 60)) : true;
+		}
+		return watch;
+	};
+	openFormDialog({ icon: "clock", title: "Job alerts", text: "A mail when a scheduled job fails, and when it works again", fields, ok: "Save", wide: true,
+		extra: alerts.mail ? [Object.assign(tonedButton("Send test", "send", "purple", () => testCronAlerts(typedEmails($("#form-dialog")))),
+			{ title: "Mail how each watched job is now to the addresses above: nothing is saved" })] : [],
+		submit: async (form) => {
+			const emails = typedEmails(form);
+			for (const choice of choices) {
+				if (choice.box.checked && !Object.keys(watchOf(choice)).length) throw new Error(`Choose what is a failure for ${cronName(choice.entry)}.`);
+			}
+			// What is watched, in root's crontab: Harbor's own jobs keep their name in the mail as a label
+			const entries = crontabEntries.map((entry) => ({ ...entry }));
+			let changed = false;
+			for (const choice of choices) {
+				const watch = watchOf(choice), entry = entries[choice.index];
+				if (JSON.stringify(watch) !== JSON.stringify(entry.watch || {})) { entry.watch = watch; changed = true; }
+				if (Object.keys(watch).length && !entry.label && HARBOR_JOBS[entry.harbor]) { entry.label = HARBOR_JOBS[entry.harbor]; changed = true; }
+			}
+			if (changed) await api("/api/server/crontab", { json: { entries } });
+			await api("/api/server/cron-alerts", { method: "PUT", json: { enabled: true, emails } });
+			toast("The job alerts are on.", "ok");
+			await refreshNotifications();
+		} });
+}
+
+async function testCronAlerts(emails) {
+	if (!emails.length) return toast("Enter the address to send the test to.", "error");
+	showMailPreview(await api("/api/server/cron-alerts/test", { method: "POST", json: { emails } }), "The test is sent.");
 }
 
 // A job run now in the task window, as cron runs it; then its log, to see what it wrote
@@ -12432,7 +13023,7 @@ function showCronForm(index = null) {
 			el("button", { type: "submit", className: "primary" }, svgIcon("check"), index === null ? "Add job" : "Save")));
 	form.onsubmit = (event) => {
 		event.preventDefault();
-		const job = { kind: "job", schedule: when.value.trim(), command: command.value.trim(), label: label.value.trim() };
+		const job = { kind: "job", schedule: when.value.trim(), command: command.value.trim(), label: label.value.trim(), watch: entry.watch || {} };
 		const entries = [...crontabEntries];
 		if (index === null) entries.push(job); else entries[index] = job;
 		run(() => saveCrontab(entries, index === null ? "The job is added." : "The job is saved."));

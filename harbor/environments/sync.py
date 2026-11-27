@@ -311,8 +311,10 @@ def sync_environments(system, name, source_id, to, data="", dry_run=False, resta
         prints = history.fingerprints(source, kinds) if not dry_run else {}
         sent_files = dependencies.manifest(source, kinds) if not dry_run else {}
         failed = 0
-        # Only a site set to Import at startup in Sync setup is restarted after it got the settings, so it imports
-        # them; any other is left running. A data sync restarts its destination itself, after the data (restart=False).
+        # uSync on each destination imports the settings it got while it runs, asked through the VNS.Harbor package
+        # (no import at startup since 1.0.92); one whose package is older is told. A site without the package (Umbraco
+        # 13) is restarted when Sync setup has it import at startup, as before; any other imports them from the
+        # backoffice. A data sync imports at its destination itself, after the data (restart=False).
         importer = None
         if not data and restart and not dry_run:
             from harbor.environments.data import DataSync
@@ -323,9 +325,6 @@ def sync_environments(system, name, source_id, to, data="", dry_run=False, resta
                 system.warn(str(error))
                 setup = {}
             imports = lambda target: importer.rules.clean(setup.get(target), target)["settings_import"] is True
-        if importer:
-            from harbor.environments.data import Failed as RestartFailed
-
         pushed = set()
 
         def one(name, target):
@@ -342,12 +341,29 @@ def sync_environments(system, name, source_id, to, data="", dry_run=False, resta
                 system.warn(f"{name}: FAILED")
                 return False
             pushed.add(target)
-            if importer and imports(target):
+            if data or not restart or dry_run:
+                return True
+            # uSync there imports them now, while the site runs (the VNS.Harbor package): no restart
+            from harbor.umbraco.backoffice import usync_import
+            done = usync_import(system, site.name, target, ("Settings",), label=name)
+            if done is not None:
+                return done
+            if importer.package():
+                # Its package there is from before that: said plainly, as the settings are not in use until imported
+                system.warn(f"{name}: the settings are there, but NOT imported yet: import them in uSync in its backoffice "
+                            "(the VNS.Harbor package 18.3.3.1 or newer there imports them by itself)")
+                return True
+            # A site without the package (Umbraco 13): restarted when it imports at startup, as before
+            if imports(target):
+                from harbor.environments.data import Failed as RestartFailed
                 try:
                     importer.apply_settings(target, force=True)
                 except (RestartFailed, CommandFailed, Stop):
                     system.warn(f"{name}: the settings are there, but it could not be restarted to import them")
                     return False
+            else:
+                system.warn(f"{name}: the settings are there, but not imported: import them in uSync in its backoffice, "
+                            "or turn on Import at startup for it in Sync setup")
             return True
 
         def plain(name, target):
@@ -376,5 +392,4 @@ def sync_environments(system, name, source_id, to, data="", dry_run=False, resta
     if failed:
         raise Stop(f"Sync finished with errors in {failed} environment(s).")
     if not data:
-        system.say("Sync completed. A site set to import at startup in Sync setup is restarted and imports the settings; "
-                   "any other imports them from the backoffice.")
+        system.say("Sync completed.")

@@ -359,8 +359,10 @@ export default class VnsHarborDashboard extends UmbElementMixin(LitElement) {
 				${this.#recent(site.recent)}`;
 		}
 		return html`<div class="page">
-			<header><h2>VNS Harbor Sync</h2><p>${this.#t("intro")}</p></header>
+			<header><h2>Harbor Sync</h2><p>${this.#t("intro")}</p></header>
 			${body}
+			<footer class="powered"><a href="https://vns.dk" target="_blank" rel="noopener">
+				<img src="/App_Plugins/VNS.Harbor/vns-logo.png" width="30" height="21" alt="VNS - vital new software"><span>Powered by VNS</span></a></footer>
 		</div>`;
 	}
 
@@ -450,6 +452,12 @@ export default class VnsHarborDashboard extends UmbElementMixin(LitElement) {
 		.recent .tone { color: var(--tone); font-weight: 700; }
 		.recent .result { text-align: right; color: var(--uui-color-positive); }
 		.recent tr.failed .result { color: var(--uui-color-danger); }
+		/* Powered by VNS under it all, as the Harbor admin has it; the logo is white, made dark for the backoffice's light page */
+		.powered { display: flex; justify-content: center; padding-top: var(--uui-size-space-3); }
+		.powered a { display: inline-flex; align-items: center; gap: 8px; color: var(--uui-color-text-alt); font-size: 12px; font-weight: 600;
+			text-decoration: none; opacity: .6; transition: opacity .2s; }
+		.powered a:hover { opacity: 1; }
+		.powered img { display: block; width: 30px; height: auto; filter: brightness(0); opacity: .7; }
 		.badge { width: 40px; height: 40px; border-radius: 10px; display: grid; place-items: center; flex: none;
 			background: color-mix(in srgb, var(--tone) 16%, transparent); color: var(--tone); font-size: 1.35rem; }
 		.links { display: grid; gap: 8px; font-size: 0.9rem; }

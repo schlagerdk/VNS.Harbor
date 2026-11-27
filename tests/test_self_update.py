@@ -105,7 +105,7 @@ class AfterUpdateTests(unittest.TestCase):
         system, moved = self.after_update()
         harbor = [command.split("bin/harbor ", 1)[1] for command in system.commands if "bin/harbor " in command]
         self.assertEqual(harbor, ["server set-servername", "server install-tls-policy", "server install-apache-conf", "state sync", "migrate",
-                                  "sql import-sa-password", "server cron upgrade", "server adopt-certificates", "servers adopt"])
+                                  "sql import-sa-password", "server cron upgrade", "env import-at-startup-off", "server adopt-certificates", "servers adopt"])
         moved.assert_called_once_with(system, "admin.example.test")
         # Nothing names /vns any more: backed up, then removed (phase 7)
         self.assertTrue(any(command.startswith("tar -czf /var/lib/harbor/backups/vns-") and command.endswith(" -C / vns")

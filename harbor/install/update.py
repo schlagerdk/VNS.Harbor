@@ -139,11 +139,17 @@ def after_update(system):
     if system.path("/etc/cron.d/vns-keep-alive").is_file() or system.path(INITIALIZED).is_file():
         # The keep-alive job runs the release in use, no longer /vns
         worked.append(attempt(system, "The keep-alive job was not updated.", "python3", f"{LIB}/keep_alive.py", "--install"))
+        # The server's health, sampled every 5 minutes for Health (1.0.92): it only reads, and mails only when asked
+        worked.append(attempt(system, "The health job was not installed.", "python3", f"{LIB}/server_health.py", "--install"))
     system.step("Bring the sites up to date")
     worked.append(attempt(system, "Harbor's copy of the sites' state was not updated.", "python3", harbor, "state", "sync"))
     worked.append(attempt(system, "Not every site was migrated: sudo harbor migrate --dry-run tells why.", "python3", harbor, "migrate"))
     worked.append(attempt(system, "The sa password was not kept in Harbor.", "python3", harbor, "sql", "import-sa-password"))
     worked.append(attempt(system, "The backup jobs were not changed to harbor commands.", "python3", harbor, "server", "cron", "upgrade"))
+    # Harbor has uSync import what it syncs or publishes (1.0.92): ImportAtStartup off on the sites and their
+    # environments, without a restart. Its own step, so a server not reached does not hold the rest of the update
+    attempt(system, "ImportAtStartup was not turned off everywhere: sudo harbor env import-at-startup-off tells why.",
+            "python3", harbor, "env", "import-at-startup-off")
     # The certificates acme.sh kept in /root/.acme.sh (before 1.0.67) moved to where its cron job renews them
     worked.append(attempt(system, "Not every certificate was moved to where acme.sh renews it: sudo harbor server adopt-certificates --dry-run tells why.",
                           "python3", harbor, "server", "adopt-certificates"))

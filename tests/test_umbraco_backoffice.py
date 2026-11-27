@@ -170,6 +170,60 @@ class BackofficeTests(unittest.TestCase):
         self.assertTrue(backoffice.uses_package(self.system, site))
 
 
+    def importer(self, answers):
+        """A fake site: each request answered from the list in turn, as (status, json) or an HTTPError code"""
+        import io
+        import urllib.error
+        sent = []
+
+        class Opener:
+            def open(self, request, timeout):
+                sent.append((request.get_method(), request.full_url, dict(request.header_items())))
+                status, body = answers.pop(0)
+                if status >= 400:
+                    raise urllib.error.HTTPError(request.full_url, status, "", {}, io.BytesIO(json.dumps(body).encode()))
+                response = mock.MagicMock(status=status)
+                response.read.return_value = json.dumps(body).encode()
+                response.__enter__.return_value = response
+                return response
+        return Opener(), sent
+
+    def test_usync_imports_what_was_synced_while_the_site_runs(self):
+        """After a settings sync the destination imported nothing unless it was restarted (aogtillon.dk, 1.0.92)"""
+        job = "a" * 32
+        opener, sent = self.importer([(202, {"id": job}), (200, {"state": "running"}),
+                                      (200, {"state": "done", "changed": 12, "failed": 0, "seconds": 3.2})])
+        self.assertTrue(backoffice.usync_import(self.system, "shop.dk", "main", label="Production", opener=opener, sleep=lambda s: None))
+        method, url, headers = sent[0]
+        self.assertEqual((method, url), ("POST", "https://shop.dk/umbraco/vns-harbor/import"))
+        # A command signed with the site's login key, which a login link never is
+        payload, signature = headers["X-harbor-command"].split(".")
+        key = json.loads((self.root / "etc/harbor/secrets/sites/shop.dk/connection/main.json").read_text())["login_key"]
+        self.assertEqual(decode(signature), hmac.new(key.encode(), payload.encode(), hashlib.sha256).digest())
+        command = json.loads(decode(payload))
+        self.assertEqual((command["action"], command["group"], command["environment"]), ("import", "Settings", "main"))
+        self.assertNotIn("user", command)
+        self.assertEqual(sent[2][1], f"https://shop.dk/umbraco/vns-harbor/import/{job}")
+        self.assertIn("Production: uSync imported the settings: 12 items changed (3.2 s)", self.system.said)
+
+    def test_what_uSync_could_not_import_is_told(self):
+        opener, _ = self.importer([(202, {"id": "b" * 32}), (200, {"state": "done", "changed": 1, "failed": 1, "problems": ["Home: no such type"]})])
+        self.assertFalse(backoffice.usync_import(self.system, "shop.dk", "main", opener=opener, sleep=lambda s: None))
+        self.assertIn("main: Home: no such type", self.system.said)
+
+    def test_an_older_package_or_none_uSync_leaves_it_as_before(self):
+        opener, _ = self.importer([(404, {})])
+        self.assertIsNone(backoffice.usync_import(self.system, "shop.dk", "main", opener=opener))
+        opener, _ = self.importer([(409, {"error": "uSync is not installed on this site"})])
+        self.assertIsNone(backoffice.usync_import(self.system, "shop.dk", "main", opener=opener))
+        self.assertTrue(any("uSync is not installed" in line for line in self.system.said))
+        # Content after settings, for data
+        opener, sent = self.importer([(202, {"id": "c" * 32}), (200, {"state": "done"}), (202, {"id": "d" * 32}), (200, {"state": "done"})])
+        self.assertTrue(backoffice.usync_import(self.system, "shop.dk", "main", ("Settings", "Content"), opener=opener))
+        groups = [json.loads(decode(headers["X-harbor-command"].split(".")[0]))["group"] for method, url, headers in sent if method == "POST"]
+        self.assertEqual(groups, ["Settings", "Content"])
+
+
 class AdminScriptTests(unittest.TestCase):
     def test_the_admin_script_is_valid(self):
         node = subprocess.run(["which", "node"], capture_output=True, text=True).stdout.strip()

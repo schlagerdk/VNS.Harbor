@@ -3,6 +3,7 @@ password in sql/, the backup and log shrink cron jobs, .NET and Node.js. The adm
 and runs the rest as tasks.
 """
 import json
+import os
 import re
 import shutil
 import tempfile
@@ -215,9 +216,17 @@ def cron(system, on, only=None):
             return
         system.plan(["Take the backup and log shrink jobs out of root's crontab"])
         system.step("Take the backup and log shrink jobs out of root's crontab")
-        # A job's label (the comment line just above it) goes with it
-        lines = [line for index, line in enumerate(lines) if line not in mine
-                 and not (LABEL.match(line) and index + 1 < len(lines) and lines[index + 1] in mine)]
+        # A job's label and what of it is watched (the comment lines just above it) go with it
+        above = cron_watch().WATCH
+        gone = set()
+        for index, line in enumerate(lines):
+            if line in mine:
+                gone.add(index)
+                before = index - 1
+                while before >= 0 and (LABEL.match(lines[before]) or above.match(lines[before])):
+                    gone.add(before)
+                    before -= 1
+        lines = [line for index, line in enumerate(lines) if index not in gone]
     system.run("crontab", "-", input="".join(line + "\n" for line in lines))
     if on:
         # When each was added, as when a job is saved in Scheduled jobs: cron has not run it before, and that is not
@@ -435,34 +444,69 @@ def clean_label(text):
     return " ".join(str(text or "").split())[:80]
 
 
-def crontab_entries(system, text=None):
-    """Root's crontab as its lines (or the crontab given): each job with its schedule, command, label (and which of
-    Harbor's jobs it is), and the other lines (variables, comments) as they are"""
+def cron_watch():
+    """lib/cron_watch.py: the watch line above a job, and how its runs ended while the alerts are on"""
+    import importlib.util
+    from harbor.core.paths import LIB
+    spec = importlib.util.spec_from_file_location("vns_cron_watch", LIB / "cron_watch.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def crontab_entries(system, text=None, with_runs=False):
+    """Root's crontab as its lines (or the crontab given): each job with its schedule, command, label, what of it is
+    watched (Email alerts) and which of Harbor's jobs it is, and the other lines (variables, comments) as they are.
+    with_runs: each job's last run as harbor-cron-shell noted it, and whether its alert is on."""
+    watcher = cron_watch()
     entries = []
-    label = None
+    label = watch = None
+
+    def dangling():
+        # A label or watch line not followed by a job is kept as the comment it is
+        if label is not None:
+            entries.append({"kind": "other", "line": f"# Harbor label: {label}"})
+        if watch is not None:
+            entries.append({"kind": "other", "line": f"# Harbor watch: {watcher.watch_text(watch)}"})
+
     for line in (crontab(system) if text is None else text).splitlines():
         parts = job_parts(line)
         if parts:
             harbor = next((name for name in JOBS if job_lines(line, name)), "")
-            entries.append({"kind": "job", "schedule": parts[0], "command": parts[1], "harbor": harbor, "label": label or ""})
-            label = None
+            entries.append({"kind": "job", "schedule": parts[0], "command": parts[1], "harbor": harbor, "label": label or "", "watch": watch or {}})
+            label = watch = None
             continue
-        if label is not None:
-            # A label line not followed by a job is kept as the comment it is
-            entries.append({"kind": "other", "line": f"# Harbor label: {label}"})
-            label = None
-        found = LABEL.match(line)
-        if found:
+        found, watched = LABEL.match(line), watcher.WATCH.match(line)
+        if found and label is None:
             label = clean_label(found.group(1))
-        elif line.strip():
-            entries.append({"kind": "other", "line": line})
-    if label is not None:
-        entries.append({"kind": "other", "line": f"# Harbor label: {label}"})
+        elif watched and watch is None:
+            watch = watcher.parse_watch(watched.group(1))
+        else:
+            dangling()
+            label = watch = None
+            if found:
+                label = clean_label(found.group(1))
+            elif watched:
+                watch = watcher.parse_watch(watched.group(1))
+            elif line.strip():
+                entries.append({"kind": "other", "line": line})
+    dangling()
+    if with_runs:
+        state = system.path(str(watcher.STATE))
+        known = watcher.runs(state)
+        failing = watcher.read_json(state / "alerts.json", {}).get("open") or {}
+        for entry in entries:
+            if entry["kind"] == "job":
+                key = watcher.key_of(entry["command"])
+                entry["last"] = (known.get(key, {}).get("runs") or [None])[0]
+                entry["failing"] = (failing.get(key) or {}).get("problems") or None
     return entries
 
 
 def crontab_save(system, entries):
-    """Root's crontab made of these entries: jobs ({schedule, command}) checked, the other lines kept as they are"""
+    """Root's crontab made of these entries: jobs ({schedule, command, label, watch}) checked, the other lines kept as
+    they are"""
+    watcher = cron_watch()
     lines = []
     for entry in entries:
         if not isinstance(entry, dict):
@@ -482,6 +526,9 @@ def crontab_save(system, entries):
         label = clean_label(entry.get("label"))
         if label:
             lines.append(f"# Harbor label: {label}")
+        watch = watcher.watch_text(entry.get("watch"))
+        if watch:
+            lines.append(f"# Harbor watch: {watch}")
         lines.append(f"{schedule} {command}")
     system.plan(["Save root's crontab"])
     system.step("Save root's crontab")
@@ -493,6 +540,9 @@ def crontab_save(system, entries):
     for command in commands - before:
         state["saved"][command] = now
     save_cron_state(system, state, commands)
+    # The jobs' logs rotated, while that is on: a job added or changed has its log in it
+    if system.path(LOGROTATE).is_file():
+        logrotate(system, True, quiet=True)
     system.say(f"Root's crontab has {sum(1 for entry in entries if entry.get('kind') != 'other')} jobs.")
 
 
@@ -541,8 +591,11 @@ def crontab_log(system, command, days=14):
     # SQL Server's line after every DBCC says "error" without being one
     errors = [line for line in output["lines"] if ERROR_LINE.search(line) and not line.startswith("DBCC execution completed.")][-20:]
     state = cron_state(system)
+    # How its last runs ended, as harbor-cron-shell noted them while the Email alerts are on
+    watcher = cron_watch()
+    noted = watcher.runs(system.path(str(watcher.STATE))).get(watcher.key_of(command), {}).get("runs") or []
     return {"command": command, "days": days, "runs": runs[-50:][::-1], "runs_count": len(runs), "output": output, "errors": errors,
-            "saved": state["saved"].get(command), "by_hand": state["by_hand"].get(command) or []}
+            "saved": state["saved"].get(command), "by_hand": state["by_hand"].get(command) or [], "noted": noted[:10]}
 
 
 def crontab_clear_log(system, command):
@@ -611,6 +664,132 @@ def crontab_run(system, command):
     if not result.ok:
         raise Stop(f"The job ended with exit code {result.returncode}.{where}", result.returncode)
     system.say(f"The job ran and ended well (exit code 0).{where}")
+
+
+# ---- the job logs kept small (Scheduled jobs): logrotate for the file each job writes its output to
+LOGROTATE = "/etc/logrotate.d/vns-harbor-jobs"
+LOGROTATE_NOTE = "# VNS Harbor: the log files of root's scheduled jobs (Scheduled jobs, Keep logs small)"
+
+
+def rotated_elsewhere(system, path):
+    """Whether another logrotate config has this file already (logrotate refuses a file named twice)"""
+    import fnmatch
+    folder = system.path("/etc/logrotate.d")
+    configs = [system.path("/etc/logrotate.conf"), *(sorted(folder.iterdir()) if folder.is_dir() else [])]
+    for config in configs:
+        if config.name == LOGROTATE.rsplit("/", 1)[1] or not config.is_file():
+            continue
+        try:
+            text = config.read_text(errors="replace")
+        except OSError:
+            continue
+        for word in re.findall(r"(?m)^\s*(\S[^{]*?)\s*\{?\s*$", text):
+            for pattern in re.findall(r"\"([^\"]+)\"|(/\S+)", word):
+                pattern = pattern[0] or pattern[1]
+                if pattern.startswith("/") and fnmatch.fnmatch(path, pattern):
+                    return True
+    return False
+
+
+def job_logs(system, entries=None):
+    """The files root's jobs write their output to (> or >> a file), each once, but those another config rotates"""
+    entries = crontab_entries(system) if entries is None else entries
+    found = []
+    for entry in entries:
+        target = job_output(entry["command"]) if entry.get("kind") == "job" else None
+        if target and target[0] == "file" and target[1] not in found and target[1].startswith("/var/log/"):
+            found.append(target[1])
+    return [path for path in found if not rotated_elsewhere(system, path)]
+
+
+def logrotate_state(system):
+    config = system.path(LOGROTATE)
+    return {"on": config.is_file(), "files": job_logs(system)}
+
+
+def logrotate(system, on, entries=None, quiet=False):
+    """Each job's log rotated weekly, the last 8 kept compressed (on), or left as it is (off). Written again when the jobs
+    change, while it is on."""
+    config = system.path(LOGROTATE)
+    if not on:
+        if config.is_file():
+            if not quiet:
+                system.plan(["Stop rotating the jobs' logs"])
+                system.step("Stop rotating the jobs' logs")
+            config.unlink()
+        if not quiet:
+            system.say("The jobs' logs are left as they are now.")
+        return
+    files = job_logs(system, entries)
+    if not quiet:
+        system.plan(["Rotate the jobs' logs"])
+        system.step("Rotate the jobs' logs")
+    quoted = [f'"{path}"' if re.search(r"\s", path) else path for path in files]
+    text = (LOGROTATE_NOTE + "\n" + "\n".join(quoted) + "\n{\n\tweekly\n\trotate 8\n\tcompress\n\tdelaycompress\n\tmissingok\n"
+            "\tnotifempty\n\tcopytruncate\n}\n") if files else LOGROTATE_NOTE + "\n# No job writes a log of its own yet.\n"
+    config.parent.mkdir(parents=True, exist_ok=True)
+    config.write_text(text, encoding="utf-8")
+    os.chmod(config, 0o644)
+    if not quiet:
+        system.say(f"{len(files)} log{'' if len(files) == 1 else 's'} rotated weekly, the last 8 kept compressed.")
+
+
+# ---- the OS updates
+def unattended_on(system):
+    """unattended-upgrades installed and on: the security updates installed by themselves, as Ubuntu chooses them"""
+    steps = ["Install unattended-upgrades", "Turn on the automatic security updates"]
+    system.plan(steps)
+    system.step(steps[0])
+    if not installed(system, "unattended-upgrades"):
+        system.run("apt-get", "install", "-y", "unattended-upgrades", env={"DEBIAN_FRONTEND": "noninteractive"})
+    system.step(steps[1])
+    path = system.path("/etc/apt/apt.conf.d/20auto-upgrades")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('APT::Periodic::Update-Package-Lists "1";\nAPT::Periodic::Unattended-Upgrade "1";\n', encoding="utf-8")
+    system.say("Security updates are installed by themselves, once a day.")
+
+
+def os_update(system, scope, health=None):
+    """The OS updates installed now: the security updates (security) or every update (all), without questions (a
+    changed config file keeps the one here), waiting for apt's lock while unattended-upgrades holds it. Packages are
+    never removed. What waits afterwards, and a restart asked for, is read again for Health."""
+    import importlib.util
+    from harbor.core.paths import LIB
+    if scope not in ("security", "all"):
+        raise Stop("Install the security updates or all of them.")
+    if health is None:
+        spec = importlib.util.spec_from_file_location("vns_server_health", LIB / "server_health.py")
+        health = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(health)
+    steps = ["Finish an update that was stopped", "Read the package lists", "Install the security updates" if scope == "security" else "Install the updates",
+             "Read what waits now"]
+    system.plan(steps)
+    # Microsoft's packages (msodbcsql18, mssql-tools18) are updated only with their licence accepted, as it was when
+    # Harbor installed them
+    env = {"DEBIAN_FRONTEND": "noninteractive", "NEEDRESTART_MODE": "a", "ACCEPT_EULA": "Y"}
+    apt = ["apt-get", "-y", "-o", "DPkg::Lock::Timeout=600", "-o", "Dpkg::Options::=--force-confdef", "-o", "Dpkg::Options::=--force-confold"]
+    # Packages unpacked by an update that stopped halfway are configured first: apt does nothing else until they are
+    system.step(steps[0])
+    system.run("dpkg", "--force-confdef", "--force-confold", "--configure", "-a", env=env)
+    system.step(steps[1])
+    system.run("apt-get", "-o", "DPkg::Lock::Timeout=600", "update", env=env)
+    system.step(steps[2])
+    if scope == "security":
+        names = [item["name"] for item in health.updates()["packages"] if item["security"]]
+        if names:
+            system.run(*apt, "install", "--only-upgrade", *names, env=env)
+    else:
+        names = None
+        system.run(*apt, "upgrade", "--with-new-pkgs", env=env)
+    system.step(steps[3])
+    # Microsoft's own list may have come with the update, with the repository Harbor named in its own
+    from harbor.sql.server import drop_duplicate_list
+    drop_duplicate_list(system)
+    found = health.updates()
+    health.write_json(health.STATE / "updates.json", found)
+    done = "No security update waited." if names == [] else f"{len(names)} security update{'' if len(names) == 1 else 's'} installed." if names else "The updates are installed."
+    left = f" {found['count']} update{'' if found['count'] == 1 else 's'} still wait{'s' if found['count'] == 1 else ''}." if found["count"] else " Nothing waits now."
+    system.say(done + left + (" The server asks to be restarted." if found["reboot"] else ""))
 
 
 # ---- Node.js

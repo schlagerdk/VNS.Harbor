@@ -9,7 +9,7 @@
 <meta name="server-hostname" content="{{ hostname }}">
 <meta name="start-view" content="{{ start_view }}">
 <meta name="role" content="{{ role }}">
-<title>{{ hostname }} · VNS Harbor</title>
+<title>{{ hostname }} · Harbor</title>
 <link rel="icon" href="/static/harbor-mark.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/static/vendor/xterm.css">
 <link rel="stylesheet" href="/static/style.css?v={{ asset_version }}">
@@ -34,7 +34,7 @@
 <header class="page-header">
   <a class="brand" href="#sites" title="All sites">
     <img class="logo" src="/static/harbor-mark.svg" width="38" height="38" alt="">
-    <span><h1>VNS Harbor</h1><span class="host">{{ hostname }}<span id="header-version" class="header-version"></span></span></span>
+    <span><h1>Harbor</h1><span class="host">{{ hostname }}<span id="header-version" class="header-version"></span></span></span>
   </a>
   <a id="system-update-badge" class="header-update" href="#server/updates" hidden>Update available</a>
   <nav class="view-switch" aria-label="Section">
@@ -115,6 +115,8 @@
       <nav class="server-nav" role="tablist" aria-label="Server" aria-orientation="vertical">
         <div class="server-nav-group">Harbor</div>
         <button type="button" role="tab" id="server-tab-settings" data-tab="settings" aria-controls="server-pane-settings" aria-selected="false"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M2 14h4M10 8h4M18 16h4"/></svg><span>General</span></button>
+        <button type="button" role="tab" id="server-tab-notifications" data-tab="notifications" aria-controls="server-pane-notifications" aria-selected="false"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg><span>Notifications</span></button>
+        <button type="button" role="tab" id="server-tab-health" data-tab="health" aria-controls="server-pane-health" aria-selected="false"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg><span>Health</span></button>
         <button type="button" role="tab" id="server-tab-menu" data-tab="menu" aria-controls="server-pane-menu" aria-selected="false"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z"/></svg><span>Top menu</span></button>
         <button type="button" role="tab" id="server-tab-updates" data-tab="updates" aria-controls="server-pane-updates" aria-selected="false"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8M21 3v5h-5"/></svg><span>Updates</span></button>
         <button type="button" role="tab" id="server-tab-users" data-tab="users" aria-controls="server-pane-users" aria-selected="false"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg><span>Users</span></button>
@@ -141,6 +143,7 @@
         </div>
         <div id="server-pane-jobs" class="server-pane" role="tabpanel" aria-labelledby="server-tab-jobs" hidden>
         <div class="server-pane-head"><div><h3>Scheduled jobs <span id="crontab-count" class="server-pane-count"></span></h3><p id="crontab-text">What this server runs on a schedule, as root</p></div><button type="button" id="crontab-add" class="primary">＋ Add job</button></div>
+          <div id="crontab-tools" class="crontab-alerts" hidden></div>
           <ul id="crontab-list" class="crontab-list" aria-busy="true"></ul>
         </div>
         <div id="server-pane-convert" class="server-pane" role="tabpanel" aria-labelledby="server-tab-convert" hidden>
@@ -148,12 +151,20 @@
           <div id="server-convert-list" class="server-tools convert-list" aria-busy="true"></div>
         </div>
         <div id="server-pane-export" class="server-pane" role="tabpanel" aria-labelledby="server-tab-export" hidden>
-          <div class="server-pane-head"><div><h3>Export Site <span id="export-count" class="server-pane-count"></span></h3><p>A site and its environments for a customer: builds for Windows or Linux, its source and its databases, without VNS Harbor, in one zip</p></div><div id="export-filter-box" class="targets-search-box sql-filter-box convert-filter-box" hidden><svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="export-filter" class="sql-filter" type="search" placeholder="Filter sites, environments, exports…" autocomplete="off" spellcheck="false" aria-label="Filter sites, environments and exports"><button type="button" id="export-filter-clear" class="search-clear" aria-label="Clear filter" title="Clear filter"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button></div></div>
+          <div class="server-pane-head"><div><h3>Export Site <span id="export-count" class="server-pane-count"></span></h3><p>A site and its environments for a customer: builds for Windows or Linux, its source and its databases, without Harbor, in one zip</p></div><div id="export-filter-box" class="targets-search-box sql-filter-box convert-filter-box" hidden><svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="export-filter" class="sql-filter" type="search" placeholder="Filter sites, environments, exports…" autocomplete="off" spellcheck="false" aria-label="Filter sites, environments and exports"><button type="button" id="export-filter-clear" class="search-clear" aria-label="Clear filter" title="Clear filter"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button></div></div>
           <div id="server-export-list" class="server-tools convert-list" aria-busy="true"></div>
         </div>
         <div id="server-pane-settings" class="server-pane" role="tabpanel" aria-labelledby="server-tab-settings" hidden>
-          <div class="server-pane-head"><div><h3>General</h3><p>How this server is reached, the mail it sends, and how its sites are kept ready</p></div></div>
+          <div class="server-pane-head"><div><h3>General</h3><p>How this server is reached, and how its sites are kept ready</p></div></div>
           <div id="server-settings-list" class="server-tools" aria-busy="true"></div>
+        </div>
+        <div id="server-pane-health" class="server-pane" role="tabpanel" aria-labelledby="server-tab-health" hidden>
+          <div class="server-pane-head"><div><h3>Health</h3><p>How this server is: its disks, memory, swap and load over the last days</p></div></div>
+          <div id="server-health-list" class="server-tools health-list" aria-busy="true"></div>
+        </div>
+        <div id="server-pane-notifications" class="server-pane" role="tabpanel" aria-labelledby="server-tab-notifications" hidden>
+          <div class="server-pane-head"><div><h3>Notifications</h3><p>The mail Harbor sends: when a site has a problem, a user's site or database grows past its limit, or a scheduled job fails, and the mail server it goes through</p></div></div>
+          <div id="server-notifications-list" class="server-tools" aria-busy="true"></div>
         </div>
         <div id="server-pane-servers" class="server-pane" role="tabpanel" aria-labelledby="server-tab-servers" hidden>
         <div class="server-pane-head"><div><h3>Servers <span id="servers-count" class="server-pane-count"></span></h3><p id="servers-release">Other servers this Harbor works with</p></div></div>
@@ -168,7 +179,7 @@
           <div id="server-windows-list" class="server-tools"></div>
         </div>
         <div id="server-pane-updates" class="server-pane" role="tabpanel" aria-labelledby="server-tab-updates" hidden>
-          <div class="server-pane-head"><div><h3>Updates</h3><p>The version of Harbor here, its updates, and going back</p></div></div>
+          <div class="server-pane-head"><div><h3>Updates</h3><p>Harbor and the OS here: their updates, and going back</p></div></div>
           <div id="server-updates-list" class="server-tools"></div>
         </div>
         <div id="server-pane-admin" class="server-pane" role="tabpanel" aria-labelledby="server-tab-admin" hidden></div>
@@ -177,7 +188,7 @@
           <div id="server-menu-list" class="server-tools"></div>
         </div>
         <div id="server-pane-usage" class="server-pane" role="tabpanel" aria-labelledby="server-tab-usage" hidden>
-          <div class="server-pane-head"><div><h3>Usage</h3><p>What the sites and databases take, who made each, and a mail when one grows past its limit</p></div></div>
+          <div class="server-pane-head"><div><h3>Usage</h3><p>What the sites and databases take, and who made each. Its mail is under Notifications.</p></div></div>
           <div id="server-usage-list" class="server-tools"></div>
         </div>
         <div id="server-pane-users" class="server-pane" role="tabpanel" aria-labelledby="server-tab-users" hidden>
@@ -372,6 +383,7 @@
       <button id="btn-check-updates" type="button" hidden>Check for updates</button>
       <button id="btn-new-site" class="primary">＋ New site</button>
     </div>
+    <div id="site-attention" class="site-attention" hidden></div>
     <div id="sites" class="cards"></div>
     <div id="no-sites" class="sites-empty" hidden>
       <div class="sites-empty-icon" aria-hidden="true">
@@ -922,7 +934,7 @@
   <form method="dialog">
     <header class="ns-head">
       <span class="ns-icon" data-header-icon="download" aria-hidden="true"></span>
-      <div><h2 id="system-update-info-title">Update VNS Harbor</h2><p id="system-update-versions"></p></div>
+      <div><h2 id="system-update-info-title">Update Harbor</h2><p id="system-update-versions"></p></div>
     </header>
     <div id="system-update-notes" class="system-update-notes"></div>
     <a id="system-update-changes" class="system-update-changes" target="_blank" rel="noopener noreferrer">See every change on GitHub ↗</a>

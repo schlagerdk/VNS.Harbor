@@ -296,6 +296,10 @@ def publish(system, name, binding, https, environment, keep, appsettings, who):
         try:
             put_in_place(system, site, incoming, folder, arguments)
             restart(system, site, kind, folder, before, f" harbor site rollback {name} puts what it had before back.")
+            if kind == "csharp":
+                # The settings it brought imported by uSync, now that it runs (no import at startup since 1.0.92)
+                from harbor.umbraco.backoffice import import_after_publish
+                import_after_publish(system, name)
         except Stop:
             remember(system, name, found, binding, kept, appsettings, who, ok=False)
             raise

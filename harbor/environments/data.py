@@ -4,8 +4,8 @@
     (scripts/data_sync.json, saved by the admin), then restart it so uSync reads them.
   sync: sync data from one site to others, when both have data sync on, the source may send and the destination may
     receive. Settings are synced from the main site first, so the destination has the same document types. Data is
-    merged: content and media are added and updated, never deleted. The destination is restarted, and uSync imports
-    the data at startup.
+    merged: content and media are added and updated, never deleted. uSync at the destination imports it while the site
+    runs, asked through the VNS.Harbor package; with an older package the sync says it is not imported.
 
 lib/data_sync.py decides who may sync what; the admin uses it too, so it stays where it is and harbor loads it.
 """
@@ -64,11 +64,19 @@ class DataSync:
             self.system.warn(str(error))
             raise Failed() from None
 
+    def package(self):
+        """Whether the site's project has the VNS.Harbor package, through which Harbor has uSync import what it syncs
+        (no import at startup); a site without it (Umbraco 13) imports at startup, restarted after a sync"""
+        if not hasattr(self, "_package"):
+            from harbor.umbraco.backoffice import uses_package
+            self._package = uses_package(self.system, self.site)
+        return self._package
+
     def appsettings(self, site_id, paths, shown=None):
         """Set uSync in the files, as data_sync.py appsettings: a line for each, Updated or Unchanged"""
         try:
             settings_of = self.config().get(site_id)
-            lines = [("Updated " if self.rules.apply_file(path, settings_of, shown) else "Unchanged ") + os.path.basename(path) for path in paths]
+            lines = [("Updated " if self.rules.apply_file(path, settings_of, shown, self.package()) else "Unchanged ") + os.path.basename(path) for path in paths]
         except (OSError, ValueError) as error:
             self.system.warn(str(error))
             raise Failed() from None
@@ -76,9 +84,10 @@ class DataSync:
         self.system.say(result)
         return result
 
-    def apply_settings(self, site_id, force=False):
+    def apply_settings(self, site_id, force=False, restart=True):
         """Edit the appsettings.json of one site in place, by its saved settings, and restart it when it changed. With
-        force it is restarted anyway, so uSync imports what it just received."""
+        force it is restarted anyway. Without restart the file is written and the site left running (what changes
+        there, such as ImportAtStartup, is read when it next starts)."""
         system, site = self.system, self.site
         if site_id == "main":
             # The project's copy too, as publishing the main site copies it to the folder the site runs from
@@ -92,6 +101,8 @@ class DataSync:
                 raise Failed()
             result = self.appsettings("main", paths)
             system.run("chown", "www-data:www-data", *paths, check=False, capture=True)
+            if not restart:
+                return
             if not force and "Updated" not in result:
                 system.say(f"Nothing changed, so {site.service_name} is not restarted.")
                 return
@@ -114,6 +125,8 @@ class DataSync:
                     system.say("Nothing changed, so the IIS app is not restarted.")
                     return
                 share.rclone("rcat", f"{share.target}/appsettings.json", input=Path(file).read_text())
+                if not restart:
+                    return
                 # IIS restarts the app when web.config changes
                 system.plan(["Restart the IIS app"])
                 system.step("Restart the IIS app")
@@ -127,6 +140,8 @@ class DataSync:
                 return
             settings.remote_exec(system, environment, f"tee {path} >/dev/null", input=Path(file).read_text(), capture=True)
             settings.remote_exec(system, environment, f"chown www-data:www-data {path}")
+            if not restart:
+                return
             unit = service_name(environment.FOLDER)
             system.plan([f"Restart {unit} on {environment.description}"])
             system.step(f"Restart {unit} on {environment.description}")
@@ -165,7 +180,7 @@ class DataSync:
                 f"Data from {source_name} to {destination_name}", *([] if dry_run else [f"Import on {destination_name}"])]
 
     def sync_one(self, source, destination, dry_run, settings_first=False):
-        """One destination: the data merged in, then a restart to import it. The settings must be in sync first; with
+        """One destination: the data merged in, then imported (without a restart where the package can). The settings must be in sync first; with
         settings_first (Sync everything) they are synced first when they are behind."""
         system = self.system
         kinds = self.kinds(source, destination)
@@ -194,9 +209,21 @@ class DataSync:
         if dry_run:
             system.say(f"DRY RUN: {destination_name} is not restarted.")
             return
-        # The destination imports what it received at startup. Its settings are applied again on the way, so a
-        # destination edited by hand still imports.
         system.step(steps[2])
+        # uSync there imports the settings and the data now, while the site runs (the VNS.Harbor package): no restart
+        from harbor.umbraco.backoffice import usync_import
+        done = usync_import(system, self.site.name, destination, ("Settings", "Content"), label=destination_name)
+        if done is True:
+            return
+        if done is False:
+            raise Failed()
+        if self.package():
+            # Its package there is from before that: said plainly, as the data is not in use until someone imports it
+            system.warn(f"{destination_name}: the data is there, but NOT imported yet: import it in uSync in its backoffice "
+                        "(the VNS.Harbor package 18.3.3.1 or newer there imports it by itself)")
+            return
+        # A site without the package (Umbraco 13): it imports what it received at startup. Its settings are applied
+        # again on the way, so a destination edited by hand still imports.
         try:
             self.apply_settings(destination, force=True)
         except (CommandFailed, Stop):
@@ -257,3 +284,57 @@ def data_sync(system, name, action, source="", destinations="", option=""):
     if failed:
         raise Stop(f"Data sync failed for: {' '.join(failed)}")
     system.say("Done.")
+
+
+# ---- no import at startup (1.0.92)
+IMPORT_OFF = "/var/lib/harbor/import-at-startup-off"
+
+
+def sites_with_usync(system, names=None):
+    """The main sites here with uSync and the VNS.Harbor package: built here (an Umbraco project with the package) or
+    published from a machine (local-publish.json, its build with VNS.Harbor.dll), with a uSync folder. An environment's
+    own folder is not one: its main site names it."""
+    from harbor.core.templates import Site
+    web = system.path("/var/www")
+    found = []
+    for folder in sorted(web.iterdir()) if web.is_dir() else []:
+        if not folder.is_dir() or folder.is_symlink() or (names and folder.name not in names):
+            continue
+        # Only a site with the VNS.Harbor package: one without (Umbraco 13) keeps importing at startup
+        projects = [project.read_text(errors="replace") for project in folder.glob("*.csproj")]
+        if projects and not any(re.search(r'<PackageReference\s+Include="VNS\.Harbor"', text, re.I) for text in projects):
+            continue
+        built = any("Umbraco.Cms" in text for text in projects)
+        published = system.path(f"{settings.STATE}/{folder.name}/local-publish.json").is_file()
+        # Published from a machine: its uSync folder where it runs, at the top or one folder down (such as _publish)
+        published = published and any((path / "VNS.Harbor.dll").is_file() for path in (folder, *folder.iterdir()) if path.is_dir())
+        if built or (published and ((folder / "uSync").is_dir() or any(folder.glob("*/uSync")))):
+            found.append(Site(folder.name))
+    return found
+
+
+def import_at_startup_off(system, names=None):
+    """Every Umbraco site with the VNS.Harbor package here, and each of its environments: uSync's ImportAtStartup None in
+    its appsettings.json (an Import at startup in its Sync setup does nothing for it). Nothing is restarted: uSync reads it
+    when the site next starts, and Harbor has uSync import what it syncs or publishes. Done once (a marker), until a
+    site or an environment could not be reached: then again with the next update."""
+    import json
+    marker = system.path(IMPORT_OFF)
+    if names is None and marker.is_file():
+        system.say("ImportAtStartup is off on the sites already.")
+        return
+    missed = []
+    for site in sites_with_usync(system, names):
+        data = DataSync(system, site)
+        for site_id in ["main", *settings.target_ids(system, site.site_root)]:
+            try:
+                data.apply_settings(site_id, restart=False)
+            except (Failed, CommandFailed, Stop, OSError, RuntimeError):
+                missed.append(f"{site.name} ({site_id})")
+    if missed:
+        system.warn("Not reached, so ImportAtStartup is left there until the next update: " + ", ".join(missed))
+        return
+    if names is None:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(json.dumps({"done": True}) + "\n")
+    system.say("ImportAtStartup is off on the sites: Harbor has uSync import what it syncs or publishes.")

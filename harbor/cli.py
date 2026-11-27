@@ -26,8 +26,12 @@ def _tls_policy(args, system):
 
 
 def _fix_permissions(args, system):
-    from harbor.sites.permissions import fix_permissions
+    from harbor.sites.permissions import fix_permissions, permissions_needed
     # The environment, as the script read it: VNS_TARGET, the older single one when it is not set
+    if args.check:
+        import json
+        print(json.dumps(permissions_needed(system, args.site, args.scope, os.environ.get("VNS_TARGET") or "prod")))
+        return
     fix_permissions(system, args.site, args.scope, os.environ.get("VNS_TARGET") or "prod")
 
 
@@ -404,13 +408,31 @@ def _server_dotnet(args, system):
         dotnet_install(system, args.channel, update=args.action == "update")
 
 
+def _server_os_update(args, system):
+    from harbor.server.tools import os_update
+    os_update(system, args.scope)
+
+
+def _env_import_off(args, system):
+    from harbor.environments.data import import_at_startup_off
+    import_at_startup_off(system, args.site or None)
+
+
+def _server_unattended(args, system):
+    from harbor.server.tools import unattended_on
+    unattended_on(system)
+
+
 def _server_crontab(args, system):
     import json
     from harbor.server.tools import crontab_clear_log, crontab_entries, crontab_log, crontab_run, crontab_save
     if args.action == "run":
         crontab_run(system, args.command)
+    elif args.action in ("logrotate-on", "logrotate-off"):
+        from harbor.server.tools import logrotate
+        logrotate(system, args.action == "logrotate-on")
     elif args.action == "list":
-        print(json.dumps(crontab_entries(system), indent=2))
+        print(json.dumps(crontab_entries(system, with_runs=True), indent=2))
     elif args.action in ("log", "clear-log"):
         try:
             command = json.loads(sys.stdin.read()).get("command", "")
@@ -630,9 +652,14 @@ def parser():
     command.add_argument("channel", help="such as 10.0")
     command.set_defaults(handler=_server_dotnet)
     command = server.add_parser("crontab", help="root's crontab: its lines as JSON (list), saved from JSON on stdin (save), a job's runs and output (log), its output file emptied (clear-log), or a job run now (run --command)")
-    command.add_argument("action", choices=("list", "save", "log", "clear-log", "run"))
+    command.add_argument("action", choices=("list", "save", "log", "clear-log", "run", "logrotate-on", "logrotate-off"))
     command.add_argument("--command", default="", help="run: the job's command, as it is in root's crontab")
     command.set_defaults(handler=_server_crontab)
+    command = server.add_parser("os-update", help="install the OS updates now: the security updates, or all of them (none removed)")
+    command.add_argument("scope", choices=("security", "all"))
+    command.set_defaults(handler=_server_os_update)
+    command = server.add_parser("unattended-upgrades", help="install and turn on the automatic security updates (unattended-upgrades)")
+    command.set_defaults(handler=_server_unattended)
     command = server.add_parser("ssh-root", help="how root may log in over SSH: yes (a password or a key), prohibit-password (a key only) or no")
     command.add_argument("mode", choices=("yes", "prohibit-password", "no"))
     command.set_defaults(handler=_server_ssh_root)
@@ -660,6 +687,7 @@ def parser():
     command = site.add_parser("fix-permissions", help="the folder the site runs from owned by www-data (was fix_permissions.sh)")
     command.add_argument("site")
     command.add_argument("scope", nargs="?", default="test", help="test (the site here) or prod (the environment in VNS_TARGET)")
+    command.add_argument("--check", action="store_true", help="only whether anything needs fixing, as JSON; nothing is changed")
     command.set_defaults(handler=_fix_permissions)
     command = site.add_parser("action", help="issue_certificate or change_env on the site here (was test_action.sh)")
     command.add_argument("site", nargs="?", default="")
@@ -1108,6 +1136,10 @@ def parser():
     # --dry-run, or anything else, which is refused as the script refused it
     command.add_argument("option", nargs=argparse.REMAINDER, help="--dry-run")
     command.set_defaults(handler=_data_sync)
+    command = environment.add_parser("import-at-startup-off", help="uSync's ImportAtStartup None on every Umbraco site here and its "
+                                     "environments, without a restart (Harbor has uSync import what it syncs or publishes); once")
+    command.add_argument("site", nargs="*", help="only these sites, and again even when it was done")
+    command.set_defaults(handler=_env_import_off)
     command = environment.add_parser("move", help="migrate or copy an environment to another folder or server, "
                                      "the destination in VNS_PROD_* (was move_env.sh)")
     command.add_argument("site")

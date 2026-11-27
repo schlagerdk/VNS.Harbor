@@ -90,7 +90,7 @@ class UsageCheckTests(unittest.TestCase):
     def test_mailed_once_when_over_and_once_when_under_again(self):
         (self.data / "usage.json").write_text(json.dumps({"enabled": True, "emails": ["ops@example.com"]}))
         sent = []
-        with patch.object(usage.report, "send", side_effect=lambda settings, to, subject, body: sent.append((to, subject, body))), \
+        with patch.object(usage.report, "send", side_effect=lambda settings, to, subject, body, html=None: sent.append((to, subject, body, html))), \
                 patch.object(usage.report, "load_mail", return_value={"host": "smtp.example.com"}):
             usage.run(self.data, now=1, **self.measure())
             usage.run(self.data, now=2, **self.measure())
@@ -108,6 +108,19 @@ class UsageCheckTests(unittest.TestCase):
         self.assertIn("- Site free.dk: 9.8 GB, no limit", sent[0][2])
         state = json.loads((self.data / "usage-state.json").read_text())
         self.assertEqual(list(state["open"]), ["database|c1|Shop"])
+
+    def test_a_test_mail_goes_to_the_addresses_typed_and_keeps_nothing(self):
+        """The alerts' dialog had no way to see their mail: Send test mails it to the addresses typed (1.0.92)"""
+        sent = []
+        result = usage.test_report(self.data, ["ops@example.com"], mail={"host": "smtp.example.com"}, now=1,
+                                   sender=lambda settings, to, subject, body, html=None: sent.append((to, subject, body, html)), **self.measure())
+        self.assertEqual(result["to"], ["ops@example.com"])
+        self.assertIn("TEST: Usage limits: 2 over", sent[0][1])
+        self.assertIn("Site big.dk (Anna): 250 MB of 100 MB", sent[0][2])
+        self.assertIn("Test: 2 over their limit", sent[0][3])
+        self.assertFalse((self.data / "usage-state.json").exists(), "nothing kept")
+        with self.assertRaises(ValueError):
+            usage.test_report(self.data, ["not an address"], **self.measure())
 
     def test_a_mail_that_fails_is_tried_again_and_off_mails_nothing(self):
         (self.data / "usage.json").write_text(json.dumps({"enabled": True, "emails": ["ops@example.com"]}))

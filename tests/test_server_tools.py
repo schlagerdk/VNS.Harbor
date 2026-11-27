@@ -387,6 +387,74 @@ class CronLabelAndClearTests(Server):
         self.assertEqual(self.crontab.splitlines(), ["# made by hand", "# Harbor label: Old 2DM data", CUSTOM,
                                                      "# Harbor label: nothing under it", "@daily /usr/local/bin/x"])
 
+    def test_what_is_watched_is_the_line_above_its_job_and_kept_when_it_is_saved(self):
+        """Email alerts for the scheduled jobs: what of a job is watched is a comment line above it, with its label (1.0.92)"""
+        self.crontab = "# Harbor label: Old data\n# Harbor watch: exit, long=30\n" + CUSTOM + "\n# Harbor watch: output\n"
+        entries = tools.crontab_entries(self.system())
+        self.assertEqual(entries[0]["watch"], {"exit": True, "long": 30})
+        self.assertEqual(entries[0]["label"], "Old data")
+        self.assertEqual(entries[1], {"kind": "other", "line": "# Harbor watch: output"})
+        entries[0]["watch"] = {"exit": True, "missed": True, "bogus": True}
+        tools.crontab_save(self.system(), entries)
+        self.assertEqual(self.crontab.splitlines(), ["# Harbor label: Old data", "# Harbor watch: exit, missed", CUSTOM, "# Harbor watch: output"])
+        entries[0]["watch"] = {}
+        tools.crontab_save(self.system(), entries)
+        self.assertEqual(self.crontab.splitlines(), ["# Harbor label: Old data", CUSTOM, "# Harbor watch: output"])
+
+    def test_the_security_updates_alone_are_installed_without_questions(self):
+        """Install updates in Health (1.0.92): only the security packages, a changed config file kept, apt's lock waited for"""
+        written = {}
+        packages = [{"name": "apache2", "security": True}, {"name": "vim", "security": False}]
+        health = mock.Mock(updates=mock.Mock(side_effect=[{"packages": packages}, {"count": 1, "reboot": True}]), STATE=self.root,
+                           write_json=lambda path, data: written.update(data))
+        system = self.system()
+        tools.os_update(system, "security", health=health)
+        install = next(line for line in system.commands if " install " in line)
+        self.assertIn("--only-upgrade apache2", install)
+        self.assertNotIn("vim", install)
+        self.assertIn("Dpkg::Options::=--force-confold", install)
+        self.assertIn("DPkg::Lock::Timeout=600", install)
+        # An update stopped halfway is finished first, and Microsoft's packages need their licence accepted (1.0.92)
+        self.assertTrue(system.commands[0].startswith("dpkg --force-confdef --force-confold --configure -a"))
+        self.assertEqual(written, {"count": 1, "reboot": True})
+        self.assertIn("1 security update installed. 1 update still waits. The server asks to be restarted.", system.said)
+        system = self.system()
+        tools.os_update(system, "all", health=mock.Mock(updates=mock.Mock(return_value={"count": 0, "reboot": False}), STATE=self.root, write_json=lambda *a: None))
+        self.assertTrue(any("upgrade --with-new-pkgs" in line for line in system.commands))
+        with self.assertRaises(tools.Stop):
+            tools.os_update(self.system(), "everything")
+        # Microsoft's own list with the repository Harbor named: Harbor's goes, so apt does not warn of it twice
+        lists = self.root / "etc/apt/sources.list.d"
+        lists.mkdir(parents=True)
+        line = "deb [arch=amd64 signed-by=/usr/share/keyrings/microsoft-prod.gpg] https://packages.microsoft.com/ubuntu/26.04/prod resolute main\n"
+        (lists / "mssql-release.list").write_text(line)
+        (lists / "microsoft-prod.list").write_text("# Microsoft\n" + line)
+        tools.os_update(self.system(), "all", health=mock.Mock(updates=mock.Mock(return_value={"count": 0, "reboot": False}), STATE=self.root, write_json=lambda *a: None))
+        self.assertFalse((lists / "mssql-release.list").exists())
+        self.assertTrue((lists / "microsoft-prod.list").exists())
+
+    def test_each_jobs_log_is_rotated_but_one_another_config_has(self):
+        """Keep the logs small (1.0.92): logrotate refuses a file named twice, so one rotated elsewhere is left out"""
+        (self.root / "etc/logrotate.d").mkdir(parents=True)
+        (self.root / "etc/logrotate.d/acme").write_text("/var/log/acme.log {\n  weekly\n}\n")
+        self.crontab = CUSTOM + "\n0 1 * * * /root/acme.sh >> /var/log/acme.log 2>&1\n@daily /root/quiet.sh > /dev/null 2>&1\n"
+        tools.logrotate(self.system(), True)
+        config = (self.root / "etc/logrotate.d/vns-harbor-jobs").read_text()
+        self.assertIn("/var/log/delete_old_2dm_data.log\n{\n\tweekly\n\trotate 8\n", config)
+        self.assertNotIn("acme.log", config)
+        # A job added while it is on has its log in it
+        entries = tools.crontab_entries(self.system())
+        entries.append({"kind": "job", "schedule": "@hourly", "command": "/root/new.sh >> /var/log/new.log 2>&1", "label": ""})
+        tools.crontab_save(self.system(), entries)
+        self.assertIn("/var/log/new.log", (self.root / "etc/logrotate.d/vns-harbor-jobs").read_text())
+        tools.logrotate(self.system(), False)
+        self.assertFalse((self.root / "etc/logrotate.d/vns-harbor-jobs").exists())
+
+    def test_the_label_and_watch_go_when_cron_takes_harbors_job_out(self):
+        self.crontab = "# Harbor label: Nightly backup\n# Harbor watch: exit\n" + tools.JOBS["backup_everything"] + "\n" + CUSTOM + "\n"
+        tools.cron(self.system(), False)
+        self.assertEqual(self.crontab, CUSTOM + "\n")
+
     def test_the_label_goes_when_cron_takes_harbors_job_out(self):
         self.crontab = "# Harbor label: Nightly backup\n" + tools.JOBS["backup_everything"] + "\n" + CUSTOM + "\n"
         tools.cron(self.system(), False)

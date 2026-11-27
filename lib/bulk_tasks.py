@@ -43,12 +43,13 @@ def problem_event(line, site):
     return event({"type": "problem", "site": site, "text": text[:300]}) if text and output_problem(line) else ""
 
 
-def run_task(task, lock):
+def run_task(task, lock, alone=False):
     site = task["site"]
     if task.get("skip"):
         return site, "SKIPPED: " + task["skip"]
     with lock:
-        print(f"\n=== {site} ==={event({'type': 'site', 'site': site, 'state': 'running'})}", flush=True)
+        # One site alone needs no heading in its output: its window is named after it
+        print(("" if alone else f"\n=== {site} ===") + event({"type": "site", "site": site, "state": "running"}), flush=True)
     status = run_command(task, site, lock)
     with lock:
         print(event({"type": "site", "site": site, "state": "done" if status == "OK" else "failed"}), end="", flush=True)
@@ -89,10 +90,12 @@ def parallel():
 def run(tasks):
     lock = threading.Lock()
     with ThreadPoolExecutor(max_workers=max(1, min(len(tasks), parallel()))) as executor:
-        results = list(executor.map(lambda task: run_task(task, lock), tasks))
-    print("\n=== Multi action summary ===", flush=True)
-    for site, status in results:
-        print(f"{site}: {status}", flush=True)
+        results = list(executor.map(lambda task: run_task(task, lock, alone=len(tasks) == 1), tasks))
+    # A summary for several sites; one site's own output says how it went
+    if len(tasks) > 1:
+        print("\n=== Multi action summary ===", flush=True)
+        for site, status in results:
+            print(f"{site}: {status}", flush=True)
     return int(any(status.startswith("FAILED") for _, status in results))
 
 

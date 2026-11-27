@@ -48,6 +48,11 @@ Where the work stands, so it can go on from here after any interruption.
      signs that user in with Umbraco's own sign-in and opens /umbraco. Only users with access to the site in Harbor get
      the button, and each login is logged (who, when).
 
+13. **A master Harbor over many servers** (asked 2026-11-27, not started): one Harbor (such as harbor.vns.dk) where users
+   log in and everything on every server is administered; users' rights per server (where they may create sites,
+   environments and databases); placement and moves decided there; later the master as a load balancer for a site on
+   two servers. See Phase 13 below.
+
 ## Phase 10: PostgreSQL beside Microsoft SQL Server (asked 2026-11-25)
 Everything the admin does with Microsoft SQL Server, also with PostgreSQL, for C# and Python sites (Umbraco does not
 support PostgreSQL). A server may have either, both or none; connections to either here or on another server.
@@ -143,6 +148,51 @@ Steps:
    linux-01: mhs.linux-01.vns.dk copied with its staging, both ran, then deleted.
 - A copy's vns-harbor.json is written again for the Harbor where it runs (harbor site connect --here): it came with
   its files and named the original.
+
+## Phase 13: A master Harbor over many servers, and later a load balancer (asked 2026-11-27, not started)
+Many servers run Harbor; one of them is chosen as the **master** (such as harbor.vns.dk). From the master everything is
+administered on every server, users live and log in there only, and the master decides where sites, environments and
+databases are. The first step towards load balancing: the same site on two servers, with the master in front.
+
+- **One place to log in**: users are made, changed and removed on the master, and log in there (harbor.vns.dk). A
+  member server's own admin is for administrators only (or off); its users come from the master, not its own
+  config.json. A user's sites can lie on several servers: a test site on test-01, its production environment on
+  prod-01, another site on test-02; the master shows them as one list, as Web Server does today for one server.
+- **What a user may, per server**: when a user is made, the master says on which servers they may create sites and
+  environments, which SQL Server or PostgreSQL connections (and so servers) they may use, with the limits per server
+  (as phase 8 and the usage limits have them for one server). Creating a site or an environment, the user chooses
+  among the servers they may use, or the master chooses for them.
+- **Placement from the master**: where a site, an environment or a database lies is chosen on the master, and moving
+  it is Copy site / migrate (phase 12) between members, started from there. The master knows every member's sites,
+  environments, databases, health (Settings, Health) and updates, and can act on each (publish, sync, restart, logs).
+- **Members**: today's Servers (phase 5: an SSH key of the master's own, the version handshake, install and update)
+  become members. The master asks each member's harbor (as it does over SSH now, or an API with a token of the
+  master's, to be decided) and keeps no copy of their state that can go stale; a member that is not reached is shown
+  as such, and its sites still run (the master is not in their path until it is a load balancer).
+- **Load balancing (later)**: a site on two (or more) members, the master in front as the load balancer (Apache's
+  mod_proxy_balancer, or HAProxy/Caddy beside it), with health checks from keep-alive. What that needs, each its own
+  step: the same build on each member (publish to all at once), shared or replicated media (or media in blob
+  storage), the database on one SQL server they share (or replicated), sessions that do not depend on one member
+  (Umbraco: its distributed cache and a load-balanced setup with one backoffice server), certificates on the master.
+
+Open questions, to be decided before the steps:
+- The master is a single point for logins and administration: what if it is down (members run on; a second master
+  standing by; or a member's own admin for administrators as the fallback)?
+- How the master talks to members: SSH as today (simple, already there), or an HTTPS API with a token per member (no
+  root SSH from the master to every server).
+- Users that exist on members today: imported to the master once, with their grants mapped to (server, site).
+- The DNS and certificate side of a site on two servers, and whether the master proxies all traffic or only balances.
+
+Steps, roughly in order (each its own release, tried on linux-01 and linux-02 first):
+1. A server is chosen as master; the others join it as members (from today's Servers), and the master's Web Server
+   lists every member's sites, each marked with the server it is on.
+2. Users on the master only: login there, the members' admins for administrators; grants per (server, site,
+   environment) and per server (create sites, environments, databases), with limits per server.
+3. Creating and moving from the master: the server chosen for a new site, environment or database; Copy site and
+   migrate between members started there.
+4. SQL Server and PostgreSQL connections of every member on the master's SQL page, with the users' grants per
+   connection as today.
+5. Load balancing: a site on two members, the master (or a balancer it manages) in front, with the steps above.
 
 ## Phase 8 steps (users on the server)
 Harbor only ever touches the Linux users in its group `harbor-users`; other users of the server are left alone. Which

@@ -163,7 +163,11 @@ console.log(JSON.stringify([
     def test_a_managed_site_has_no_backoffice_login_here(self):
         """Saving it on the server a site runs on connected it to that Harbor: its sync could no longer reach its own"""
         source = (APP / "static/app.js").read_text()
-        self.assertIn('if (currentUser.admin && site.kind === "umbraco" && !site.managed_by && backofficeLoginFits(site)) addManage("Backoffice login…"', source)
+        # Beside the backoffice, in an Umbraco site's details (1.0.92): an administrator's, never on a managed site
+        self.assertIn('if (site.kind === "umbraco" && address.url) {', source)
+        self.assertIn('if (currentUser.admin && !site.managed_by && backofficeLoginFits(site)) {', source)
+        self.assertIn('textContent: "Backoffice login…"', source)
+        self.assertNotIn('addManage("Backoffice login…"', source)
         app = (APP / "app.py").read_text()
         start = app.index("def api_backoffice_user")
         body = app[start:app.index("\n\n\n", start)]
@@ -181,7 +185,7 @@ console.log(JSON.stringify(["13.13.0", "18.3.0", "18.3.1", "18.4.2", ""].map((um
     .concat([backofficeLoginFits({umbraco_version: "13.1.0", harbor_package: true})])));"""
         result = subprocess.run(["node", "-e", script], capture_output=True, text=True, check=True)
         self.assertEqual(json.loads(result.stdout), [False, False, True, True, False, True])
-        self.assertIn('!site.managed_by && backofficeLoginFits(site)) addManage("Backoffice login…"', source)
+        self.assertIn('!site.managed_by && backofficeLoginFits(site)) {', source)
 
     def test_confirmation_names_the_environment_it_acts_on(self):
         source = (APP / "static/app.js").read_text()

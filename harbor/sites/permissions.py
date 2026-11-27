@@ -40,3 +40,24 @@ def fix_permissions(system, name, scope="test", target="prod"):
         settings.remote_exec(system, environment, f"env {variables} python3 -", input=remote_helper())
     else:
         raise Stop("Scope must be test or prod.")
+
+
+def permissions_needed(system, name, scope="test", target="prod"):
+    """Whether Fix permissions has something to fix, without changing anything: {needed, example} (needed None when
+    it cannot be told, with error)"""
+    import json
+    name = normalize_site_name(name)
+    site = Site(name)
+    if scope == "test":
+        result = system.run("sudo", "env", "CHECK=1", f"SITE={name}", f"ROOT={site.site_root}", "python3", str(HELPER), capture=True, check=False)
+    elif scope == "prod":
+        environment = settings.load(system, site.site_root, target)
+        normalize_site_name(environment.FOLDER)
+        variables = f"CHECK=1 SITE={shlex.quote(environment.FOLDER)} ROOT={shlex.quote(environment.root)}"
+        result = settings.remote_exec(system, environment, f"env {variables} python3 -", input=remote_helper(), capture=True, check=False)
+    else:
+        raise Stop("Scope must be test or prod.")
+    try:
+        return json.loads((result.stdout or "").strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        return {"needed": None, "error": (result.stderr or result.stdout or "no answer").strip()[-300:]}

@@ -243,18 +243,45 @@ def fit_to_frameworks(found, frameworks, show_output=False):
     return fitted
 
 
-def check_updates(root, show_output=False):
+def progress(data):
+    """A step for the admin's window, as harbor's own commands report them (harbor/core/system.py PROGRESS)"""
+    if os.environ.get("HARBOR_PROGRESS") == "1":
+        sys.stdout.write("\x1b]7777;harbor;" + json.dumps(data) + "\x07")
+        sys.stdout.flush()
+
+
+def clear_http_cache(root):
+    """NuGet keeps nuget.org's answers up to 30 minutes (its http cache): a version just published was not seen (VNS.Harbor
+    18.3.3). A check asks nuget.org as it is now. As the build user, whose cache it is."""
+    argv, env = _build_as().command_for(["dotnet", "nuget", "locals", "http-cache", "--clear"], root)
+    subprocess.run(argv, cwd=root, env=(env or os.environ) | {"DOTNET_CLI_UI_LANGUAGE": "en-US"}, capture_output=True, text=True, timeout=60, check=False)
+
+
+def check_updates(root, show_output=False, planned=False):
+    if show_output:
+        # The window shows the check as a step at once, before the project is read, and what it found as the next.
+        # planned: the step is in a plan made already (after Update packages)
+        name = Path(root).name
+        if not planned:
+            progress({"type": "plan", "steps": [f"Check the NuGet packages of {name}"]})
+        progress({"type": "step", "text": f"Check the NuGet packages of {name}"})
     value = fingerprint(root)
     available = False
     packages = {}
     try:
+        clear_http_cache(root)
         for project in sorted(Path(root).glob("*.csproj")):
             # Listing restores the project, which can run its build steps: as the build user, never as root
+            # A package on a development version (dev/nuget-dev.sh: 18.3.3.1-dev.…) is skipped by --outdated unless
+            # prereleases are asked for: then they are, and a stable package is still only offered a stable version
+            prerelease = bool(re.search(r'Version="[^"]*-[^"]*"', project.read_text(errors="replace")))
             argv, env = _build_as().command_for(
-                ["dotnet", "list", str(project), "package", "--outdated", "--format", "json", "--output-version", "1"], root)
+                ["dotnet", "list", str(project), "package", "--outdated", "--format", "json", "--output-version", "1",
+                 *(["--include-prerelease"] if prerelease else [])], root)
             result = subprocess.run(argv, cwd=root, env=(env or os.environ) | {"DOTNET_CLI_UI_LANGUAGE": "en-US", "VSLANG": "1033"},
                                     capture_output=True, text=True, timeout=180, check=True)
-            found = fit_to_frameworks(parse_updates(result.stdout), project_frameworks(result.stdout), show_output)
+            found = [item for item in parse_updates(result.stdout) if "-" in item["current"] or "-" not in item["latest"]]
+            found = fit_to_frameworks(found, project_frameworks(result.stdout), show_output)
             for item in found:
                 key = item["name"].lower()
                 if key in packages and packages[key] != item:
@@ -268,6 +295,9 @@ def check_updates(root, show_output=False):
                 if result.stderr:
                     print(result.stderr, end="", file=sys.stderr, flush=True)
         state = "available" if available else "current"
+        if show_output:
+            count = len(packages)
+            progress({"type": "step", "text": f"{count} update{'' if count == 1 else 's'} available" if count else "Every package is up to date"})
     except (OSError, ValueError, subprocess.SubprocessError) as exc:
         if show_output and isinstance(exc, subprocess.CalledProcessError):
             if exc.stdout:
@@ -292,20 +322,35 @@ def upgrade_packages(root, name=None):
         packages = [item for item in packages if item["name"].lower() == name.lower()]
         if not packages:
             raise ValueError("Package has no checked update: " + name)
+    # The window shows a step for each package, the restore, and the check after; dotnet's own output only when it fails
+    as_root = os.geteuid() == 0
+    name = Path(root).name
+    steps = [f'Update {item["name"]} to {item["latest"]}' for item in packages] + (["Restore the project"] if as_root else []) \
+        + [f"Check the NuGet packages of {name}"]
+    progress({"type": "plan", "steps": steps})
+
+    def failed(result):
+        told = "".join(text for text in (result.stdout, result.stderr) if isinstance(text, str))
+        print(told, end="", flush=True)
+        return result.returncode if result.returncode > 0 else 128 - result.returncode
+
     for item in packages:
+        progress({"type": "step", "text": f'Update {item["name"]} to {item["latest"]}'})
         print(f'Update {item["name"]}: {item["current"]} -> {item["latest"]}', flush=True)
-        # As root only the version is written in the project file; the restore, which can run build steps, is the
-        # build user's
-        as_root = os.geteuid() == 0
+        # As root only the version is written in the project file (its --no-restore warning is expected); the restore,
+        # which can run build steps, is the build user's, once for all of them
         result = subprocess.run(
             ["dotnet", "add", str(projects[0]), "package", item["name"], "--version", item["latest"], *(["--no-restore"] if as_root else [])],
-            cwd=root)
-        if result.returncode == 0 and as_root:
-            argv, env = _build_as().command_for(["dotnet", "restore", str(projects[0])], root)
-            result = subprocess.run(argv, cwd=root, env=env)
+            cwd=root, capture_output=True, text=True)
         if result.returncode:
-            return result.returncode if result.returncode > 0 else 128 - result.returncode
-    check_updates(root, show_output=True)
+            return failed(result)
+    if as_root:
+        progress({"type": "step", "text": "Restore the project"})
+        argv, env = _build_as().command_for(["dotnet", "restore", str(projects[0])], root)
+        result = subprocess.run(argv, cwd=root, env=env, capture_output=True, text=True)
+        if result.returncode:
+            return failed(result)
+    check_updates(root, show_output=True, planned=True)
     return 0
 
 

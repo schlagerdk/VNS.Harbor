@@ -2,6 +2,40 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.92] - 2026-11-27
+
+### Features
+
+- Fix permissions is shown only where it has something to fix: a file not owned by www-data, or one it cannot read, found as the site's page opens (its group and a file's mode alone are not counted, as builds and publishes leave those); it goes once the fix is done.
+- Test the config (Apache) shows its result in a window of its own, fine, fine with warnings, or the error with its file and line, not in a terminal.
+- Backoffice login… stands beside the backoffice in an environment's details, at the right, as a link with its icon and colour, not as a button in Manage.
+- Web Server shows Needs attention above the sites: what keep-alive finds wrong now (not answering, a certificate, a failed service), a service that failed and an environment gone from its server, each with its site and environment and a way straight to it; and a Needs attention filter.
+- Settings and data synced to an environment are imported by uSync there at once, while the site runs: the VNS.Harbor package imports them as uSync's Import button does (Settings, then Content for content, media and dictionary), and the sync window and the dashboard tell how many items changed and what could not be imported. Nothing is restarted, a data sync included. Publishing the main site has uSync import the settings it brought the same way. For a site with the package Import at startup is gone from Sync setup, and the update turns uSync's ImportAtStartup off on it and its environments, without a restart (harbor env import-at-startup-off; an environment not reached is done with the next update). A site without the package, such as Umbraco 13, keeps Import at startup in Sync setup and is restarted after a sync to import, as before. A destination whose package is older is told plainly that what it got is not imported yet (it was left unimported without a word) (VNS.Harbor 18.3.3).
+- The admin and its mail say Harbor, not VNS Harbor: the header, the tab's title, sign-in, Update Harbor, Export, the mails' head and foot, and who started a sync; Powered by VNS stays. The repository, the commands and the NuGet package keep VNS Harbor.
+- In Umbraco the dashboard is Harbor Sync, its user group too (one made as VNS Harbor Sync is renamed once, a name given by hand is kept), and Powered by VNS stands under its latest syncs, as in the Harbor admin (VNS.Harbor 18.3.3).
+- Keep-alive's mails (a change, the daily report and the test) and the usage alerts are HTML beside their text: the server and what happened on top in red, amber or green, each site as a card with its problem, since when and for how long, linked to the site; a solved problem says how long it lasted, and the subject starts with a red or green mark. They read on a phone and in a mail program's dark mode. The mail server's test from Settings is one too.
+- Settings has Notifications: the mail Harbor sends in one place, each with who gets it, on or off, and a test: the mail server (from General), Site problems (keep-alive's email report, from General), Usage alerts (from Usage) and Job alerts. General keeps keep-alive itself, with its log; Usage what the sites and databases take.
+- Settings has Health: the server now (memory, swap, each disk and load, a tile each with its limit) and charts of the last 24 hours or 7 days with the time and value under the pointer, sampled every 5 minutes (/etc/cron.d/vns-health, installed with the update). Updates has the OS updates beside Harbor's: how many wait, how many are security updates, whether they install by themselves (Turn on automatic security updates installs unattended-upgrades), and a restart asked for. Install updates… installs the security updates or all of them in the task window (none removed, a changed config file kept, apt's lock waited for), and says first what it restarts: Apache, SQL Server, PostgreSQL or a new kernel. An update stopped halfway is finished first, Microsoft's packages (msodbcsql18, mssql-tools18) are updated with their licence accepted, and Harbor's mssql-release.list goes when Microsoft's own microsoft-prod.list names the same repository (apt warned of it twice).
+- Server health (Settings, Notifications): a mail when a disk, memory (twice in a row) or swap is past its limit, security updates (or any) wait, or the server asks to be restarted, and when it is fine again; the limits are chosen, and Send test mails how the server is now.
+- Scheduled jobs can keep the logs small: each job's log file rotated weekly, the last 8 kept compressed (logrotate), also those of jobs added later; a file another logrotate config has already is left to it.
+- Job alerts (Settings, Notifications): choose the scheduled jobs to watch and, for each, what is a failure (an exit code other than 0, lines like errors in its output or its log, not run when its schedule says, or run longer than the minutes given). A watched job that fails is mailed once, with the end of its output, and once when it works again; Send test mails how each watched job is now. While they are on, root's crontab runs each job through harbor-cron-shell (its SHELL), which runs it as before and notes how it ended: each job shows how its last run ended, and its Log the exit codes of its last runs. Turn off puts root's crontab back as it was.
+- Usage alerts has Send test, as keep-alive's report has Test run: everything measured now, and the alert's mail, with what is over its limit now, sent to the addresses typed and shown, nothing saved.
+
+### Fixes
+
+- Notifications has each card the whole width: at a medium width a card's title, state and buttons ran into each other.
+- uSync's import after a sync failed now and then with Cannot access a disposed object (IServiceProvider): it ran on after the request that started it had ended, with that request's services; it has a scope of its own (VNS.Harbor 18.3.3.1).
+- Fix permissions leaves vns-harbor.json as Harbor writes it (root:www-data), so the site can read its key and not change it; it made it www-data's.
+- Check and Update on a site's NuGet packages show their steps with their marks, as other tasks do (a step for each package updated, the restore, then the check); Check is named Check the NuGet packages of the site, not Multi action: check, and dotnet's own output is shown only when it fails.
+- Check sees a NuGet version just published: NuGet kept nuget.org's answer up to 30 minutes, so VNS.Harbor 18.3.3 was not offered until then.
+- Check offers the release to a package on a development version (18.3.3.1-dev.… from dev/nuget-dev.sh): dotnet skipped it unless prereleases were asked for; a package on a stable version is still only offered a stable one.
+- On a phone, Export Site's sites keep inside their card: the name and kind on the first line, Exports and Export… on one of their own below, and the card's text wraps.
+- On a phone, SQL Server's databases and backups have their name as the card's head, whole, with its badges and chips under it, no longer squeezed to a letter a line; the three tabs stay on one row, and a login's name and what it may use wrap instead of being cut.
+
+### Documentation
+
+- The README's screenshots are as the admin is now (Harbor, Notifications, Health, the site's page with its NuGet packages), two of them new.
+
 ## [1.0.91] - 2026-11-26
 
 ### Fixes

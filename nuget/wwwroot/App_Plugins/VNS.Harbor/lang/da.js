@@ -64,10 +64,10 @@ export default {
 		cancel: "Annuller",
 		close: "Luk",
 
-		failedTitle: "VNS Harbor kunne ikke spørges",
+		failedTitle: "Harbor kunne ikke spørges",
 		failedText: "Sitet kunne ikke læse sin egen forbindelse til Harbor.",
-		noAccessTitle: "Ingen adgang til VNS Harbor Sync",
-		noAccessText: "En administrator kan give dig adgang ved at tilføje dig til brugergruppen VNS Harbor Sync (alias vnsHarbor). Administratorer har adgang.",
+		noAccessTitle: "Ingen adgang til Harbor Sync",
+		noAccessText: "En administrator kan give dig adgang ved at tilføje dig til brugergruppen Harbor Sync (alias vnsHarbor). Administratorer har adgang.",
 		notConnectedTitle: "Ikke forbundet til Harbor",
 		notConnectedText: "Sitet er endnu ikke forbundet til den Harbor, der styrer det. Det bliver forbundet, når Harbor publicerer det.",
 		unreachableTitle: "Harbor kan ikke nås",

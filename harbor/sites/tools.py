@@ -274,6 +274,10 @@ def publish(system, name, configuration="", folder="", environment_name=""):
     system.run("systemctl", "status", unit, "--no-pager", check=False)
     if system.run("systemctl", "is-active", "--quiet", unit, check=False).ok:
         system.say(f"OK: {unit} is running")
+        # The settings it brought imported by uSync, now that it runs (no import at startup since 1.0.92)
+        if "Umbraco.Cms" in project.read_text(errors="replace"):
+            from harbor.umbraco.backoffice import import_after_publish
+            import_after_publish(system, site.name)
     else:
         system.say(f"FAILED: {unit} is not running. Last log lines:")
         system.run("journalctl", "-u", unit, "-n", "20", "--no-pager", check=False)

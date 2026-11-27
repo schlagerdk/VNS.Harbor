@@ -64,10 +64,10 @@ export default {
 		cancel: "Cancel",
 		close: "Close",
 
-		failedTitle: "VNS Harbor could not be asked",
+		failedTitle: "Harbor could not be asked",
 		failedText: "The site could not read its own connection to Harbor.",
-		noAccessTitle: "No access to VNS Harbor Sync",
-		noAccessText: "An administrator can give you access by adding you to the VNS Harbor Sync user group (alias vnsHarbor). Administrators have access.",
+		noAccessTitle: "No access to Harbor Sync",
+		noAccessText: "An administrator can give you access by adding you to the Harbor Sync user group (alias vnsHarbor). Administrators have access.",
 		notConnectedTitle: "Not connected to Harbor",
 		notConnectedText: "This site is not connected to the Harbor that manages it yet. It is connected when Harbor publishes it.",
 		unreachableTitle: "Harbor cannot be reached",

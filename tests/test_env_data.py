@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -66,6 +67,7 @@ class DataSyncTests(SyncTests):
         self.restore(before)
         code, system, _ = self.harbor(["env", "data-sync", "shop.dk", *args], answers=self.answers())
         self.assertEqual(code, result.returncode, (result.stdout, result.stderr, system.said))
+        # A site without the VNS.Harbor package (as this one) imports at startup and is restarted, as the script did
         self.assertEqual(self.snapshot(), legacy_files)
         # Here or in an environment on this server (through sudo bash -c), as the fake systemctl saw them
         commands = [command[len("sudo bash -c "):] if command.startswith("sudo bash -c ") else command for command in system.commands]
@@ -91,6 +93,40 @@ class DataSyncTests(SyncTests):
         staging = self.web / "shop.dk/_staging"
         self.assertTrue((staging / "uSync/v17/Content/item.config").is_file())
         self.assertTrue((staging / "uSync/v17/DataTypes/item.config").is_file(), "the settings synced first")
+
+    def test_data_is_imported_without_a_restart_where_the_package_can(self):
+        """A data sync restarted its destination, so uSync imported at startup: the package imports it while it runs (1.0.92)"""
+        self.sync_settings_first()
+        with mock.patch("harbor.umbraco.backoffice.usync_import", return_value=True) as imported:
+            code, system, _ = self.harbor(["env", "data-sync", "shop.dk", "sync", "main", "staging"], answers=self.answers())
+        self.assertEqual(code, 0, system.said)
+        self.assertEqual(imported.call_args.args[3], ("Settings", "Content"))
+        self.assertFalse([command for command in system.commands if "systemctl restart" in command], "not restarted")
+
+    def test_import_at_startup_goes_off_with_the_update_without_a_restart(self):
+        """The update turns ImportAtStartup off on the sites with the VNS.Harbor package and their environments; nothing
+        is restarted, and it is done once; a site without the package (Umbraco 13) is left importing at startup (1.0.92)"""
+        (self.web / "shop.dk/scripts/data_sync.json").write_text(json.dumps({"staging": {"settings_import": True}}))
+        (self.web / "shop.dk/Shop.csproj").write_text('<Project><ItemGroup><PackageReference Include="Umbraco.Cms" />'
+                                                      '<PackageReference Include="VNS.Harbor" /></ItemGroup></Project>\n')
+        staging = self.web / "shop.dk/_staging/appsettings.json"
+        before = json.loads(staging.read_text())
+        before.setdefault("uSync", {}).setdefault("Settings", {})["ImportAtStartup"] = "Settings"
+        staging.write_text(json.dumps(before))
+        code, system, _ = self.harbor(["env", "import-at-startup-off"], answers=self.answers())
+        self.assertEqual(code, 0, system.said)
+        self.assertEqual(json.loads(staging.read_text())["uSync"]["Settings"]["ImportAtStartup"], "None")
+        self.assertFalse([command for command in system.commands if "systemctl" in command and "restart" in command], "not restarted")
+        # The environment on another server is not reached here (its appsettings.json cannot be read): told, and
+        # done again with the next update, as nothing is marked done
+        self.assertIn("Not reached, so ImportAtStartup is left there until the next update: shop.dk (production)", system.said)
+        self.assertFalse((self.folder / "var/lib/harbor/import-at-startup-off").exists())
+        # A site without the package (Umbraco 13) keeps importing at startup: the update leaves it
+        (self.web / "shop.dk/Shop.csproj").write_text('<Project><ItemGroup><PackageReference Include="Umbraco.Cms" /></ItemGroup></Project>\n')
+        before["uSync"]["Settings"]["ImportAtStartup"] = "Settings"
+        staging.write_text(json.dumps(before))
+        code, system, _ = self.harbor(["env", "import-at-startup-off"], answers=self.answers())
+        self.assertEqual(json.loads(staging.read_text())["uSync"]["Settings"]["ImportAtStartup"], "Settings")
 
     def test_no_data_to_a_site_whose_settings_are_behind(self):
         """Data merged into other document types gives problems there: Sync settings (or Sync everything) first"""

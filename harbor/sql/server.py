@@ -73,12 +73,27 @@ def microsoft_keys(system):
     system.run("bash", "-c", KEYS)
 
 
+def drop_duplicate_list(system):
+    """Harbor's mssql-release.list taken away when Microsoft's own packages-microsoft-prod has the same repository in
+    microsoft-prod.list (its 1.2 does): apt warns of every source named twice. True when it was."""
+    ours, theirs = system.path("/etc/apt/sources.list.d/mssql-release.list"), system.path("/etc/apt/sources.list.d/microsoft-prod.list")
+    lines = lambda path: {line.strip() for line in path.read_text().splitlines() if line.strip() and not line.lstrip().startswith("#")}
+    try:
+        if ours.is_file() and theirs.is_file() and lines(ours) and lines(ours) <= lines(theirs):
+            ours.unlink()
+            return True
+    except OSError:
+        pass
+    return False
+
+
 def install_tools(system, version_id):
     """mssql-tools18 (sqlcmd) from Microsoft's repository for this Ubuntu"""
     system.plan(["Add Microsoft tools repository", "Install mssql-tools18"])
     system.step("Add Microsoft tools repository")
     listing = system.run("curl", "-fsSL", f"{BASE_URL}/config/ubuntu/{version_id}/prod.list", capture=True).stdout
     system.path("/etc/apt/sources.list.d/mssql-release.list").write_text(listing)
+    drop_duplicate_list(system)
     system.step("Install mssql-tools18")
     system.run("apt-get", "update")
     system.run("env", "ACCEPT_EULA=Y", "apt-get", "install", "-y", "mssql-tools18", "unixodbc-dev")

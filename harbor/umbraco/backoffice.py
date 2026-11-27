@@ -246,3 +246,124 @@ def login_link(system, name, environment="main", who="", now=None):
         stream.write(json.dumps({"time": datetime.now(timezone.utc).isoformat(timespec="seconds"), "who": who, "environment": environment,
                                  "user": user}) + "\n")
     return f"{address(system, site, environment)}/umbraco/vns-harbor/login?token={payload}.{signature}"
+
+
+# ---- uSync's import, asked of the package after a sync (no restart)
+IMPORT_WAIT = 30 * 60
+
+
+def command_token(keys, site, environment, action, group, now=None):
+    """A one-time command for the package, signed as a login link is; it has an action, so it is never a login"""
+    now = time.time() if now is None else now
+    payload = encode(json.dumps({"site": site, "environment": environment, "action": action, "group": group, "exp": int(now) + LIFETIME,
+                                 "nonce": secrets.token_hex(16)}, separators=(",", ":")).encode())
+    return f"{payload}.{encode(hmac.new(keys['login_key'].encode(), payload.encode(), hashlib.sha256).digest())}"
+
+
+def usync_import(system, name, environment, groups=("Settings",), label="", opener=None, sleep=time.sleep, wait=IMPORT_WAIT, ready_wait=0):
+    """uSync on an environment imports what was just synced to it, while it runs: the VNS.Harbor package there imports
+    each group in turn (Settings, then Content for content, media and dictionary), as uSync's Import button does.
+    True when it did, False when uSync could not import everything (told), None when it cannot be asked: the package
+    there is older or missing, uSync is not there, or the site is not reached (told), so the caller does as before.
+    ready_wait: seconds to wait for a site that was just started to answer (after a publish)."""
+    import urllib.error
+    import urllib.request
+    site = site_named(system, name)
+    label = label or environment
+    try:
+        if not runs_package(system, site, environment):
+            return None
+        keys = connection(system, site, environment)
+        # The site must know the key the command is signed with: connected now when it does not
+        try:
+            written = json.loads(read_remote(system, site, environment, "vns-harbor.json") or "{}")
+        except ValueError:
+            written = {}
+        if written.get("loginKey") != keys["login_key"]:
+            connect(system, site.name, environment)
+    except (OSError, RuntimeError, Stop) as error:
+        system.warn(f"{label}: the import could not be asked for: {error}")
+        return None
+    base = address(system, site, environment)
+    opener = opener or urllib.request.build_opener()
+
+    def ask(path, method="GET", headers=None):
+        request = urllib.request.Request(base + path, method=method, headers={"User-Agent": "VNS-Harbor", **(headers or {})},
+                                         data=b"" if method == "POST" else None)
+        with opener.open(request, timeout=30) as response:
+            return response.status, json.loads(response.read() or b"{}")
+
+    def start(group):
+        """The import started; a site still starting is asked again until ready_wait has gone"""
+        waited = 0
+        while True:
+            try:
+                return ask("/umbraco/vns-harbor/import", "POST", {"X-Harbor-Command": command_token(keys, site.name, environment, "import", group)})
+            except urllib.error.HTTPError as error:
+                if error.code not in (502, 503, 504) or waited >= ready_wait:
+                    raise
+                error.close()
+            except (OSError, ValueError):
+                if waited >= ready_wait:
+                    raise
+            sleep(3)
+            waited += 3
+
+    for group in groups:
+        try:
+            status, found = start(group)
+        except urllib.error.HTTPError as error:
+            # 404: a package from before the import; 409: no uSync there, or an import running already
+            reason = ""
+            try:
+                reason = json.loads(error.read() or b"{}").get("error", "")
+            except ValueError:
+                pass
+            error.close()
+            if error.code == 409 and reason:
+                system.warn(f"{label}: uSync could not import there: {reason}")
+            return None
+        except (OSError, ValueError) as error:
+            system.warn(f"{label}: {base} was not reached to import there: {getattr(error, 'reason', error)}")
+            return None
+        job = found.get("id", "") if status == 202 else ""
+        if not re.fullmatch(r"[0-9a-f]{32}", job):
+            return None
+        waited = 0
+        while True:
+            try:
+                _, found = ask(f"/umbraco/vns-harbor/import/{job}")
+            except (OSError, ValueError) as error:
+                system.warn(f"{label}: lost the import there: {getattr(error, 'reason', error)}; uSync's log in the backoffice tells how it went")
+                return False
+            if found.get("state") != "running":
+                break
+            if waited >= wait:
+                system.warn(f"{label}: uSync still imports {group.lower()} after {wait // 60} minutes; its log in the backoffice tells how it ends")
+                return False
+            sleep(2)
+            waited += 2
+        what = "settings" if group == "Settings" else "content, media and dictionary"
+        if found.get("state") == "failed":
+            system.warn(f"{label}: uSync could not import the {what}: {found.get('error') or 'see its log in the backoffice'}")
+            return False
+        changed, failed = int(found.get("changed", 0)), int(found.get("failed", 0))
+        system.say(f"{label}: uSync imported the {what}: {changed} item{'' if changed == 1 else 's'} changed"
+                   + (f", {failed} not imported" if failed else "") + f" ({found.get('seconds', 0)} s)")
+        if failed:
+            for problem in found.get("problems") or []:
+                system.warn(f"{label}: {problem}")
+            return False
+    return True
+
+
+def import_after_publish(system, name):
+    """After the main site is published: the settings its uSync folder brought imported by uSync, as ImportAtStartup did
+    before Harbor imported them itself (1.0.92). A site without uSync, or without the package, is left as it is."""
+    site = site_named(system, name)
+    roots = {system.path(site.site_root), system.path(running_folder(system, site, "main"))}
+    if not any(any(root.glob("uSync/*/")) for root in roots) or not uses_package(system, site):
+        return
+    if usync_import(system, site.name, "main", ("Settings",), label=site.name, ready_wait=180) is None:
+        system.warn("uSync did not import the settings that came with this publish: import them in its backoffice "
+                    "(the VNS.Harbor package 18.3.3.1 or newer does it by itself).")

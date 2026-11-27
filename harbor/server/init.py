@@ -59,6 +59,7 @@ def init(system):
 
     system.step("Install the keep-alive job")
     system.run("python3", f"{LIB}/keep_alive.py", "--install")
+    system.run("python3", f"{LIB}/server_health.py", "--install")
     system.run("systemctl", "enable", "--now", "cron")
     marker = system.path(INITIALIZED)
     marker.parent.mkdir(parents=True, exist_ok=True)

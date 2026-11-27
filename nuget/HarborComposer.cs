@@ -18,17 +18,24 @@ public sealed class HarborComposer: IComposer {
 }
 
 /// <summary>
-/// The user group whose members may use the VNS Harbor Sync dashboard. It is made empty: nobody may until an administrator
+/// The user group whose members may use the Harbor Sync dashboard. It is made empty: nobody may until an administrator
 /// adds them.
 /// </summary>
 public sealed class HarborGroup(IUserGroupService groups, IShortStringHelper strings): INotificationAsyncHandler<UmbracoApplicationStartedNotification> {
 	public const string Alias = "vnsHarbor";
+	public const string Name = "Harbor Sync";
 
 	public async Task HandleAsync(UmbracoApplicationStartedNotification notification, CancellationToken cancellationToken) {
-		if (await groups.GetAsync(Alias) is not null) {
+		var found = await groups.GetAsync(Alias);
+		if (found is not null) {
+			// Made as VNS Harbor Sync before 18.3.3: renamed once, a name an administrator gave it is kept
+			if (found.Name == "VNS Harbor Sync") {
+				found.Name = Name;
+				await groups.UpdateAsync(found, Umbraco.Cms.Core.Constants.Security.SuperUserKey);
+			}
 			return;
 		}
-		var group = new UserGroup(strings, 0, Alias, "VNS Harbor Sync", "icon-sync");
+		var group = new UserGroup(strings, 0, Alias, Name, "icon-sync");
 		await groups.CreateAsync(group, Umbraco.Cms.Core.Constants.Security.SuperUserKey);
 	}
 }

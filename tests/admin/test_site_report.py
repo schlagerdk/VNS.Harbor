@@ -20,8 +20,8 @@ class SiteReportTests(unittest.TestCase):
         self.state = Path(folder.name)
         self.sent = []
 
-    def send(self, settings, to, subject, body):
-        self.sent.append((to, subject, body))
+    def send(self, settings, to, subject, body, html=None):
+        self.sent.append((to, subject, body, html))
 
     def run_with(self, results, settings=None, at=None):
         at = at or datetime(2026, 11, 24, 10, 0).timestamp()
@@ -80,7 +80,7 @@ class SiteReportTests(unittest.TestCase):
         self.assertIn("Daily site report: 1 problem", self.sent[0][1])
 
     def test_a_mail_that_cannot_be_sent_is_kept_for_the_admin(self):
-        def fail(*args):
+        def fail(*args, **kwargs):
             raise OSError("Connection refused")
         on = {"enabled": True, "emails": ["ops@example.com"], "when": "change", "checks": list(report.CHECKS)}
         report.record([{"name": "a.example.com", "problems": {"down": "HTTP 500"}}], on, self.state, now=1000, mail=MAIL, sender=fail)
@@ -99,6 +99,22 @@ class SiteReportTests(unittest.TestCase):
         self.assertEqual(report.events(self.state), [])
         # Without recipients it is shown, not sent
         self.assertIn("No recipients", report.test_report([], {}, "web-01", mail=MAIL, sender=self.send)["error"])
+
+    def test_the_mail_has_an_html_part_that_says_how_long_it_lasted(self):
+        """The mails were plain text, hard to read at a glance: they have an HTML part beside it (1.0.92)"""
+        on = {"enabled": True, "emails": ["ops@example.com"], "when": "change", "checks": list(report.CHECKS)}
+        start = datetime(2026, 11, 24, 10, 0).timestamp()
+        self.run_with([{"name": "<b>shop.example.com", "problems": {"down": "timed out"}}], on, start)
+        self.run_with([{"name": "<b>shop.example.com", "problems": {}}], on, start + 9 * 3600 + 34 * 60)
+        started, solved = self.sent[0][3], self.sent[1][3]
+        self.assertIn("<!doctype html>", started)
+        self.assertIn("&lt;b&gt;shop.example.com", started)
+        self.assertNotIn("<b>shop", started)
+        self.assertIn("Not answering", started)
+        self.assertIn("Answering again", solved)
+        self.assertIn("it lasted 9 h 34 min", solved)
+        self.assertIn("(it lasted 9 h 34 min)", self.sent[1][2])
+        self.assertIn("Nothing is wrong now", solved)
 
     def test_settings_are_checked(self):
         with self.assertRaises(ValueError):

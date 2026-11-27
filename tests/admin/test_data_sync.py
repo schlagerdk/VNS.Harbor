@@ -72,7 +72,18 @@ class DataSyncTests(unittest.TestCase):
         self.assertEqual(off["uSync"]["Settings"]["ExportOnSave"], "All")
         self.assertEqual(off["uSync"]["Settings"]["UiEnabledGroups"], "Settings")
 
-    def test_import_at_startup_is_set_by_sync_setup(self):
+    def test_a_site_with_the_package_never_imports_at_startup(self):
+        """Harbor has uSync import what it syncs or publishes through the VNS.Harbor package (1.0.92): ImportAtStartup
+        None for such a site, whatever it takes part with or Sync setup says"""
+        template = json.loads((ROOT / "templates/sites/csharp/umbraco/project/appsettings.json").read_text())
+        copy = lambda: json.loads(json.dumps(template))
+        startup = lambda data: data["uSync"]["Settings"].get("ImportAtStartup")
+        for settings in ({}, {"settings_import": True}, ON, dict(ON, receive=False), dict(ON, send=False)):
+            with self.subTest(settings=settings):
+                self.assertEqual(startup(data_sync.apply_appsettings(copy(), settings, package=True)), "None")
+
+    def test_a_site_without_the_package_imports_at_startup_by_sync_setup(self):
+        """Umbraco 13 cannot run the package: it imports at startup as before, and is restarted after a sync"""
         template = json.loads((ROOT / "templates/sites/csharp/umbraco/project/appsettings.json").read_text())
         copy = lambda: json.loads(json.dumps(template))
         startup = lambda data: data["uSync"]["Settings"].get("ImportAtStartup")
@@ -89,9 +100,10 @@ class DataSyncTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "appsettings.json"
             path.write_text('{\n  "Name": "a, b }",\n  "uSync": {"Settings": {"ImportAtStartup": "None",},},\n}\n')
-            self.assertTrue(data_sync.apply_file(path, {"settings_import": True}))
+            path.write_text('{\n  "Name": "a, b }",\n  "uSync": {"Settings": {"ImportAtStartup": "Settings",},},\n}\n')
+            self.assertTrue(data_sync.apply_file(path, {}, package=True))
             saved = json.loads(path.read_text())
-            self.assertEqual((saved["Name"], saved["uSync"]["Settings"]["ImportAtStartup"]), ("a, b }", "Settings"))
+            self.assertEqual((saved["Name"], saved["uSync"]["Settings"]["ImportAtStartup"]), ("a, b }", "None"))
             path.write_text('{\n  "Url": "https://x.dk", // the site\n  "uSync": {}\n}\n')
             with self.assertRaisesRegex(ValueError, r"appsettings.json on prod has a comment \(line 2\)"):
                 data_sync.apply_file(path, {}, "appsettings.json on prod")

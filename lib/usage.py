@@ -248,6 +248,89 @@ def mail_body(new, solved, everything=None):
     return "\n".join(lines) + "\n\nThe limits are set on each user under Settings, Users.\n"
 
 
+def bar(item):
+    """How full: a bar of its size against its limit, green, amber from 80 % and red over it"""
+    if item.get("limit_mb") is None:
+        return ""
+    share = item["size_mb"] / item["limit_mb"] if item["limit_mb"] else 1
+    colour = "#dc2626" if share > 1 else "#d97706" if share >= .8 else "#16a34a"
+    width = max(2, min(100, round(share * 100)))
+    rest = f'<td class="cnt" style="background:#e5e7eb;font-size:0;line-height:0">&nbsp;</td>' if width < 100 else ""
+    return ('<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-top:8px;border-collapse:separate;'
+            f'border-radius:999px;overflow:hidden;height:6px"><tr><td width="{width}%" style="background:{colour};height:6px;font-size:0;line-height:0">'
+            f'&nbsp;</td>{rest}</tr></table>')
+
+
+def amount(item):
+    limit = item.get("limit_mb")
+    if limit is None:
+        return f"{size_text(item['size_mb'])}, no limit"
+    return f"{size_text(item['size_mb'])} of {size_text(limit)} &middot; {round(item['size_mb'] / limit * 100) if limit else 100} %"
+
+
+def mail_html(new, solved, everything=None, host=None, now=None, test=False):
+    """The mail as HTML: what went over, what came under, and everything the users made, by user, with how full"""
+    host = host or socket.gethostname()
+    esc, row, section = report.esc, report.row, report.section
+    sections = []
+    if new:
+        sections.append(section("Grown past its limit", "".join(
+            row("red", f"{item['kind']} over", f'<span class="tx">{esc(item["name"])}</span>', f"Made by {item['user']}",
+                amount(item) + bar(item)) for item in new), len(new)))
+    if solved:
+        sections.append(section("Under its limit again", "".join(
+            row("green", f"{item['kind']} under", f'<span class="tx">{esc(item["name"])}</span>', f"Made by {item['user']}") for item in solved),
+            len(solved)))
+    if everything:
+        users = {}
+        for item in everything:
+            users.setdefault(item["user"], []).append(item)
+        parts = []
+        for who, items in users.items():
+            lines = "".join(
+                '<tr><td class="ln" style="padding:10px 0;border-top:1px solid #e5e7eb">'
+                f'<span class="mu" style="font-size:11px;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#6b7280">{esc(item["kind"])}</span>'
+                f'<div class="tx" style="font-size:14px;line-height:20px;font-weight:600;word-break:break-word">{esc(item["name"])}</div>'
+                f'<div class="mu" style="font-size:12px;line-height:18px;color:#6b7280">{amount(item)}</div>{bar(item)}</td></tr>' for item in items)
+            parts.append('<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="rw rl" style="margin:0 0 10px;'
+                         'border-collapse:separate;background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px"><tr><td style="padding:12px 16px 4px">'
+                         f'<div class="tx" style="font-size:15px;font-weight:700;padding-bottom:8px">{esc(who)}</div>'
+                         f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">{lines}</table></td></tr></table>')
+        sections.append(section("Everything the users made, now", "".join(parts), len(everything)))
+    if test:
+        tone, title = "blue", f"Test: {len(new)} over {'its' if len(new) == 1 else 'their'} limit"
+    elif new:
+        tone, title = "red", f"{len(new)} over {'its' if len(new) == 1 else 'their'} limit" + (f", {len(solved)} under again" if solved else "")
+    else:
+        tone, title = "green", f"{len(solved)} under {'its' if len(solved) == 1 else 'their'} limit again"
+    over = sum(1 for item in (everything or []) if item.get("limit_mb") is not None and item["size_mb"] > item["limit_mb"])
+    lead = f"{over} of what the users made {'is' if over == 1 else 'are'} over the limit now." if over else "Nothing the users made is over its limit now."
+    footer = (f"Usage is checked on <strong>{esc(host)}</strong> every hour. Sent {report.stamp(now or time.time())}. "
+              "The limits are set on each user under Settings, Users in Harbor; who is mailed, under Settings, Notifications.")
+    if test:
+        lead = "A test of the usage alerts: this is how they look, with what is over its limit now. Nothing was kept. " + lead
+    return report.page(host, tone, title, lead, sections, footer, "Test: usage limits" if test else "Usage limits")
+
+
+def test_report(data_dir, emails, mail=None, sender=None, now=None, **measure):
+    """A test of the alerts, from their dialog: everything measured now, and the mail they give, with what is over now,
+    sent to the addresses typed (not saved). Nothing is kept. Returned as {subject, body, to, error}."""
+    emails = validate_settings({"enabled": True, "emails": emails})["emails"]
+    everything = []
+    over = check(data_dir, everything=everything, **measure)
+    host = socket.gethostname()
+    subject = f"[{host}] TEST: Usage limits: {len(over)} over"
+    body = f"A test of the usage alerts on {host}: this is how they look. Nothing was kept.\n\n" + (
+        mail_body(over, [], everything) if over or everything else "Nothing the users made is over its limit.\n")
+    error = ""
+    try:
+        (sender or report.send)(report.load_mail() if mail is None else mail, emails, subject, body,
+                                html=mail_html(over, [], everything, host, now, test=True))
+    except Exception as exc:  # noqa: BLE001  (smtplib, ssl and socket each have their own; the user is told which)
+        error = f"Not sent: {exc}"
+    return {"subject": subject, "body": body, "to": emails if not error else [], "error": error}
+
+
 def run(data_dir, mail=True, now=None, **measure):
     """Check, keep what is over in usage-state.json, and mail what went over or came under since the last check"""
     data_dir = Path(data_dir)
@@ -267,9 +350,9 @@ def run(data_dir, mail=True, now=None, **measure):
         settings = load_settings(data_dir)
         if settings["enabled"] and settings["emails"] and (new or solved):
             try:
-                report.send(report.load_mail(), settings["emails"], f"[{socket.gethostname()}] Usage limits: "
+                report.send(report.load_mail(), settings["emails"], f"[{socket.gethostname()}] " + ("\U0001F534 " if new else "\u2705 ") + "Usage limits: "
                             + (f"{len(new)} over" if new else "") + (", " if new and solved else "") + (f"{len(solved)} under again" if solved else ""),
-                            mail_body(new, solved, everything))
+                            mail_body(new, solved, everything), html=mail_html(new, solved, everything, now=now))
                 mail_error = None
             except Exception as exc:  # noqa: BLE001  (smtplib, ssl and socket each have their own)
                 mail_error = str(exc)
@@ -314,6 +397,7 @@ def main():
     parser.add_argument("--install")
     parser.add_argument("--remove", action="store_true")
     parser.add_argument("--sync", help="the hourly job for DIR as its settings and users need it")
+    parser.add_argument("--test-report", action="store_true", help="with --data: a test mail to the addresses on stdin (JSON), as JSON")
     args = parser.parse_args()
     if args.install:
         install(args.install)
@@ -325,6 +409,11 @@ def main():
             install(args.sync)
         else:
             CRON.unlink(missing_ok=True)
+    elif args.data and args.test_report:
+        try:
+            print(json.dumps(test_report(args.data, json.loads(sys.stdin.read() or "[]"))))
+        except ValueError as exc:
+            print(json.dumps({"error": str(exc)}))
     elif args.data:
         result = run(args.data, mail=not args.json)
         if args.json:

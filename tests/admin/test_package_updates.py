@@ -42,6 +42,10 @@ class PackageUpdateTests(unittest.TestCase):
         # NuGet is not asked: the newest version a project can use is the one dotnet named
         nuget = patch.object(tracking, "compatible_latest", side_effect=lambda name, current, frameworks: {"example": "2.0"}.get(name.lower()))
         nuget.start()
+        # Nor is NuGet's cache cleared: its own test asks for it
+        self.cache = patch.object(tracking, "clear_http_cache")
+        self.cache.start()
+        self.addCleanup(patch.stopall)
         self.addCleanup(nuget.stop)
 
     def state(self):
@@ -72,6 +76,24 @@ class PackageUpdateTests(unittest.TestCase):
         self.project.write_text('<Project><PackageReference Include="Example" Version="2.0" /></Project>')
         self.assertEqual(self.state(), "")
         self.assertEqual(tracking.status(self.root, "test", tracking.fingerprint(self.root)), "pending")
+
+    def test_a_check_asks_nuget_org_as_it_is_now(self):
+        """A version just published was not seen: NuGet's http cache kept nuget.org's answer up to 30 minutes (VNS.Harbor 18.3.3, 1.0.92)"""
+        self.cache.stop()
+        with patch.object(tracking.subprocess, "run", return_value=Mock(stdout=update_output())) as run:
+            tracking.check_updates(self.root)
+        self.assertEqual(run.call_args_list[0].args[0][-4:], ["nuget", "locals", "http-cache", "--clear"])
+
+    def test_a_development_version_is_offered_the_release_and_a_stable_one_no_prerelease(self):
+        """A site on VNS.Harbor 18.3.3.1-dev.… (dev/nuget-dev.sh) was not offered 18.3.3.1: --outdated skips a prerelease (1.0.92)"""
+        self.project.write_text('<Project><PackageReference Include="VNS.Harbor" Version="18.3.3.1-dev.1" /></Project>')
+        output = update_output([{"id": "VNS.Harbor", "requestedVersion": "18.3.3.1-dev.1", "resolvedVersion": "18.3.3.1-dev.1", "latestVersion": "18.3.3.1"},
+                                PACKAGE_UPDATE | {"latestVersion": "3.0-beta"}])
+        with patch.object(tracking, "compatible_latest", side_effect=lambda name, current, frameworks: {"vns.harbor": "18.3.3.1"}.get(name.lower())), \
+                patch.object(tracking.subprocess, "run", return_value=Mock(stdout=output)) as run:
+            self.assertEqual(tracking.check_updates(self.root), "available")
+        self.assertIn("--include-prerelease", run.call_args.args[0])
+        self.assertEqual([item["name"] for item in tracking.updates_details(self.root, tracking.fingerprint(self.root))["packages"]], ["VNS.Harbor"])
 
     def test_all_projects_checked_and_any_update_flags_site(self):
         (self.root / "Other.csproj").write_text("<Project />")
@@ -129,7 +151,7 @@ class PackageUpdateTests(unittest.TestCase):
         self.assertEqual(run.call_args.args[0],
                          ["dotnet", "add", str(self.project), "package", "Example", "--version", "2.0"])
         self.assertEqual(run.call_count, 1)
-        check.assert_called_once_with(self.root, show_output=True)
+        check.assert_called_once_with(self.root, show_output=True, planned=True)
 
     def test_update_all_stops_at_failure_and_does_not_claim_success(self):
         tracking.record(self.root, "updates", tracking.fingerprint(self.root), status="available",
@@ -153,7 +175,7 @@ class PackageUpdateTests(unittest.TestCase):
             self.assertEqual(tracking.upgrade_packages(self.root), 0)
         self.assertEqual([call.args[0][-3:] for call in run.call_args_list],
                          [["Example", "--version", "2.0"], ["Other", "--version", "4.0"]])
-        check.assert_called_once_with(self.root, show_output=True)
+        check.assert_called_once_with(self.root, show_output=True, planned=True)
 
     def test_upgrade_rejects_unknown_package_and_stale_check(self):
         tracking.record(self.root, "updates", tracking.fingerprint(self.root), status="available",

@@ -6,7 +6,7 @@
 		<ImplicitUsings>enable</ImplicitUsings>
 		<Nullable>enable</Nullable>
 		<PackageId>VNS.Harbor</PackageId>
-		<Version>18.3.2.3</Version>
+		<Version>18.3.3.1</Version>
 		<Authors>VNS</Authors>
 		<Description>VNS Harbor in Umbraco: log in from the Harbor admin, and sync settings and data to the site's environments.</Description>
 		<PackageTags>umbraco;umbraco-marketplace;vns;harbor</PackageTags>
@@ -29,5 +29,8 @@
 	<ItemGroup>
 		<PackageReference Include="Umbraco.Cms.Web.Common" Version="[18.3.1, 19.0.0)" />
 		<PackageReference Include="Umbraco.Cms.Api.Management" Version="[18.3.1, 19.0.0)" />
+		<!-- uSync's import, called when Harbor has synced settings or data here: compiled against it, never required. A
+		     site without uSync does not get it from this package, and the import says it has none. -->
+		<PackageReference Include="uSync.BackOffice" Version="18.2.1" PrivateAssets="all" ExcludeAssets="runtime" />
 	</ItemGroup>
 </Project>

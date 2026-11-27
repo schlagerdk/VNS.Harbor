@@ -76,7 +76,9 @@ class SyncTests(Base):
         def python3(argv):
             run = subprocess.run(["python3", *argv[1:]], capture_output=True, text=True)
             return Result(run.returncode, run.stdout, run.stderr)
-        code, system, _ = self.harbor(["env", "sync", "shop.dk", *args], answers={"rsync": rsync, "python3": python3, **(answers or {})})
+        # The files as the script sent them; uSync's import after it (the package, 1.0.92) is tested on its own
+        with mock.patch("harbor.umbraco.backoffice.usync_import", return_value=None):
+            code, system, _ = self.harbor(["env", "sync", "shop.dk", *args], answers={"rsync": rsync, "python3": python3, **(answers or {})})
         self.assertEqual(code, result.returncode, (result.stdout, result.stderr, system.said))
         self.assertEqual(self.snapshot(), legacy_files)
         recorded = [command[len("sshpass -e "):] if command.startswith("sshpass -e ") else command for command in system.commands
@@ -125,7 +127,10 @@ class SyncTests(Base):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("s.shop.dk (staging): skipped", "\n".join(system.said))
 
-    def test_only_a_site_set_to_import_at_startup_is_restarted(self):
+    def test_synced_settings_are_imported_or_the_site_restarted(self):
+        """A site with the VNS.Harbor package has uSync import the settings and nothing is restarted, its environments
+        whose package is older told plainly (aogtillon.dk); one without (Umbraco 13) is restarted when Sync setup has
+        it import at startup, as before (1.0.92)"""
         (self.web / "shop.dk/scripts/data_sync.json").write_text(json.dumps({"staging": {"settings_import": True},
                                                                               "production": {"settings_import": False}}))
         def rsync(argv):
@@ -137,15 +142,30 @@ class SyncTests(Base):
         def python3(argv):
             run = subprocess.run(["python3", *argv[1:]], capture_output=True, text=True)
             return Result(run.returncode, run.stdout, run.stderr)
+        answers = {"rsync": rsync, "python3": python3}
         restarted = []
-        with mock.patch("harbor.environments.data.DataSync.apply_settings", lambda self, site_id, force=False: restarted.append((site_id, force))):
-            code, system, _ = self.harbor(["env", "sync", "shop.dk", "main", "all"], answers={"rsync": rsync, "python3": python3})
-            self.assertEqual(code, 0, system.said)
-            self.assertEqual(restarted, [("staging", True)])
-            # A dry run restarts nothing
+        with mock.patch("harbor.environments.data.DataSync.apply_settings", lambda self, site_id, force=False, restart=True: restarted.append(site_id)):
+            # Without the package: the one set to import at startup restarted, the other told
+            with mock.patch("harbor.umbraco.backoffice.usync_import", return_value=None):
+                code, system, _ = self.harbor(["env", "sync", "shop.dk", "main", "all"], answers=answers)
+            self.assertEqual((code, restarted), (0, ["staging"]))
+            self.assertTrue(any("not imported: import them in uSync" in line and "Import at startup" in line for line in system.said), system.said)
+            # With the package, and its package older there: told, nothing restarted
             restarted.clear()
-            code, system, _ = self.harbor(["env", "sync", "shop.dk", "main", "all", "--dry-run"], answers={"rsync": rsync, "python3": python3})
+            with mock.patch("harbor.umbraco.backoffice.uses_package", return_value=True), \
+                    mock.patch("harbor.umbraco.backoffice.usync_import", return_value=None):
+                code, system, _ = self.harbor(["env", "sync", "shop.dk", "main", "all"], answers=answers)
             self.assertEqual((code, restarted), (0, []))
+            self.assertEqual(sum("NOT imported yet" in line for line in system.said), 2, system.said)
+            # The package imports them: nothing restarted, nothing told
+            with mock.patch("harbor.umbraco.backoffice.usync_import", return_value=True) as imported:
+                code, system, _ = self.harbor(["env", "sync", "shop.dk", "main", "all"], answers=answers)
+            self.assertEqual((code, restarted, imported.call_count), (0, [], 2))
+            self.assertFalse(any("imported" in line.lower() and "not" in line.lower() for line in system.said))
+            # A dry run imports nothing
+            with mock.patch("harbor.umbraco.backoffice.usync_import") as imported:
+                code, system, _ = self.harbor(["env", "sync", "shop.dk", "main", "all", "--dry-run"], answers=answers)
+            self.assertEqual((code, imported.call_count), (0, 0))
 
     def test_what_is_refused(self):
         for args in (("main", "main"), ("nowhere", "all"), ("main", "nowhere"), ("main", "main,staging"), ("main", "all", "--data", "content"),

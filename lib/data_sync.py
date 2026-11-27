@@ -11,8 +11,11 @@ Each site, the main site ("main") and every environment (its id), has its own se
   settings_send     the site may send its settings (uSync settings, Views, css, scripts). By default only the
                     main site may: settings come from the main site, and environments do not pass them around.
   settings_receive  the site may receive settings: on unless turned off. The main site never receives them.
-  settings_import   uSync imports the site's settings when it starts (ImportAtStartup Settings, or None when off).
+  settings_import   uSync imports the site's settings when it starts (ImportAtStartup Settings, or None when off), for a
+                    site without the VNS.Harbor package (such as Umbraco 13): it is restarted after a sync so it imports.
                     Unset, it is left as the appsettings.json has it. A site that receives data always imports all.
+                    A site with the package never imports at startup (ImportAtStartup None): Harbor has uSync import
+                    what it syncs or publishes while the site runs, through the package (1.0.92).
 
 Data can be synced from A to B when both have data sync on, A may send and B may receive. Only what both
 take part with is synced. A sync always merges: content is added and updated, never deleted.
@@ -80,7 +83,7 @@ def clean(settings, site_id=""):
     result = {flag: settings.get(flag) is True for flag in FLAGS}
     result["settings_send"] = settings.get("settings_send", site_id == "main") is True
     result["settings_receive"] = settings.get("settings_receive", True) is True
-    # Unset (None) leaves ImportAtStartup as it is
+    # Unset (None) leaves ImportAtStartup as it is (a site without the package; one with it never imports at startup)
     result["settings_import"] = settings["settings_import"] if isinstance(settings.get("settings_import"), bool) else None
     return result
 
@@ -147,9 +150,10 @@ def settings_allowed(config, source, destination):
         raise ValueError(f"{destination} may not receive settings")
 
 
-def apply_appsettings(data, settings):
+def apply_appsettings(data, settings, package=False):
     """Set uSync for one site: the content and media handlers by what it takes part with, export on save
-    and at startup for a sender, and import at startup for a receiver, or by Import at startup (settings_import). A sender exports everything when it starts,
+    and at startup for a sender. With the VNS.Harbor package (package) never an import at startup, as Harbor has uSync
+    import through it; without (Umbraco 13), import at startup for a receiver, or by Import at startup (settings_import). A sender exports everything when it starts,
     so content made before it could send is there to sync too: export on save only writes what is saved after. A site with data sync off gets the handlers off,
     and the values set here are reverted. Returns the changed object."""
     settings = clean(settings)
@@ -170,11 +174,16 @@ def apply_appsettings(data, settings):
             general["ExportAtStartup"] = "All"
         elif general.get("ExportAtStartup") == "All":
             general["ExportAtStartup"] = "None"
-        # A receiver imports all, as the data it gets is imported as it starts; otherwise by Import at startup
-        general["ImportAtStartup"] = "All" if settings["receive"] else "None" if settings["settings_import"] is False else "Settings"
+        if package:
+            general["ImportAtStartup"] = "None"
+        else:
+            # A receiver imports all, as the data it gets is imported as it starts; otherwise by Import at startup
+            general["ImportAtStartup"] = "All" if settings["receive"] else "None" if settings["settings_import"] is False else "Settings"
         general["UiEnabledGroups"] = "Settings,Content"
     else:
-        if settings["settings_import"] is not None:
+        if package:
+            general["ImportAtStartup"] = "None"
+        elif settings["settings_import"] is not None:
             general["ImportAtStartup"] = "Settings" if settings["settings_import"] else "None"
         elif general.get("ImportAtStartup") == "All":
             general["ImportAtStartup"] = "Settings"
@@ -207,13 +216,13 @@ def configuration_json(text, shown):
         raise ValueError(f"{shown} is not valid JSON, so it is not changed: {exc}") from exc
 
 
-def apply_file(path, settings, shown=None):
+def apply_file(path, settings, shown=None, package=False):
     shown = shown or str(path)
     text = Path(path).read_text(encoding="utf-8-sig")
     data = configuration_json(text, shown)
     if not isinstance(data, dict):
         raise ValueError(f"{shown} is not a settings object")
-    updated = json.dumps(apply_appsettings(data, settings), indent=2, ensure_ascii=False) + "\n"
+    updated = json.dumps(apply_appsettings(data, settings, package), indent=2, ensure_ascii=False) + "\n"
     if updated == text:
         return False
     Path(path).write_text(updated, encoding="utf-8")
