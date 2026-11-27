@@ -27,6 +27,37 @@ import secrets
 
 ROOT = "root"
 USERNAME_RE = re.compile(r"^[A-Za-z0-9._@-]{1,64}$")
+EMAIL_RE = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
+
+
+def clean_email(value):
+    """A user's email, for a forgotten password: optional"""
+    value = str(value or "").strip()
+    if value and (len(value) > 254 or not EMAIL_RE.fullmatch(value)):
+        raise ValueError("Enter a valid email address, or none.")
+    return value
+
+
+def mail_of(user):
+    """Where a user's mail goes: their email, or their username when it is one"""
+    if (user or {}).get("email"):
+        return user["email"]
+    username = (user or {}).get("username", "")
+    return username if EMAIL_RE.fullmatch(username) else ""
+
+
+def for_reset(config, said):
+    """The user a forgotten password is asked for, by username or email (either case): never root, nor a locked user.
+    Root's password is set on the server (harbor), never by a link in a mail"""
+    said = str(said or "").strip().lower()
+    if not said or len(said) > 254:
+        return None
+    for user in config.get("users", []):
+        if user.get("disabled"):
+            continue
+        if user.get("username", "").lower() == said or (user.get("email") or "").lower() == said:
+            return user
+    return None
 ENV_RE = re.compile(r"^(main|[a-z0-9][a-z0-9-]{0,62})$")
 
 # What a user may be given on a site, in the order the admin shows them
@@ -266,7 +297,7 @@ def forget_made(user, kind, name, connection=None):
 # A user template: rules under a name to start new users from. Which sites and SQL connections a user gets is chosen
 # for each user; the template says what they may do on each one they are given (1.0.77). A name, password, lock or
 # what they made is never in it.
-TEMPLATE_KEYS = ("web", "create_sites", "sftp", "sql", "manage_connections", "connection_engines", "limits", "site_rules", "sql_rules")
+TEMPLATE_KEYS = ("web", "create_sites", "sftp", "sql", "manage_connections", "connection_engines", "limits", "site_rules", "sql_rules", "dns", "cloudflare_parts")
 # The SQL Servers a connection can be to: Microsoft SQL Server and PostgreSQL
 ENGINES = ("mssql", "postgres")
 
@@ -287,6 +318,25 @@ def has_web(user):
 
 
 DOMAIN_RE = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+")
+
+
+CLOUDFLARE_PARTS = ("dns", "analytics", "cache", "speed", "rules", "ssl", "security")
+
+
+def cloudflare_part(user, part):
+    """Whether the user may use a part of Cloudflare (on the domains given them): every part for an administrator"""
+    if is_admin(user):
+        return True
+    return has_dns(user) and part in (user.get("cloudflare_parts") or ["dns"])
+
+
+def domain_name(name):
+    """Whether a name is a domain, also one with æ, ø or å (checked as its punycode, ledernøn.dk as xn--…)"""
+    try:
+        ascii_name = name.encode("idna").decode("ascii")
+    except (UnicodeError, ValueError):
+        return False
+    return bool(DOMAIN_RE.fullmatch(ascii_name.lower()))
 
 
 def has_dns(user):
@@ -388,6 +438,8 @@ def template_rules(given):
                "own": bool(grants) and all(grant.get("own") for grant in grants),
                "limits": next((grant["limits"] for grant in grants if isinstance(grant.get("limits"), dict)), None)}
     rules = {key: bool(given.get(key, key == "web")) for key in ("web", "create_sites", "sftp", "sql", "manage_connections", "dns")}
+    parts = given.get("cloudflare_parts")
+    rules["cloudflare_parts"] = [part for part in CLOUDFLARE_PARTS if isinstance(parts, list) and part in parts] or ["dns"]
     rules["connection_engines"] = clean_engines(given.get("connection_engines"))
     rules["limits"] = clean_limits(given.get("limits"))
     rules["site_rules"] = {"actions": site_actions(site.get("actions") or []), "new_envs": bool(site.get("new_envs", True))}
@@ -442,6 +494,7 @@ def clean(data, existing=None, sites=None, connections=None):
         raise ValueError("Use letters, numbers and . _ @ - for the username (max 64).")
     user["username"] = username
     user["name"] = clean_name(data.get("name", existing.get("name", "")))
+    user["email"] = clean_email(data.get("email", existing.get("email", "")))
     role = data.get("role", existing.get("role", "user"))
     if role not in ("admin", "user"):
         raise ValueError("The role must be admin or user.")
@@ -513,9 +566,12 @@ def clean(data, existing=None, sites=None, connections=None):
     if not isinstance(domains, list):
         raise ValueError("Invalid DNS domains.")
     user["dns_domains"] = sorted({str(name).strip().lower().rstrip(".") for name in domains
-                                  if isinstance(name, str) and DOMAIN_RE.fullmatch(str(name).strip().lower().rstrip("."))})
+                                  if isinstance(name, str) and domain_name(str(name).strip().lower().rstrip("."))})
     if not user["dns_domains"]:
         user["dns"] = False
+    # Which parts of Cloudflare they may use on those domains (DNS only for one given before there was a choice)
+    parts = data.get("cloudflare_parts", existing.get("cloudflare_parts", ["dns"]))
+    user["cloudflare_parts"] = [part for part in CLOUDFLARE_PARTS if isinstance(parts, list) and part in parts] or ["dns"]
     # A part with nothing in it is turned off as it is saved: SQL Server without a connection or a SQL Server they may add
     # one to, the Web Server without a site or the right to make one. On with nothing in it would be no access.
     if user["sql"] and not user["connections"] and not (user["manage_connections"] and user["connection_engines"]):

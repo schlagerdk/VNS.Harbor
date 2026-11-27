@@ -797,9 +797,13 @@ async function route() {
 	// A user goes to the part they have: SQL Server without the Web Server, and the other way round
 	const wantsSql = location.hash.startsWith("#sql") || (!location.hash && startView === "sql");
 	// With neither, the sites view tells them who gives access
-	if (!currentUser.admin && wantsSql && !currentUser.sql) {
+	// Only Cloudflare: its page, with neither Web Server nor SQL Server to go to
+	const wantsDns = location.hash.startsWith("#dns");
+	if (!currentUser.admin && !wantsDns && !currentUser.web && !currentUser.sql && currentUser.dns) {
+		history.replaceState(null, "", "#dns");
+	} else if (!currentUser.admin && wantsSql && !currentUser.sql) {
 		history.replaceState(null, "", "#sites");
-	} else if (!currentUser.admin && !wantsSql && !currentUser.web && currentUser.sql) {
+	} else if (!currentUser.admin && !wantsSql && !wantsDns && !currentUser.web && currentUser.sql) {
 		history.replaceState(null, "", "#sql");
 	}
 	const hash = decodeURIComponent(location.hash.slice(1));
@@ -8214,14 +8218,41 @@ async function openServerSettings() {
 	try {
 		const [server, keepAlive] = await Promise.all([loadServerAddress().catch(() => null),
 			api("/api/keep-alive").catch(() => ({ installed: false, enabled: false, interval_minutes: 5 }))]);
-		const domains = await api("/api/temp-domains").catch(() => ({ domains: [] }));
-		// The address and the temporary addresses, then keep-alive (its mail and the mail server are under Notifications)
-		list.replaceChildren(publicAddressCard(server), tempDomainsCard(domains.domains, server), keepAliveCard(keepAlive));
+		const [domains, signIn] = await Promise.all([api("/api/temp-domains").catch(() => ({ domains: [] })), api("/api/sign-in").catch(() => null)]);
+		// The address and the temporary addresses, then keep-alive (its mail and the mail server are under Notifications),
+		// then the sign-in page
+		list.replaceChildren(publicAddressCard(server), tempDomainsCard(domains.domains, server), keepAliveCard(keepAlive), ...(signIn ? [signInCard(signIn)] : []));
 	} finally {
 		list.removeAttribute("aria-busy");
 	}
 }
 
+// The sign-in page: Forgot password (with the mail server), and the addresses Harbor took over, whose visitors are told
+// their old password does not work here
+function signInCard(signIn) {
+	const moved = signIn.moved_from || [];
+	const card = toolCard({ icon: "lock", tone: "purple", title: "Sign-in",
+		detail: signIn.forgot ? "Forgot password mails a link to set a new one" : "Forgot password needs the mail server (Notifications)",
+		state: signIn.forgot ? "Forgot password on" : "No Forgot password", stateClass: signIn.forgot ? "ok" : "",
+		text: moved.length ? `Harbor took over ${moved.join(", ")}: one who comes from there is told the old password does not work, and to use Forgot password.`
+			: "An address Harbor took over, such as an older admin's: one who comes from it is told the old password does not work here.",
+		actions: [tonedButton(moved.length ? "Edit…" : "Add an address…", moved.length ? "pencil" : "plus", moved.length ? "amber" : "green", () => askMovedFrom(signIn))] });
+	card.querySelector(".tool-head").append(...card.querySelectorAll(":scope > .tool-actions"));
+	return card;
+}
+function askMovedFrom(signIn) {
+	const hosts = el("input", { name: "moved_from", autocomplete: "off", spellcheck: false, autocapitalize: "off", value: (signIn.moved_from || []).join(", "), placeholder: "account.example.com" });
+	const here = signIn.admin_site || location.host;
+	openFormDialog({ icon: "lock", title: "Addresses Harbor took over", ok: "Save",
+		text: "One who comes from one of them is told on the sign-in page that the old password does not work here, and to use Forgot password.",
+		fields: [el("label", { className: "dns-field" }, "Addresses", hosts, el("small", { className: "hint", textContent: "Commas between them. Bound to Harbor, it is seen at once; redirected, send it on to " + `https://${here}/login?from=<the address>` + "." }))],
+		submit: async () => {
+			const list = hosts.value.split(/[\s,]+/).map((host) => host.trim()).filter(Boolean);
+			await api("/api/sign-in", { method: "PUT", json: { moved_from: list } });
+			toast(list.length ? "The addresses are saved." : "No address is kept.", "ok");
+			await openServerSettings();
+		} });
+}
 function publicAddressCard(server) {
 	// The address and where it comes from; set by hand only behind NAT that it cannot find, in a dialog of its own
 	const own = server?.public || "";
@@ -9260,7 +9291,7 @@ function menuCard() {
 	const shown = currentUser.menu || { web: true, sql: true };
 	const chosen = menuChoice(setting);
 	const card = toolCard({ icon: "grid", tone: "purple", title: "Top menu and start page", detail: "What is beside Settings, and where the admin opens",
-		state: [shown.web && "Web Server", shown.sql && "SQL Server", currentUser.dns && "DNS"].filter(Boolean).join(", ").replace(/, ([^,]*)$/, " and $1"), stateClass: "ok" });
+		state: [shown.web && "Web Server", shown.sql && "SQL Server", currentUser.dns && "Cloudflare"].filter(Boolean).join(", ").replace(/, ([^,]*)$/, " and $1"), stateClass: "ok" });
 	card.append(el("div", { className: "menu-choices", role: "radiogroup", ariaLabel: "In the top menu" },
 		...MENU_CHOICES.map(([key, title, text, value]) => el("button", {
 			type: "button", role: "radio", ariaChecked: String(key === chosen), className: "menu-choice" + (key === chosen ? " active" : ""),
@@ -9297,13 +9328,13 @@ function menuCard() {
 	card.append(start);
 	// DNS in the top menu: automatic (while a Cloudflare account is set up, Settings, DNS), or out of it
 	const dnsSetting = currentUser.menu_setting?.dns || "auto";
-	card.append(el("div", { className: "menu-start" }, el("span", { className: "menu-start-label", textContent: "DNS" }),
+	card.append(el("div", { className: "menu-start" }, el("span", { className: "menu-start-label", textContent: "Cloudflare" }),
 		el("div", { className: "keep-alive-interval", role: "group", ariaLabel: "DNS in the top menu" },
 			...[["auto", "In the menu"], ["hide", "Not in the menu"]].map(([value, label]) => el("button", { type: "button", textContent: label,
 				className: value === dnsSetting ? "active" : "", ariaPressed: String(value === dnsSetting), onclick: () => value !== dnsSetting && run(async () => {
 					await api("/api/preferences", { method: "PUT", json: { dns_menu: value } });
 					await refreshDnsMenu();
-					toast(value === "hide" ? "DNS is out of the top menu." : "DNS is in the top menu.", "ok");
+					toast(value === "hide" ? "Cloudflare is out of the top menu." : "Cloudflare is in the top menu.", "ok");
 					await openMenuSettings();
 				}) }))),
 		el("small", { className: "menu-start-note", textContent: currentUser.dns_account ? "While the Cloudflare account is set up. Users given a domain keep it in theirs." : "Once a Cloudflare account is set up (Settings, DNS)." })));
@@ -11932,13 +11963,19 @@ let dnsSettings = null;
 async function openDnsSettings() {
 	dnsSettings = await api("/api/dns/settings");
 	const configured = dnsSettings.configured;
+	// The domains read again from Cloudflare, with a spinner until it has answered
+	const refresh = tonedButton("Refresh domains", "sync", "purple", () => busyClick(refresh, async () => {
+		const read = await api("/api/dns/zones/refresh", { method: "POST" });
+		toast(`Cloudflare has ${read.zones} domain${read.zones === 1 ? "" : "s"}.`, "ok");
+		await openDnsSettings();
+	}));
 	const card = toolCard({ icon: "cloud", tone: "amber", title: "Cloudflare",
 		detail: configured ? (dnsSettings.auth === "token" ? "Logs in with an API token" : `Logs in with the Global API Key of ${dnsSettings.email}`) : "Not set up",
 		state: configured ? "Connected" : "Not set up", stateClass: configured ? "ok" : "",
-		text: configured ? "Its domains are under DNS in the top menu. The key or token is kept for root only, and never shown again."
-			: "Connect the Cloudflare account, and its domains are kept under DNS in the top menu: by administrators, and by the users given a domain.",
+		text: configured ? `Its domains are under Cloudflare in the top menu${dnsSettings.zones != null ? `: ${dnsSettings.zones} domain${dnsSettings.zones === 1 ? "" : "s"}, read ${dnsSettings.zones_read ? syncAgo(dnsSettings.zones_read * 1000) : "before"}. Kept until refreshed, as they seldom change` : ""}. The key or token is kept for root only, and never shown again.`
+			: "Connect the Cloudflare account, and its domains are kept under Cloudflare in the top menu: DNS, cache, SSL/TLS, rules and security, by administrators and the users given a domain.",
 		actions: [tonedButton(configured ? "Change…" : "Connect…", configured ? "pencil" : "cloud", configured ? "blue" : "green", askDnsAccount),
-			...(configured ? [tonedButton("Open DNS", "cloud", "teal", () => go("#dns")), tonedButton("Remove…", "trash", "red", () => run(removeDnsAccount))] : [])] });
+			...(configured ? [refresh, tonedButton("Open Cloudflare", "cloud", "teal", () => go("#dns")), tonedButton("Remove…", "trash", "red", () => run(removeDnsAccount))] : [])] });
 	card.classList.add("tool-card-wide", "actions-below");
 	$("#server-dns-list").replaceChildren(card);
 }
@@ -11982,7 +12019,7 @@ function askDnsAccount() {
 		} });
 }
 async function removeDnsAccount() {
-	if (!await ask({ title: "Remove the Cloudflare account?", message: "DNS goes from the top menu for everyone, until an account is set up again. The domains and their records in Cloudflare are not touched.",
+	if (!await ask({ title: "Remove the Cloudflare account?", message: "Cloudflare goes from the top menu for everyone, until an account is set up again. The domains and their records in Cloudflare are not touched.",
 		input: false, danger: true, ok: "Remove" })) return;
 	await api("/api/dns/settings", { method: "DELETE" });
 	await refreshDnsMenu();
@@ -12013,28 +12050,108 @@ const DNS_TYPES = [
 const DNS_TTLS = [[1, "Auto"], [60, "1 min"], [120, "2 min"], [300, "5 min"], [600, "10 min"], [900, "15 min"], [1800, "30 min"],
 	[3600, "1 hr"], [7200, "2 hr"], [18000, "5 hr"], [43200, "12 hr"], [86400, "1 day"]];
 const dnsTtl = (ttl) => (DNS_TTLS.find(([value]) => value === ttl) || [ttl, `${ttl} s`])[1];
+// Cloudflare in the top menu: the domains on the left, nothing chosen until one is; the chosen one's parts as tabs
 async function openDns(zone = "") {
+	// Never the empty frame of a domain while the domains are read, nor when they cannot be: a state of its own each
 	$("#dns-zones").replaceChildren(loadingState("Reading the domains…"));
-	({ zones: dnsZones } = await api("/api/dns/zones"));
+	const reading = api("/api/dns/zones");
+	// A domain asked for (its link): opened at once, by its id and the name it had last, while the list is read beside it
+	if (zone && /^[0-9a-f]{32}$/.test(zone)) {
+		dnsZones = null;
+		const opened = showDnsZone(zone, { id: zone, name: cfKeptName(zone) });
+		let found;
+		try {
+			({ zones: found } = await reading);
+		} catch (error) {
+			dnsOpening++;
+			return cfNoAnswer(error, zone);
+		}
+		dnsZones = found;
+		$("#dns-zones-count").textContent = dnsZones.length ? String(dnsZones.length) : "";
+		$("#dns-zone-filter").value = "";
+		const chosen = dnsZones.find((item) => item.id === zone);
+		drawDnsZones();
+		// Not one of the user's (or gone): the welcome, and what was read of it left
+		if (!chosen) {
+			dnsOpening++;
+			opened.catch(() => {});
+			dnsZone = null;
+			return drawCfWelcome();
+		}
+		dnsZone = chosen;
+		$("#dns-zone-name").textContent = chosen.name;
+		cfKeepName(chosen);
+		return opened;
+	}
+	$(".dns-panel-head").hidden = true;
+	$("#cf-tabs").hidden = true;
+	for (const [part] of CF_PARTS) $("#cf-part-" + part).hidden = part !== "dns";
+	$("#cf-part-dns .cf-part-bar").hidden = true;
+	$("#dns-records").replaceChildren(loadingState("Reading Cloudflare…"));
+	try {
+		({ zones: dnsZones } = await reading);
+	} catch (error) {
+		return cfNoAnswer(error, zone);
+	}
 	$("#dns-zones-count").textContent = dnsZones.length ? String(dnsZones.length) : "";
-	// The one asked for, the one chosen last, or the first
-	let last = "";
-	try { last = localStorage.getItem("vns-dns-zone") || ""; } catch (error) { /* none */ }
-	const chosen = dnsZones.find((item) => item.id === zone) || dnsZones.find((item) => item.id === last) || dnsZones[0];
+	// Only one asked for (its link): else none, and the domain is found first
+	const chosen = dnsZones.find((item) => item.id === zone);
 	dnsZone = chosen || null;
 	$("#dns-zone-filter").value = "";
 	drawDnsZones();
-	// The domain is what is looked for first
 	$("#dns-zone-filter").focus({ preventScroll: true });
-	if (!chosen) {
-		$("#dns-zone-name").textContent = "No domains";
-		$("#dns-new").hidden = $("#dns-purge").hidden = true;
-		$("#dns-records").replaceChildren(el("p", { className: "muted", textContent: currentUser.admin ? "The Cloudflare account has no domains." : "No domain is given to you yet: ask an administrator." }));
-		return;
-	}
+	if (!chosen) return drawCfWelcome();
 	await showDnsZone(chosen.id);
 }
+// The domains could not be read: said in the panel with why, and Try again
+function cfNoAnswer(error, zone) {
+	dnsZones = [];
+	$("#dns-zones").replaceChildren();
+	$("#dns-zones-count").textContent = "";
+	$(".dns-panel-head").hidden = true;
+	$("#cf-tabs").hidden = true;
+	for (const [part] of CF_PARTS) $("#cf-part-" + part).hidden = part !== "dns";
+	$("#cf-part-dns .cf-part-bar").hidden = true;
+	$("#dns-records").replaceChildren(el("div", { className: "cf-welcome" },
+		el("div", { className: "sites-empty-icon cf-welcome-icon", ariaHidden: "true" }, svgIcon("cloud")),
+		el("h2", { textContent: "Cloudflare did not answer" }),
+		el("p", { textContent: error.message || "The domains could not be read." }),
+		el("div", { className: "cf-welcome-stats" }, tonedButton("Try again", "sync", "blue", () => run(() => openDns(zone))))));
+}
+// The parts of a domain, as tabs; each shown to one who may use it
+const CF_PARTS = [["dns", "DNS", "cloud"], ["analytics", "Analytics", "activity"], ["cache", "Cache", "archive"], ["speed", "Speed", "play"],
+	["rules", "Rules", "corner"], ["ssl", "SSL/TLS", "lock"], ["security", "Security", "shield"]];
+let cfPart = "dns";
+let cfParts = ["dns"];
+// The tab last used; at first the first one the user has (DNS)
+try { cfPart = localStorage.getItem("vns-cf-part") || ""; } catch (error) { /* none */ }
+function drawCfTabs() {
+	const tabs = CF_PARTS.filter(([part]) => cfParts.includes(part));
+	if (!cfParts.includes(cfPart)) cfPart = tabs[0]?.[0] || "dns";
+	$("#cf-tabs").hidden = tabs.length < 2;
+	$("#cf-tabs").replaceChildren(...tabs.map(([part, label, icon]) => el("button", { type: "button", role: "tab", className: "sql-tab" + (part === cfPart ? " active" : ""),
+		ariaSelected: String(part === cfPart), onclick: () => part !== cfPart && run(() => showCfPart(part)) }, svgIcon(icon), label)));
+	for (const [part] of CF_PARTS) $("#cf-part-" + part).hidden = part !== cfPart;
+}
+async function showCfPart(part) {
+	cfPart = part;
+	try { localStorage.setItem("vns-cf-part", part); } catch (error) { /* none */ }
+	drawCfTabs();
+	if (part === "dns") return;
+	$("#cf-part-" + part).replaceChildren(loadingState(`Reading ${dnsZone.name}…`));
+	await fillCfPart(part);
+}
+// A part of the domain read and drawn in its box, shown or not yet
+async function fillCfPart(part) {
+	const box = $("#cf-part-" + part);
+	if (part === "rules") return drawCfRules(box);
+	if (part === "analytics") return drawCfAnalytics(box);
+	const data = await api(`/api/dns/zones/${dnsZone.id}/settings/${part}`);
+	drawCfSettings(box, part, data.settings);
+}
 function drawDnsZones() {
+	// Not read yet: its own loading stays
+	if (!dnsZones) return;
 	const words = $("#dns-zone-filter").value.toLowerCase().split(/\s+/).filter(Boolean);
 	const shown = dnsZones.filter((item) => words.every((word) => item.name.includes(word)));
 	$("#dns-zones").replaceChildren(...(shown.length ? shown.map((item) => el("button", { type: "button", className: "dns-zone" + (item.id === dnsZone?.id ? " active" : ""),
@@ -12050,27 +12167,97 @@ $("#dns-zone-filter").addEventListener("keydown", (event) => {
 	$("#dns-zones .dns-zone")?.click();
 });
 $("#dns-new").onclick = () => editDnsRecord();
-$("#dns-purge").onclick = () => run(purgeDnsCache);
 $("#dns-filter").addEventListener("input", () => {
 	const words = $("#dns-filter").value.toLowerCase().split(/\s+/).filter(Boolean);
 	for (const row of document.querySelectorAll("#dns-records .dns-record[data-search]")) row.hidden = !words.every((word) => row.dataset.search.includes(word));
 	// A group with nothing found goes with it
 	for (const group of document.querySelectorAll("#dns-records .dns-group")) group.hidden = !group.querySelector(".dns-record:not([hidden])");
 });
-async function showDnsZone(id) {
-	dnsZone = dnsZones.find((item) => item.id === id);
-	try { localStorage.setItem("vns-dns-zone", id); } catch (error) { /* none */ }
+// Nothing chosen yet: a welcome as Harbor's other empty pages, the account at a glance, and the domains opened last as
+// cards that open them
+// What the user may do with a domain, in words: "its DNS", "its DNS and analytics", "its DNS, cache and SSL/TLS"
+function cfPartsWords() {
+	const mine = currentUser.cloudflare_parts || ["dns"];
+	const words = CF_PARTS.filter(([part]) => mine.includes(part)).map(([part, label]) => ["dns", "ssl"].includes(part) ? label : label.toLowerCase());
+	if (!words.length) words.push("DNS");
+	return "its " + (words.length === 1 ? words[0] : words.slice(0, -1).join(", ") + " and " + words.at(-1));
+}
+function drawCfWelcome() {
+	$("#cf-tabs").hidden = true;
+	for (const part of CF_PARTS) $("#cf-part-" + part[0]).hidden = true;
+	$(".dns-panel-head").hidden = true;
+	let recent = [];
+	try { recent = JSON.parse(localStorage.getItem("vns-cf-recent") || "[]"); } catch (error) { /* none */ }
+	const shown = recent.map((id) => dnsZones.find((item) => item.id === id)).filter(Boolean).slice(0, 6);
+	const pending = dnsZones.filter((item) => item.status && item.status !== "active").length;
+	const card = (zone) => el("button", { type: "button", className: "cf-recent", onclick: () => run(() => showDnsZone(zone.id)) },
+		el("span", { className: "cf-recent-icon", ariaHidden: "true" }, svgIcon("globe")), el("span", { className: "cf-recent-name", textContent: zone.name }), svgIcon("chevron"));
+	const welcome = el("div", { className: "cf-welcome" },
+		el("div", { className: "sites-empty-icon cf-welcome-icon", ariaHidden: "true" }, svgIcon("cloud")),
+		el("h2", { textContent: dnsZones.length ? "Cloudflare" : "No domains" }),
+		el("p", { textContent: !dnsZones.length ? (currentUser.admin ? "The Cloudflare account has no domains yet." : "No domain is given to you yet: ask an administrator.")
+			: `Find a domain on the left, or start typing, for ${cfPartsWords()}.` }),
+		...(dnsZones.length ? [el("div", { className: "cf-welcome-stats" },
+			el("span", { className: "dns-chip" }, svgIcon("globe"), `${dnsZones.length} domain${dnsZones.length === 1 ? "" : "s"}`),
+			el("span", { className: "dns-chip on" }, svgIcon("check"), `${dnsZones.length - pending} active`),
+			...(pending ? [el("span", { className: "dns-chip proxied" }, svgIcon("clock"), `${pending} pending`)] : []))] : []),
+		...(shown.length ? [el("div", { className: "cf-recent-head", textContent: "Opened last" }), el("div", { className: "cf-recent-list" }, ...shown.map(card))] : []));
+	$("#dns-records").replaceChildren(welcome);
+	$("#cf-part-dns").hidden = false;
+	$("#cf-part-dns .cf-part-bar").hidden = true;
+}
+// A domain opened: its name and tabs at once (the parts the user has), a spinner in the tab it opens on, its records and
+// that tab read together, then shown. Another opened meanwhile wins: what this one read is left
+let dnsOpening = 0;
+// The names of the domains opened, by id: a domain's link shows its name before the list of domains is read
+function cfKeptName(id) {
+	try { return JSON.parse(localStorage.getItem("vns-cf-names") || "{}")[id] || ""; } catch (error) { return ""; }
+}
+function cfKeepName(zone) {
+	try {
+		const names = JSON.parse(localStorage.getItem("vns-cf-names") || "{}");
+		if (names[zone.id] === zone.name) return;
+		names[zone.id] = zone.name;
+		localStorage.setItem("vns-cf-names", JSON.stringify(Object.fromEntries(Object.entries(names).slice(-50))));
+	} catch (error) { /* none */ }
+}
+async function showDnsZone(id, known = null) {
+	const opening = ++dnsOpening;
+	dnsZone = (dnsZones || []).find((item) => item.id === id) || known;
+	if (dnsZone.name) cfKeepName(dnsZone);
+	// The domains opened last, for the welcome
+	try {
+		const recent = JSON.parse(localStorage.getItem("vns-cf-recent") || "[]").filter((other) => other !== id);
+		localStorage.setItem("vns-cf-recent", JSON.stringify([id, ...recent].slice(0, 12)));
+	} catch (error) { /* none */ }
 	if (location.hash !== "#dns/" + id) history.replaceState(null, "", "#dns/" + id);
 	drawDnsZones();
+	$(".dns-panel-head").hidden = false;
 	$("#dns-zone-name").textContent = dnsZone.name;
-	$("#dns-records-count").textContent = "";
-	$("#dns-new").hidden = false;
-	$("#dns-records").replaceChildren(loadingState(`Reading ${dnsZone.name}…`));
-	const data = await api(`/api/dns/zones/${id}/records`);
+	$("#dns-records-count").replaceChildren();
+	$("#cf-part-dns .cf-part-bar").hidden = true;
+	const reading = `Reading ${dnsZone.name || "the domain"}…`;
+	$("#dns-records").replaceChildren(loadingState(reading));
+	cfParts = currentUser.cloudflare_parts || ["dns"];
+	drawCfTabs();
+	if (cfPart !== "dns") $("#cf-part-" + cfPart).replaceChildren(loadingState(reading));
+	const shown = cfPart;
+	const [data] = await Promise.all([api(`/api/dns/zones/${id}/records`),
+		shown !== "dns" ? fillCfPart(shown).catch((error) => opening === dnsOpening && $("#cf-part-" + shown).replaceChildren(el("p", { className: "muted", textContent: error.message }))) : null]);
+	if (opening !== dnsOpening) return;
 	dnsRecords = data.records;
 	dnsAdmin = data.admin;
-	$("#dns-purge").hidden = !dnsAdmin;
+	// The parts as the server says them, should they have changed since the page was opened
+	const parts = data.parts || ["dns"];
+	const changed = parts.join() !== cfParts.join();
+	cfParts = parts;
+	$("#dns-new").hidden = !cfParts.includes("dns");
+	$("#cf-part-dns .cf-part-bar").hidden = false;
 	drawDnsRecords();
+	if (changed) {
+		drawCfTabs();
+		if (cfPart !== shown && cfPart !== "dns") await showCfPart(cfPart);
+	}
 }
 // The records grouped by type, each group framed as the sites' parts on Usage: its type and what it is for at its head,
 // a line per record under it with its name, what it points to, its TTL and proxy as chips, and Edit
@@ -12080,7 +12267,11 @@ function drawDnsRecords() {
 		el("span", { className: "dns-chip", textContent: `${dnsRecords.length} record${dnsRecords.length === 1 ? "" : "s"}` }),
 		...(proxiedCount ? [el("span", { className: "dns-chip proxied" }, svgIcon("cloud"), `${proxiedCount} proxied`)] : []));
 	$("#dns-filter").value = "";
-	if (!dnsRecords.length) return $("#dns-records").replaceChildren(el("p", { className: "muted dns-none", textContent: "No records yet: New record makes the first." }));
+	if (!dnsRecords.length) {
+		const first = addFirstCard("Add your first record", `An address, an alias or mail for ${dnsZone.name}`, () => editDnsRecord());
+		first.classList.add("cf-first");
+		return $("#dns-records").replaceChildren(first);
+	}
 	const order = DNS_TYPES.map(([type]) => type);
 	const types = [...new Set(dnsRecords.map((record) => record.type))].sort((a, b) => (order.indexOf(a) + 1 || 99) - (order.indexOf(b) + 1 || 99));
 	$("#dns-records").replaceChildren(...types.map((type) => {
@@ -12095,9 +12286,28 @@ function drawDnsRecords() {
 }
 // A record's name without the domain (@ for the domain itself), as it is typed
 const dnsShortName = (name) => name === dnsZone.name ? "@" : name.endsWith("." + dnsZone.name) ? name.slice(0, -dnsZone.name.length - 1) : name;
+// A click that waits for Cloudflare: the button's icon a spinner and the button still until it has answered, so the
+// click is seen; as it was again when it fails
+async function busyClick(button, work) {
+	if (button.disabled) return;
+	const icon = button.querySelector(".ico");
+	const spinner = el("span", { className: "btn-spinner", ariaHidden: "true" });
+	icon?.replaceWith(spinner);
+	button.disabled = true;
+	button.classList.add("busy");
+	button.setAttribute("aria-busy", "true");
+	try {
+		await work();
+	} finally {
+		if (icon) spinner.replaceWith(icon);
+		button.disabled = false;
+		button.classList.remove("busy");
+		button.removeAttribute("aria-busy");
+	}
+}
 function dnsRecordRow(record) {
-	// A record through Cloudflare's proxy is an administrator's: locked for a user
-	const locked = record.proxied && !dnsAdmin;
+	// Locked for users by an administrator (a proxied one until it is opened): a user sees it, and cannot change it
+	const locked = record.locked && !dnsAdmin;
 	const content = record.type === "MX" ? record.content : record.content;
 	const short = dnsShortName(record.name);
 	return el("div", { className: "dns-record", "data-search": `${record.type} ${record.name} ${record.content}`.toLowerCase() },
@@ -12107,13 +12317,33 @@ function dnsRecordRow(record) {
 		el("div", { className: "dns-record-chips" },
 			...(record.type === "MX" && record.priority != null ? [el("span", { className: "dns-chip", title: "Priority: lower is tried first", textContent: `Priority ${record.priority}` })] : []),
 			el("span", { className: "dns-chip", title: "TTL" }, svgIcon("clock"), dnsTtl(record.ttl)),
-			...(record.proxiable ? [el("span", { className: "dns-chip" + (record.proxied ? " proxied" : ""), title: record.proxied ? "Through Cloudflare's proxy" : "DNS only" }, svgIcon("cloud"), record.proxied ? "Proxied" : "DNS only")] : [])),
-		el("div", { className: "dns-record-actions" }, locked
-			? el("span", { className: "dns-locked", title: "Through Cloudflare's proxy: only an administrator changes it" }, svgIcon("lock"), "Locked")
-			: el("button", { type: "button", textContent: "Edit…", onclick: () => editDnsRecord(record) })));
+			// Proxied: turned on and off with a click, as the lock, by anyone the record is open to; locked, it is only shown
+			...(record.proxiable ? [!locked
+				? el("button", { type: "button", className: "dns-chip dns-proxy-toggle" + (record.proxied ? " proxied" : ""),
+					title: record.proxied ? "Through Cloudflare's proxy: click for DNS only" : "DNS only: click to send it through Cloudflare's proxy",
+					ariaLabel: record.proxied ? "Make it DNS only" : "Proxy it through Cloudflare", ariaPressed: String(Boolean(record.proxied)), onclick: (event) => run(() => busyClick(event.currentTarget, async () => {
+						await api(`/api/dns/zones/${dnsZone.id}/records/${record.id}`, { method: "PUT",
+							json: { type: record.type, name: record.name, content: record.content, ttl: record.ttl, proxied: !record.proxied } });
+						record.proxied = !record.proxied;
+						toast(`${record.type} ${dnsShortName(record.name)} is ${record.proxied ? "proxied" : "DNS only"}.`, "ok");
+						drawDnsRecords();
+					})) }, svgIcon("cloud"), record.proxied ? "Proxied" : "DNS only")
+				: el("span", { className: "dns-chip" + (record.proxied ? " proxied" : ""), title: record.proxied ? "Through Cloudflare's proxy" : "DNS only" }, svgIcon("cloud"), record.proxied ? "Proxied" : "DNS only")] : [])),
+		el("div", { className: "dns-record-actions" },
+			// An administrator locks and opens it for users with a click; a user sees whether it is theirs to change
+			...(dnsAdmin ? [el("button", { type: "button", className: "dns-lock-toggle" + (record.locked ? " locked" : ""),
+				title: record.locked ? "Locked for users: click to let them change it" : "Users may change it: click to lock it for them",
+				ariaLabel: record.locked ? "Open it for users" : "Lock it for users", onclick: (event) => run(() => busyClick(event.currentTarget, async () => {
+					await api(`/api/dns/zones/${dnsZone.id}/records/${record.id}/lock`, { method: "PUT", json: { locked: !record.locked } });
+					record.locked = !record.locked;
+					toast(`${record.type} ${dnsShortName(record.name)} is ${record.locked ? "locked for users" : "open to users"}.`, "ok");
+					drawDnsRecords();
+				})) }, svgIcon(record.locked ? "lock" : "unlock"))] : []),
+			locked ? el("span", { className: "dns-locked", title: "Locked by an administrator" }, svgIcon("lock"), "Locked")
+				: el("button", { type: "button", textContent: "Edit…", onclick: () => editDnsRecord(record) })));
 }
 // New record, or one changed: its type (fixed once it is made) and the fields that type has, shown as it is chosen.
-// Proxied for an administrator, on the types Cloudflare can proxy. Delete from the same dialog
+// Proxied on the types Cloudflare can proxy. Delete from the same dialog
 function editDnsRecord(record = null) {
 	const type0 = record?.type || "A";
 	// The types as a list on the left, as Settings' menu: a new record chooses one, a record changed has its own alone
@@ -12161,9 +12391,12 @@ function editDnsRecord(record = null) {
 	})[kind]();
 	const typeFields = el("div", { className: "dns-type-fields" });
 	// Proxied: a card with its switch, as the other options in Harbor
-	const proxied = el("input", { type: "checkbox", className: "switch small", checked: Boolean(record?.proxied), ariaLabel: "Proxied" });
-	const proxyRow = el("label", { className: "dns-proxy-row" }, el("span", { className: "dns-proxy-icon", ariaHidden: "true" }, svgIcon("cloud")),
-		el("span", { className: "dns-proxy-text" }, el("strong", { textContent: "Proxied" }), el("small", { textContent: "Through Cloudflare: its cache and protection, the server's address hidden" })), proxied);
+	// Proxied: an option card as Harbor's dialogs have them
+	const proxyRow = checkOption("dns_proxied", "Proxied", "Through Cloudflare: its cache and protection, the server's address hidden", Boolean(record?.proxied), "cloud", "amber");
+	const proxied = proxyRow.querySelector("input");
+	// An administrator: whether users may change it (a proxied record locked until opened)
+	const lockRow = checkOption("dns_locked", "Locked for users", "They see it, and cannot change or delete it", record ? record.locked : false, "lock", "red");
+	lockRow.hidden = !dnsAdmin;
 	const nameHints = { SRV: "The service and protocol first, such as _sip._tcp (@ is not one)", CAA: "@ for the domain itself", MX: "@ for the domain's own mail" };
 	const show = () => {
 		const kind = types.querySelector("input:checked").value;
@@ -12173,15 +12406,19 @@ function editDnsRecord(record = null) {
 		typeFields.replaceChildren(...partsOf(kind));
 		for (const input of typeFields.querySelectorAll("input:not([type=search]), textarea")) input.required = !["dns_mx_priority", "dns_caa_flags"].includes(input.name);
 		nameField.querySelector(".dns-name-hint").textContent = nameHints[kind] || "@ for the domain itself, * for every name under it";
-		proxyRow.hidden = !dnsAdmin || !["A", "AAAA", "CNAME"].includes(kind);
+		proxyRow.hidden = !["A", "AAAA", "CNAME"].includes(kind);
 	};
 	for (const input of types.querySelectorAll("input")) input.onchange = show;
 	show();
-	openFormDialog({ icon: "cloud", title: record ? `${record.type} ${dnsShortName(record.name)}` : `New record in ${dnsZone.name}`, ok: record ? "Save" : "Create record", wide: true,
-		text: record ? `In ${dnsZone.name}. Its type stays ${record.type}: delete it and make a new one to change that.` : "Changed in Cloudflare at once. It may take its TTL before it is seen everywhere.",
+	// A record changed is one type: a dialog of normal width, its type said in the head (SRV's four fields want room)
+	const [, typeTitle, typeAbout] = DNS_TYPES.find(([value]) => value === type0) || [type0, type0, ""];
+	openFormDialog({ icon: "cloud", title: record ? `${record.type} ${dnsShortName(record.name)}` : `New record in ${dnsZone.name}`, ok: record ? "Save" : "Create record",
+		wide: !record || record.type === "SRV",
+		text: record ? `${typeTitle} in ${dnsZone.name}: ${typeAbout.charAt(0).toLowerCase() + typeAbout.slice(1)}. Delete it and make a new one to change its type.` : "Changed in Cloudflare at once. It may take its TTL before it is seen everywhere.",
 		fields: [el("div", { className: "dns-dialog" + (record ? " one-type" : "") }, types,
 			el("div", { className: "dns-dialog-main" }, typeHead,
-				el("div", { className: "ns-grid dns-name-row" }, nameField, el("label", { className: "dns-field" }, "TTL", ttlPick)), typeFields, proxyRow))],
+				el("div", { className: "ns-grid dns-name-row" }, nameField, el("label", { className: "dns-field" }, "TTL", ttlPick)), typeFields,
+				el("div", { className: "cf-options" }, proxyRow, lockRow)))],
 		extra: record ? [tonedButton("Delete…", "trash", "red", () => run(async () => {
 			formDialog.close();
 			if (!await ask({ title: `Delete ${record.type} ${dnsShortName(record.name)}?`, message: `${record.name} → ${record.content}. It is deleted in Cloudflare at once.`, input: false, danger: true, ok: "Delete" })) return;
@@ -12191,22 +12428,341 @@ function editDnsRecord(record = null) {
 		}))] : [],
 		submit: async () => {
 			const kind = types.querySelector("input:checked").value;
-			const body = { type: kind, name: name.value.trim(), ttl: Number(ttlPick.value), ...(dnsAdmin ? { proxied: proxied.checked } : {}) };
+			const body = { type: kind, name: name.value.trim(), ttl: Number(ttlPick.value), proxied: proxied.checked };
 			if (kind === "A" || kind === "AAAA") body.content = address.value;
 			else if (kind === "TXT") body.content = txt.value;
 			else if (kind === "MX") Object.assign(body, { content: target.value, priority: Number(mxPriority.value) });
 			else if (kind === "SRV") Object.assign(body, { priority: srvPriority.value, weight: srvWeight.value, port: srvPort.value, target: srvTarget.value });
 			else if (kind === "CAA") Object.assign(body, { tag: caaTag.value, value: caaValue.value, flags: caaFlags.value });
 			else body.content = target.value;
-			await api(`/api/dns/zones/${dnsZone.id}/records${record ? "/" + record.id : ""}`, { method: record ? "PUT" : "POST", json: body });
+			const saved = await api(`/api/dns/zones/${dnsZone.id}/records${record ? "/" + record.id : ""}`, { method: record ? "PUT" : "POST", json: body });
+			// The lock as chosen, where an administrator changed it
+			const lock = lockRow.querySelector("input").checked;
+			const id = record?.id || saved.id;
+			if (dnsAdmin && id && lock !== Boolean(record?.locked ?? false)) await api(`/api/dns/zones/${dnsZone.id}/records/${id}/lock`, { method: "PUT", json: { locked: lock } });
 			toast(record ? `${kind} ${body.name || "@"} saved.` : `${kind} ${body.name || "@"} made.`, "ok");
 			await showDnsZone(dnsZone.id);
 		} });
 }
-async function purgeDnsCache() {
-	if (!await ask({ title: `Purge the cache of ${dnsZone.name}?`, message: "Cloudflare forgets every file it keeps for the domain: the next visits fetch them from the server again.", input: false, danger: true, ok: "Purge cache" })) return;
-	await api(`/api/dns/zones/${dnsZone.id}/purge`, { method: "POST" });
-	toast(`The cache of ${dnsZone.name} is purged.`, "ok");
+// The zone settings of a part (Cache, SSL/TLS, Security): each a card with what it does and its choices as segments,
+// changed at once. Cache has Purge as well: everything, or the addresses given
+const CF_SETTINGS = {
+	cache: [
+		["development_mode", "Development mode", "Cloudflare's cache is passed by for three hours, so a change is seen at once", [["off", "Off"], ["on", "On"]]],
+		["cache_level", "Caching level", "What is cached: Standard caches every static file, with its query string", [["basic", "No query string"], ["simplified", "Ignore query string"], ["aggressive", "Standard"]]],
+		["browser_cache_ttl", "Browser cache", "How long a visitor's browser keeps what it fetched", [[0, "Respect headers"], [1800, "30 min"], [14400, "4 h"], [86400, "1 day"], [691200, "8 days"], [2678400, "1 month"]]],
+		["always_online", "Always Online", "Shows a copy from the Internet Archive when the server is down", [["off", "Off"], ["on", "On"]]]],
+	ssl: [
+		["ssl", "Encryption mode", "How Cloudflare reaches the server: Full (strict) when the server has a valid certificate, as Harbor's sites do", [["off", "Off"], ["flexible", "Flexible"], ["full", "Full"], ["strict", "Full (strict)"]]],
+		["always_use_https", "Always use HTTPS", "Every http:// visit is sent to https://", [["off", "Off"], ["on", "On"]]],
+		["min_tls_version", "Minimum TLS version", "The oldest TLS a visitor may use", [["1.0", "1.0"], ["1.1", "1.1"], ["1.2", "1.2"], ["1.3", "1.3"]]],
+		["automatic_https_rewrites", "Automatic HTTPS rewrites", "http:// links in pages are changed to https:// where they can be", [["off", "Off"], ["on", "On"]]],
+		["tls_1_3", "TLS 1.3", "The newest TLS for visitors that have it", [["off", "Off"], ["on", "On"], ["zrt", "With 0-RTT"]]]],
+	speed: [
+		["brotli", "Brotli", "Pages and files sent compressed with Brotli, smaller than gzip", [["off", "Off"], ["on", "On"]]],
+		["early_hints", "Early Hints", "The browser starts fetching a page's CSS and scripts before the page itself has come", [["off", "Off"], ["on", "On"]]],
+		["http3", "HTTP/3", "The newest HTTP, over QUIC: faster on mobile networks", [["off", "Off"], ["on", "On"]]],
+		["0rtt", "0-RTT", "A visitor coming back connects without a round trip first", [["off", "Off"], ["on", "On"]]],
+		["rocket_loader", "Rocket Loader", "Scripts loaded after the page: faster to show, but it can break scripts that expect to run first", [["off", "Off"], ["on", "On"]]]],
+	security: [
+		["security_level", "Security level", "How readily a visitor is challenged. Under attack checks every visitor before the site: for an attack only", [["essentially_off", "Essentially off"], ["low", "Low"], ["medium", "Medium"], ["high", "High"], ["under_attack", "Under attack"]]],
+		["browser_check", "Browser integrity check", "Visitors with headers of known bad software are stopped", [["off", "Off"], ["on", "On"]]],
+		["challenge_ttl", "Challenge passage", "How long a visitor who passed a challenge is let through", [[1800, "30 min"], [3600, "1 h"], [14400, "4 h"], [86400, "1 day"], [604800, "1 week"]]]],
+};
+function drawCfSettings(box, part, current) {
+	const cards = CF_SETTINGS[part].filter(([id]) => current[id]).map(([id, title, text, choices]) => {
+		const value = current[id].value;
+		const known = choices.some(([choice]) => String(choice) === String(value));
+		const choicesShown = known ? choices : [...choices, [value, String(value)]];
+		const segments = el("div", { className: "cf-segments", role: "radiogroup", ariaLabel: title },
+			...choicesShown.map(([choice, label]) => el("button", { type: "button", role: "radio", ariaChecked: String(String(choice) === String(value)),
+				className: "cf-segment" + (String(choice) === String(value) ? " active" : "") + (id === "security_level" && choice === "under_attack" ? " danger" : ""),
+				disabled: !current[id].editable, textContent: label, onclick: () => String(choice) !== String(value) && run(async () => {
+					if (id === "security_level" && choice === "under_attack" && !await ask({ title: `Under attack mode on ${dnsZone.name}?`,
+						message: "Every visitor is checked by Cloudflare for a few seconds before the site opens. Turn it off again when the attack is over.", input: false, danger: true, ok: "Turn on" })) return;
+					const saved = await api(`/api/dns/zones/${dnsZone.id}/settings/${part}`, { method: "PATCH", json: { setting: id, value: choice } });
+					toast(`${title}: ${label}.`, "ok");
+					drawCfSettings(box, part, saved.settings);
+				}) })));
+		return el("section", { className: "cf-setting" }, el("div", { className: "cf-setting-text" }, el("strong", { textContent: title }), el("small", { textContent: text })), segments);
+	});
+	const parts = [];
+	if (part === "cache") parts.push(cfPurgeCard());
+	if (!cards.length) parts.push(el("p", { className: "muted", textContent: "Cloudflare did not give these settings: the API token may lack Zone, Zone Settings, Read and Edit (Settings, Cloudflare)." }));
+	box.replaceChildren(...parts, ...cards);
+}
+// Purge: everything the domain has in Cloudflare's cache, or only the addresses typed
+function cfPurgeCard() {
+	const urls = el("textarea", { rows: 3, spellcheck: false, placeholder: `https://${dnsZone.name}/css/site.css\nOne address a line, up to 30` });
+	return el("section", { className: "cf-setting cf-purge" },
+		el("div", { className: "cf-setting-text" }, el("strong", { textContent: "Purge cache" }), el("small", { textContent: "Cloudflare forgets what it keeps, and fetches it from the server at the next visit: all of it, or the addresses given" })),
+		el("div", { className: "cf-purge-body" }, urls, el("div", { className: "cf-purge-actions" },
+			tonedButton("Purge these", "eraser", "blue", () => run(async () => {
+				const files = urls.value.split(/\s+/).filter(Boolean);
+				if (!files.length) throw new Error("Type the addresses to purge, one a line.");
+				await api(`/api/dns/zones/${dnsZone.id}/purge`, { method: "POST", json: { files } });
+				urls.value = "";
+				toast(`${files.length} address${files.length === 1 ? "" : "es"} purged.`, "ok");
+			})),
+			tonedButton("Purge everything…", "eraser", "amber", () => run(async () => {
+				if (!await ask({ title: `Purge all of ${dnsZone.name}?`, message: "Cloudflare forgets every file it keeps for the domain: the next visits fetch them from the server again, which may be slower for a while.", input: false, danger: true, ok: "Purge everything" })) return;
+				await api(`/api/dns/zones/${dnsZone.id}/purge`, { method: "POST" });
+				toast(`The cache of ${dnsZone.name} is purged.`, "ok");
+			})))));
+}
+// Analytics: the domain's traffic as Cloudflare sees it, as Health shows the server: tiles of the totals, and a bar a
+// day of requests, the part from Cloudflare's cache in its own colour
+let cfAnalyticsDays = 7;
+async function drawCfAnalytics(box) {
+	const { days, breakdown, breakdown_error: breakdownError } = await api(`/api/dns/zones/${dnsZone.id}/analytics?days=${cfAnalyticsDays}`);
+	const sum = (key) => days.reduce((total, day) => total + (day[key] || 0), 0);
+	const requests = sum("requests"), cached = sum("cached"), bytes = sum("bytes"), cachedBytes = sum("cached_bytes");
+	const count = (value) => value >= 1e6 ? `${(value / 1e6).toFixed(1)} M` : value >= 1e3 ? `${(value / 1e3).toFixed(1)} k` : String(value);
+	const size = (value) => value >= 1e9 ? `${(value / 1e9).toFixed(1)} GB` : value >= 1e6 ? `${(value / 1e6).toFixed(1)} MB` : `${Math.round(value / 1e3)} kB`;
+	// A share too small to round to 1 % is still said to be there
+	const percent = (part, whole) => !whole ? "—" : part > 0 && part / whole < .005 ? "<1 %" : `${Math.round(part / whole * 100)} %`;
+	const tile = (title, value, detail, tone) => el("div", { className: "health-tile" },
+		el("span", { className: "health-tile-title" }, el("span", { className: "health-dot", style: `background:${tone}` }), title),
+		el("strong", { className: "health-tile-value", textContent: value }), el("small", { textContent: detail }));
+	const period = el("div", { className: "keep-alive-interval cf-period", role: "group", ariaLabel: "Period" },
+		...[[1, "Today"], [7, "7 days"], [30, "30 days"]].map(([value, label]) => el("button", { type: "button", textContent: label, className: value === cfAnalyticsDays ? "active" : "",
+			ariaPressed: String(value === cfAnalyticsDays), onclick: () => value !== cfAnalyticsDays && run(async () => { cfAnalyticsDays = value; await drawCfAnalytics(box); }) })));
+	// A bar a day: its height the requests, the cached part in its own colour; the day and numbers on hover
+	const most = Math.max(1, ...days.map((day) => day.requests));
+	const bars = el("div", { className: "cf-bars", role: "img", ariaLabel: `Requests a day: ${days.map((day) => `${day.date} ${day.requests}`).join(", ")}` },
+		...days.map((day) => el("div", { className: "cf-bar", title: `${day.date}: ${count(day.requests)} requests, ${percent(day.cached, day.requests)} from the cache, ${count(day.visitors)} visitors, ${size(day.bytes)}` },
+			el("span", { className: "cf-bar-total", style: `height:${day.requests / most * 100}%` },
+				el("span", { className: "cf-bar-cached", style: `height:${day.requests ? day.cached / day.requests * 100 : 0}%` })),
+			el("small", { textContent: day.date.slice(5).replace("-", "/") }))));
+	box.replaceChildren(
+		el("div", { className: "cf-part-bar" }, el("div", { className: "cf-setting-text" }, el("strong", { textContent: "Traffic" }),
+			el("small", { textContent: "As Cloudflare sees it, every visit through it: a day behind at most" })), period),
+		el("div", { className: "health-tiles cf-tiles" },
+			tile("Requests", count(requests), `${count(sum("views"))} page views`, "#58a6ff"),
+			tile("Visitors", count(Math.max(...days.map((day) => day.visitors), 0)), cfAnalyticsDays === 1 ? "Unique" : "Unique on the busiest day", "#a371f7"),
+			tile("From the cache", percent(cached, requests), `${count(cached)} of ${count(requests)} requests`, "#f0883e"),
+			tile("Data", size(bytes), `${percent(cachedBytes, bytes)} from the cache`, "#39c5bb"),
+			tile("Threats", count(sum("threats")), "Stopped by Cloudflare", "#f85149"),
+			tile("HTTPS", breakdown ? percent(breakdown.encrypted, requests) : "—", breakdown ? `${count(breakdown.encrypted)} of ${count(requests)} requests` : "Not given", "#3fb950")),
+		el("section", { className: "cf-setting cf-chart" }, el("div", { className: "cf-setting-text" }, el("strong", { textContent: "Requests a day" }),
+			el("small", {}, el("span", { className: "cf-key total" }), "All ", el("span", { className: "cf-key cached" }), "From Cloudflare's cache")), bars),
+		cfBreakdown(breakdown, breakdownError, requests, { count, size, percent }));
+}
+// What the traffic was made of: where it came from, what it was answered, what was sent and with what. A card each, a
+// line a name with its share as a bar in the card's one colour; the answers by kind, as status colours with their names
+const CF_STATUS_NAMES = { 200: "OK", 204: "No content", 206: "Partial content", 301: "Moved permanently", 302: "Found elsewhere", 303: "See other",
+	304: "Not modified", 307: "Temporary redirect", 308: "Permanent redirect", 400: "Bad request", 401: "Login needed", 403: "Forbidden",
+	404: "Not found", 405: "Method not allowed", 429: "Too many requests", 499: "Visitor gave up", 500: "Server error", 502: "Bad gateway",
+	503: "Unavailable", 504: "Gateway timeout", 520: "Server answered oddly", 521: "Server is down", 522: "Server timed out",
+	523: "Server not reached", 524: "Server too slow", 525: "TLS handshake failed", 526: "Server's certificate not valid" };
+const CF_STATUS_KINDS = [["2", "Success", "#3fb950"], ["3", "Redirect", "#58a6ff"], ["4", "Visitor error", "#d29922"], ["5", "Server error", "#f85149"]];
+function cfBreakdown(found, why, requests, { count, size, percent }) {
+	if (!found) return el("section", { className: "cf-setting cf-breakdown-none" }, el("div", { className: "cf-setting-text" },
+		el("strong", { textContent: "What the traffic was made of" }), el("small", { textContent: `Cloudflare did not give it${why ? `: ${why}` : "."}` })));
+	let regions = null;
+	try { regions = new Intl.DisplayNames(["en"], { type: "region" }); } catch (error) { /* codes only */ }
+	const countryName = (code) => { try { return regions?.of(code) || code; } catch (error) { return code; } };
+	// A line: its name, a bar of its share of the largest, and its number
+	const lines = (rows, value, label, tone, detail = () => "", title = () => "") => {
+		const most = Math.max(1, ...rows.map(value));
+		return el("div", { className: "cf-lines" }, ...rows.map((row) => el("div", { className: "cf-line", title: title(row) },
+			el("span", { className: "cf-line-name" }, ...label(row)),
+			el("span", { className: "cf-line-track" }, el("span", { className: "cf-line-fill", style: `width:${Math.max(value(row) / most * 100, 1.5)}%;background:${tone}` })),
+			el("span", { className: "cf-line-detail", textContent: detail(row) }), el("span", { className: "cf-line-value", textContent: count(value(row)) }))));
+	};
+	const card = (title, about, ...body) => el("section", { className: "cf-setting cf-breakdown-card" },
+		el("div", { className: "cf-setting-text" }, el("strong", { textContent: title }), el("small", { textContent: about })), ...body);
+	const nothing = () => el("p", { className: "muted cf-lines-none", textContent: "Nothing in the period." });
+	// The answers: a bar of the kinds, and the codes under it, each with what it means
+	const kinds = CF_STATUS_KINDS.map(([first, name, tone]) => ({ name, tone, requests: found.statuses.filter((row) => row.name.startsWith(first)).reduce((all, row) => all + row.requests, 0) }));
+	const answered = kinds.reduce((all, kind) => all + kind.requests, 0);
+	const toneOf = (code) => (CF_STATUS_KINDS.find(([first]) => code.startsWith(first)) || [])[2] || "#8b949e";
+	const answers = card("Answers", "What Cloudflare answered, by kind and by code",
+		...(answered ? [el("div", { className: "cf-kinds-bar", role: "img", ariaLabel: kinds.filter((kind) => kind.requests).map((kind) => `${kind.name} ${percent(kind.requests, answered)}`).join(", ") },
+			...kinds.filter((kind) => kind.requests).map((kind) => el("span", { style: `width:${kind.requests / answered * 100}%;background:${kind.tone}`, title: `${kind.name}: ${count(kind.requests)}` }))),
+		el("div", { className: "cf-kinds" }, ...kinds.filter((kind) => kind.requests).map((kind) => el("span", { className: "cf-kind" },
+			el("span", { className: "cf-kind-dot", style: `background:${kind.tone}` }), kind.name, el("b", { textContent: percent(kind.requests, answered) })))),
+		el("div", { className: "cf-codes" }, ...found.statuses.map((row) => el("div", { className: "cf-code", title: `${count(row.requests)} requests` },
+			el("span", { className: "cf-code-number", style: `color:${toneOf(row.name)};border-color:${toneOf(row.name)}55`, textContent: row.name }),
+			el("span", { className: "cf-code-name", textContent: CF_STATUS_NAMES[row.name] || "", title: CF_STATUS_NAMES[row.name] || "" }),
+			el("span", { className: "cf-code-count", textContent: percent(row.requests, answered) }))))] : [nothing()]));
+	const countries = card("Countries", "Where the requests came from",
+		found.countries.length ? lines(found.countries, (row) => row.requests, (row) => [el("span", { className: "cf-country-code", textContent: row.name === "Unknown" ? "??" : row.name }),
+			el("span", { textContent: row.name === "Unknown" ? "Unknown" : countryName(row.name) })], "#58a6ff",
+			(row) => row.threats ? `${count(row.threats)} threat${row.threats === 1 ? "" : "s"}` : "", (row) => `${count(row.requests)} requests, ${size(row.bytes)}`) : nothing());
+	const content = card("Content", "What was sent, by kind of file",
+		found.content.length ? lines(found.content, (row) => row.requests, (row) => [el("span", { textContent: row.name === "empty" ? "Empty" : row.name.toUpperCase() })], "#39c5bb",
+			(row) => size(row.bytes), (row) => `${count(row.requests)} requests, ${size(row.bytes)}`) : nothing());
+	const browsers = card("Browsers", "Page views by browser",
+		found.browsers.length ? lines(found.browsers, (row) => row.views, (row) => [el("span", { textContent: row.name })], "#a371f7", () => "", (row) => `${count(row.views)} page views`) : nothing());
+	const protocolLines = (rows, rename) => lines(rows, (row) => row.requests, (row) => [el("span", { textContent: rename(row.name) })], "#d2a8ff",
+		(row) => percent(row.requests, requests), (row) => `${count(row.requests)} requests`);
+	const protocols = card("Protocols", "How visitors connected",
+		el("div", { className: "cf-protocols" },
+			el("div", {}, el("span", { className: "cf-protocols-head", textContent: "HTTP" }), found.http.length ? protocolLines(found.http, (name) => name) : nothing()),
+			el("div", {}, el("span", { className: "cf-protocols-head", textContent: "TLS" }), found.tls.length ? protocolLines(found.tls, (name) => name === "none" ? "None (plain HTTP)" : name.replace("TLSv", "TLS ")) : nothing())));
+	return el("div", { className: "cf-breakdown" }, countries, answers, content, browsers, protocols);
+}
+// Rules: the domain's redirects (Cloudflare's Single Redirects), a line each, made and changed in a dialog, saved together
+let cfRules = [];
+// A rule's expression said as it is typed: From host and path, or Cloudflare's own expression where it is not one of those
+function cfRuleFrom(expression) {
+	const host = expression.match(/^http\.host eq "([^"]+)"/)?.[1] || (expression.match(/^ends_with\(http\.host, "\.([^"]+)"\)/)?.[1] ? "*." + expression.match(/^ends_with\(http\.host, "\.([^"]+)"\)/)[1] : "");
+	const path = expression.match(/starts_with\(http\.request\.uri\.path, "([^"]+)"\)/)?.[1] || "";
+	return host ? `From ${host}${path}` : expression;
+}
+async function drawCfRules(box) {
+	// The redirects, the page rules, how many of each the domain may have, and its Managed Transforms: read together
+	const [redirects, pageRules, limits, headers] = await Promise.all([api(`/api/dns/zones/${dnsZone.id}/redirects`),
+		api(`/api/dns/zones/${dnsZone.id}/pagerules`).then((data) => data.rules).catch(() => null),
+		api(`/api/dns/zones/${dnsZone.id}/rule-limits`).catch(() => ({})),
+		api(`/api/dns/zones/${dnsZone.id}/managed-headers`).catch((error) => ({ error: error.message }))]);
+	cfRules = redirects.rules;
+	const save = async (rules, said) => {
+		({ rules: cfRules } = await api(`/api/dns/zones/${dnsZone.id}/redirects`, { method: "PUT", json: { rules } }));
+		toast(said, "ok");
+		await drawCfRules(box);
+	};
+	const rows = cfRules.map((rule, index) => el("div", { className: "dns-record cf-rule" + (rule.enabled ? "" : " off") },
+		el("div", { className: "dns-record-name" }, el("strong", { textContent: rule.description || cfRuleFrom(rule.expression) }), el("small", { textContent: cfRuleFrom(rule.expression), title: rule.expression })),
+		el("span", { className: "dns-record-arrow", ariaHidden: "true", textContent: "→" }),
+		el("code", { className: "dns-record-content", textContent: rule.target, title: rule.target }),
+		el("div", { className: "dns-record-chips" }, el("span", { className: "dns-chip", textContent: String(rule.status) }),
+			...(rule.keep_query ? [el("span", { className: "dns-chip", textContent: "Keeps query" })] : []),
+			...(rule.enabled ? [] : [el("span", { className: "dns-chip", textContent: "Off" })])),
+		el("div", { className: "dns-record-actions" }, tonedButton("Edit…", "pencil", "blue", () => editCfRedirect(index, save)))));
+	box.replaceChildren(
+		cfRuleSection({ title: "Redirects", about: "From a host (and a path) to another address, by Cloudflare before the server is asked", used: cfRules.length, limit: limits.redirects,
+			add: ["New redirect", () => editCfRedirect(null, save)], first: ["Add your first redirect", `Send an old address, such as old.${dnsZone.name} or a path that moved, to where it is now`], rows }),
+		cfPageRulesSection(box, pageRules, limits.page_rules),
+		cfManagedHeaders(box, headers));
+}
+// A kind of rule, as each is shown: its head with how many of the domain's are used, its rules as lines, or the dashed
+// card that adds the first. New only while there is room for one more
+function cfRuleSection({ title, about, used, limit, add, first, rows, note = null, subhead = false }) {
+	const full = limit != null && used >= limit;
+	const head = el("div", { className: "cf-part-bar" + (subhead ? " cf-subhead" : "") },
+		el("div", { className: "cf-setting-text" }, el("strong", {}, title, ...(limit != null ? [el("span", { className: "dns-chip cf-used" + (full ? " full" : ""),
+			title: full ? `All ${limit} are used: delete one to make another` : `${limit - used} more can be made`, textContent: `${used} of ${limit} used` })] : [])),
+			el("small", { textContent: about })),
+		...(rows?.length && add && !full ? [tonedButton(add[0], "plus", "green", add[1])] : []));
+	if (note) return el("div", { className: "cf-rule-section" }, head, note);
+	if (!rows.length) {
+		const card = addFirstCard(first[0], first[1], add[1]);
+		card.classList.add("cf-first", "row");
+		return el("div", { className: "cf-rule-section" }, head, card);
+	}
+	return el("div", { className: "cf-rule-section" }, head, el("section", { className: "dns-group" }, el("div", { className: "dns-group-rows" }, ...rows)),
+		...(full ? [el("p", { className: "muted cf-full", textContent: `All ${limit} ${title.toLowerCase()} the domain may have are used: delete one, or turn one into another, to make a new one.` })] : []));
+}
+// Managed Transforms: headers Cloudflare adds to or takes from every request and answer, each on or off at once, as
+// the settings of Cache and SSL/TLS are. One that cannot be on with another that is says so, and waits
+function cfManagedHeaders(box, found) {
+	const head = el("div", { className: "cf-part-bar cf-subhead" }, el("div", { className: "cf-setting-text" }, el("strong", { textContent: "Managed Transforms" }),
+		el("small", { textContent: "Headers Cloudflare adds to or takes from every request and answer, a click each" })));
+	if (found.error) return el("div", { className: "cf-rule-section" }, head, el("p", { className: "muted", textContent: `Cloudflare did not give them: ${found.error}. The API token may lack Zone, Transform Rules, Read and Edit (Settings, Cloudflare).` }));
+	const all = [...found.request, ...found.response];
+	const card = (item) => {
+		const blocking = item.conflicts.map((id) => all.find((other) => other.id === id)).filter((other) => other?.enabled);
+		const still = blocking.length > 0 && !item.enabled;
+		const segments = el("div", { className: "cf-segments", role: "radiogroup", ariaLabel: item.title },
+			...[[false, "Off"], [true, "On"]].map(([value, label]) => el("button", { type: "button", role: "radio", ariaChecked: String(item.enabled === value),
+				className: "cf-segment" + (item.enabled === value ? " active" : ""), disabled: still, textContent: label,
+				onclick: (event) => item.enabled !== value && run(() => busyClick(event.currentTarget, async () => {
+					await api(`/api/dns/zones/${dnsZone.id}/managed-headers`, { method: "PATCH", json: { header: item.id, enabled: value } });
+					toast(`${item.title}: ${label}.`, "ok");
+					await drawCfRules(box);
+				})) })));
+		return el("section", { className: "cf-setting" + (still ? " off" : "") }, el("div", { className: "cf-setting-text" }, el("strong", { textContent: item.title }),
+			el("small", { textContent: still ? `${item.text}. Not with ${blocking.map((other) => other.title).join(" or ")} on.` : item.text })), segments);
+	};
+	const group = (title, items) => items.length ? [el("div", { className: "cf-group-head", textContent: title }), ...items.map(card)] : [];
+	return el("div", { className: "cf-rule-section cf-managed" }, head, ...group("Request headers: what the server is told", found.request),
+		...group("Response headers: what the visitor gets", found.response));
+}
+// Page rules: a URL pattern and what it does, by priority. One that forwards is made and changed here; any is turned on
+// or off, and deleted. Others (cache level and the like) are shown as Cloudflare says them
+const CF_PAGE_ACTIONS = { forwarding_url: "Forward", always_use_https: "Always use HTTPS", cache_level: "Cache level", ssl: "SSL", browser_cache_ttl: "Browser cache TTL",
+	edge_cache_ttl: "Edge cache TTL", disable_security: "Disable security", security_level: "Security level", rocket_loader: "Rocket Loader", disable_performance: "Disable performance",
+	automatic_https_rewrites: "Automatic HTTPS rewrites", cache_deception_armor: "Cache deception armor", disable_apps: "Disable apps", email_obfuscation: "Email obfuscation" };
+function cfPageRulesSection(box, rules, limit = null) {
+	const reload = () => run(() => drawCfRules(box));
+	const section = { title: "Page Rules", about: "Cloudflare's older rules: a URL pattern (* for any part) and what is done there, the first that matches",
+		used: rules?.length || 0, limit, subhead: true, add: ["New page rule", () => editCfPageRule(null, reload)],
+		first: ["Add your first page rule", `Forward a pattern such as www.${dnsZone.name}/* to where it should go`] };
+	if (!rules) return cfRuleSection({ ...section, limit: null, note: el("p", { className: "muted", textContent: "Cloudflare did not give the page rules: the API token may lack Zone, Page Rules, Read (Settings, Cloudflare)." }) });
+	const said = (action) => action.id === "forwarding_url" ? `${action.value?.status_code || 301} → ${action.value?.url || ""}`
+		: `${CF_PAGE_ACTIONS[action.id] || action.id}${action.value != null && typeof action.value !== "object" ? ": " + action.value : ""}`;
+	return cfRuleSection({ ...section, rows: rules.map((rule, index) => el("div", { className: "dns-record cf-rule" + (rule.enabled ? "" : " off") },
+		el("div", { className: "dns-record-name" }, el("strong", { textContent: rule.pattern }), el("small", { textContent: `Position ${index + 1}` })),
+		el("span", { className: "dns-record-arrow", ariaHidden: "true", textContent: "→" }),
+		el("code", { className: "dns-record-content", title: rule.actions.map(said).join(" · "), textContent: rule.forward ? rule.forward.url : rule.actions.map(said).join(" · ") }),
+		el("div", { className: "dns-record-chips" }, ...(rule.forward ? [el("span", { className: "dns-chip", textContent: String(rule.forward.status) })] : []),
+			el("span", { className: "dns-chip" + (rule.enabled ? " on" : ""), textContent: rule.enabled ? "On" : "Off" })),
+		el("div", { className: "dns-record-actions" }, rule.forward
+			? tonedButton("Edit…", "pencil", "blue", () => editCfPageRule(rule, reload))
+			: tonedButton(rule.enabled ? "Turn off" : "Turn on", rule.enabled ? "stop" : "play", rule.enabled ? "amber" : "green", () => run(async () => {
+				await api(`/api/dns/zones/${dnsZone.id}/pagerules/${rule.id}`, { method: "PATCH", json: { enabled: !rule.enabled } });
+				toast(`The page rule is ${rule.enabled ? "off" : "on"}.`, "ok");
+				await drawCfRules(box);
+			}))))) });
+}
+function editCfPageRule(rule, reload) {
+	const field = (label, input, hint = "") => el("label", { className: "dns-field" }, label, input, ...(hint ? [el("small", { className: "hint", textContent: hint })] : []));
+	const pattern = el("input", { autocomplete: "off", spellcheck: false, required: true, value: rule?.pattern || "", placeholder: `www.${dnsZone.name}/*` });
+	const target = el("input", { autocomplete: "off", spellcheck: false, required: true, value: rule?.forward?.url || "", placeholder: `https://${dnsZone.name}/$1` });
+	const status = premiumSelect({ label: "Kind", value: rule?.forward?.status || 301, options: [{ value: 301, label: "301", sub: "Moved for good" }, { value: 302, label: "302", sub: "For now" }] });
+	const enabledRow = checkOption("cf_page_enabled", "On", "Off keeps the rule without using it", rule ? rule.enabled : true, "check", "green");
+	openFormDialog({ icon: "corner", title: rule ? `Page rule: ${rule.pattern}` : `New page rule in ${dnsZone.name}`, ok: "Save",
+		text: "Forwards the addresses that match the pattern: * stands for any part, and $1 in the address it goes to for what the first * matched.",
+		fields: [field("URL pattern", pattern, `Such as www.${dnsZone.name}/*`), el("div", { className: "ns-grid dns-grid-narrow" }, field("Forward to", target, "$1 for what the first * matched"),
+			el("label", { className: "dns-field" }, "Kind", status)), enabledRow],
+		extra: rule ? [tonedButton("Delete…", "trash", "red", () => run(async () => {
+			formDialog.close();
+			if (!await ask({ title: `Delete the page rule ${rule.pattern}?`, message: `${rule.pattern} → ${rule.forward?.url || ""}`, input: false, danger: true, ok: "Delete" })) return;
+			await api(`/api/dns/zones/${dnsZone.id}/pagerules/${rule.id}`, { method: "DELETE" });
+			toast("The page rule is deleted.", "ok");
+			reload();
+		}))] : [],
+		submit: async () => {
+			await api(`/api/dns/zones/${dnsZone.id}/pagerules${rule ? "/" + rule.id : ""}`, { method: rule ? "PUT" : "POST",
+				json: { pattern: pattern.value.trim(), url: target.value.trim(), status: Number(status.value), enabled: enabledRow.querySelector("input").checked } });
+			toast(rule ? "The page rule is saved." : "The page rule is made.", "ok");
+			reload();
+		} });
+}
+function editCfRedirect(index, save) {
+	const rule = index == null ? null : cfRules[index];
+	const host = rule?.expression.match(/http\.host eq "([^"]+)"/)?.[1] || (rule?.expression.match(/ends_with\(http\.host, "\.([^"]+)"\)/)?.[1] ? "*." + rule.expression.match(/ends_with\(http\.host, "\.([^"]+)"\)/)[1] : "");
+	const path = rule?.expression.match(/starts_with\(http\.request\.uri\.path, "([^"]+)"\)/)?.[1] || "";
+	const custom = Boolean(rule) && !host;
+	const field = (label, input, hint = "") => el("label", { className: "dns-field" }, label, input, ...(hint ? [el("small", { className: "hint", textContent: hint })] : []));
+	const description = el("input", { autocomplete: "off", value: rule?.description || "", placeholder: "Old site to the new" });
+	const from = el("input", { autocomplete: "off", spellcheck: false, value: host, placeholder: `old.${dnsZone.name}`, required: !custom, disabled: custom });
+	const fromPath = el("input", { autocomplete: "off", spellcheck: false, value: path, placeholder: "/blog (optional)", disabled: custom });
+	const target = el("input", { autocomplete: "off", spellcheck: false, value: rule?.target || "", placeholder: `https://www.${dnsZone.name}`, required: true });
+	const status = premiumSelect({ label: "Kind", value: rule?.status || 301, options: [{ value: 301, label: "301", sub: "Moved for good" }, { value: 302, label: "302", sub: "For now" }, { value: 307, label: "307", sub: "For now, the same method" }, { value: 308, label: "308", sub: "For good, the same method" }] });
+	// Its options as Harbor's option cards
+	const keepRow = checkOption("cf_keep_query", "Keep the query string", "?a=1 goes with it to the new address", Boolean(rule?.keep_query), "link", "blue");
+	const enabledRow = checkOption("cf_enabled", "On", "Off keeps the rule without using it", rule ? rule.enabled : true, "check", "green");
+	const keep = keepRow.querySelector("input"), enabled = enabledRow.querySelector("input");
+	openFormDialog({ icon: "corner", title: rule ? `Redirect: ${rule.description || host || "rule"}` : `New redirect in ${dnsZone.name}`, ok: "Save",
+		text: custom ? "Made in Cloudflare with an expression of its own: only its target and kind are changed here." : "From the host (and a path under it) to the address given.",
+		fields: [field("Name", description), el("div", { className: "ns-grid dns-grid-narrow" }, field("From host", from, "* for every name under it: *.example.com"), field("Path", fromPath)),
+			el("div", { className: "ns-grid dns-grid-narrow" }, field("To", target), el("label", { className: "dns-field" }, "Kind", status)),
+			el("div", { className: "cf-options" }, keepRow, enabledRow)],
+		extra: rule ? [tonedButton("Delete…", "trash", "red", () => run(async () => {
+			formDialog.close();
+			if (!await ask({ title: `Delete the redirect ${rule.description || host}?`, message: `${rule.expression} → ${rule.target}`, input: false, danger: true, ok: "Delete" })) return;
+			await save(cfRules.filter((_, at) => at !== index), "The redirect is deleted.");
+		}))] : [],
+		submit: async () => {
+			const made = { description: description.value.trim(), target: target.value.trim(), status: Number(status.value), keep_query: keep.checked, enabled: enabled.checked,
+				...(custom ? { expression: rule.expression } : { source_host: from.value.trim(), source_path: fromPath.value.trim() }) };
+			const rules = cfRules.map((item) => ({ ...item }));
+			if (rule) rules[index] = made; else rules.push(made);
+			await save(rules, rule ? "The redirect is saved." : "The redirect is made.");
+		} });
 }
 
 // ------------------------------------------------------------------ users
@@ -12667,6 +13223,7 @@ function openUserEditor(user = null, template = null, editTemplate = undefined) 
 	userForm.username.required = !asTemplate;
 	userForm.username.value = user?.username || "";
 	userForm.elements.name.value = user?.name || "";
+	userForm.email.value = user?.email || "";
 	userForm.password.required = !editing && !asTemplate;
 	userForm.password.placeholder = editing ? "Leave empty to keep it" : "At least 12 characters";
 	// Changing a user or a template: no templates; a new user: the templates, the one it started from lit
@@ -12702,6 +13259,10 @@ function openUserEditor(user = null, template = null, editTemplate = undefined) 
 	// DNS: where a Cloudflare account is set up, the domains of it they may keep
 	userForm.dns.checked = Boolean(user?.dns);
 	fillUserDns(user?.dns_domains || []);
+	// The parts of Cloudflare they may use: DNS for one given before there was a choice
+	const parts = user?.cloudflare_parts || ["dns"];
+	$("#user-cf-parts").replaceChildren(...CF_PARTS.map(([part, label, icon]) => el("label", { className: "grant-chip" },
+		el("input", { type: "checkbox", name: "cf_part", value: part, checked: parts.includes(part) }), el("span", {}, label))));
 	// To which SQL Servers: both for one given it before there was a choice
 	const engines = Array.isArray(user?.connection_engines) ? user.connection_engines : ["mssql", "postgres"];
 	for (const box of userForm.querySelectorAll("input[name=connection_engine]")) box.checked = engines.includes(box.value);
@@ -12764,6 +13325,7 @@ function templateSqlRules(rules) {
 function templateAccess() {
 	return { web: userForm.web.checked, create_sites: userForm.create_sites.checked, sftp: userForm.sftp.checked, sql: userForm.sql.checked,
 		manage_connections: userForm.manage_connections.checked, connection_engines: connectionEngines(), limits: userLimits(), dns: userForm.dns.checked,
+		cloudflare_parts: [...userForm.querySelectorAll("input[name=cf_part]:checked")].map((box) => box.value),
 		site_rules: $("#template-site-rules").firstChild.read(), sql_rules: $("#template-sql-rules").firstChild.read() };
 }
 function showUserScope() {
@@ -12813,7 +13375,8 @@ function userAccess() {
 	});
 	return { role: userForm.role.value, web: userForm.web.checked, create_sites: userForm.create_sites.checked, sql: userForm.sql.checked,
 		manage_connections: userForm.manage_connections.checked, connection_engines: connectionEngines(), sites, connections, sftp: userForm.sftp.checked, limits: userLimits(),
-		dns: userForm.dns.checked, dns_domains: [...userForm.querySelectorAll("input[name=dns_domain]:checked")].map((box) => box.value) };
+		dns: userForm.dns.checked, dns_domains: [...userForm.querySelectorAll("input[name=dns_domain]:checked")].map((box) => box.value),
+		cloudflare_parts: [...userForm.querySelectorAll("input[name=cf_part]:checked")].map((box) => box.value) };
 }
 // A new user starts from a template: a chip each above the fields, the one used lit; templates are made under Users
 function showUserTemplates(chosen) {
@@ -12829,9 +13392,9 @@ function showUserTemplates(chosen) {
 function useUserTemplate(template) {
 	// What is typed already (the username, name and password) stays; the parts and limits are the template's, and each
 	// site or connection ticked gives what its rules say
-	const typed = { username: userForm.username.value, name: userForm.elements.name.value, password: userForm.password.value };
+	const typed = { username: userForm.username.value, name: userForm.elements.name.value, email: userForm.email.value, password: userForm.password.value };
 	const { site_rules: _site, sql_rules: _sql, ...parts } = template.access;
-	openUserEditor({ ...parts, username: typed.username, name: typed.name }, template);
+	openUserEditor({ ...parts, username: typed.username, name: typed.name, email: typed.email }, template);
 	userForm.password.value = typed.password;
 }
 // Save keeps the window open, Save and close (Enter) closes it
@@ -12866,7 +13429,7 @@ function saveUserForm(close) {
 	const view = userView();
 	run(async () => {
 		const id = userForm.dataset.id;
-		const body = { username: userForm.username.value.trim(), name: userForm.elements.name.value.trim(), disabled: userForm.disabled.checked, ...userAccess() };
+		const body = { username: userForm.username.value.trim(), name: userForm.elements.name.value.trim(), email: userForm.email.value.trim(), disabled: userForm.disabled.checked, ...userAccess() };
 		if (userForm.password.value) body.password = userForm.password.value;
 		const sftp = {};
 		if (userForm.sftp.checked && userForm.sftp_password.value) sftp.password = userForm.sftp_password.value;

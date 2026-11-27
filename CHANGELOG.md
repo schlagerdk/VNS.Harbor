@@ -2,6 +2,31 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.99] - Unreleased
+
+### Features
+
+- Cloudflare in place of DNS: the top menu's Cloudflare opens with no domain chosen, on a welcome with the account's domains at a glance, what the user may do with them, and those opened last as cards; while the domains are read it says so, and when Cloudflare does not answer it says why with Try again (Find a domain on the left), and a domain's parts are tabs: DNS (its records, as before), Cache (purge everything or the addresses given, development mode, caching level, browser cache, Always Online), SSL/TLS (encryption mode, Always use HTTPS, minimum TLS, automatic HTTPS rewrites, TLS 1.3), Rules (redirects from a host and a path to another address, 301 to 308, keeping the query string or not, on or off) and Security (security level with Under attack asked first, browser integrity check, challenge passage); and Analytics (requests, visitors, from the cache, data and threats as tiles, and a bar a day, today, 7 or 30 days) and Speed (Brotli, Early Hints, HTTP/3, 0-RTT, Rocket Loader). Rules also lists the page rules, Cloudflare's older rules: one that forwards is made and changed there, any turned on or off. Each setting a card with its choices as segments, changed at once and in the audit log.
+- A user given Cloudflare chooses which parts they may use (May use: DNS, Analytics, Cache, Speed, SSL/TLS, Rules, Security) beside their domains; one given DNS before keeps DNS only. A template keeps the parts too.
+- Proxied and a redirect's options are option cards, as the rest of Harbor's dialogs have them.
+- Templates lay out as Users: three across, the dashed card the same size.
+- A domain with æ, ø or å (such as ledernøn.dk) can be given to a user: it was dropped as it was saved.
+- A domain with no redirects or records yet has the dashed Add your first … card, as Users and Templates have, in place of a line of text.
+- A DNS record can be locked for users or opened to them by an administrator, a lock beside its Edit (and Locked for users in its dialog), whether it is proxied or not; until it is chosen, a proxied record is locked, as before. A user changes the records open to them, proxied too, and one they make stays open to them.
+- Cloudflare on a phone: the top menu on one line (its parts without icons, Settings as its gear), the domain's tabs a row that scrolls on its own, and a record's chips side by side.
+- A user with only Cloudflare opens on it, not on No sites for you yet; Search sites is not shown there.
+- Cloudflare: a record's Proxied is turned on and off with one click in the list, as its lock, by an administrator and by a user the record is open to (it stays open to them when they proxy it), each showing a spinner until Cloudflare has answered; a record changed opens in a dialog of normal width with its type in the head.
+- Cloudflare Analytics shows what the traffic was made of: countries (with their threats), the answers by kind and by code with what each means, content by kind of file, browsers, HTTP and TLS versions, and how much came over HTTPS; where the plan or token does not give it, the days are still shown and it says why.
+- Cloudflare Rules: redirects and page rules are built the same way, each with how many of the domain's are used (such as 1 of 3, from Cloudflare), a low card that adds the first when there are none, and New only while there is room; and Managed Transforms, the headers Cloudflare adds to or takes from requests and answers, are turned on and off there, one that cannot be on with another saying so.
+- Cloudflare's tabs in the order DNS, Analytics, Cache, Speed, Rules, SSL/TLS and Security; a user's Cloudflare parts are listed in the same order.
+- Cloudflare's redirect and page rule dialogs are of normal width, and fields side by side start at the same line when one has a hint under it.
+- A Cloudflare domain opens with its name and tabs at once and one spinner in the tab it opens on, its records and that tab read together and shown when both are there; no DNS filter while it is read, and a domain opened meanwhile is not overwritten by the one before. A domain's link opens it at once, with the name it had last, while the list of domains is read beside it. On a phone Analytics' period is one row under its heading, and a tapped tab no longer stays lit as if chosen. Analytics' cards stand one under another in a narrower window.
+- A Cloudflare domain's count of records and proxied ones stands beside DNS's filter (under it on a phone), so the domain's head is the same on every tab and nothing moves when a tab is changed.
+- Cloudflare's list of domains is kept by Harbor until refreshed, as it seldom changes: no call to Cloudflare for it each time a page, tab or record is opened. Settings, Cloudflare says how many there are and when they were read, with Refresh domains; a domain added in Cloudflare and opened by its link is read at once, and another account reads them again.
+- Forgot password on the sign-in page: a link mailed to the user's email (or their username, when it is one), good once within 30 minutes, to set a new password that signs them out everywhere else. The answer is the same whether the account exists or not, it is limited per address and per user, only a hash of the link is kept, and root's password is never set this way. Users have an optional email for it, beside their name.
+- The sign-in page tells one who comes from an address Harbor took over (bound to Harbor, or redirected to /login?from=<address>) that the old password does not work here, and to use Forgot password; the addresses are kept under Settings, General, Sign-in.
+- The server named Harbor says Harbor Master in the top bar, not its name twice.
+
 ## [1.0.98] - 2026-11-27
 
 ### Features

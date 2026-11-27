@@ -103,6 +103,159 @@ class CloudflareTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             cloudflare.record_body({"type": "CAA", "name": "@", "ttl": 1, "tag": "nope", "value": "x"}, "shop.dk", admin=True)
 
+    def test_zone_settings_only_as_cloudflare_takes_them(self):
+        fake = FakeCloudflare({f"/zones/{ZONE}/settings": ([{"id": "ssl", "value": "full", "editable": True}, {"id": "always_use_https", "value": "off"},
+                                                            {"id": "brotli", "value": "on"}], 1)})
+        found = cloudflare.zone_settings({"token": "t" * 40}, ZONE, "ssl", opener=fake)
+        self.assertEqual(set(found), {"ssl", "always_use_https"})
+        cloudflare.change_setting({"token": "t" * 40}, ZONE, "ssl", "ssl", "strict", opener=fake)
+        self.assertEqual((fake.asked[-1][0], fake.asked[-1][1].split("/")[-1], json.loads(fake.asked[-1][3])), ("PATCH", "ssl", {"value": "strict"}))
+        with self.assertRaises(ValueError):
+            cloudflare.change_setting({"token": "t" * 40}, ZONE, "ssl", "ssl", "everything", opener=fake)
+        with self.assertRaises(ValueError):
+            cloudflare.change_setting({"token": "t" * 40}, ZONE, "cache", "ssl", "strict", opener=fake)
+        cloudflare.change_setting({"token": "t" * 40}, ZONE, "cache", "browser_cache_ttl", "14400", opener=fake)
+        self.assertEqual(json.loads(fake.asked[-1][3]), {"value": 14400})
+
+    def test_purge_of_addresses_and_redirects(self):
+        fake = FakeCloudflare()
+        cloudflare.purge_urls({"token": "t" * 40}, ZONE, ["https://shop.dk/a.css", " "], opener=fake)
+        self.assertEqual(json.loads(fake.asked[-1][3]), {"files": ["https://shop.dk/a.css"]})
+        with self.assertRaises(ValueError):
+            cloudflare.purge_urls({"token": "t" * 40}, ZONE, ["shop.dk/a.css"], opener=fake)
+        self.assertEqual(cloudflare.redirect_expression("*.old.dk", "/blog"), 'ends_with(http.host, ".old.dk") and starts_with(http.request.uri.path, "/blog")')
+        with self.assertRaises(ValueError):
+            cloudflare.redirect_expression("not a host")
+        cloudflare.save_redirects({"token": "t" * 40}, ZONE, [{"description": "Old", "source_host": "old.shop.dk", "target": "https://shop.dk", "status": 301, "keep_query": True}], opener=fake)
+        sent = json.loads(fake.asked[-1][3])["rules"][0]
+        self.assertEqual((sent["expression"], sent["action_parameters"]["from_value"]["target_url"]["value"], sent["action_parameters"]["from_value"]["preserve_query_string"]),
+                         ('http.host eq "old.shop.dk"', "https://shop.dk", True))
+        self.assertEqual(fake.asked[-1][0], "PUT")
+
+    def test_page_rules_read_and_a_forward_made(self):
+        rule = {"id": "b" * 32, "status": "active", "priority": 1,
+                "targets": [{"target": "url", "constraint": {"operator": "matches", "value": "www.aogtillon.dk/*"}}],
+                "actions": [{"id": "forwarding_url", "value": {"url": "https://aogtillon.dk/$1", "status_code": 301}}]}
+        fake = FakeCloudflare({f"/zones/{ZONE}/pagerules": ([rule], 1)})
+        found = cloudflare.page_rules({"token": "t" * 40}, ZONE, opener=fake)
+        self.assertEqual((found[0]["pattern"], found[0]["forward"], found[0]["enabled"]), ("www.aogtillon.dk/*", {"url": "https://aogtillon.dk/$1", "status": 301}, True))
+        cloudflare.save_page_rule({"token": "t" * 40}, ZONE, None, {"pattern": "old.shop.dk/*", "url": "https://shop.dk/$1", "status": 302}, opener=fake)
+        sent = json.loads(fake.asked[-1][3])
+        self.assertEqual((fake.asked[-1][0], sent["actions"][0]["value"]["status_code"], sent["status"]), ("POST", 302, "active"))
+        with self.assertRaises(ValueError):
+            cloudflare.save_page_rule({"token": "t" * 40}, ZONE, None, {"pattern": "x", "url": "https://shop.dk"}, opener=fake)
+        cloudflare.page_rule_state({"token": "t" * 40}, ZONE, "b" * 32, False, opener=fake)
+        self.assertEqual((fake.asked[-1][0], json.loads(fake.asked[-1][3])), ("PATCH", {"status": "disabled"}))
+
+    def test_analytics_a_day_with_the_empty_ones(self):
+        import datetime
+        def answer(request, timeout=None):
+            sent = json.loads(request.data)
+            self.assertEqual((sent["variables"]["since"], sent["variables"]["until"]), ("2026-11-21", "2026-11-27"))
+            return Answer(json.dumps({"data": {"viewer": {"zones": [{"httpRequests1dGroups": [
+                {"dimensions": {"date": "2026-11-26"}, "sum": {"requests": 120, "cachedRequests": 60, "bytes": 5000, "cachedBytes": 2500, "threats": 2, "pageViews": 40}, "uniq": {"uniques": 9}}]}]}}}).encode())
+        days = cloudflare.analytics({"token": "t" * 40}, ZONE, 7, today=datetime.date(2026, 11, 27), opener=answer)
+        self.assertEqual(len(days), 7)
+        self.assertEqual(days[5], {"date": "2026-11-26", "requests": 120, "cached": 60, "bytes": 5000, "cached_bytes": 2500, "threats": 2, "views": 40, "visitors": 9})
+        self.assertEqual(days[0]["requests"], 0)
+        def refuse(request, timeout=None):
+            return Answer(json.dumps({"errors": [{"message": "not authorized for that account"}]}).encode())
+        with self.assertRaises(cloudflare.CloudflareError):
+            cloudflare.analytics({"token": "t" * 40}, ZONE, 7, opener=refuse)
+
+    def test_what_the_traffic_was_made_of_summed_over_the_days(self):
+        import datetime
+        def answer(request, timeout=None):
+            day = {"encryptedRequests": 90, "countryMap": [{"clientCountryName": "DK", "requests": 80, "threats": 1, "bytes": 4000}, {"clientCountryName": "US", "requests": 20, "threats": 0, "bytes": 900}],
+                   "responseStatusMap": [{"edgeResponseStatus": 200, "requests": 95}, {"edgeResponseStatus": 404, "requests": 5}],
+                   "contentTypeMap": [{"edgeResponseContentTypeName": "html", "requests": 60, "bytes": 3000}, {"edgeResponseContentTypeName": "", "requests": 1, "bytes": 0}],
+                   "browserMap": [{"uaBrowserFamily": "Chrome", "pageViews": 30}], "clientHTTPVersionMap": [{"clientHTTPProtocol": "HTTP/2", "requests": 100}],
+                   "clientSSLMap": [{"clientSSLProtocol": "TLSv1.3", "requests": 90}]}
+            other = dict(day, countryMap=[{"clientCountryName": "US", "requests": 70, "threats": 3, "bytes": 100}])
+            return Answer(json.dumps({"data": {"viewer": {"zones": [{"httpRequests1dGroups": [{"sum": day}, {"sum": other}]}]}}}).encode())
+        found = cloudflare.breakdown({"token": "t" * 40}, ZONE, 7, today=datetime.date(2026, 11, 27), opener=answer)
+        self.assertEqual(found["encrypted"], 180)
+        # Summed over the days, largest first
+        self.assertEqual(found["countries"], [{"name": "US", "requests": 90, "threats": 3, "bytes": 1000}, {"name": "DK", "requests": 80, "threats": 1, "bytes": 4000}])
+        self.assertEqual(found["statuses"][0], {"name": "200", "requests": 190})
+        self.assertEqual(found["browsers"], [{"name": "Chrome", "views": 60}])
+        # A name Cloudflare left empty is said as Unknown
+        self.assertIn({"name": "Unknown", "requests": 2, "bytes": 0}, found["content"])
+        with self.assertRaises(ValueError):
+            cloudflare.breakdown({"token": "t" * 40}, ZONE, 14, opener=answer)
+
+    def test_how_many_rules_a_domain_may_have(self):
+        zone = {"plan": {"legacy_id": "free"}, "meta": {"page_rule_quota": 3}}
+        # The entitlements when they are given, exact
+        fake = FakeCloudflare({f"/zones/{ZONE}": (zone, 1), f"/zones/{ZONE}/entitlements": ([{"id": "rulesets.dynamic_redirect_rule_max", "allocation": {"value": 12}},
+                                                                                               {"id": "page_rules", "allocation": {"value": 5}}], 1)})
+        self.assertEqual(cloudflare.rule_limits({"token": "t" * 40}, ZONE, opener=fake), {"redirects": 12, "page_rules": 5})
+        # A token that may not read them: the domain's page rules and its plan's redirects
+        def refused(request, timeout=None):
+            if request.full_url.endswith("/entitlements"):
+                return Answer(json.dumps({"success": False, "errors": [{"message": "Unauthorized"}]}).encode())
+            return Answer(json.dumps({"success": True, "result": zone}).encode())
+        self.assertEqual(cloudflare.rule_limits({"token": "t" * 40}, ZONE, opener=refused), {"redirects": 10, "page_rules": 3})
+
+    def test_managed_transforms_read_and_one_turned_on(self):
+        current = {"managed_request_headers": [{"id": "remove_visitor_ip_headers", "enabled": False, "has_conflict": True, "conflicts_with": ["add_true_client_ip_headers"]}],
+                   "managed_response_headers": [{"id": "add_security_headers", "enabled": False, "has_conflict": False}]}
+        fake = FakeCloudflare({f"/zones/{ZONE}/managed_headers": (current, 1)})
+        found = cloudflare.managed_headers({"token": "t" * 40}, ZONE, opener=fake)
+        self.assertEqual(found["request"][0]["conflicts"], ["add_true_client_ip_headers"])
+        self.assertEqual(found["response"][0]["title"], "Add security headers")
+        cloudflare.set_managed_header({"token": "t" * 40}, ZONE, "add_security_headers", True, opener=fake)
+        sent = [json.loads(data) for method, url, headers, data in fake.asked if method == "PATCH"]
+        self.assertEqual(sent, [{"managed_request_headers": [], "managed_response_headers": [{"id": "add_security_headers", "enabled": True}]}])
+        # Only one Cloudflare has for the domain
+        with self.assertRaises(ValueError):
+            cloudflare.set_managed_header({"token": "t" * 40}, ZONE, "add_everything", True, opener=fake)
+
+    def test_the_domains_kept_until_refreshed_or_another_account(self):
+        fake = FakeCloudflare({"/zones": ([{"id": ZONE, "name": "shop.dk", "status": "active"}], 1)})
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "zones.json"
+            account = {"auth": "token", "token": "t" * 40}
+            self.assertEqual(cloudflare.kept_zones(account, path, opener=fake)["zones"][0]["name"], "shop.dk")
+            # Kept: Cloudflare is not asked again, and the key or token is not in the file
+            cloudflare.kept_zones(account, path, opener=fake)
+            self.assertEqual(len(fake.asked), 1)
+            self.assertNotIn("t" * 40, path.read_text())
+            # Refreshed, or another account: asked again
+            cloudflare.kept_zones(account, path, fresh=True, opener=fake)
+            cloudflare.kept_zones({"auth": "token", "token": "u" * 40}, path, opener=fake)
+            self.assertEqual(len(fake.asked), 3)
+            cloudflare.forget_zones(path)
+            self.assertFalse(path.exists())
+
+    def test_a_record_locked_for_users_as_chosen(self):
+        """A proxied record is locked until an administrator opens it; any record can be locked; a deleted one forgotten"""
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "locks.json"
+            locks = cloudflare.load_locks(path)
+            self.assertTrue(cloudflare.is_locked(locks, ZONE, {"id": RECORD, "proxied": True}))
+            self.assertFalse(cloudflare.is_locked(locks, ZONE, {"id": RECORD, "proxied": False}))
+            cloudflare.set_lock(path, ZONE, RECORD, False)
+            self.assertFalse(cloudflare.is_locked(cloudflare.load_locks(path), ZONE, {"id": RECORD, "proxied": True}))
+            cloudflare.set_lock(path, ZONE, RECORD, True)
+            self.assertTrue(cloudflare.is_locked(cloudflare.load_locks(path), ZONE, {"id": RECORD, "proxied": False}))
+            cloudflare.set_lock(path, ZONE, RECORD, None)
+            self.assertEqual(cloudflare.load_locks(path), {})
+
+    def test_a_user_who_proxies_a_record_is_not_locked_out(self):
+        """A user turns Proxied on for a record open to them: it stays open, so they can turn it off again"""
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "locks.json"
+            cloudflare.keep_open(path, ZONE, RECORD, admin=False)
+            self.assertFalse(cloudflare.is_locked(cloudflare.load_locks(path), ZONE, {"id": RECORD, "proxied": True}))
+            # An administrator's lock is not undone by it, and an administrator's own change leaves no choice behind
+            cloudflare.set_lock(path, ZONE, RECORD, True)
+            cloudflare.keep_open(path, ZONE, RECORD, admin=False)
+            self.assertTrue(cloudflare.is_locked(cloudflare.load_locks(path), ZONE, {"id": RECORD, "proxied": False}))
+            cloudflare.set_lock(path, ZONE, RECORD, None)
+            cloudflare.keep_open(path, ZONE, RECORD, admin=True)
+            self.assertEqual(cloudflare.load_locks(path), {})
+
     def test_cloudflare_saying_no_is_said(self):
         def refuse(request, timeout=None):
             return Answer(json.dumps({"success": False, "errors": [{"message": "Invalid request headers"}]}).encode())
@@ -115,6 +268,10 @@ class DnsAccessTests(unittest.TestCase):
     def test_a_user_keeps_only_the_domains_given(self):
         user = access.clean({"username": "anna", "role": "user", "dns": True, "dns_domains": ["Shop.DK.", "not a domain"]})
         self.assertEqual(user["dns_domains"], ["shop.dk"])
+        # A domain with æ, ø or å is kept as it is named
+        both = access.clean({"username": "d", "role": "user", "dns": True, "dns_domains": ["ledernelon.dk", "ledernøn.dk"]})
+        self.assertEqual(both["dns_domains"], ["ledernelon.dk", "ledernøn.dk"])
+        self.assertTrue(access.dns_zone(both, "ledernøn.dk"))
         self.assertTrue(access.has_dns(user))
         self.assertTrue(access.dns_zone(user, "shop.dk"))
         self.assertFalse(access.dns_zone(user, "other.dk"))
@@ -124,6 +281,13 @@ class DnsAccessTests(unittest.TestCase):
         # A template keeps DNS on or off; the domains are each user's
         self.assertTrue(access.template_rules({"dns": True})["dns"])
         self.assertFalse(access.template_rules({})["dns"])
+        # Which parts of Cloudflare: DNS for one given before there was a choice
+        parts = access.clean({"username": "c", "role": "user", "dns": True, "dns_domains": ["shop.dk"], "cloudflare_parts": ["cache", "dns"]})
+        self.assertEqual(parts["cloudflare_parts"], ["dns", "cache"])
+        self.assertTrue(access.cloudflare_part(parts, "cache"))
+        self.assertFalse(access.cloudflare_part(parts, "ssl"))
+        self.assertEqual(user["cloudflare_parts"], ["dns"])
+        self.assertTrue(access.cloudflare_part({"role": "admin"}, "security"))
 
 
 if __name__ == "__main__":

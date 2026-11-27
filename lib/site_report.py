@@ -565,6 +565,20 @@ def test_report(results, report, host, mail=None, sender=send, now=None):
     return {"subject": subject, "body": body, "to": to if not error else [], "error": error}
 
 
+def reset_mail_html(host, username, link, minutes, now=None):
+    """A link to set a new password (the sign-in page's Forgot password): one button, and the link written out under it"""
+    now = now or time.time()
+    button = (f'<a href="{esc(link)}" style="display:inline-block;padding:12px 22px;border-radius:10px;background:#7c3aed;color:#ffffff;'
+              f'font-size:15px;font-weight:700;text-decoration:none">Set a new password</a>'
+              f'<div class="mu" style="margin-top:14px;font-size:12px;line-height:18px;color:#6b7280;word-break:break-all">'
+              f'Or open this link: {esc(link)}</div>')
+    return page(host, "blue", "Set a new password",
+                f"Someone asked to set a new password for {username}. The link works once, within {minutes} minutes.",
+                [section("Your account", button,
+                         note="If it was not you, do nothing: your password stays as it is, and the link runs out by itself.")],
+                f"Sent from <strong>{esc(host)}</strong> {stamp(now)}.", "Sign-in")
+
+
 def test_mail_html(host, now=None):
     """The test of the mail server, from Settings"""
     now = now or time.time()

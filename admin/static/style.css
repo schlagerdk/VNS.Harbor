@@ -490,6 +490,21 @@ body.login { display: grid; place-items: center; min-height: 100vh; min-height: 
 .login-card button.primary { min-height: 44px; margin-top: 4px; border-radius: 9px; background: linear-gradient(135deg, #5865d8, #7548ba); border-color: #8580e6; box-shadow: 0 4px 16px rgba(108, 123, 255, .16); }
 .login-card button.primary:hover:not(:where(:disabled, .disabled, .off)) { background: linear-gradient(135deg, #6673e7, #8658cb); border-color: #b4bcff; }
 .login-error { padding: 10px 12px; border: 1px solid rgba(248, 81, 73, .35); border-radius: 9px; background: rgba(248, 81, 73, .08); }
+/* A note on the sign-in page: an address Harbor took over, a link mailed, a password set, a link that ran out */
+.login-note { display: flex; align-items: flex-start; gap: 11px; margin: 0 0 20px; padding: 12px 14px; border: 1px solid rgba(88, 166, 255, .35); border-radius: 10px; background: rgba(88, 166, 255, .08); color: #c9d1d9; font-size: 13px; line-height: 1.5; }
+.login-note .ico { flex: none; width: 18px; height: 18px; margin: 1px 0 0; color: var(--blue); }
+.login-note strong { color: var(--text); }
+.login-note.moved { border-color: rgba(163, 113, 247, .4); background: rgba(163, 113, 247, .1); }
+.login-note.moved .ico { color: #c4a7ff; }
+.login-note.ok { border-color: rgba(63, 185, 80, .38); background: rgba(63, 185, 80, .08); }
+.login-note.ok .ico { color: var(--green); }
+.login-note.bad { border-color: rgba(248, 81, 73, .35); background: rgba(248, 81, 73, .08); }
+.login-note.bad .ico { color: var(--red); }
+/* Forgot password and Back to sign in: a quiet link under the button */
+.login-switch { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 18px; color: var(--muted); font-size: 13px; text-decoration: none; }
+.login-switch .ico { width: 14px; height: 14px; margin: 0; }
+.login-switch:hover { color: var(--text); }
+.login-card a.login-button { display: flex; align-items: center; justify-content: center; min-height: 44px; border-radius: 9px; background: linear-gradient(135deg, #5865d8, #7548ba); border: 1px solid #8580e6; color: #fff; font-weight: 600; text-decoration: none; }
 .login-footer { display: flex; justify-content: center; margin: 28px 0 0; }
 @media (max-width: 480px) { .login-heading { padding: 26px 24px 22px; } .login-card .card-body { padding: 24px; } }
 .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; width: min(360px, 92vw); box-shadow: var(--shadow); overflow: hidden; }
@@ -583,6 +598,7 @@ body.login { display: grid; place-items: center; min-height: 100vh; min-height: 
 .site-layout.with-packages .package-list { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
 .targets-empty { min-height: 0; padding: 48px 20px; border: 1px dashed var(--line); border-radius: 12px; }
 body[data-view="sql"] .page-header .search-box { display: none; }
+body[data-view="dns"] .page-header .search-box { display: none; }
 body[data-view="server"] .page-header .search-box { display: none; }
 dialog.newsite .hint { margin-top: 8px; line-height: 1.55; }
 dialog.newsite .hint + .hint { margin-top: 10px; }
@@ -945,7 +961,8 @@ a.btn-link .ico { width: 13px; height: 13px; flex: none; }
 .sql-tabs[hidden], .sql-tabs button[hidden] { display: none; }
 .sql-tabs button { display: inline-flex; align-items: center; gap: 8px; padding: 8px 14px; border: 0; border-radius: 9px; background: transparent; color: var(--muted); font-size: 13.5px; font-weight: 600; transition: background .15s, color .15s, box-shadow .15s; }
 .sql-tabs button .ico { width: 15px; height: 15px; margin: 0; }
-.sql-tabs button:hover:not(:where(:disabled, .disabled, .off)) { background: rgba(255, 255, 255, .04); color: var(--text); }
+/* Hover only where there is a pointer: a tapped tab on a phone does not stay lit as if it were chosen */
+@media (hover: hover) { .sql-tabs button:hover:not(:where(:disabled, .disabled, .off)) { background: rgba(255, 255, 255, .04); color: var(--text); } }
 .sql-tabs button[aria-selected="true"] { background: rgba(88, 166, 255, .18); color: #cfe3ff; box-shadow: inset 0 0 0 1px rgba(88, 166, 255, .6), 0 1px 8px rgba(88, 166, 255, .15); }
 .sql-tab-count { padding: 1px 7px; border-radius: 999px; background: rgba(255, 255, 255, .08); color: var(--muted); font-size: 11.5px; font-weight: 600; }
 .sql-tab-count:empty { display: none; }
@@ -2608,13 +2625,13 @@ body:not([data-role="user"]) .header-tools { display: inline-flex; }
 .tool-open-admin:focus-visible { outline: none; border-color: var(--blue); }
 /* The tools read as cards, not bars across a wide screen */
 /* The tools as cards, two beside each other; their buttons under them where there are several */
-#server-pane-tools .server-tools, #server-pane-users .users-list, #servers-list { grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: stretch; }
-#server-pane-users .users-list > .tool-card, #server-pane-users .users-list > .add-first-card { min-height: 170px; }
-#server-pane-users .users-list > .add-first-card { margin-top: 0; }
+#server-pane-tools .server-tools, #server-pane-users .users-list, #server-pane-templates .users-list, #servers-list { grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: stretch; }
+#server-pane-users .users-list > .tool-card, #server-pane-users .users-list > .add-first-card, #server-pane-templates .users-list > .tool-card, #server-pane-templates .users-list > .add-first-card { min-height: 170px; }
+#server-pane-users .users-list > .add-first-card, #server-pane-templates .users-list > .add-first-card { margin-top: 0; }
 #servers-list > .tool-card, #servers-list > .add-first-card { min-height: 190px; }
 #server-pane-tools .server-tools > .tool-card { min-height: 150px; padding: 18px 18px 16px; }
 #server-settings-list { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: stretch; }
-@media (max-width: 1400px) { #server-pane-tools .server-tools, #server-pane-users .users-list, #servers-list { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 1400px) { #server-pane-tools .server-tools, #server-pane-users .users-list, #server-pane-templates .users-list, #servers-list { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 #server-pane-tools .add-first-card { min-height: 150px; }
 /* Access: two columns, SSH and Samba, then Samba's shares and users as lines */
 #server-pane-tools .server-tools.access-layout { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -2648,7 +2665,7 @@ body:not([data-role="user"]) .header-tools { display: inline-flex; }
 .tool-group-title { font-size: 13px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 .tool-group-count { padding: 1px 8px; border-radius: 999px; background: rgba(255, 255, 255, .07); color: var(--muted); font-size: 12px; font-weight: 600; }
 .tool-card.actions-below > .tool-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; margin-top: auto; }
-@media (max-width: 1000px) { #server-pane-tools .server-tools, #server-pane-users .users-list, #servers-list, #server-settings-list { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 1000px) { #server-pane-tools .server-tools, #server-pane-users .users-list, #server-pane-templates .users-list, #servers-list, #server-settings-list { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 860px) {
 	.server-body { grid-template-columns: minmax(0, 1fr); gap: 16px; }
 	.server-nav { position: static; display: flex; gap: 4px; padding: 6px; overflow-x: auto; scrollbar-width: none; }
@@ -3555,6 +3572,7 @@ button.meta-action:hover:not(:where(:disabled, .disabled, .off)), button.meta-ac
 /* The domain's name large at the head, its counts as chips under it */
 .dns-title h2 { margin: 0; font-size: 22px; overflow-wrap: anywhere; }
 .dns-title-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.cf-part-bar > .dns-title-chips { margin-top: 0; }
 /* A group per type, framed as the sites' parts on Usage: its head, then a line per record */
 .dns-group { margin: 12px 0; border: 1px solid rgba(255, 255, 255, .1); border-radius: 12px; background: rgba(255, 255, 255, .025); overflow: hidden; }
 .dns-group[hidden] { display: none; }
@@ -3562,7 +3580,7 @@ button.meta-action:hover:not(:where(:disabled, .disabled, .off)), button.meta-ac
 .dns-group-head strong { font-size: 14px; }
 .dns-group-head small { color: var(--muted); font-size: 12.5px; }
 .dns-group-count { margin-left: auto; padding: 1px 9px; border-radius: 999px; background: rgba(255, 255, 255, .06); color: var(--muted); font-size: 12px; font-weight: 600; }
-.dns-record { display: grid; grid-template-columns: minmax(140px, 1fr) 18px minmax(0, 2fr) 230px 96px; align-items: center; gap: 12px; padding: 10px 16px; }
+.dns-record { display: grid; grid-template-columns: minmax(140px, 1fr) 18px minmax(0, 2fr) 230px 140px; align-items: center; gap: 12px; padding: 10px 16px; }
 .dns-record[hidden] { display: none; }
 .dns-record + .dns-record { border-top: 1px solid rgba(255, 255, 255, .05); }
 .dns-record:hover:not(:where(:disabled, .disabled, .off)) { background: rgba(255, 255, 255, .025); }
@@ -3581,6 +3599,16 @@ button.meta-action:hover:not(:where(:disabled, .disabled, .off)), button.meta-ac
 .dns-chip .ico { width: 13px; height: 13px; margin: 0; color: var(--muted); }
 .dns-chip.proxied { background: rgba(240, 136, 62, .16); color: #ffb37a; }
 .dns-chip.proxied .ico { color: #ffb37a; }
+/* Proxied as a toggle: a chip that reacts to the pointer as a button */
+button.dns-chip.dns-proxy-toggle { border: 1px solid transparent; font-family: inherit; cursor: pointer; transition: border-color .15s, background .15s; }
+button.dns-chip.dns-proxy-toggle:hover { border-color: rgba(139, 148, 158, .45); }
+button.dns-chip.dns-proxy-toggle.proxied:hover { border-color: rgba(240, 136, 62, .55); background: rgba(240, 136, 62, .22); }
+/* Busy: the icon a spinner in the button's own colour, the button still and not reacting to the pointer */
+.btn-spinner { display: inline-block; flex: none; width: 13px; height: 13px; box-sizing: border-box; border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; animation: activity-spin .7s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .btn-spinner { animation-duration: 2s; } }
+button.busy { cursor: progress; pointer-events: none; }
+button.busy:disabled { opacity: 1; }
+button.dns-chip.dns-proxy-toggle:focus-visible { outline: 2px solid #f0883e; outline-offset: 2px; }
 .dns-none { padding: 18px 4px; }
 @media (max-width: 900px) {
 	.dns-record { grid-template-columns: minmax(0, 1fr) auto; }
@@ -3607,7 +3635,7 @@ button.meta-action:hover:not(:where(:disabled, .disabled, .off)), button.meta-ac
    with what it is at their head. A record changed has its type alone: no list */
 .dns-dialog { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 22px; align-items: start; }
 .dns-dialog.one-type { grid-template-columns: minmax(0, 1fr); }
-.dns-dialog.one-type .dns-type-list { display: none; }
+.dns-dialog.one-type .dns-type-list, .dns-dialog.one-type .dns-type-head { display: none; }
 .dns-type-list { display: grid; gap: 2px; padding: 6px; border: 1px solid var(--line); border-radius: 12px; background: rgba(0, 0, 0, .18); }
 #form-dialog dialog label.dns-type-item, dialog .dns-type-list label.dns-type-item { position: relative; display: flex; flex-direction: row; justify-content: flex-start; text-align: left; align-items: center; gap: 10px; margin: 0; padding: 8px 10px; border: 1px solid transparent; border-radius: 9px;
 	color: var(--muted); font-size: 13px; cursor: pointer; transition: background .15s, color .15s; }
@@ -3617,7 +3645,8 @@ dialog .dns-type-list label.dns-type-item:not(:has(input:checked)) { background:
 dialog .dns-type-list label.dns-type-item:has(input:checked) { border-color: rgba(88, 166, 255, .45); background: rgba(88, 166, 255, .12); color: var(--text); font-weight: 600; }
 dialog .dns-type-list label.dns-type-item:has(input:focus-visible) { outline: 2px solid rgba(88, 166, 255, .55); }
 .dns-type-item .badge.dns-type { min-width: 50px; }
-.dns-dialog-main { display: grid; gap: 16px; min-width: 0; }
+.dns-dialog-main { display: grid; gap: 14px; min-width: 0; }
+.dns-dialog.one-type .dns-dialog-main { gap: 12px; }
 .dns-type-head { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px;
 	background: linear-gradient(135deg, rgba(88, 166, 255, .08), transparent 60%), rgba(255, 255, 255, .02); }
 .dns-type-head .badge.dns-type { min-width: 58px; padding: 5px 8px; font-size: 12px; }
@@ -3630,8 +3659,9 @@ dialog .dns-type-list label.dns-type-item:has(input:focus-visible) { outline: 2p
 #form-dialog .dns-dialog input:not([type=radio]):not([type=checkbox]) { box-sizing: border-box; height: 42px; }
 .dns-field > .pselect { width: 100%; }
 .dns-type-fields { display: grid; gap: 14px; }
-.dns-grid-narrow { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
-.dns-grid-four { grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 2fr); }
+/* Fields side by side start at the same line, also when one has a hint under it and the other not */
+.dns-grid-narrow { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); align-items: start; }
+.dns-grid-four { grid-template-columns: repeat(3, minmax(0, 1fr)) minmax(0, 2fr); align-items: start; }
 .dns-ttl-select .pselect-trigger, .dns-caa-tag .pselect-trigger { width: 100%; height: 42px; }
 .dns-name-input { display: flex; align-items: stretch; }
 .dns-name-input input { flex: 1; min-width: 0; border-top-right-radius: 0; border-bottom-right-radius: 0; }
@@ -3658,3 +3688,155 @@ dialog .dns-proxy-row .switch:checked { border-color: #f0883e; background: #f088
 /* Settings, DNS: how Harbor logs in to Cloudflare, and its fields */
 .dns-auth-fields { display: grid; gap: 8px; margin-top: 14px; }
 .dns-auth-fields[hidden] { display: none; }
+
+/* Cloudflare's parts of a domain: tabs as the SQL page's, a bar over a part's list, and each setting a card with its
+   choices as segments */
+.cf-tabs { margin: 4px 0 16px; }
+.cf-tabs[hidden] { display: none; }
+.cf-tabs .sql-tab .ico { width: 15px; height: 15px; margin: 0; }
+.cf-part[hidden] { display: none; }
+.cf-part { display: grid; gap: 12px; }
+.cf-part-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 14px; }
+.cf-part-bar .targets-search-box { flex: 0 1 320px; min-width: 160px; margin-left: 0; }
+.cf-part-bar > button { margin-left: auto; }
+#cf-part-dns > #dns-records { min-width: 0; }
+.cf-setting { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px 24px; padding: 14px 16px;
+	border: 1px solid rgba(255, 255, 255, .1); border-radius: 12px; background: rgba(255, 255, 255, .025); }
+.cf-setting-text { display: grid; gap: 3px; min-width: 0; }
+.cf-setting-text strong { font-size: 14px; }
+.cf-setting-text small { color: var(--muted); font-size: 12.5px; line-height: 1.45; }
+.cf-segments { display: inline-flex; flex-wrap: wrap; gap: 3px; padding: 3px; border: 1px solid var(--line); border-radius: 10px; background: rgba(0, 0, 0, .22); }
+.cf-segment { padding: 6px 12px; border: 0; border-radius: 7px; background: none; color: var(--muted); font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+.cf-segment:hover:not(:where(:disabled, .disabled, .off)) { color: var(--text); background: rgba(255, 255, 255, .06); }
+.cf-segment.active { background: rgba(240, 136, 62, .18); color: #ffb37a; box-shadow: inset 0 0 0 1px rgba(240, 136, 62, .55); }
+.cf-segment.danger.active { background: rgba(248, 81, 73, .18); color: #ff8a82; box-shadow: inset 0 0 0 1px rgba(248, 81, 73, .6); }
+.cf-segment:disabled { opacity: .5; cursor: default; }
+.cf-purge { grid-template-columns: minmax(0, 1fr); }
+.cf-purge-body { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: start; }
+.cf-purge-body textarea { resize: none; height: 84px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+.cf-purge-actions { display: grid; gap: 8px; }
+.cf-rule.off { opacity: .6; }
+.cf-option { margin-top: 0; grid-template-columns: minmax(0, 1fr) auto; }
+.cf-part-chips { margin-bottom: 4px; }
+@media (max-width: 900px) {
+	.cf-setting, .cf-purge-body { grid-template-columns: minmax(0, 1fr); }
+}
+.cf-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+/* One option shown takes the row; none shown, no row */
+.cf-options:has(> [hidden]) { grid-template-columns: minmax(0, 1fr); }
+.cf-options:not(:has(> :not([hidden]))) { display: none; }
+@media (max-width: 640px) { .cf-options { grid-template-columns: minmax(0, 1fr); } }
+.add-first-card.cf-first { width: 100%; min-height: 190px; padding: 32px 24px; gap: 14px; }
+/* Rules: each kind a section of its own, built the same, a line between them */
+.cf-rule-section { display: grid; gap: 12px; min-width: 0; }
+.cf-rule-section + .cf-rule-section { margin-top: 10px; padding-top: 20px; border-top: 1px solid var(--line); }
+.add-first-card.cf-first.small { min-height: 150px; padding: 24px; }
+/* A low card in a row, where there is more than one kind on the page with none yet: the plus, then what it adds */
+.add-first-card.row { flex-direction: row; justify-content: flex-start; gap: 14px; min-height: 0; padding: 12px 16px; text-align: left; }
+.add-first-card.row .add-first-icon { flex: none; width: 34px; height: 34px; border-radius: 10px; }
+.add-first-card.row .add-first-icon .ico { width: 16px; height: 16px; }
+.add-first-card.row .add-first-text { justify-items: start; gap: 2px; max-width: none; }
+.add-first-card.row .add-first-text strong { font-size: 13.5px; }
+.cf-used { margin-left: 10px; vertical-align: 2px; font-size: 11px; }
+.cf-used.full { background: rgba(210, 153, 34, .16); color: #e3b341; }
+.cf-full { margin: 0; font-size: 12.5px; }
+.cf-group-head { margin-top: 6px; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+.cf-setting.off .cf-setting-text { opacity: .6; }
+.dns-chip.on { background: rgba(63, 185, 80, .16); color: #56d364; }
+.cf-none { margin: 0; }
+/* Analytics: the totals as Health's tiles, and a bar a day */
+.cf-tiles { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+/* What the traffic was made of: cards two by two, a line a name with its bar */
+.cf-breakdown { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.cf-breakdown-card { grid-template-columns: minmax(0, 1fr); align-content: start; }
+.cf-breakdown-card:last-child:nth-child(odd) { grid-column: 1 / -1; }
+.cf-lines { display: grid; gap: 7px; }
+.cf-line { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.3fr) 76px 52px; align-items: center; gap: 12px; min-height: 22px; font-size: 13px; }
+.cf-line-name { display: flex; align-items: center; gap: 8px; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--text); }
+.cf-line-name > span:last-child { overflow: hidden; text-overflow: ellipsis; }
+.cf-line-track { height: 6px; border-radius: 3px; background: rgba(255, 255, 255, .05); overflow: hidden; }
+.cf-line-fill { display: block; height: 100%; border-radius: 3px; }
+.cf-line-value { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--text); text-align: right; white-space: nowrap; }
+.cf-line-detail { overflow: hidden; color: var(--muted); font-size: 11.5px; text-align: right; white-space: nowrap; text-overflow: ellipsis; }
+.cf-country-code { flex: none; min-width: 26px; padding: 1px 5px; border-radius: 5px; background: rgba(88, 166, 255, .12); color: #9ecbff; font: 600 10.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; text-align: center; }
+.cf-kinds-bar { display: flex; gap: 2px; height: 10px; border-radius: 5px; overflow: hidden; }
+.cf-kinds-bar > span { min-width: 3px; }
+.cf-kinds { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12.5px; color: var(--muted); }
+.cf-kind { display: inline-flex; align-items: center; gap: 6px; }
+.cf-kind b { color: var(--text); font-variant-numeric: tabular-nums; }
+.cf-kind-dot { width: 9px; height: 9px; border-radius: 3px; }
+.cf-codes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 14px; }
+.cf-code { display: grid; grid-template-columns: 44px minmax(0, 1fr) auto; align-items: center; gap: 8px; font-size: 12.5px; }
+.cf-code-number { padding: 1px 0; border: 1px solid; border-radius: 6px; font: 600 11.5px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; text-align: center; }
+.cf-code-name { overflow: hidden; color: var(--muted); white-space: nowrap; text-overflow: ellipsis; }
+.cf-code-count { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.cf-protocols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+.cf-protocols > div { display: grid; gap: 8px; align-content: start; }
+.cf-protocols-head { color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+.cf-lines-none { margin: 0; font-size: 13px; }
+/* Narrower than that, the cards one under another: names and numbers kept whole */
+@media (max-width: 1240px) { .cf-breakdown { grid-template-columns: minmax(0, 1fr); } }
+/* The period a segmented row: beside the heading, and on a phone a whole row under it, never one button a line */
+.keep-alive-interval.cf-period { flex-wrap: nowrap; margin-top: 0; }
+@media (max-width: 640px) { .cf-part-bar:has(> .cf-period) { flex-direction: column; align-items: stretch; } .keep-alive-interval.cf-period { width: 100%; } .keep-alive-interval.cf-period button { flex: 1; } }
+@media (max-width: 1080px) { .cf-protocols { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 560px) { .cf-codes { grid-template-columns: minmax(0, 1fr); } .cf-line { grid-template-columns: minmax(0, 1fr) auto 52px; row-gap: 5px; } .cf-line-track { grid-column: 1 / -1; grid-row: 2; } }
+.cf-chart { grid-template-columns: minmax(0, 1fr); }
+.cf-bars { display: flex; align-items: flex-end; gap: 6px; height: 180px; padding-top: 8px; }
+.cf-bar { flex: 1; display: grid; grid-template-rows: 1fr auto; gap: 6px; height: 100%; min-width: 0; text-align: center; }
+.cf-bar-total { position: relative; align-self: end; display: flex; align-items: flex-end; min-height: 2px; border-radius: 5px 5px 2px 2px; background: rgba(88, 166, 255, .55); overflow: hidden; }
+.cf-bar-cached { display: block; width: 100%; background: #f0883e; opacity: .9; }
+.cf-bar small { color: var(--muted); font-size: 10.5px; white-space: nowrap; overflow: hidden; }
+.cf-bars:has(.cf-bar:nth-child(15)) .cf-bar small { visibility: hidden; }
+.cf-bars:has(.cf-bar:nth-child(15)) .cf-bar:nth-child(5n + 1) small { visibility: visible; }
+.cf-key { display: inline-block; width: 10px; height: 10px; margin: 0 5px 0 10px; border-radius: 3px; vertical-align: -1px; }
+.cf-key.total { margin-left: 0; background: rgba(88, 166, 255, .55); }
+.cf-key.cached { background: #f0883e; }
+@media (max-width: 1100px) { .cf-tiles { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 640px) { .cf-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+/* An administrator's lock of a record for users: an icon button before Edit, red when locked */
+.dns-record-actions { gap: 8px; align-items: center; }
+.dns-lock-toggle { display: grid; place-items: center; width: 34px; height: 34px; padding: 0; border: 1px solid var(--line); border-radius: 9px; background: rgba(255, 255, 255, .03); color: var(--muted); cursor: pointer; }
+.dns-lock-toggle .ico { width: 15px; height: 15px; margin: 0; }
+.dns-lock-toggle:hover:not(:where(:disabled, .disabled, .off)) { border-color: rgba(255, 255, 255, .2); color: var(--text); }
+.dns-lock-toggle.locked { border-color: rgba(248, 81, 73, .5); background: rgba(248, 81, 73, .1); color: #ff8a82; }
+/* Cloudflare on a phone: the tabs a row that scrolls on its own (never the page), the bar's filter and button on one
+   line, a group's head without its line of explanation, and a record's chips side by side */
+@media (max-width: 640px) {
+	.cf-tabs { display: flex; flex-wrap: nowrap; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; max-width: 100%; }
+	.cf-tabs::-webkit-scrollbar { display: none; }
+	.cf-tabs button { flex: none; }
+	.cf-tabs button .ico { display: none; }
+	.cf-part-bar { flex-wrap: wrap; }
+	.cf-part-bar .targets-search-box { flex: 1 1 0; min-width: 0; }
+	/* DNS's counts on a line of their own under its filter and New record */
+	.cf-part-bar > .dns-title-chips { order: 3; flex-basis: 100%; }
+	.cf-part-bar > button { flex: none; }
+	.dns-group-head small { display: none; }
+	.dns-group-head { padding: 10px 12px; }
+	.dns-record { padding: 10px 12px; }
+	.dns-record-chips { flex-direction: row; flex-wrap: wrap; }
+	.dns-panel { padding: 14px; }
+	.dns-title h2 { font-size: 20px; }
+	.view-switch button { padding-left: 9px; padding-right: 9px; }
+	.view-switch button:not(#switch-server) .ico { display: none; }
+}
+/* Cloudflare's welcome, with no domain chosen: as Harbor's other empty pages, the account's counts, and the domains
+   opened last as cards */
+.cf-welcome { display: flex; flex-direction: column; align-items: center; padding: 48px 20px 40px; text-align: center; }
+.cf-welcome-icon { border-color: rgba(240, 136, 62, .35); color: #ffb37a; background: linear-gradient(135deg, rgba(240, 136, 62, .18), rgba(163, 113, 247, .16)); box-shadow: 0 0 60px rgba(240, 136, 62, .12); }
+.cf-welcome h2 { margin: 0 0 8px; font-size: 26px; }
+.cf-welcome > p { max-width: 520px; margin: 0; color: var(--muted); font-size: 14px; line-height: 1.55; }
+.cf-welcome-stats { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; margin-top: 18px; }
+.cf-recent-head { margin: 32px 0 12px; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+.cf-recent-list { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; width: 100%; max-width: 760px; }
+.cf-recent { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 12px 14px; border: 1px solid rgba(255, 255, 255, .1); border-radius: 12px;
+	background: rgba(255, 255, 255, .03); color: var(--text); font: inherit; font-size: 13.5px; text-align: left; cursor: pointer; transition: border-color .15s, background .15s; }
+.cf-recent:hover:not(:where(:disabled, .disabled, .off)) { border-color: rgba(240, 136, 62, .5); background: rgba(240, 136, 62, .08); }
+.cf-recent-icon { display: grid; place-items: center; flex: none; width: 30px; height: 30px; border-radius: 8px; color: #ffb37a; background: rgba(240, 136, 62, .14); }
+.cf-recent-icon .ico, .cf-recent > .ico { width: 15px; height: 15px; margin: 0; }
+.cf-recent > .ico { margin-left: auto; color: var(--muted); transform: rotate(90deg); }
+.cf-recent-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.cf-part-bar[hidden], .dns-panel-head[hidden] { display: none; }
+@media (max-width: 900px) { .cf-recent-list { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 560px) { .cf-recent-list { grid-template-columns: minmax(0, 1fr); } }

@@ -84,6 +84,9 @@ _keep_alive_spec.loader.exec_module(_keep_alive_module)
 _cloudflare_spec = importlib.util.spec_from_file_location("vns_cloudflare", os.path.join(LIB_DIR, "cloudflare.py"))
 _cloudflare = importlib.util.module_from_spec(_cloudflare_spec)
 _cloudflare_spec.loader.exec_module(_cloudflare)
+_reset_spec = importlib.util.spec_from_file_location("vns_password_reset", os.path.join(LIB_DIR, "password_reset.py"))
+_password_reset = importlib.util.module_from_spec(_reset_spec)
+_reset_spec.loader.exec_module(_password_reset)
 _usage_spec = importlib.util.spec_from_file_location("vns_usage", os.path.join(LIB_DIR, "usage.py"))
 _usage = importlib.util.module_from_spec(_usage_spec)
 _usage_spec.loader.exec_module(_usage)
@@ -436,6 +439,7 @@ def api_dns_settings():
     current = _cloudflare.load()
     if request.method == "DELETE":
         _cloudflare.remove()
+        _cloudflare.forget_zones(CLOUDFLARE_ZONES)
         audit("Removed the Cloudflare account")
         return jsonify(_cloudflare.shown({}))
     if request.method == "PUT":
@@ -447,9 +451,31 @@ def api_dns_settings():
         except _cloudflare.CloudflareError as exc:
             return error(f"Cloudflare did not take it: {exc}")
         _cloudflare.save(settings)
+        # The domains read again for the account now set
+        try:
+            _cloudflare.kept_zones(settings, CLOUDFLARE_ZONES, fresh=True)
+        except _cloudflare.CloudflareError:
+            pass
         audit("Set the Cloudflare account")
         return jsonify(**_cloudflare.shown(settings), zones=count)
-    return jsonify(_cloudflare.shown(current))
+    # With how many domains are kept and when they were read, for Refresh domains
+    shown = _cloudflare.shown(current)
+    if current:
+        try:
+            kept = json.loads(open(CLOUDFLARE_ZONES, encoding="utf-8").read())
+            shown.update(zones=len(kept.get("zones") or []), zones_read=kept.get("read"))
+        except (OSError, ValueError):
+            pass
+    return jsonify(shown)
+
+
+CLOUDFLARE_LOCKS = os.path.join(DATA, "cloudflare-locks.json")
+# The account's domains, kept until refreshed under Settings, Cloudflare: every call needs them, and they seldom change
+CLOUDFLARE_ZONES = os.path.join(DATA, "cloudflare-zones.json")
+
+
+def cloudflare_zones(settings, fresh=False):
+    return _cloudflare.kept_zones(settings, CLOUDFLARE_ZONES, fresh=fresh)["zones"]
 
 
 def dns_zone_names():
@@ -458,7 +484,7 @@ def dns_zone_names():
     if not settings:
         return None
     try:
-        return [item["name"] for item in _cloudflare.zones(settings)]
+        return [item["name"] for item in cloudflare_zones(settings)]
     except _cloudflare.CloudflareError:
         app.logger.exception("Could not read the Cloudflare zones")
         return []
@@ -475,7 +501,10 @@ def dns_account():
 
 def dns_zone_of(settings, zone):
     """The zone, by its id, where the user may keep it: {id, name}"""
-    found = next((item for item in _cloudflare.zones(settings) if item["id"] == zone), None)
+    found = next((item for item in cloudflare_zones(settings) if item["id"] == zone), None)
+    # One added in Cloudflare since they were read: read again once
+    if not found and _cloudflare.ZONE_ID.fullmatch(zone or ""):
+        found = next((item for item in cloudflare_zones(settings, fresh=True) if item["id"] == zone), None)
     if not found or not access.dns_zone(me(), found["name"]):
         abort(404, "No such domain.")
     return found
@@ -486,25 +515,50 @@ def api_dns_zones():
     """The domains of the account the user may keep: every one for an administrator"""
     settings = dns_account()
     try:
-        found = _cloudflare.zones(settings)
+        found = cloudflare_zones(settings)
     except _cloudflare.CloudflareError as exc:
         return error(str(exc), 502)
     user = me()
     return jsonify(zones=[item for item in found if access.dns_zone(user, item["name"])])
 
 
+@app.route("/api/dns/zones/refresh", methods=["POST"])
+def api_dns_zones_refresh():
+    """The account's domains read again from Cloudflare (Settings, Cloudflare): one added or removed there is seen"""
+    require_admin()
+    settings = _cloudflare.load()
+    if not settings:
+        return error("No Cloudflare account is set up.", 404)
+    try:
+        kept = _cloudflare.kept_zones(settings, CLOUDFLARE_ZONES, fresh=True)
+    except _cloudflare.CloudflareError as exc:
+        return error(str(exc), 502)
+    audit(f"Refreshed the Cloudflare domains: {len(kept['zones'])}")
+    return jsonify(zones=len(kept["zones"]), read=kept["read"])
+
+
 @app.route("/api/dns/zones/<zone>/records", methods=["GET", "POST"])
 def api_dns_records(zone):
-    """A domain's records; POST: a new one. Proxied is an administrator's"""
+    """A domain's records; POST: a new one, proxied by anyone who may make it"""
     settings = dns_account()
     try:
         found = dns_zone_of(settings, zone)
         if request.method == "POST":
-            body = _cloudflare.record_body(request.get_json(silent=True), found["name"], is_admin())
+            cloudflare_part_of("dns")
+            # Proxied for anyone on a record open to them: a new one is theirs, open also when it is proxied
+            body = _cloudflare.record_body(request.get_json(silent=True), found["name"], True)
             made = _cloudflare.create(settings, zone, body)
+            if made.get("id"):
+                _cloudflare.keep_open(CLOUDFLARE_LOCKS, zone, made["id"], is_admin())
             audit(f"DNS: made {body['type']} {body['name']} in {found['name']}")
             return jsonify(id=made.get("id"))
-        return jsonify(zone=found, records=_cloudflare.records(settings, zone), admin=is_admin())
+        # The records only for one who has DNS; the parts they have, for the page's tabs
+        # Each record with whether it is locked for users
+        locks = _cloudflare.load_locks(CLOUDFLARE_LOCKS)
+        records = [dict(item, locked=_cloudflare.is_locked(locks, zone, item)) for item in _cloudflare.records(settings, zone)] \
+            if access.cloudflare_part(me(), "dns") else []
+        return jsonify(zone=found, records=records, admin=is_admin(),
+                       parts=[part for part in _cloudflare.PARTS if access.cloudflare_part(me(), part)])
     except ValueError as exc:
         return error(str(exc))
     except _cloudflare.CloudflareError as exc:
@@ -513,19 +567,22 @@ def api_dns_records(zone):
 
 @app.route("/api/dns/zones/<zone>/records/<record>", methods=["PUT", "DELETE"])
 def api_dns_record(zone, record):
-    """A record changed or deleted. A proxied record is an administrator's: a user cannot change or delete it"""
-    settings = dns_account()
+    """A record changed or deleted. A locked record is an administrator's: a user cannot change or delete it"""
+    settings = cloudflare_part_of("dns")
     try:
         found = dns_zone_of(settings, zone)
         current = _cloudflare.record(settings, zone, record)
-        if current["proxied"] and not is_admin():
-            return error("This record goes through Cloudflare's proxy: only an administrator changes it.", 403)
+        if not is_admin() and _cloudflare.is_locked(_cloudflare.load_locks(CLOUDFLARE_LOCKS), zone, current):
+            return error("This record is locked: only an administrator changes it.", 403)
         if request.method == "DELETE":
             _cloudflare.delete(settings, zone, record)
+            _cloudflare.set_lock(CLOUDFLARE_LOCKS, zone, record, None)
             audit(f"DNS: deleted {current['type']} {current['name']} in {found['name']}")
             return jsonify(ok=True)
-        body = _cloudflare.record_body(request.get_json(silent=True), found["name"], is_admin(), current)
+        body = _cloudflare.record_body(request.get_json(silent=True), found["name"], True, current)
         _cloudflare.update(settings, zone, record, body)
+        # A record open to a user stays open when they proxy it, as a new one of theirs: never locked by their own click
+        _cloudflare.keep_open(CLOUDFLARE_LOCKS, zone, record, is_admin())
         audit(f"DNS: changed {body['type']} {body['name']} in {found['name']}")
         return jsonify(ok=True)
     except ValueError as exc:
@@ -534,18 +591,164 @@ def api_dns_record(zone, record):
         return error(str(exc), 502)
 
 
-@app.route("/api/dns/zones/<zone>/purge", methods=["POST"])
-def api_dns_purge(zone):
-    """Cloudflare's cache of a domain emptied: an administrator's"""
+def cloudflare_part_of(part):
+    """The account, where the user may use this part of Cloudflare"""
+    settings = dns_account()
+    if not access.cloudflare_part(me(), part):
+        abort(403, f"{_cloudflare.PART_NAMES.get(part, part)} is not yours.")
+    return settings
+
+
+@app.route("/api/dns/zones/<zone>/records/<record>/lock", methods=["PUT"])
+def api_dns_record_lock(zone, record):
+    """A record locked or opened for users: an administrator's choice, kept by Harbor"""
     require_admin()
     settings = dns_account()
+    locked = (request.get_json(silent=True) or {}).get("locked")
+    if not isinstance(locked, bool):
+        return error("Locked is true or false.")
     try:
         found = dns_zone_of(settings, zone)
-        _cloudflare.purge(settings, zone)
+        current = _cloudflare.record(settings, zone, record)
+        _cloudflare.set_lock(CLOUDFLARE_LOCKS, zone, record, locked)
+    except ValueError as exc:
+        return error(str(exc))
     except _cloudflare.CloudflareError as exc:
         return error(str(exc), 502)
-    audit(f"DNS: purged the cache of {found['name']}")
+    audit(f"DNS: {'locked' if locked else 'opened'} {current['type']} {current['name']} in {found['name']} for users")
+    return jsonify(locked=locked)
+
+
+@app.route("/api/dns/zones/<zone>/purge", methods=["POST"])
+def api_dns_purge(zone):
+    """Cloudflare's cache of a domain emptied: all of it, or the addresses given (files)"""
+    settings = cloudflare_part_of("cache")
+    files = (request.get_json(silent=True) or {}).get("files")
+    try:
+        found = dns_zone_of(settings, zone)
+        if files:
+            _cloudflare.purge_urls(settings, zone, files if isinstance(files, list) else str(files).split())
+        else:
+            _cloudflare.purge(settings, zone)
+    except ValueError as exc:
+        return error(str(exc))
+    except _cloudflare.CloudflareError as exc:
+        return error(str(exc), 502)
+    audit(f"Cloudflare: purged the cache of {found['name']}" + (f" ({len(files)} addresses)" if files else ""))
     return jsonify(ok=True)
+
+
+@app.route("/api/dns/zones/<zone>/settings/<part>", methods=["GET", "PATCH"])
+def api_cloudflare_settings(zone, part):
+    """A part's zone settings (Cache, SSL/TLS, Security): read, or one changed"""
+    if part not in _cloudflare.SETTINGS_OF:
+        abort(404)
+    settings = cloudflare_part_of(part)
+    try:
+        found = dns_zone_of(settings, zone)
+        if request.method == "PATCH":
+            data = request.get_json(silent=True) or {}
+            _cloudflare.change_setting(settings, zone, part, str(data.get("setting", "")), data.get("value"))
+            audit(f"Cloudflare: {data.get('setting')} of {found['name']} set to {data.get('value')}")
+        return jsonify(settings=_cloudflare.zone_settings(settings, zone, part))
+    except ValueError as exc:
+        return error(str(exc))
+    except _cloudflare.CloudflareError as exc:
+        return error(str(exc), 502)
+
+
+@app.route("/api/dns/zones/<zone>/analytics")
+def api_cloudflare_analytics(zone):
+    """A domain's traffic a day, and what it was made of: the last 7 days, or ?days=30 (or 1)"""
+    settings = cloudflare_part_of("analytics")
+    try:
+        dns_zone_of(settings, zone)
+        days = int(request.args.get("days") or 7)
+        found = _cloudflare.analytics(settings, zone, days)
+        # What it was made of: left out, with why, where the plan or token does not give it
+        try:
+            parts, why = _cloudflare.breakdown(settings, zone, days), ""
+        except _cloudflare.CloudflareError as exc:
+            parts, why = None, str(exc)
+        return jsonify(days=found, breakdown=parts, breakdown_error=why)
+    except ValueError as exc:
+        return error(str(exc))
+    except _cloudflare.CloudflareError as exc:
+        return error(str(exc), 502)
+
+
+@app.route("/api/dns/zones/<zone>/rule-limits")
+def api_cloudflare_rule_limits(zone):
+    """How many redirect rules and page rules the domain may have"""
+    settings = cloudflare_part_of("rules")
+    try:
+        dns_zone_of(settings, zone)
+        return jsonify(_cloudflare.rule_limits(settings, zone))
+    except ValueError as exc:
+        return error(str(exc))
+    except _cloudflare.CloudflareError as exc:
+        return error(str(exc), 502)
+
+
+@app.route("/api/dns/zones/<zone>/managed-headers", methods=["GET", "PATCH"])
+def api_cloudflare_managed_headers(zone):
+    """The domain's Managed Transforms: read, or one turned on or off ({header, enabled})"""
+    settings = cloudflare_part_of("rules")
+    try:
+        found = dns_zone_of(settings, zone)
+        if request.method == "PATCH":
+            data = request.get_json(silent=True) or {}
+            headers = _cloudflare.set_managed_header(settings, zone, str(data.get("header") or ""), data.get("enabled") is True)
+            audit(f"Cloudflare: {data.get('header')} turned {'on' if data.get('enabled') is True else 'off'} for {found['name']}")
+            return jsonify(headers)
+        return jsonify(_cloudflare.managed_headers(settings, zone))
+    except ValueError as exc:
+        return error(str(exc))
+    except _cloudflare.CloudflareError as exc:
+        return error(str(exc), 502)
+
+
+@app.route("/api/dns/zones/<zone>/pagerules", methods=["GET", "POST"])
+@app.route("/api/dns/zones/<zone>/pagerules/<rule>", methods=["PUT", "PATCH", "DELETE"])
+def api_cloudflare_page_rules(zone, rule=None):
+    """A domain's page rules: read, a forwarding one made (POST) or changed (PUT), any one on or off (PATCH) or deleted"""
+    settings = cloudflare_part_of("rules")
+    try:
+        found = dns_zone_of(settings, zone)
+        data = request.get_json(silent=True) or {}
+        if request.method in ("POST", "PUT"):
+            _cloudflare.save_page_rule(settings, zone, rule, data)
+            audit(f"Cloudflare: {'made' if rule is None else 'changed'} a page rule of {found['name']}: {data.get('pattern')}")
+        elif request.method == "PATCH":
+            _cloudflare.page_rule_state(settings, zone, rule, data.get("enabled") is True)
+            audit(f"Cloudflare: page rule of {found['name']} turned {'on' if data.get('enabled') else 'off'}")
+        elif request.method == "DELETE":
+            _cloudflare.delete_page_rule(settings, zone, rule)
+            audit(f"Cloudflare: deleted a page rule of {found['name']}")
+        return jsonify(rules=_cloudflare.page_rules(settings, zone))
+    except ValueError as exc:
+        return error(str(exc))
+    except _cloudflare.CloudflareError as exc:
+        return error(str(exc), 502)
+
+
+@app.route("/api/dns/zones/<zone>/redirects", methods=["GET", "PUT"])
+def api_cloudflare_redirects(zone):
+    """A domain's redirect rules: read, or put as given"""
+    settings = cloudflare_part_of("rules")
+    try:
+        found = dns_zone_of(settings, zone)
+        if request.method == "PUT":
+            rules = (request.get_json(silent=True) or {}).get("rules")
+            if not isinstance(rules, list) or len(rules) > 125:
+                return error("Expected the redirect rules.")
+            _cloudflare.save_redirects(settings, zone, rules)
+            audit(f"Cloudflare: saved {len(rules)} redirect rule{'' if len(rules) == 1 else 's'} of {found['name']}")
+        return jsonify(rules=_cloudflare.redirect_rules(settings, zone))
+    except ValueError as exc:
+        return error(str(exc))
+    except _cloudflare.CloudflareError as exc:
+        return error(str(exc), 502)
 
 
 @app.route("/api/usage/over")
@@ -605,6 +808,30 @@ def api_usage_test():
         return error(found.get("error") or "The test could not be made.")
     audit("Sent a test of the usage alerts")
     return jsonify(found)
+
+
+@app.route("/api/sign-in", methods=["GET", "PUT"])
+def api_sign_in():
+    """The sign-in page's settings: the addresses Harbor took over, whose visitors are told to set a new password, and
+    whether Forgot password can be offered (it needs the mail server)"""
+    require_admin()
+    if request.method == "PUT":
+        given = (request.get_json(silent=True) or {}).get("moved_from") or []
+        if not isinstance(given, list) or len(given) > 10:
+            return error("Up to 10 addresses.")
+        hosts = []
+        for value in given:
+            try:
+                host = _normalize_dns_name(str(value).strip(), fully_qualified=True).lower()
+            except ValueError as exc:
+                return error(f"{value}: {exc}")
+            if host not in hosts:
+                hosts.append(host)
+        with CONFIG_LOCK:
+            cfg["moved_from"] = hosts
+            save_config()
+        audit("Set the addresses Harbor took over: " + (", ".join(hosts) or "none"))
+    return jsonify(moved_from=moved_from(), forgot=can_mail(), admin_site=ADMIN_SITE)
 
 
 @app.route("/api/mail", methods=["GET", "PUT"])
@@ -736,10 +963,10 @@ def protect():
             # A sign-in page left open past the session's idle timeout, or one from before a sign-in in another tab,
             # sends a token the session no longer has. A form sent from this site's own page is no forgery: the
             # browser says so in Sec-Fetch-Site, which no other site can set. Any other gets a fresh sign-in page.
-            if request.path == "/login":
+            if request.path in ("/login", "/forgot", "/reset"):
                 if request.headers.get("Sec-Fetch-Site") != "same-origin":
                     session.clear()
-                    return render_template("login.html", csrf=csrf_token(), error="The sign-in page had expired. Sign in again."), 400
+                    return render_template("login.html", csrf=csrf_token(), error="The sign-in page had expired. Sign in again.", **sign_in_page()), 400
             elif request.path == "/logout" and not session.get("uid"):
                 return redirect("/login")
             elif not expected:
@@ -751,7 +978,7 @@ def protect():
     if request.path.startswith("/ws/") and urlparse(request.headers.get("Origin", "")).netloc != request.headers.get("Host", ""):
         return jsonify(error="Bad origin"), 403
     # An export's zip, by its link's secret (Settings, Export): what a customer is sent, without a login
-    public = request.path == "/login" or request.path.startswith("/static/") or request.path.startswith("/download/") and request.method in ("GET", "HEAD")
+    public = request.path in ("/login", "/forgot", "/reset") or request.path.startswith("/static/") or request.path.startswith("/download/") and request.method in ("GET", "HEAD")
     g.user = session_user()
     if not public and g.user is None:
         session.clear()
@@ -822,6 +1049,134 @@ def asset_version():
     return {"asset_version": version}
 
 
+# ---- the sign-in page: where it was before (an address Harbor took over), and a forgotten password
+
+RESET_LINKS = os.path.join(DATA, "password-resets.json")
+RESET_ASKED = {}
+RESET_PER_IP = 5           # asked from one address in WINDOW
+RESET_PER_USER = 3         # mails to one user in an hour
+
+
+def moved_from():
+    """The addresses Harbor took over (Settings, General, Sign-in): one who comes from them is told to set a new password"""
+    return [host for host in cfg.get("moved_from", []) if isinstance(host, str)]
+
+
+def came_from_moved():
+    """The address Harbor took over that this visit came from: it is that address (a binding), it was sent here from it
+    (?from=, as a redirect is best made, since a browser seldom says where it came from), or a page there linked here"""
+    hosts = {host.lower() for host in moved_from()}
+    if not hosts:
+        return ""
+    for host in ((request.host or "").split(":")[0], request.args.get("from", ""), urlparse(request.referrer or "").hostname or ""):
+        if host and host.lower() in hosts:
+            return host.lower()
+    return ""
+
+
+def can_mail():
+    return bool(_keep_alive_module.report.load_mail().get("host"))
+
+
+def sign_in_page():
+    """What every sign-in page has: whether Forgot password can be offered (a mail server to send the link)"""
+    return {"forgot": can_mail()}
+
+
+def reset_allowed(ip, user_id):
+    """A forgotten password may be asked for: not too often from one address, nor mailed too often to one user"""
+    now = time.time()
+    with FAIL_LOCK:
+        asked = RESET_ASKED.setdefault(ip, [])
+        asked[:] = [when for when in asked if now - when < WINDOW]
+        asked.append(now)
+        if len(asked) > RESET_PER_IP:
+            return False
+        if user_id:
+            mailed = RESET_ASKED.setdefault("user:" + user_id, [])
+            mailed[:] = [when for when in mailed if now - when < 3600]
+            if len(mailed) >= RESET_PER_USER:
+                return False
+            mailed.append(now)
+    return True
+
+
+def reset_link(token):
+    """The link in the mail: to Harbor's own address, never one taken from the request (a forged Host header)"""
+    return f"https://{ADMIN_SITE}/reset?token={token}" if ADMIN_SITE else f"{request.host_url.rstrip('/')}/reset?token={token}"
+
+
+@app.route("/forgot", methods=["GET", "POST"])
+def forgot():
+    """Forgot password: a link mailed to the user to set a new one. The answer is the same whether the user exists or
+    not, so it cannot be used to find out who has an account"""
+    said = ""
+    error = ""
+    if request.method == "POST":
+        if not can_mail():
+            error = "Harbor cannot send mail yet: ask an administrator to set a new password for you."
+        else:
+            asked = request.form.get("username", "")
+            user = access.for_reset(cfg, asked)
+            to = access.mail_of(user) if user else ""
+            if reset_allowed(client_ip(), user["id"] if user and to else None) and user and to:
+                token = _password_reset.make(RESET_LINKS, user["id"])
+                link = reset_link(token)
+                host = ADMIN_SITE or request.host
+                body = (f"Someone asked to set a new password for {user['username']} on Harbor ({host}).\n\n"
+                        f"Open this link to choose a new password. It works once, within {_password_reset.TRY_MINUTES} minutes:\n{link}\n\n"
+                        "If it was not you, do nothing: your password stays as it is, and the link runs out by itself.\n")
+                try:
+                    _keep_alive_module.report.send(_keep_alive_module.report.load_mail(), [to], "Set a new password for Harbor", body,
+                                                   html=_keep_alive_module.report.reset_mail_html(host, user["username"], link, _password_reset.TRY_MINUTES))
+                    audit(f"Mailed a link to set a new password to {user['username']}")
+                except Exception:  # noqa: BLE001  (smtplib, ssl and socket each have their own: logged, the answer is the same)
+                    app.logger.exception("Could not mail the password link")
+            time.sleep(1)
+            said = (f"If there is an account with that username or email, a link to set a new password is on its way to its email. "
+                    f"It works once, within {_password_reset.TRY_MINUTES} minutes.")
+    return render_template("login.html", csrf=csrf_token(), mode="forgot", said=said, error=error, **sign_in_page())
+
+
+@app.route("/reset", methods=["GET", "POST"])
+def reset_password():
+    """The link from the mail: a new password, twice. The link's secret goes from the address into the session at once,
+    so it is not left in the browser's history"""
+    token = request.args.get("token")
+    if token:
+        session["reset_token"] = token
+        return redirect("/reset")
+    token = session.get("reset_token", "")
+    user_id = _password_reset.peek(RESET_LINKS, token)
+    user = access.find(cfg, user_id) if user_id else None
+    if user is None or user.get("disabled") or user.get("id") == access.ROOT:
+        session.pop("reset_token", None)
+        return render_template("login.html", csrf=csrf_token(), mode="reset", expired=True, **sign_in_page())
+    error = ""
+    if request.method == "POST":
+        password = request.form.get("password", "")
+        if len(password) < 12 or len(password) > 128:
+            error = "The password must be 12 to 128 characters."
+        elif password != request.form.get("again", ""):
+            error = "The two passwords are not the same."
+        elif _password_reset.use(RESET_LINKS, token) != user["id"]:
+            session.pop("reset_token", None)
+            return render_template("login.html", csrf=csrf_token(), mode="reset", expired=True, **sign_in_page())
+        else:
+            with CONFIG_LOCK:
+                user = access.find(cfg, user_id)
+                user["password_hash"] = generate_password_hash(password)
+                # Every session they had ends: whoever had their old password is out
+                user["version"] = user.get("version", 1) + 1
+                save_config()
+            linux_users_changed()
+            audit(f"{user['username']} set a new password from a mailed link")
+            session.clear()
+            session["login_said"] = "Your new password is set. Sign in with it."
+            return redirect("/login")
+    return render_template("login.html", csrf=csrf_token(), mode="reset", username=user["username"], error=error, **sign_in_page())
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     error = ""
@@ -848,7 +1203,8 @@ def login():
             record_failure(ip)
             time.sleep(1)
             error = "Wrong username or password."
-    return render_template("login.html", csrf=csrf_token(), error=error), (429 if "Too many" in error else 200)
+    return render_template("login.html", csrf=csrf_token(), error=error, said=session.pop("login_said", ""), moved=came_from_moved(),
+                           **sign_in_page()), (429 if "Too many" in error else 200)
 
 
 @app.route("/logout", methods=["POST"])
@@ -4462,7 +4818,8 @@ def api_me():
                    # administrator unless it is taken out of the menu (Settings, Top menu)
                    dns=bool(_cloudflare.load()) and access.has_dns(user) and not (admin and cfg.get("dns_menu") == "hide"),
                    dns_account=admin and bool(_cloudflare.load()),
-                   dns_domains=[] if admin else user.get("dns_domains", []))
+                   dns_domains=[] if admin else user.get("dns_domains", []),
+                   cloudflare_parts=list(_cloudflare.PARTS) if admin else user.get("cloudflare_parts", ["dns"]))
 
 
 LINUX_USERS_LOCK = threading.Lock()

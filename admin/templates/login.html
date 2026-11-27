@@ -4,13 +4,14 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>Sign in · Harbor</title>
+<title>{% if mode == 'forgot' %}Forgot password{% elif mode == 'reset' %}New password{% else %}Sign in{% endif %} · Harbor</title>
 <link rel="icon" href="/static/harbor-mark.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/static/style.css?v={{ asset_version }}">
 </head>
 <body class="login">
 <main class="login-shell">
-  <form method="post" action="/login" class="card login-card">
+  {% set mode = mode or "login" %}
+  <form method="post" action="{{ '/login' if mode == 'login' else '/' ~ mode }}" class="card login-card">
   <header class="login-heading">
     <div class="login-brand">
       <img class="login-logo" src="/static/harbor-mark.svg" width="56" height="56" alt="">
@@ -20,13 +21,47 @@
     <p>Sites, services and databases. One workspace.</p>
   </header>
   <div class="card-body">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    {% if mode == "forgot" %}
+    <h2>Forgot your password?</h2>
+    <p class="login-intro">Type your username or email. A link to set a new password is mailed to you.</p>
+    {% if said %}
+    <p class="login-note ok" role="status"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4h16v16H4zM4 4l8 8 8-8"/></svg><span>{{ said }}</span></p>
+    {% else %}
+    <label>Username or email <input name="username" autocomplete="username" autofocus required maxlength="254" spellcheck="false"></label>
+    {% if error %}<p class="error login-error" role="alert">{{ error }}</p>{% endif %}
+    <button type="submit" class="primary wide">Send the link</button>
+    {% endif %}
+    <a class="login-switch" href="/login"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>Back to sign in</a>
+    {% elif mode == "reset" %}
+    {% if expired %}
+    <h2>The link does not work</h2>
+    <p class="login-note bad" role="alert"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M12 7v6M12 16.5v.5"/></svg><span>It was used already, or it ran out. Ask for a new one.</span></p>
+    {% if forgot %}<a class="primary wide login-button" href="/forgot">Ask for a new link</a>{% endif %}
+    <a class="login-switch" href="/login"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 18l-6-6 6-6"/></svg>Back to sign in</a>
+    {% else %}
+    <h2>Set a new password</h2>
+    <p class="login-intro">For <strong>{{ username }}</strong>. At least 12 characters. You are signed out everywhere else.</p>
+    <input type="text" name="username" value="{{ username }}" autocomplete="username" hidden>
+    <label>New password <input name="password" type="password" autocomplete="new-password" autofocus required minlength="12" maxlength="128"></label>
+    <label>The same again <input name="again" type="password" autocomplete="new-password" required minlength="12" maxlength="128"></label>
+    {% if error %}<p class="error login-error" role="alert">{{ error }}</p>{% endif %}
+    <button type="submit" class="primary wide">Set the password</button>
+    {% endif %}
+    {% else %}
     <h2>Welcome back</h2>
     <p class="login-intro">Sign in to manage your server.</p>
-    <input type="hidden" name="csrf" value="{{ csrf }}">
+    {% if moved %}
+    <!-- Come from an address Harbor took over: its old passwords do not work here -->
+    <p class="login-note moved" role="status"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l9 4.5v9L12 21l-9-4.5v-9z"/><path d="M12 12l9-4.5M12 12v9M12 12L3 7.5"/></svg><span><strong>{{ moved }} is now Harbor.</strong> Your password from there does not work here: {% if forgot %}use Forgot password below to have a link mailed to you, and set a new one.{% else %}ask an administrator to set a new one for you.{% endif %}</span></p>
+    {% endif %}
+    {% if said %}<p class="login-note ok" role="status"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6L9 17l-5-5"/></svg><span>{{ said }}</span></p>{% endif %}
     <label>Username <input name="username" autocomplete="username" autofocus required></label>
     <label>Password <input name="password" type="password" autocomplete="current-password" required></label>
     {% if error %}<p class="error login-error" role="alert">{{ error }}</p>{% endif %}
     <button type="submit" class="primary wide">Log in</button>
+    {% if forgot %}<a class="login-switch" href="/forgot"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>Forgot password?</a>{% endif %}
+    {% endif %}
   </div>
   </form>
   <footer class="login-footer">

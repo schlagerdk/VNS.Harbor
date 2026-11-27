@@ -131,6 +131,42 @@ def zones(settings, opener=None):
                    for item in pages(settings, "/zones", opener=opener)), key=lambda item: item["name"])
 
 
+def _account_of(settings):
+    """Which account the settings log in to, without the key or token: the domains kept are of that one only"""
+    import hashlib
+    said = json.dumps([settings.get("auth"), settings.get("email"), settings.get("token") or settings.get("key")])
+    return hashlib.sha256(said.encode()).hexdigest()[:16]
+
+
+def kept_zones(settings, path, fresh=False, opener=None):
+    """The account's domains as kept (they seldom change): read from Cloudflare the first time, when the account is
+    another, or when asked fresh (Settings, Cloudflare, Refresh domains). {"zones": [...], "read": when}"""
+    import time
+    account = _account_of(settings)
+    if not fresh:
+        try:
+            kept = json.loads(Path(path).read_text(encoding="utf-8"))
+            if kept.get("account") == account and isinstance(kept.get("zones"), list):
+                return {"zones": kept["zones"], "read": kept.get("read")}
+        except (OSError, ValueError):
+            pass
+    found = zones(settings, opener=opener)
+    read = int(time.time())
+    path = Path(path)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}")
+    temporary.write_text(json.dumps({"account": account, "read": read, "zones": found}), encoding="utf-8")
+    os.replace(temporary, path)
+    return {"zones": found, "read": read}
+
+
+def forget_zones(path):
+    """The kept domains gone: the account was removed"""
+    try:
+        Path(path).unlink()
+    except OSError:
+        pass
+
+
 def records(settings, zone, opener=None):
     """A zone's records: [{id, type, name, content, priority, ttl, proxied, proxiable}], by type and name"""
     if not ZONE_ID.fullmatch(zone or ""):
@@ -247,3 +283,394 @@ def record(settings, zone, record_id, opener=None):
 
 def purge(settings, zone, opener=None):
     call(settings, "POST", f"/zones/{zone}/purge_cache", {"purge_everything": True}, opener=opener)
+
+
+# ---- the parts of a zone beside DNS (Cloudflare in Harbor's menu): Cache, SSL/TLS, Rules and Security
+# A part and what a user given it may do there. SSL/TLS and Security change how every visitor reaches the site: an
+# administrator's, unless given
+# In the order of the domain's tabs: what it is doing first
+PARTS = ("dns", "analytics", "cache", "speed", "rules", "ssl", "security")
+PART_NAMES = {"dns": "DNS", "analytics": "Analytics", "cache": "Cache", "speed": "Speed", "ssl": "SSL/TLS", "rules": "Rules", "security": "Security"}
+# The zone settings each part shows and changes, with the values Cloudflare takes
+SETTINGS_OF = {
+    "cache": {"development_mode": ("on", "off"), "cache_level": ("basic", "simplified", "aggressive"),
+              "browser_cache_ttl": (0, 30, 60, 120, 300, 1200, 1800, 3600, 7200, 10800, 14400, 18000, 28800, 43200, 57600, 72000, 86400,
+                                    172800, 259200, 345600, 432000, 691200, 1382400, 2073600, 2678400, 5356800, 16070400, 31536000),
+              "always_online": ("on", "off")},
+    "ssl": {"ssl": ("off", "flexible", "full", "strict"), "always_use_https": ("on", "off"), "min_tls_version": ("1.0", "1.1", "1.2", "1.3"),
+            "automatic_https_rewrites": ("on", "off"), "tls_1_3": ("on", "off", "zrt")},
+    "speed": {"brotli": ("on", "off"), "early_hints": ("on", "off"), "http3": ("on", "off"), "0rtt": ("on", "off"),
+              "rocket_loader": ("on", "off")},
+    "security": {"security_level": ("essentially_off", "low", "medium", "high", "under_attack"), "browser_check": ("on", "off"),
+                 "challenge_ttl": (300, 900, 1800, 2700, 3600, 7200, 10800, 14400, 28800, 57600, 86400, 604800, 2592000, 31536000)},
+}
+
+
+def zone_settings(settings, zone, part, opener=None):
+    """The zone settings of a part, as {id: value}; one the token may not read is left out"""
+    if part not in SETTINGS_OF or not ZONE_ID.fullmatch(zone or ""):
+        raise ValueError("Unknown part")
+    found = {}
+    for item in call(settings, "GET", f"/zones/{zone}/settings", opener=opener).get("result") or []:
+        if isinstance(item, dict) and item.get("id") in SETTINGS_OF[part]:
+            found[item["id"]] = {"value": item.get("value"), "editable": bool(item.get("editable", True))}
+    return found
+
+
+def change_setting(settings, zone, part, setting, value, opener=None):
+    """One zone setting changed, to one of the values Cloudflare takes for it"""
+    allowed = SETTINGS_OF.get(part, {}).get(setting)
+    if allowed is None or not ZONE_ID.fullmatch(zone or ""):
+        raise ValueError("Unknown setting")
+    if isinstance(allowed[0], int):
+        try:
+            value = int(value)
+        except (TypeError, ValueError):
+            value = None
+    if value not in allowed:
+        raise ValueError("Not a value this setting takes.")
+    return call(settings, "PATCH", f"/zones/{zone}/settings/{setting}", {"value": value}, opener=opener)["result"]
+
+
+URL = re.compile(r"https?://[^\s\"'<>]{1,2000}")
+
+
+def purge_urls(settings, zone, urls, opener=None):
+    """Only these files forgotten by Cloudflare's cache (at most 30 a call, as Cloudflare takes them)"""
+    urls = [url.strip() for url in urls if str(url).strip()]
+    if not urls or len(urls) > 30 or not all(URL.fullmatch(url) for url in urls):
+        raise ValueError("Give one to 30 addresses, each starting with https://")
+    call(settings, "POST", f"/zones/{zone}/purge_cache", {"files": urls}, opener=opener)
+
+
+# Redirect rules (Cloudflare's Single Redirects: the phase http_request_dynamic_redirect), the rules a site most often
+# needs: from a host or path to another address, 301 or 302
+REDIRECT_PHASE = "http_request_dynamic_redirect"
+HOSTNAME = re.compile(r"(\*\.)?[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+")
+
+
+def redirect_rules(settings, zone, opener=None):
+    """The zone's redirect rules: [{id, description, enabled, expression, target, status, keep_query}]; none when the
+    zone has no such ruleset yet"""
+    if not ZONE_ID.fullmatch(zone or ""):
+        raise ValueError("Unknown zone")
+    try:
+        ruleset = call(settings, "GET", f"/zones/{zone}/rulesets/phases/{REDIRECT_PHASE}/entrypoint", opener=opener)["result"]
+    except CloudflareError as error:
+        if "not found" in str(error).lower() or "could not find" in str(error).lower():
+            return []
+        raise
+    found = []
+    for rule in ruleset.get("rules") or []:
+        redirect = ((rule.get("action_parameters") or {}).get("from_value") or {})
+        found.append({"id": rule.get("id", ""), "description": rule.get("description", ""), "enabled": rule.get("enabled", True),
+                      "expression": rule.get("expression", ""), "target": ((redirect.get("target_url") or {}).get("value")
+                      or (redirect.get("target_url") or {}).get("expression") or ""),
+                      "status": redirect.get("status_code", 301), "keep_query": bool(redirect.get("preserve_query_string"))})
+    return found
+
+
+def redirect_expression(source_host, source_path=""):
+    """A rule's expression from what is typed: a host (and a path, which then begins with it)"""
+    host = str(source_host or "").strip().lower().rstrip(".")
+    if not HOSTNAME.fullmatch(host):
+        raise ValueError("Give the host it is from, such as old.example.com.")
+    path = str(source_path or "").strip()
+    if path and (not path.startswith("/") or '"' in path or len(path) > 500):
+        raise ValueError("The path starts with /, such as /old.")
+    if host.startswith("*."):
+        expression = f'ends_with(http.host, "{host[1:]}")'
+    else:
+        expression = f'http.host eq "{host}"'
+    if path:
+        expression += f' and starts_with(http.request.uri.path, "{path}")'
+    return expression
+
+
+def save_redirects(settings, zone, rules, opener=None):
+    """The zone's redirect rules as given ([{description, source_host, source_path, target, status, keep_query,
+    enabled}]), put in place of those there were: Cloudflare keeps a phase's rules as one list"""
+    built = []
+    for rule in rules:
+        target = str(rule.get("target") or "").strip()
+        if not URL.fullmatch(target):
+            raise ValueError("The address it goes to starts with https://")
+        status = int(rule.get("status") or 301)
+        if status not in (301, 302, 307, 308):
+            raise ValueError("A redirect is 301, 302, 307 or 308.")
+        expression = rule.get("expression") or redirect_expression(rule.get("source_host"), rule.get("source_path"))
+        built.append({"expression": expression, "description": str(rule.get("description") or "")[:500], "enabled": rule.get("enabled", True) is not False,
+                      "action": "redirect", "action_parameters": {"from_value": {"status_code": status, "target_url": {"value": target},
+                                                                                  "preserve_query_string": bool(rule.get("keep_query"))}}})
+    call(settings, "PUT", f"/zones/{zone}/rulesets/phases/{REDIRECT_PHASE}/entrypoint", {"rules": built}, opener=opener)
+
+
+# ---- which parts a token may use: what Settings says is missing
+TOKEN_NEEDS = {"dns": "Zone, DNS, Edit", "analytics": "Zone, Analytics, Read", "speed": "Zone, Zone Settings, Edit", "cache": "Zone, Cache Purge, Purge and Zone, Zone Settings, Edit",
+               "ssl": "Zone, Zone Settings, Edit (and Zone, SSL and Certificates, Edit)", "rules": "Zone, Single Redirect, Edit (or Zone, Dynamic Redirect, Edit)",
+               "security": "Zone, Zone Settings, Edit"}
+
+
+# ---- Page Rules (Cloudflare's older rules, still in use on many zones): a URL pattern and its actions
+PAGE_RULE_ID = re.compile(r"[0-9a-f]{32}")
+PATTERN = re.compile(r"[^\s\"'<>]{1,500}")
+
+
+def page_rules(settings, zone, opener=None):
+    """The zone's page rules, by priority: [{id, pattern, actions: [{id, value}], forward: {url, status} or None, enabled, priority}]"""
+    if not ZONE_ID.fullmatch(zone or ""):
+        raise ValueError("Unknown zone")
+    found = []
+    for rule in call(settings, "GET", f"/zones/{zone}/pagerules", opener=opener).get("result") or []:
+        target = ((rule.get("targets") or [{}])[0].get("constraint") or {}).get("value", "")
+        actions = [{"id": action.get("id", ""), "value": action.get("value")} for action in rule.get("actions") or []]
+        forward = next(({"url": (action["value"] or {}).get("url", ""), "status": (action["value"] or {}).get("status_code", 301)}
+                        for action in actions if action["id"] == "forwarding_url" and isinstance(action["value"], dict)), None)
+        found.append({"id": rule.get("id", ""), "pattern": target, "actions": actions, "forward": forward,
+                      "enabled": rule.get("status") == "active", "priority": rule.get("priority", 1)})
+    return sorted(found, key=lambda item: -item["priority"])
+
+
+def page_rule_body(data):
+    """A forwarding page rule from what is typed: its URL pattern (* for any part), where it goes ($1 for the first *),
+    301 or 302, on or off"""
+    pattern = str(data.get("pattern") or "").strip()
+    if not PATTERN.fullmatch(pattern) or "." not in pattern:
+        raise ValueError("Give the URL pattern, such as www.example.com/*")
+    url = str(data.get("url") or "").strip()
+    if not URL.fullmatch(url):
+        raise ValueError("The address it goes to starts with https://")
+    status = int(data.get("status") or 301)
+    if status not in (301, 302):
+        raise ValueError("A page rule forwards with 301 or 302.")
+    return {"targets": [{"target": "url", "constraint": {"operator": "matches", "value": pattern}}],
+            "actions": [{"id": "forwarding_url", "value": {"url": url, "status_code": status}}],
+            "status": "active" if data.get("enabled", True) is not False else "disabled"}
+
+
+def save_page_rule(settings, zone, rule_id, data, opener=None):
+    """A forwarding page rule made (rule_id None) or changed"""
+    body = page_rule_body(data)
+    if rule_id is None:
+        return call(settings, "POST", f"/zones/{zone}/pagerules", body, opener=opener)["result"]
+    if not PAGE_RULE_ID.fullmatch(rule_id or ""):
+        raise ValueError("Unknown page rule")
+    return call(settings, "PUT", f"/zones/{zone}/pagerules/{rule_id}", body, opener=opener)["result"]
+
+
+def page_rule_state(settings, zone, rule_id, enabled, opener=None):
+    """A page rule on or off, whatever its actions"""
+    if not PAGE_RULE_ID.fullmatch(rule_id or ""):
+        raise ValueError("Unknown page rule")
+    return call(settings, "PATCH", f"/zones/{zone}/pagerules/{rule_id}", {"status": "active" if enabled else "disabled"}, opener=opener)["result"]
+
+
+def delete_page_rule(settings, zone, rule_id, opener=None):
+    if not PAGE_RULE_ID.fullmatch(rule_id or ""):
+        raise ValueError("Unknown page rule")
+    call(settings, "DELETE", f"/zones/{zone}/pagerules/{rule_id}", opener=opener)
+
+
+# ---- Analytics: the zone's traffic a day, from Cloudflare's GraphQL Analytics API (on every plan, the last 30 days)
+ANALYTICS_QUERY = """query ($zone: String!, $since: Date!, $until: Date!) { viewer { zones(filter: {zoneTag: $zone}) {
+  httpRequests1dGroups(limit: 31, filter: {date_geq: $since, date_leq: $until}, orderBy: [date_ASC]) {
+    dimensions { date } sum { requests cachedRequests bytes cachedBytes threats pageViews } uniq { uniques } } } } }"""
+
+
+# What the traffic was made of over the period: countries, answers, content, browsers, HTTP and TLS. Asked on its own,
+# so the days are still shown where a plan or token does not give it
+BREAKDOWN_QUERY = """query ($zone: String!, $since: Date!, $until: Date!) { viewer { zones(filter: {zoneTag: $zone}) {
+  httpRequests1dGroups(limit: 31, filter: {date_geq: $since, date_leq: $until}) { sum {
+    encryptedRequests
+    countryMap { clientCountryName requests threats bytes }
+    responseStatusMap { edgeResponseStatus requests }
+    contentTypeMap { edgeResponseContentTypeName requests bytes }
+    browserMap { uaBrowserFamily pageViews }
+    clientHTTPVersionMap { clientHTTPProtocol requests }
+    clientSSLMap { clientSSLProtocol requests }
+  } } } } }"""
+# Each list of the breakdown: Cloudflare's map, its name and the numbers kept, how many are shown
+BREAKDOWN_MAPS = {
+    "countries": ("countryMap", "clientCountryName", ("requests", "threats", "bytes"), 12),
+    "statuses": ("responseStatusMap", "edgeResponseStatus", ("requests",), 12),
+    "content": ("contentTypeMap", "edgeResponseContentTypeName", ("requests", "bytes"), 8),
+    "browsers": ("browserMap", "uaBrowserFamily", ("pageViews",), 8),
+    "http": ("clientHTTPVersionMap", "clientHTTPProtocol", ("requests",), 6),
+    "tls": ("clientSSLMap", "clientSSLProtocol", ("requests",), 6),
+}
+
+
+def _graphql(settings, query, variables, opener=None):
+    headers = {"Content-Type": "application/json", "User-Agent": "Harbor"}
+    if settings.get("token"):
+        headers["Authorization"] = f"Bearer {settings['token']}"
+    else:
+        headers["X-Auth-Email"], headers["X-Auth-Key"] = settings["email"], settings["key"]
+    request = urllib.request.Request(API + "/graphql", method="POST", headers=headers, data=json.dumps({"query": query, "variables": variables}).encode())
+    try:
+        with (opener or urllib.request.urlopen)(request, timeout=30) as response:
+            answer = json.loads(response.read().decode() or "{}")
+    except urllib.error.HTTPError as error:
+        raise CloudflareError(f"Cloudflare answered {error.code}.") from None
+    except (OSError, ValueError) as error:
+        raise CloudflareError(f"Cloudflare was not reached: {error}") from None
+    if answer.get("errors"):
+        raise CloudflareError("; ".join(item.get("message", "") for item in answer["errors"] if isinstance(item, dict)) or "Cloudflare refused it.")
+    zones = (((answer.get("data") or {}).get("viewer") or {}).get("zones") or [{}])
+    return zones[0].get("httpRequests1dGroups") or [] if zones else []
+
+
+def _period(zone, days, today):
+    import datetime
+    if not ZONE_ID.fullmatch(zone or "") or days not in (1, 7, 30):
+        raise ValueError("Unknown zone or period")
+    until = today or datetime.date.today()
+    return until - datetime.timedelta(days=days - 1), until
+
+
+def breakdown(settings, zone, days=7, today=None, opener=None):
+    """What the period's traffic was made of, each list summed over its days and largest first:
+    {encrypted, countries: [{name, requests, threats, bytes}], statuses: [{name, requests}], content: [{name, requests,
+    bytes}], browsers: [{name, views}], http: [{name, requests}], tls: [{name, requests}]}"""
+    since, until = _period(zone, days, today)
+    groups = _graphql(settings, BREAKDOWN_QUERY, {"zone": zone, "since": since.isoformat(), "until": until.isoformat()}, opener)
+    found = {"encrypted": 0}
+    for key, (field, name, numbers, shown) in BREAKDOWN_MAPS.items():
+        summed = {}
+        for group in groups:
+            for item in (group.get("sum") or {}).get(field) or []:
+                label = str(item.get(name) if item.get(name) not in (None, "") else "Unknown")
+                into = summed.setdefault(label, dict.fromkeys(numbers, 0))
+                for number in numbers:
+                    into[number] += int(item.get(number) or 0)
+        rows = [{"name": label, **{("views" if number == "pageViews" else number): value for number, value in values.items()}}
+                for label, values in summed.items()]
+        rows.sort(key=lambda row: -(row.get("requests", row.get("views", 0))))
+        found[key] = rows[:shown]
+    found["encrypted"] = sum(int((group.get("sum") or {}).get("encryptedRequests") or 0) for group in groups)
+    return found
+
+
+def analytics(settings, zone, days=7, today=None, opener=None):
+    """The zone's traffic a day over the last days (7 or 30): [{date, requests, cached, bytes, cached_bytes, threats,
+    views, visitors}], oldest first"""
+    import datetime
+    since, until = _period(zone, days, today)
+    groups = _graphql(settings, ANALYTICS_QUERY, {"zone": zone, "since": since.isoformat(), "until": until.isoformat()}, opener)
+    found = {}
+    for group in groups:
+        total, uniq = group.get("sum") or {}, group.get("uniq") or {}
+        found[(group.get("dimensions") or {}).get("date", "")] = {"requests": total.get("requests", 0), "cached": total.get("cachedRequests", 0),
+                                                                  "bytes": total.get("bytes", 0), "cached_bytes": total.get("cachedBytes", 0),
+                                                                  "threats": total.get("threats", 0), "views": total.get("pageViews", 0),
+                                                                  "visitors": uniq.get("uniques", 0)}
+    # Every day of the period, a day with nothing as nothing
+    empty = {"requests": 0, "cached": 0, "bytes": 0, "cached_bytes": 0, "threats": 0, "views": 0, "visitors": 0}
+    return [{"date": (since + datetime.timedelta(days=at)).isoformat(), **found.get((since + datetime.timedelta(days=at)).isoformat(), empty)}
+            for at in range(days)]
+
+
+# ---- which records are locked for users: kept by Harbor (not in Cloudflare), set by an administrator a record at a time.
+# Not set, a proxied record is locked (as it was before there was a choice) and any other is not
+# ---- how many rules a domain may have: Cloudflare's own numbers, its plan's where those are not given
+REDIRECTS_BY_PLAN = {"free": 10, "pro": 25, "business": 50, "enterprise": 300}
+
+
+def rule_limits(settings, zone, opener=None):
+    """{"redirects": how many redirect rules, "page_rules": how many page rules}: from the domain's entitlements, else
+    the domain itself (page rules) and its plan (redirects); None where it cannot be told"""
+    if not ZONE_ID.fullmatch(zone or ""):
+        raise ValueError("Unknown zone")
+    found = call(settings, "GET", f"/zones/{zone}", opener=opener).get("result") or {}
+    plan = str(((found.get("plan") or {}).get("legacy_id")) or "").lower()
+    limits = {"redirects": REDIRECTS_BY_PLAN.get(plan), "page_rules": (found.get("meta") or {}).get("page_rule_quota")}
+    # The entitlements are exact, but not every token may read them
+    try:
+        for item in call(settings, "GET", f"/zones/{zone}/entitlements", opener=opener).get("result") or []:
+            if not isinstance(item, dict):
+                continue
+            value = (item.get("allocation") or {}).get("value")
+            if item.get("id") == "rulesets.dynamic_redirect_rule_max" and isinstance(value, int):
+                limits["redirects"] = value
+            elif item.get("id") == "page_rules" and isinstance(value, int):
+                limits["page_rules"] = value
+    except CloudflareError:
+        pass
+    return {key: value if isinstance(value, int) and not isinstance(value, bool) else None for key, value in limits.items()}
+
+
+# ---- Managed Transforms: headers Cloudflare adds to or takes from each request and answer, turned on and off
+MANAGED_HEADERS = {
+    "add_client_certificate_headers": ("Add TLS client auth headers", "The server is told the visitor's client certificate, where mutual TLS (mTLS) is used"),
+    "add_visitor_location_headers": ("Add visitor location headers", "The server is told the visitor's city, country, continent, longitude and latitude"),
+    "remove_visitor_ip_headers": ("Remove visitor IP headers", "Headers that may carry the visitor's IP address are taken off before the server sees them"),
+    "add_true_client_ip_headers": ("Add True-Client-IP header", "The server is told the visitor's IP address in a True-Client-IP header"),
+    "add_waf_credential_check_status_header": ("Add leaked credentials checks header", "The server is told in Exposed-Credential-Check when a login uses a password known to have leaked"),
+    "remove_x-powered-by_header": ("Remove X-Powered-By headers", "The answer no longer says what software the server runs"),
+    "add_security_headers": ("Add security headers", "Answers get headers against cross-site scripting and being framed by other sites"),
+}
+
+
+def managed_headers(settings, zone, opener=None):
+    """{"request": [...], "response": [...]}: each {id, title, text, enabled, conflicts: [ids it cannot be on with]}"""
+    if not ZONE_ID.fullmatch(zone or ""):
+        raise ValueError("Unknown zone")
+    found = call(settings, "GET", f"/zones/{zone}/managed_headers", opener=opener).get("result") or {}
+    said = lambda item: {"id": item.get("id"), "title": MANAGED_HEADERS.get(item.get("id"), (item.get("id"), ""))[0],
+                         "text": MANAGED_HEADERS.get(item.get("id"), ("", ""))[1], "enabled": bool(item.get("enabled")),
+                         "conflicts": [other for other in item.get("conflicts_with") or [] if isinstance(other, str)] if item.get("has_conflict") else []}
+    return {"request": [said(item) for item in found.get("managed_request_headers") or [] if isinstance(item, dict)],
+            "response": [said(item) for item in found.get("managed_response_headers") or [] if isinstance(item, dict)]}
+
+
+def set_managed_header(settings, zone, header, enabled, opener=None):
+    """One managed header turned on or off: only one Cloudflare has for the domain"""
+    current = managed_headers(settings, zone, opener)
+    side = next((side for side in ("request", "response") if any(item["id"] == header for item in current[side])), None)
+    if not side:
+        raise ValueError("Unknown header")
+    body = {"managed_request_headers": [], "managed_response_headers": []}
+    body[f"managed_{side}_headers"] = [{"id": header, "enabled": bool(enabled)}]
+    call(settings, "PATCH", f"/zones/{zone}/managed_headers", body, opener=opener)
+    return managed_headers(settings, zone, opener)
+
+
+def load_locks(path):
+    try:
+        found = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return found if isinstance(found, dict) else {}
+
+
+def is_locked(locks, zone, record):
+    """Whether a record ({id, proxied}) is locked for users"""
+    chosen = (locks.get(zone) or {}).get(record.get("id"))
+    return bool(record.get("proxied")) if chosen is None else bool(chosen)
+
+
+def keep_open(path, zone, record_id, admin):
+    """A record a user made or changed stays open to them, also when they proxied it (a proxied record is otherwise
+    locked until opened). An administrator's choice is left as it is"""
+    if admin:
+        return
+    if (load_locks(path).get(zone) or {}).get(record_id) is None:
+        set_lock(path, zone, record_id, False)
+
+
+def set_lock(path, zone, record_id, locked):
+    """A record locked (True) or opened (False) for users, as chosen; None forgets the choice (a deleted record)"""
+    if not ZONE_ID.fullmatch(zone or "") or not RECORD_ID.fullmatch(record_id or ""):
+        raise ValueError("Unknown record")
+    locks = load_locks(path)
+    zone_locks = locks.setdefault(zone, {})
+    if locked is None:
+        zone_locks.pop(record_id, None)
+    else:
+        zone_locks[record_id] = bool(locked)
+    if not zone_locks:
+        locks.pop(zone, None)
+    path = Path(path)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}")
+    temporary.write_text(json.dumps(locks), encoding="utf-8")
+    os.replace(temporary, path)

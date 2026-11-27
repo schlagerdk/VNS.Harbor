@@ -224,6 +224,10 @@ Later, once the first is in use:
   server's address), where today only DNS is checked.
 - On the master (phase 13): DNS there, for every server's customers.
 
+Done in 1.0.98 and 1.0.99: the account, DNS, then Cloudflare in the menu with DNS, Cache, SSL/TLS, Rules (redirects)
+and Security as tabs of a domain, and the parts a user may use. Left: Cache Rules and other rule kinds than redirects,
+Page Rules (being retired by Cloudflare), firewall rules, and the record made with a new site.
+
 Steps:
 1. Settings: the Cloudflare account (email and key, or a token), tried before it is kept; the zones it has.
 2. DNS in the top menu: zones and records, new, edit, delete, proxied and purge for an administrator.
