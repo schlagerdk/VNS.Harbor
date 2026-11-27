@@ -25,6 +25,20 @@ class AccessTests(unittest.TestCase):
         self.assertEqual(access.label(config, access.ROOT), "Martin")
         self.assertEqual(access.label(config, "u_gone"), "")
 
+    def test_environments_on_a_member_only_for_one_who_may_add_them(self):
+        # May create sites is another thing: alone, no server makes environments for them
+        servers = {"two": {"web": True, "create_sites": True}, "three": {"web": True, "create_envs": True}}
+        user = access.clean({"username": "dina@shop.dk", "role": "user", "servers": servers})
+        self.assertNotIn("create_envs", user["servers"]["three"])
+        # A site given that lets them add environments: their environments may go to three
+        given = {"two": {"web": True, "sites": {"shop": {"envs": ["main"], "actions": ["create_env"]}}}, "three": {"create_envs": True}}
+        self.assertTrue(access.clean({"username": "dina@shop.dk", "role": "user", "servers": given})["servers"]["three"]["create_envs"])
+        # Neither: no server makes environments for them, and one with nothing else goes
+        none = {"two": {"web": True, "sites": {"shop": {"envs": ["main"], "actions": ["service"]}}}, "three": {"create_envs": True}}
+        user = access.clean({"username": "dina@shop.dk", "role": "user", "servers": none})
+        self.assertNotIn("three", user["servers"])
+        self.assertNotIn("create_envs", user["servers"]["two"])
+
     def test_terminal_gives_files(self):
         user = access.clean({"username": "anna", "web": True, "sites": {"shop.dk": {"envs": ["main"], "actions": ["terminal", "logs"]}}},
                             sites={"shop.dk": ["main"]})
@@ -200,6 +214,27 @@ class AccessTests(unittest.TestCase):
         self.assertEqual(self.user(sql=True, connections={"c1": {"databases": [], "actions": ["create"]}})["connections"], {})
         self.assertNotIn("own", self.user(sql=True, connections={"c1": {"databases": ["*"], "own": True}})["connections"]["c1"])
 
+    def test_a_member_with_nothing_on_it_is_no_access_there(self):
+        """Web Server switched on for a member, with no site there nor sites or environments to make, kept the member
+        as theirs (its dot lit): it is no access there, as SQL Server with no connection"""
+        servers = access.clean_servers({"two": {"web": True, "sql": True}, "three": {"web": True, "sites": {"shop.dk": {"envs": ["main"]}}, "sql": True},
+                                        "four": {"sql": True, "manage_connections": True}})
+        self.assertEqual(set(servers), {"three", "four"})
+        self.assertEqual((servers["three"]["web"], servers["three"]["sql"]), (True, False))
+        self.assertTrue(servers["four"]["sql"])
+
+    def test_a_template_on_a_master_gives_access_on_its_members(self):
+        """A template on a master says what a user made from it has on each member: its parts and limits there, not
+        its sites, and nothing on a member with neither Web Server, SQL Server nor environments"""
+        kept = access.clean_template({"name": "Developer", "access": {"servers": {
+            "linux-01": {"web": True, "create_sites": True, "limits": {"sites": 2}, "sites": {"shop.dk": {"envs": ["main"]}}},
+            "linux-02": {"create_envs": True}, "linux-03": {"sftp": True}, "bad name!": {"web": True}}}})["access"]
+        self.assertEqual(set(kept["servers"]), {"linux-01", "linux-02"})
+        self.assertEqual((kept["servers"]["linux-01"]["web"], kept["servers"]["linux-01"]["limits"]), (True, {"sites": 2}))
+        self.assertNotIn("sites", kept["servers"]["linux-01"])
+        self.assertTrue(kept["servers"]["linux-02"]["create_envs"])
+        self.assertNotIn("servers", access.clean_template({"name": "x", "access": {}})["access"])
+
     def test_a_template_keeps_rules_and_nothing_of_the_person(self):
         """Rules to start new users from: what they may do on each site and SQL connection they are given, never which
         ones, nor their name, password, lock or what they made (1.0.77)"""
@@ -212,7 +247,7 @@ class AccessTests(unittest.TestCase):
         self.assertEqual(template["name"], "Web developer")
         self.assertTrue(template["id"].startswith("t_"))
         kept = template["access"]
-        self.assertEqual(set(kept), set(access.TEMPLATE_KEYS), "no sites, connections or anything of the person")
+        self.assertEqual(set(kept), set(access.TEMPLATE_KEYS) - {"servers"}, "no sites, connections or anything of the person (servers only on a master)")
         self.assertEqual(kept["site_rules"], {"actions": ["appsettings", "delete", "files", "logs", "packages", "packages_view", "terminal"], "new_envs": False},
                          "a terminal gives Files, and Files the NuGet packages")
         self.assertEqual(kept["sql_rules"], {"own": True, "actions": ["create", "query"], "limits": {"databases": 2}})

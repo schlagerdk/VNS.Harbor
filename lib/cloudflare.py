@@ -427,7 +427,7 @@ def redirect_build(rule):
     elif mode == "all":
         expression = "true"
     elif mode == "wildcard":
-        pattern = str(rule.get("pattern") or "").strip()
+        pattern = whole_address(str(rule.get("pattern") or "").strip())
         if not pattern or len(pattern) > 500 or '"' in pattern or "\n" in pattern:
             raise ValueError("Give the pattern, such as https://old.example.com/*")
         expression = f'http.request.full_uri wildcard r"{pattern}"'
@@ -599,6 +599,15 @@ CACHE_SETTINGS = ("cache_level", "edge_cache_ttl", "browser_cache_ttl", "cache_d
 CACHE_LEVELS = ("bypass", "cache_everything")
 
 
+def whole_address(pattern):
+    """A pattern of the whole address with no path given (http*://old.example.com) is every page of it: Cloudflare's
+    address always has its path, / at least, so without one it would match nothing"""
+    # One that ends in * takes the path with it already (http://*)
+    if not pattern.endswith("*") and re.fullmatch(r"(?:[a-z*]+://)?[^/\s]+", pattern, flags=re.I):
+        return pattern + "/*"
+    return pattern
+
+
 def match_read(expression):
     """How a rule matches: {mode, pattern, expression}, mode "wildcard" (a pattern of the whole address), "all" or "custom\""""
     expression = (expression or "").strip()
@@ -616,7 +625,7 @@ def match_build(rule):
     if mode == "all":
         return "true"
     if mode == "wildcard":
-        pattern = str(rule.get("pattern") or "").strip()
+        pattern = whole_address(str(rule.get("pattern") or "").strip())
         if not pattern or len(pattern) > 500 or '"' in pattern or "\n" in pattern:
             raise ValueError("Give the pattern, such as https://www.example.com/images/*")
         return f'http.request.full_uri wildcard r"{pattern}"'

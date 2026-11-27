@@ -104,6 +104,27 @@ class AdminAccessTests(AdminUpdateTests):
         with self.assertRaises(Exception):
             admin.set_allowed_addresses(system, "", ["192.0.2.10"], "redirect", "/login")
 
+    def test_behind_cloudflare_the_visitors_own_address_is_seen(self):
+        """Behind Cloudflare's proxy the admin saw Cloudflare's address (Your address now, Require ip): the visitor's
+        own is taken from CF-Connecting-IP, from Cloudflare's addresses only, once however often it is set"""
+        from harbor.core.system import Result
+        conf = self.write_conf()
+        system = RecordingSystem(root=self.root)
+        admin.real_address(system, "admin.example.test")
+        text = conf.read_text()
+        self.assertIn("  ServerName admin.example.test\n  # Harbor: the visitor's own address", text)
+        self.assertIn("  RemoteIPHeader CF-Connecting-IP\n  RemoteIPTrustedProxy 173.245.48.0/20 ", text)
+        self.assertIn("a2enmod -q remoteip", system.commands)
+        # Again: nothing changes, and who may reach it is set as before beside it
+        admin.real_address(system, "admin.example.test")
+        self.assertEqual(conf.read_text(), text)
+        admin.set_allowed_addresses(system, "", ["192.0.2.10"])
+        self.assertEqual(conf.read_text().count("RemoteIPHeader"), 1)
+        # One Apache refuses is taken back
+        conf.write_text(self.CONF)
+        admin.real_address(RecordingSystem(root=self.root, answers={"apache2ctl configtest": Result(1, "", "Syntax error")}), "admin.example.test")
+        self.assertEqual(conf.read_text(), self.CONF)
+
     def test_a_change_apache_refuses_and_a_bad_address_are_refused(self):
         from harbor.core.system import Result
         conf = self.write_conf()

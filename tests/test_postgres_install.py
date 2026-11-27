@@ -62,6 +62,19 @@ class UninstallTests(unittest.TestCase):
             self.assertFalse((root / "var/opt/postgresql").exists())
             self.assertIn("apt-get remove --purge -y postgresql postgresql-18", system.commands)
 
+    def test_its_backup_job_goes_with_it(self):
+        """Removed, PostgreSQL's backup job stayed in root's crontab, failing every four hours (and mailed where it was
+        watched): it goes, with its label and watch lines; Microsoft SQL Server's jobs stay"""
+        table = ("# Harbor label: Microsoft SQL Server backup\n15 */4 * * * /usr/local/bin/harbor sql backup-everything >> /var/log/sql_backup_everything.log 2>&1\n"
+                 "# Harbor label: PostgreSQL backup\n30 */4 * * * /usr/local/bin/harbor postgres backup-everything >> /var/log/postgres_backup_everything.log 2>&1\n")
+        with tempfile.TemporaryDirectory() as folder:
+            system = RecordingSystem(root=Path(folder), answers={"dpkg -s postgresql": "Status: install ok installed", "crontab -l": table})
+            postgres.uninstall(system, delete_data=False)
+        written = next(text for command, text in zip(system.commands, system.inputs) if command == "crontab -")
+        self.assertNotIn("postgres", written)
+        self.assertIn("harbor sql backup-everything", written)
+        self.assertIn("Microsoft SQL Server backup", written)
+
     def test_kept_databases_keep_their_settings(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
@@ -83,15 +96,18 @@ class ConnectionTests(unittest.TestCase):
             root = Path(folder)
             app = root / "var/www/admin.example.com/app"
             app.mkdir(parents=True)
-            system = RecordingSystem(root=root)
+            system = RecordingSystem(root=root, answers={"hostname -s": "web-01"})
+            (app / "sql-connections.json").write_text(json.dumps([{"id": "a", "name": "Local", "host": "localhost", "port": 1433, "username": "sa", "password": "old"}]))
             with mock.patch("harbor.install.admin.admin_sites", return_value=["admin.example.com"]), \
                     mock.patch("harbor.install.admin.web_root", return_value="/var/www"):
-                server.add_admin_connection(system, "mssql", "Local", 1433, "sa", "first", "/var/opt/mssql/backup")
-                server.add_admin_connection(system, "postgres", "Local", 5432, "postgres", "secret", "/var/opt/postgresql/backup")
-                server.add_admin_connection(system, "mssql", "Local", 1433, "sa", "second", "/var/opt/mssql/backup")
+                server.add_admin_connection(system, "mssql", None, 1433, "sa", "first", "/var/opt/mssql/backup")
+                server.add_admin_connection(system, "postgres", None, 5432, "postgres", "secret", "/var/opt/postgresql/backup")
+                server.add_admin_connection(system, "mssql", None, 1433, "sa", "second", "/var/opt/mssql/backup")
             items = json.loads((app / "sql-connections.json").read_text())
             self.assertEqual([(item.get("engine", "mssql"), item["username"], item["password"]) for item in items],
                              [("mssql", "sa", "second"), ("postgres", "postgres", "secret")])
+            # Named by the server, not Local: the one called Local before too
+            self.assertEqual([item["name"] for item in items], ["web-01", "web-01"])
             self.assertEqual(items[1]["backup_directory"], "/var/opt/postgresql/backup")
 
 

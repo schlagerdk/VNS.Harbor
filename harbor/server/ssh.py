@@ -30,6 +30,11 @@ def set_root_login(system, mode):
     never left unable to start. Connections open now stay."""
     if mode not in MODES:
         raise Stop(f"Not a way for root to log in: {mode} (yes, prohibit-password or no)")
+    # A member is reached by its master as root, with a key, over SSH (and so are the other members' copies and moves):
+    # with no root login the master loses it
+    from harbor.server.master import MEMBERSHIP
+    if mode == "no" and system.path(MEMBERSHIP).exists():
+        raise Stop("This server is a member of Harbor Master, which reaches it as root over SSH with a key: root keeps its login (a key only is the safest).")
     system.plan([f"Let root log in over SSH {MODES[mode]}"])
     system.step(f"Let root log in over SSH {MODES[mode]}")
     path = system.path(DROPIN)

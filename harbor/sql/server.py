@@ -231,12 +231,21 @@ def update_admin_connections(system, password):
             system.say(f"The SQL connection of {site} to SQL Server here has the new sa password.")
 
 
+def machine_name(system):
+    """This server's short name (linux-01), as a connection to its own SQL Server is called: on a master's SQL Server
+    page beside its members', "Local" did not say whose"""
+    name = system.output("hostname", "-s", check=False).strip() or system.output("hostname", check=False).strip().split(".")[0]
+    return name if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.-]{0,62}", name or "") else "Local"
+
+
 def add_admin_connection(system, engine, name, port, username, password, backup_directory):
     """A connection to the server installed here in each admin site's connections, as its own login (sa, postgres): or
-    the one there given the password, when there is one already. Microsoft SQL Server's and PostgreSQL's alike."""
+    the one there given the password, when there is one already. Microsoft SQL Server's and PostgreSQL's alike. Named
+    by this server (name None); one still called Local, as they were, is named so too."""
     import json
     import uuid
     from harbor.install.admin import admin_sites, web_root
+    name = name or machine_name(system)
     names = set(LOCAL_HOSTS)
     for argv in (("hostname",), ("hostname", "-f"), ("hostname", "-I")):
         names.update(item.lower() for item in system.output(*argv, check=False).split())
@@ -256,6 +265,8 @@ def add_admin_connection(system, engine, name, port, username, password, backup_
         if local:
             for item in local:
                 item["password"] = password
+                if item.get("name") == "Local":
+                    item["name"] = name
         else:
             items.append({"id": uuid.uuid4().hex, **({"engine": engine} if engine != "mssql" else {}), "name": name, "host": "localhost",
                           "port": port, "username": username, "password": password, "backup_directory": backup_directory,
@@ -438,7 +449,7 @@ def install_server(system, edition="", with_tools=None, assume_yes=None, older_u
     # A connection to it in the admin, as sa, once its tools are here (none works without sqlcmd)
     from harbor.sql.databases import sa_password
     if server_installed and system.path(SQLCMD).is_file() and sa_password(system):
-        add_admin_connection(system, "mssql", "Local", 1433, "sa", sa_password(system), BACKUPS)
+        add_admin_connection(system, "mssql", None, 1433, "sa", sa_password(system), BACKUPS)
 
 
 def wait_for_logins(system, seconds=900):

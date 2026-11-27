@@ -206,7 +206,7 @@ def install(system):
             pass
     system.step(steps[4])
     from harbor.sql.server import add_admin_connection
-    add_admin_connection(system, "postgres", "Local", PORT, "postgres", value, BACKUPS)
+    add_admin_connection(system, "postgres", None, PORT, "postgres", value, BACKUPS)
     versions = [package_version(system, f"postgresql-{major}").split("-")[0] for major in clusters(system)]
     system.say(f"PostgreSQL {next((item for item in reversed(versions) if item), package_version(system, 'postgresql'))} runs here.")
 
@@ -263,6 +263,11 @@ def uninstall(system, delete_data=False, with_tools=False):
         system.say(f"The databases are kept in {DATA}.")
     remove_admin_connections(system, tools_too=with_tools)
     system.path(SECRET).unlink(missing_ok=True)
+    # Its backup job goes with it: without PostgreSQL here it only fails, and is mailed as failing where it is watched
+    # (Scheduled jobs suggests it again once PostgreSQL is back)
+    from harbor.server.tools import cron, crontab, job_lines
+    if job_lines(crontab(system), "postgres_backup"):
+        cron(system, False, only="postgres_backup")
     system.say("PostgreSQL removed.")
 
 

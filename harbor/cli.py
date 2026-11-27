@@ -349,7 +349,21 @@ def _servers(args, system):
     from harbor.server import servers
     if args.command == "add":
         servers.add(system, args.name, args.host, args.user, args.port, os.environ.get("HARBOR_SSH_PASSWORD", ""))
+        if args.member:
+            # A master's new server is its member at once: its Harbor this one's, then joined and made known to the others
+            from harbor.server import master
+            servers.install(system, args.name)
+            master.join(system, args.name)
     elif args.command == "remove":
+        # A member leaves first (its users and their access go, on both sides), while it can still be asked; not when
+        # it stays in Servers anyway (an environment here runs there)
+        entry = servers.servers(system).get(args.name) or {}
+        if entry.get("member"):
+            from harbor.server import master
+            using = servers.environments_on(system, entry.get("host", ""))
+            if using:
+                raise Stop(f"Environments here run on {args.name}: {', '.join(using)}. It stays in Servers while they are there.")
+            master.leave(system, args.name)
         servers.remove(system, args.name, uninstall=args.uninstall)
     elif args.command == "adopt":
         servers.adopt_environment_servers(system)
@@ -388,8 +402,15 @@ def _master(args, system):
     import sys
     from harbor.server import master
     if args.command == "call":
-        body = json.loads(sys.stdin.read() or "null") if args.body else None
-        print(json.dumps(master.call(system, args.method, args.path, body)))
+        given = json.loads(sys.stdin.read() or "null") if args.body or args.raw else None
+        print(json.dumps(master.call(system, args.method, args.path, None if args.raw else given, raw=given if args.raw else None, as_user=args.as_user or None,
+                                     client=args.client or None)))
+    elif args.command == "ws":
+        master.bridge(system, args.path, args.as_user or None)
+    elif args.command == "sql":
+        print(json.dumps(master.connections(system), indent=2))
+    elif args.command == "introduce":
+        master.introduce(system)
     else:
         print(json.dumps(master.sites(system), indent=2))
 
@@ -417,7 +438,7 @@ def _server_cron(args, system):
 def _server_dotnet(args, system):
     from harbor.server.tools import dotnet_install, dotnet_remove
     if args.action == "remove":
-        dotnet_remove(system, args.channel)
+        dotnet_remove(system, args.channel, last=args.last)
     else:
         dotnet_install(system, args.channel, update=args.action == "update")
 
@@ -745,6 +766,7 @@ def parser():
     command = server.add_parser("dotnet", help="install a .NET channel (SDK and ASP.NET Core runtime), update it to its newest patch, or remove it")
     command.add_argument("action", choices=("install", "update", "remove"))
     command.add_argument("channel", help="such as 10.0")
+    command.add_argument("--last", action="store_true", help="remove: the only version too (a master, which hosts nothing)")
     command.set_defaults(handler=_server_dotnet)
     command = server.add_parser("crontab", help="root's crontab: its lines as JSON (list), saved from JSON on stdin (save), a job's runs and output (log), its output file emptied (clear-log), or a job run now (run --command)")
     command.add_argument("action", choices=("list", "save", "log", "clear-log", "run", "logrotate-on", "logrotate-off"))
@@ -1104,6 +1126,7 @@ def parser():
     command.add_argument("host", help="its address")
     command.add_argument("--user", default="root")
     command.add_argument("--port", default="22")
+    command.add_argument("--member", action="store_true", help="(on a master) this release installed there, and the server made a member")
     command.set_defaults(handler=_servers)
     command = other.add_parser("adopt", help="put the servers the environments here run on in Servers, where they are not (run by the update)")
     command.set_defaults(handler=_servers)
@@ -1151,8 +1174,19 @@ def parser():
     command.add_argument("method")
     command.add_argument("path")
     command.add_argument("--body", action="store_true")
+    command.add_argument("--raw", action="store_true", help="stdin is {type, data (base64)}: what a page sent, as it is")
+    command.add_argument("--as", dest="as_user", default="", help="one of the master's users, as whom the admin here answers")
+    command.add_argument("--client", default="", help="the address the one on the master's page comes from")
+    command.set_defaults(handler=_master)
+    command = master.add_parser("ws", help="(on a member) a terminal or task of the admin here, as the master: lines of JSON on stdin and stdout")
+    command.add_argument("path")
+    command.add_argument("--as", dest="as_user", default="")
     command.set_defaults(handler=_master)
     command = master.add_parser("sites", help="(on the master) every member's sites, as JSON")
+    command.set_defaults(handler=_master)
+    command = master.add_parser("sql", help="(on the master) every member's SQL connections, as JSON (never a password)")
+    command.set_defaults(handler=_master)
+    command = master.add_parser("introduce", help="(on the master) the members made known to each other in their own Servers")
     command.set_defaults(handler=_master)
     command = other.add_parser("status", help="the version handshake with a server, or every server, as JSON")
     command.add_argument("name", nargs="?", default="")

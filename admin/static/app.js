@@ -88,10 +88,71 @@ function pruneButtons(root, site, envKey = null) {
 }
 
 // What the page shows of the user's access: the parts, and what they may make
+// On a master: which server the page works on, beside Harbor's name. The master itself first, then its members
+function showServerPicker() {
+	// Not before the server has said who the user is (the page's first guess has no members)
+	if (!Array.isArray(currentUser.members)) return;
+	let box = $("#server-picker");
+	// An administrator chooses the server; a user never does: what they were given on each is theirs in one list
+	if (!currentUser.admin) {
+		box?.remove();
+		try { sessionStorage.removeItem("vns-server"); } catch (error) { /* none */ }
+		return;
+	}
+	const members = currentUser.members;
+	// A member no longer there (left, or the user is not an administrator): back to the master
+	if (pickedServer && !members.includes(pickedServer)) return chooseServer("");
+	if (!members.length) { box?.remove(); return; }
+	// In Settings' menu, at its top: Web Server and SQL Server have every server at once
+	if (box && box.dataset.value === pickedServer) return;
+	box?.remove();
+	const pick = premiumSelect({ label: "Server", value: pickedServer, className: "settings-server-select",
+		options: [{ value: "", label: "This server" }, ...members.map((name) => ({ value: name, label: name, sub: "Member" }))] });
+	// Where the page stands goes with it to the other server: Settings' tab, SQL Server, the sites; a site's own page is
+	// the sites there, as that site is this server's
+	pick.addEventListener("change", () => {
+		if (pick.value === pickedServer) return;
+		// On Admin site (a site's page): the admin site of the server chosen, not the one left
+		const onAdmin = location.hash.startsWith("#site/");
+		const admin = onAdmin ? allSites.find((item) => item.admin && (item.harbor_server || "") === pick.value) : null;
+		// A tab the master has every member's in (Health, Usage, Convert DB, Export Site) is not a member's: its Settings then
+		const masters = pick.value && MASTER_WIDE_TABS.some((tab) => location.hash.startsWith("#server/" + tab));
+		chooseServer(pick.value, onAdmin ? (admin ? siteLink(admin.name) : "#server/settings") : masters ? "#server/settings" : location.hash || "#server/settings");
+	});
+	box = el("div", { id: "server-picker", className: "settings-server" + (pickedServer ? " on-member" : "") },
+		el("span", { className: "settings-server-label", textContent: "Server" }), el("div", { className: "settings-server-row" }, svgIcon("server"), pick));
+	box.dataset.value = pickedServer;
+	$(".server-nav").prepend(box);
+	if (pickedServer) {
+		// Settings say which server they are of: its name in their head, and the name a site there falls back to
+		const title = $(".server-page-title h2");
+		if (title) title.textContent = pickedServer;
+		$("meta[name=server-hostname]")?.setAttribute("content", pickedServer);
+		// Settings that are the master's (its Cloudflare account, top menu, users and templates) are not the member's
+		document.body.classList.add("on-member");
+		const via = `/api/via/${encodeURIComponent(pickedServer)}`;
+		// Its top menu as the member has it
+		api(`${via}/menu-shown`).then((menu) => { memberMenu = menu; }).catch(() => {});
+		// Its Sites group as the member has it: the page was drawn with the master's
+		api(`${via}/site-tools`).then((tools) => {
+			$("#server-tab-convert").hidden = !tools.convert;
+			$("#server-tab-export").hidden = !tools.export;
+			$("#server-group-sites").hidden = !(tools.convert || tools.export);
+		}).catch(() => {});
+	}
+}
+// On a member: its own top menu (Web Server, SQL Server), as it would show it; the master's is for the master
+let memberMenu = null;
 function applyAccess() {
+	showServerPicker();
+	// A master hosts nothing itself: its own Settings have no software to install (a member's, chosen at the top, do)
+	markServer();
+	// Adding a server (Servers, and its card in the dialogs that choose one) is an administrator's alone
+	document.body.classList.toggle("not-admin", !currentUser.admin);
 	// Web Server and SQL Server in the menu: for a user while they have them, for an administrator as set in Settings
-	$("#switch-sites").hidden = !currentUser.web || currentUser.menu?.web === false;
-	$("#switch-sql").hidden = !currentUser.sql || currentUser.menu?.sql === false;
+	const menu = serverContext ? memberMenu || { web: true, sql: true } : currentUser.menu;
+	$("#switch-sites").hidden = !currentUser.web || menu?.web === false;
+	$("#switch-sql").hidden = !currentUser.sql || menu?.sql === false;
 	// DNS: where a Cloudflare account is set up (Settings, DNS), for an administrator and a user given domains
 	$("#switch-dns").hidden = !currentUser.dns;
 	// The server itself (its tools, scheduled jobs and the other servers) is the admins'
@@ -99,7 +160,8 @@ function applyAccess() {
 	// Preferences is the start page: an administrator has it in the Server page's Settings
 	$("#menu-preferences").hidden = currentUser.admin || !(currentUser.web && currentUser.sql);
 	$("#switch-sites").closest("nav").hidden = [...$("#switch-sites").closest("nav").children].filter((button) => !button.hidden).length < 2;
-	$("#btn-new-site").hidden = !currentUser.create_sites;
+	// New site: never for one who may not make sites; shown by the sites list, once it knows there are some
+	if (!currentUser.create_sites) $("#btn-new-site").hidden = true;
 	$("#menu-usage").hidden = !currentUser.usage;
 	showUsageBanner();
 	$("#sql-add-connection").hidden = !currentUser.manage_connections;
@@ -462,6 +524,29 @@ function secretField(input) {
 	input.revealSecret = (open) => { shown = open; show(); };
 	show();
 }
+// Safari takes a field outside a form for part of one login form with every other such field on the page, and offers
+// the admin's own login in a filter (the users' filter above all). A search field in a form of its own, a search form
+// that holds only it, is not a login: each is put in one, which sends nothing
+// A field Safari would offer the admin's own saved login in (a user's username and email in their window): read only until
+// it has the focus, as Safari offers nothing for a field that is read only when it is clicked; typed in as any other
+function noAutofill(input) {
+	input.readOnly = true;
+	input.addEventListener("focus", () => setTimeout(() => { input.readOnly = false; }));
+	input.addEventListener("blur", () => { input.readOnly = true; });
+}
+function searchForms(root) {
+	for (const input of root.querySelectorAll('input[type="search"]')) {
+		if (input.form || input.closest("form")) continue;
+		const box = input.closest(".targets-search-box, .search-box") || input;
+		const form = el("form", { className: "search-form", role: "search", autocomplete: "off", noValidate: true });
+		form.addEventListener("submit", (event) => event.preventDefault());
+		box.replaceWith(form);
+		form.append(box);
+		input.setAttribute("autocomplete", "off");
+		if (!input.name) input.name = "q";
+	}
+}
+searchForms(document);
 // A form's values as the dialogs read them: FormData reads what a field holds, which for a password is only its dots
 function formValues(form) {
 	const data = Object.fromEntries(new FormData(form));
@@ -529,7 +614,216 @@ document.addEventListener("focusin", (event) => {
 	for (const name of ["data-1p-ignore", "data-lpignore", "data-bwignore", "data-form-type"]) input.setAttribute(name, name === "data-form-type" ? "other" : "true");
 });
 
+// On a master, the server the page works on (phase 13): "" is the master itself, else one of its members, whose own
+// admin answers every call but those that are the master's (its users, the user's own profile, Cloudflare). Kept for
+// the tab, so a reload stays where it was
+let serverContext = "";
+try { serverContext = sessionStorage.getItem("vns-server") || ""; } catch (error) { /* none */ }
+// The server an administrator chose at the top, for Settings (Health, Usage, Apache …), which are one server's each.
+// Web Server and SQL Server are every server's at once, each site and connection worked on where it is
+let pickedServer = serverContext;
+// Every server's sites and connections in one list: a master's, an administrator all its members, a user those given
+const joinedMembers = () => currentUser?.members || [];
+// Where the servers are named: an administrator always; a user who may make sites on two or more, so they choose and
+// see what is where (one with less sees one Harbor, no server named)
+const namesServers = () => Boolean(currentUser?.admin) || (currentUser?.create_on || []).length > 1;
+// Cloudflare's own (/api/dns/…) is the master's; a name's DNS checked for a site (/api/dns?name=) is the server's own
+const MASTER_PATHS = ["/api/me", "/api/master/", "/api/via/", "/api/users", "/api/user-templates", "/api/dns/", "/api/profile", "/api/preferences",
+	"/api/sign-in", "/api/your-address"];
+// The SQL connection and engine chosen, kept a server each: one of a member's is not this server's
+// A user's are one list, kept as one: their connections on every server are theirs alike
+const sqlKey = (part, server = "") => `vns-sql-${part}` + (server ? `@${server}` : "");
+// A user's site on a member, from where the page is this server's (the list of sites): the server it is on
+const userServerOf = (site) => joinedMembers().length && !serverContext && site
+	? allSites.find((item) => item.name === String(site).split("@")[0])?.harbor_server || "" : "";
+// The host of the server the page works on: this one's (the address in the browser), or a member's own admin, so names
+// suggested and the commands given are that server's, not the master's
+const pageHost = () => (serverContext && currentUser?.member_hosts?.[serverContext]) || location.hostname;
+// A master's own Settings list every member's in one panel (Usage, Convert DB, Export Site): a section a member, marked
+// data-harbor-server. What is done in one (a click, a key, a dialog opened from it, a task started there) goes to that
+// member, as if its own Settings were open
+let actionServer = "";
+const ACTION_PATHS = ["/api/usage/limit", "/api/usage/room/", "/api/usage/site/", "/api/convert", "/api/exports", "/api/sql/", "/api/sites/", "/api/site-fs/", "/api/term"];
+function trackActionServer(event) {
+	const target = event.target instanceof Element ? event.target : null;
+	const holder = target?.closest("[data-harbor-server]");
+	if (holder) { actionServer = holder.dataset.harborServer; return; }
+	const dialog = target?.closest("dialog");
+	if (dialog) { actionServer = dialog.dataset.harborServer || ""; return; }
+	actionServer = "";
+}
+document.addEventListener("pointerdown", trackActionServer, true);
+document.addEventListener("keydown", trackActionServer, true);
+// A dialog opened from a member's section is that member's too, until it closes
+{
+	const showModal = HTMLDialogElement.prototype.showModal;
+	HTMLDialogElement.prototype.showModal = function () {
+		this.dataset.harborServer = actionServer;
+		return showModal.call(this);
+	};
+}
+// A path of the admin's API on a member, from the master's page: as its own page would ask it
+const viaPath = (server, url) => server ? `/api/via/${encodeURIComponent(server)}/${url.slice(5)}` : url;
+function apiPath(url, options = {}) {
+	// Done in a member's section of the master's own Settings: to that member (a task's start, not the processes' poll)
+	if (!serverContext && actionServer && typeof url === "string" && ACTION_PATHS.some((path) => url.startsWith(path))
+		&& !(url.startsWith("/api/term") && (options.method || (options.json !== undefined ? "POST" : "GET")) === "GET")) {
+		return viaPath(actionServer, url);
+	}
+	// A call about one of a user's sites goes to the server it is on, wherever the page is
+	const named = typeof url === "string" && url.match(/^\/api\/(?:sites|site-fs)\/([^/?]+)/);
+	const siteServer = named ? userServerOf(decodeURIComponent(named[1])) : "";
+	if (siteServer) return `/api/via/${encodeURIComponent(siteServer)}/${url.slice(5)}`;
+	if (!serverContext || typeof url !== "string" || !url.startsWith("/api/") || MASTER_PATHS.some((path) => url === path || url.startsWith(path + (path.endsWith("/") ? "" : "/")) || url.startsWith(path + "?"))) return url;
+	return `/api/via/${encodeURIComponent(serverContext)}/${url.slice(5)}`;
+}
+// The member chosen: the page goes on, on it, without a reload. What it had of the server before is let go and read
+// again there: its sites, SQL connections, addresses, version and menu
+const PAGE_AS_LOADED = { title: document.title, hostname: document.querySelector("meta[name=server-hostname]")?.content || "",
+	heading: document.querySelector(".server-page-title h2")?.textContent || "",
+	tools: ["#server-tab-convert", "#server-tab-export", "#server-group-sites"].map((selector) => [selector, document.querySelector(selector)?.hidden]) };
+async function chooseServer(name, hash = "#sites", after = null) {
+	pickedServer = name || "";
+	// While the other server is read, only that it is opened: none of the pages' empty states on the way
+	const opening = loadingState(name ? `Opening ${name}…` : "Opening this server…");
+	opening.classList.add("server-opening");
+	$("main").prepend(opening);
+	document.body.classList.add("switching-server");
+	try { name ? sessionStorage.setItem("vns-server", name) : sessionStorage.removeItem("vns-server"); } catch (error) { /* none */ }
+	serverContext = name || "";
+	allSites = [];
+	sitesLoaded = false;
+	sqlConnections = [];
+	memberMenu = null;
+	serverAddress = null;
+	// Server tools were the other server's: read again, never shown from what that one had
+	toolsDrawn = false;
+	delete $("#server-ips").dataset.key;
+	document.body.classList.toggle("on-member", Boolean(serverContext));
+	$("#server-picker")?.remove();
+	if (!serverContext) {
+		document.title = PAGE_AS_LOADED.title;
+		$("meta[name=server-hostname]")?.setAttribute("content", PAGE_AS_LOADED.hostname);
+		if ($(".server-page-title h2")) $(".server-page-title h2").textContent = PAGE_AS_LOADED.heading;
+		for (const [selector, hidden] of PAGE_AS_LOADED.tools) if ($(selector)) $(selector).hidden = hidden;
+	}
+	$("#view-sites").classList.remove("only-members");
+	$("#view-sql").classList.remove("only-members");
+	// The master's lists of its members are its own: not on a member's pages
+	$("#member-sites").hidden = $("#member-sql").hidden = Boolean(serverContext);
+	// What the SQL page and the sites showed was the other server's: gone at once, so it never stands under this one,
+	// also when this one does not answer
+	for (const id of ["sql-heading", "sql-engine", "sql-connection-bar", "sql-tools-required", "sql-no-connections", "sql-tabs", "sql-filter-box",
+		"sql-databases-panel", "sql-backups-panel", "sql-logins-panel"]) $("#" + id).hidden = true;
+	$("#sql-status").textContent = "";
+	$("#sql-status").hidden = true;
+	// Its connections were the other server's: none chosen here until this one's are read, its own choice then
+	$("#sql-connection").replaceChildren(el("option", { value: "", textContent: "Choose a connection..." }));
+	$("#sql-connection").value = "";
+	try { sqlEngine = localStorage.getItem(sqlKey("engine")) || ""; } catch (error) { sqlEngine = ""; }
+	$("#sites").replaceChildren();
+	$("#site-attention").hidden = true;
+	if (location.hash !== hash) history.pushState(null, "", hash);
+	try {
+		await run(async () => {
+			await loadSites();
+			await route();
+			checkSystemUpdate(false).catch(() => {});
+		});
+	} finally {
+		opening.remove();
+		document.body.classList.remove("switching-server");
+	}
+	// What was asked for there, once its page is drawn (a new database, from the master's list)
+	if (after) after();
+}
+
 async function api(url, options = {}) {
+	// Who they are on a member: what they may there is that member's (as the master sent them), who they are and the
+	// servers they have the master's
+	if (url === "/api/me") {
+		const mine = await apiCall("/api/me", options);
+		currentUser = { ...currentUser, members: mine.members };
+		// An administrator on a member (chosen at the top): what that member says, who they are the master's
+		if (mine.admin && serverContext) {
+			const there = await apiCall(`/api/via/${encodeURIComponent(serverContext)}/me`, {});
+			return { ...there, id: mine.id, username: mine.username, name: mine.name, master: mine.master, members: mine.members, member_hosts: mine.member_hosts,
+				// The member's own: it is a member (Servers there makes no members)
+				member_of: there.member_of,
+				header: mine.header, dns: mine.dns, dns_account: mine.dns_account, dns_domains: mine.dns_domains, cloudflare_parts: mine.cloudflare_parts };
+		}
+		return mine.admin ? mine : userEverywhere(mine);
+	}
+	return apiCall(url, options);
+}
+// A user given access on a master's members sees one Harbor: what they may on each member is joined to what they may
+// here (the sites and SQL connections of each as their own), and they never choose a server
+async function userEverywhere(mine) {
+	const members = mine.members || [];
+	if (!members.length) return mine;
+	const found = await Promise.all(members.map((name) => apiCall(`/api/via/${encodeURIComponent(name)}/me`, {}).catch(() => null)));
+	const joined = { ...mine, sites: { ...(mine.sites || {}) }, connections: { ...(mine.connections || {}) }, create_on: [], env_hosts: [] };
+	found.forEach((there, index) => {
+		if (!there) return;
+		// Where they may make sites: a new site is made on the first of them, its name never shown to them
+		// Where their environments may be made
+		if (there.create_envs) joined.env_hosts = [...(joined.env_hosts || []), members[index]];
+		if (there.create_sites) {
+			joined.create_on.push(members[index]);
+			if (!joined.create_sites) joined.temp_domains = there.temp_domains || [];
+			joined.create_sites = true;
+		}
+		joined.web = joined.web || there.web;
+		joined.sql = joined.sql || there.sql;
+		Object.assign(joined.sites, there.sites || {});
+		Object.assign(joined.connections, there.connections || {});
+		joined.connection_engines = [...new Set([...(joined.connection_engines || []), ...(there.connection_engines || [])])];
+		joined.menu = { web: Boolean(joined.web), sql: Boolean(joined.sql) };
+	});
+	return joined;
+}
+// A member's environments managed from a main site in the list: shown under that site, not as sites of their own
+let managedElsewhere = new Set();
+// On a master's own Settings: the panels that are every member's (Usage, Convert DB, Export Site)
+const masterSettings = () => Boolean(currentUser?.master) && !serverContext && !pickedServer;
+// Such a panel, a section a member: its name over its own part, drawn by the panel for that member (open(name, into));
+// how many each has summed into the count beside the panel's title
+async function openOnMembers(list, count, open) {
+	const members = joinedMembers();
+	list.setAttribute("aria-busy", "true");
+	// The sections already there are kept when they are the same members, so reading again does not jump
+	const shown = [...list.querySelectorAll(":scope > .member-pane")];
+	const same = shown.length === members.length && shown.every((section, index) => section.dataset.harborServer === members[index]);
+	const parts = same ? shown.map((section) => section.querySelector(".member-pane-list")) : members.map(() => el("div", { className: list.className + " member-pane-list" }));
+	const sections = same ? shown : members.map((name, index) => el("section", { className: "member-pane", "data-harbor-server": name },
+		el("div", { className: "site-server-head" }, el("span", { className: "site-server-icon" }, svgIcon("server")), el("strong", { textContent: name })), parts[index]));
+	// Read the first time: one ring for all of them, and each member's part shown once every one has answered (not a
+	// head and a ring a member, each then left out or filled as it answers)
+	if (!same) {
+		for (const part of parts) part.replaceChildren(el("span"));
+		list.replaceChildren(loadingState(`Asking ${members.join(", ")}…`));
+	}
+	try {
+		await Promise.all(members.map((name, index) => open(name, parts[index]).catch((error) => parts[index].replaceChildren(el("p", { className: "muted", textContent: error.message })))));
+	} finally {
+		if (!same) list.replaceChildren(...sections);
+		list.removeAttribute("aria-busy");
+	}
+	// A member with nothing to show is left out; with nothing on any, the first one's empty state alone, with no server
+	const empty = parts.map((part) => part.dataset.count === "0");
+	sections.forEach((section, index) => { section.hidden = empty[index]; section.classList.remove("only-empty"); });
+	if (sections.length && empty.every(Boolean)) {
+		sections[0].hidden = false;
+		sections[0].classList.add("only-empty");
+	}
+	if (count) {
+		const total = parts.reduce((all, part) => all + (Number(part.dataset.count) || 0), 0);
+		$(count).textContent = total ? String(total) : "";
+	}
+	return parts;
+}
+async function apiCall(url, options = {}) {
+	url = apiPath(url, options);
 	options.headers = Object.assign({ "X-CSRF-Token": csrf }, options.headers || {});
 	if (options.json !== undefined) {
 		options.method = options.method || "POST";
@@ -545,6 +839,8 @@ async function api(url, options = {}) {
 	// Apache answers 502 or 503 itself while the admin site starts (after an update): no JSON of its own
 	if ((response.status === 502 || response.status === 503) && !data.error) throw new Error("The admin site is starting. Try again in a moment.");
 	if (!response.ok) throw new Error(data.error || response.statusText);
+	// Saved on the master, but a member did not take it
+	if (data.members_error) toast(`Saved here; not sent to ${data.members_error}`, "error");
 	return data;
 }
 
@@ -776,6 +1072,7 @@ const views = ["sites", "site", "sql", "server", "dns"];
 
 function showView(name) {
 	currentView = name;
+
 	// The site search belongs to the sites: it is hidden on the SQL page
 	document.body.dataset.view = name;
 	// The switch in the header shows which of the two sections is open
@@ -793,7 +1090,28 @@ function showView(name) {
 }
 
 // Hash routes: #sites, #site/<name>, #files/<path>
+// A user's page works on the server what it shows is on: a site's own (its server, kept with it in the list), the SQL
+// connection chosen; anything else is this one. An administrator chooses at the top instead
+function userContext() {
+	if (!joinedMembers().length) return;
+	const hash = decodeURIComponent(location.hash.slice(1));
+	const [view, ...rest] = hash.split("/");
+	// An administrator's Settings, files and terminal are the server chosen at the top
+	if (currentUser.admin && !["", "sites", "site", "sql", "dns"].includes(view)) { serverContext = pickedServer; markServer(); return; }
+	const name = rest.join("/");
+	if (view === "site") serverContext = allSites.find((site) => site.name === name)?.harbor_server || "";
+	else if (view === "sql") serverContext = sqlConnections.find((item) => item.id === $("#sql-connection").value)?.harbor_server || "";
+	else serverContext = "";
+	markServer();
+}
+// What the page shows of the server it is on, once it knows: a master's own Settings host nothing (no software), a
+// member's chosen at the top have it, and the master's own settings are not shown as the member's
+function markServer() {
+	document.body.classList.toggle("is-master", Boolean(currentUser.master) && !serverContext);
+	document.body.classList.toggle("on-member", Boolean(serverContext) && Boolean(currentUser.admin) && serverContext === pickedServer);
+}
 async function route() {
+	userContext();
 	// A user goes to the part they have: SQL Server without the Web Server, and the other way round
 	const wantsSql = location.hash.startsWith("#sql") || (!location.hash && startView === "sql");
 	// With neither, the sites view tells them who gives access
@@ -810,6 +1128,11 @@ async function route() {
 	const slash = hash.indexOf("/");
 	const view = slash < 0 ? hash : hash.slice(0, slash);
 	const arg = slash < 0 ? "" : hash.slice(slash + 1);
+	// The server chosen in Settings is Settings' alone: leaving them (Web Server, SQL Server, a site) is the master's
+	// page again, its addresses, Files and Terminal too; Settings then open on this server. Its admin site, opened from
+	// its Settings, and its files are still that server's
+	const inSettings = view === "server" || view === "files" || view === "remote-files" || (view === "site" && allSites.find((site) => site.name === arg)?.admin);
+	if (pickedServer && !inSettings) return chooseServer("", location.hash || "#sites");
 	if (editorDialog.open && !(await discardOk())) {
 		history.replaceState(null, "", currentView === "site" ? siteLink($("#site-head h2").textContent) : "#sites");
 		return;
@@ -884,7 +1207,8 @@ function showSiteBack() {
 window.addEventListener("hashchange", route);
 const go = (hash) => { location.hash = hash; };
 const siteLink = (name) => "#site/" + encodeURIComponent(name);
-const fsUrl = (action) => remoteFilesSite ? "/api/remote-fs/" + encodeURIComponent(remoteFilesSite) + "/" + action : (serverFiles ? "/api/server-fs/" : "/api/site-fs/" + localFilesRoot.split("/").map(encodeURIComponent).join("/") + "/") + action;
+const fsUrl = (action) => apiPath(fsUrlHere(action));
+const fsUrlHere = (action) => remoteFilesSite ? "/api/remote-fs/" + encodeURIComponent(remoteFilesSite) + "/" + action : (serverFiles ? "/api/server-fs/" : "/api/site-fs/" + localFilesRoot.split("/").map(encodeURIComponent).join("/") + "/") + action;
 
 // ------------------------------------------------------------------ sites
 
@@ -951,8 +1275,23 @@ function monitorUpdateCheck(state) {
 async function loadSites() {
 	// What the user may do can have changed since the page opened: it is fetched again with the sites
 	try { currentUser = await api("/api/me"); accessSnapshot = JSON.stringify(currentUser); applyAccess(); } catch (error) { /* the page goes on with what it had */ }
+	// A user's sites are those given on this server and on each member, in one list: each knows where it is
+	const userMembers = joinedMembers();
+	if (userMembers.length) serverContext = "";
 	const data = await api("/api/sites");
-	allSites = data.sites;
+	allSites = data.sites || [];
+	if (userMembers.length) {
+		const found = await Promise.all(userMembers.map((name) => api(`/api/via/${encodeURIComponent(name)}/sites`).then((there) => ({ name, sites: there.sites || [] })).catch(() => ({ name, sites: [] }))));
+		// A member's own admin site too (never listed with the sites): Settings' Admin site shows it on that member
+		for (const { name, sites } of found) allSites.push(...sites.filter((site) => !site.admin || currentUser.admin).map((site) => ({ ...site, harbor_server: name })));
+		// An environment managed from a main site in the list is that site's (shown under it there): not a site of its own
+		const named = new Set(allSites.map((site) => site.name));
+		const managed = allSites.filter((site) => site.harbor_server && site.managed_by?.site && named.has(site.managed_by.site));
+		// By its server and name: the environment may have the name of its main site
+		managedElsewhere = new Set(managed.map((site) => `${site.harbor_server}|${site.name}`));
+		allSites = allSites.filter((site) => !managedElsewhere.has(`${site.harbor_server || ""}|${site.name}`));
+		userContext();
+	}
 	sitesLoaded = true;
 	if (data.update_check) monitorUpdateCheck(data.update_check);
 	// The admin site, from Settings: its own page (who can reach it, its certificate and service)
@@ -967,40 +1306,57 @@ async function loadSites() {
 	// What keep-alive finds wrong now, for Needs attention and each card's state (an administrator's view)
 	if (currentUser.admin) {
 		keepAliveProblems = await api("/api/keep-alive/log").then((log) => log.problems || []).catch(() => []);
+		// On the master: each member's too, each said by its server (a member that does not answer is left out)
+		if (onMasterItself()) {
+			const found = await Promise.all(joinedMembers().map((server) => api(viaPath(server, "/api/keep-alive/log"))
+				.then((log) => (log.problems || []).map((problem) => ({ ...problem, server }))).catch(() => [])));
+			keepAliveProblems = [...keepAliveProblems, ...found.flat()];
+			await refreshUsageOver(true).catch(() => {});
+		}
 	}
 	renderSites();
 	if (currentView === "site") renderSite(decodeURIComponent(location.hash.slice(6)));
 	if (currentView === "sql") await refreshSql();
-	// A master's members are asked over SSH: behind the page's own sites, so these are not kept waiting
-	if (currentUser.master) loadMemberSites();
+	// A master's members' sites are in the list itself, each under its server
 }
 // A master's members and their sites (phase 13): null until asked, then [{server, admin, reachable, error, sites}]
-let memberSites = null;
+let memberSites = [];
 let memberSitesAsked = null;
 async function loadMemberSites() {
 	if (memberSitesAsked) return memberSitesAsked;
 	memberSitesAsked = api("/api/master/sites").then((data) => { memberSites = data.members; })
 		.catch((error) => { memberSites = [{ server: "Members", reachable: false, error: error.message, sites: [] }]; })
-		.finally(() => { memberSitesAsked = null; renderMemberSites(); });
+		.finally(() => { memberSitesAsked = null; renderSites(); });
 	return memberSitesAsked;
 }
 // Each member's sites under this server's, a group a server: a line a site, opened in that server's own admin, where
 // what is done to it is done by its own Harbor. The search above finds them too
 function renderMemberSites() {
 	const box = $("#member-sites");
-	box.hidden = !currentUser?.master || !memberSites;
+	if (!currentUser?.master || serverContext) $("#view-sites").classList.remove("only-members");
+	if (memberSitesWaiting()) {
+		box.hidden = false;
+		box.replaceChildren(askingMembers());
+		$("#no-sites").hidden = true;
+		return;
+	}
+	box.hidden = !currentUser?.master || !memberSites || Boolean(serverContext);
 	if (box.hidden) return;
 	let shown = 0;
+	// A member's own admin site is never one of its sites here, as this server's is not
+	for (const member of memberSites) member.sites = member.sites.filter((site) => !site.admin);
 	// A member with no sites may be a SQL server only (its connections come on the master's SQL page): not listed here
-	box.replaceChildren(...memberSites.filter((member) => !member.reachable || member.sites.length).map((member) => {
+	const groups = memberSites.filter((member) => !member.reachable || member.sites.length);
+	// As the SQL page has its members' databases: a head, then a group a member, its icon, its name and how many
+	box.replaceChildren(...(groups.length ? [el("div", { className: "member-sql-head" }, el("strong", { textContent: "On the members" }),
+		el("small", { textContent: "Each site opens on its server, as if you were there" }))] : []),
+	...groups.map((member) => {
 		const sites = member.sites.filter(matchesQuery).sort((a, b) => siteLabel(a).localeCompare(siteLabel(b), undefined, { numeric: true, sensitivity: "base" }));
 		shown += sites.length;
 		const head = el("div", { className: "member-head" },
-			el("span", { className: "member-icon" + (member.reachable ? "" : " bad") }, svgIcon("server")),
-			el("div", { className: "member-title" }, el("strong", {}, member.server, el("span", { className: "member-count", textContent: String(member.sites.length) })),
-				el("small", { textContent: member.reachable ? `${member.host} · its own Harbor acts on its sites` : member.error || "Not reachable" })),
-			...(member.reachable && member.admin ? [el("a", { className: "button-link tool-open-admin", href: `${member.admin}/`, target: "_blank", rel: "noopener noreferrer",
-				title: `The admin of ${member.server}, in a new tab` }, svgIcon("external"), "Open admin")] : []));
+			el("span", { className: "member-icon" + (member.reachable ? "" : " bad") }, svgIcon("globe")),
+			el("div", { className: "member-title" }, member.reachable ? memberName(member.server, "#sites") : el("strong", { textContent: member.server }),
+				el("small", { textContent: member.reachable ? `${member.sites.length} site${member.sites.length === 1 ? "" : "s"}` : member.error || "Not reachable" })));
 		const line = (site) => {
 			const state = siteState(site);
 			const envs = [...site.environments].sort((a, b) => environmentRank(a) - environmentRank(b));
@@ -1008,16 +1364,18 @@ function renderMemberSites() {
 				el("span", { className: "member-site-name" }, el("strong", { textContent: siteLabel(site) }), el("small", { textContent: bindingLabel(envs[0] || {}) || site.name })),
 				el("span", { className: "member-envs" }, ...envs.map((env) => el("span", { className: "badge usage-kind env-" + String(env.environment || "").toLowerCase(),
 					title: `${bindingLabel(env) || site.name}${env.host ? " @ " + env.host : ""}`, textContent: env.environment || (env.key === "main" ? "Main" : env.target) }))),
-				...(member.admin ? [svgIcon("external")] : [])];
-			return member.admin ? el("a", { className: "member-site", href: `${member.admin}/${siteLink(site.name)}`, target: "_blank", rel: "noopener noreferrer",
-				title: `${siteLabel(site)} in the admin of ${member.server}` }, ...body) : el("div", { className: "member-site" }, ...body);
+				svgIcon("arrow-right")];
+			return el("a", { className: "member-site", href: siteLink(site.name), title: `${siteLabel(site)} on ${member.server}`,
+				onclick: (event) => { event.preventDefault(); chooseServer(member.server, siteLink(site.name)); } }, ...body);
 		};
 		return el("section", { className: "member-group" }, head,
 			...(sites.length ? [el("div", { className: "member-list" }, ...sites.map(line))]
 				: member.reachable ? [el("p", { className: "muted member-none", textContent: "None that matches the search." })] : []));
 	}));
-	// Sites on the members: the page is not empty, though this server has none of its own
-	if (shown) $("#no-sites").hidden = true;
+	// Sites on the members: the page is not empty, though this server has none of its own; none there either, it is
+	$("#no-sites").hidden = shown > 0 || overviewSites().filter(matches).length > 0;
+	// Only the members' sites (none of this server's own): they stand at the top, where the SQL page has its members'
+	$("#view-sites").classList.toggle("only-members", shown > 0 && !listedSites().length);
 }
 
 // A site is running when any of its services is; sites without a service are static
@@ -1299,7 +1657,9 @@ for (const layout of ["grid", "list"]) {
 }
 
 function renderSites() {
-	const siteCount = listedSites().length;
+	// On a master, its members' sites are found by the search too
+	const memberCount = currentUser?.master && !serverContext ? (memberSites || []).reduce((all, member) => all + member.sites.filter((site) => !site.admin).length, 0) : 0;
+	const siteCount = listedSites().length + memberCount;
 	// One site needs no search or filter; an administrator can also take the search out of their header (Settings, Top
 	// menu), which leaves the filters as they are
 	const hideSearch = siteCount <= 1 || currentUser.header?.search === false;
@@ -1335,11 +1695,27 @@ function renderSites() {
 		$("#empty-sites-description").textContent = "An administrator gives you access to the sites you work on.";
 	}
 	renderSiteAttention(visible);
-	for (const site of visible) box.append(siteCard(site));
+	// An administrator's sites on every server: a group a server, its name over its sites (a user sees none of that)
+	const servers = namesServers() ? joinedMembers() : [];
+	box.classList.toggle("grouped", servers.length > 0);
+	if (servers.length) {
+		// A section a server: its name, then a grid of its own sites (the rows of one grid are each as tall as a card)
+		for (const server of ["", ...servers]) {
+			const here = visible.filter((site) => (site.harbor_server || "") === server);
+			if (!here.length) continue;
+			box.append(el("section", { className: "site-server-group" },
+				el("div", { className: "site-server-head" }, el("span", { className: "site-server-icon" }, svgIcon("server")),
+					el("strong", { textContent: server || "This server" }), el("span", { className: "site-server-count", textContent: String(here.length) })),
+				el("div", { className: "cards" + (siteLayout === "list" ? " list" : "") }, ...here.map(siteCard))));
+		}
+	} else for (const site of visible) box.append(siteCard(site));
 	updateSiteActivity();
 	renderCardUpdateChecks();
 	decorate(box);
 	renderMemberSites();
+	// The search has the focus on Web Server, once it is shown: not taken from a field or button that has it
+	if (currentView === "sites" && !$("#search").hidden && $("#dock").hidden && (document.activeElement === document.body || !document.activeElement)
+		&& !document.querySelector("dialog[open]")) $("#search").focus({ preventScroll: true });
 }
 
 function updateSiteActivity() {
@@ -1386,7 +1762,7 @@ function backofficeLogin(link, site, env, url) {
 		// Opened at once, so the browser does not take it for a popup
 		const opened = window.open("about:blank", "_blank");
 		const target = isTarget(env) ? env.target : "main";
-		fetch(`/api/sites/${encodeURIComponent(site.name)}/backoffice-login?target=${encodeURIComponent(target)}`, { headers: { Accept: "application/json" } })
+		fetch(apiPath(`/api/sites/${encodeURIComponent(site.name)}/backoffice-login?target=${encodeURIComponent(target)}`), { headers: { Accept: "application/json" } })
 			.then((response) => response.ok ? response.json() : { url: null })
 			.catch(() => ({ url: null }))
 			.then((data) => {
@@ -1585,7 +1961,9 @@ function problemEnvironment(site, name) {
 // environment gone from its server. A certificate soon is a warning; the rest is wrong.
 function siteProblems(site) {
 	const found = [];
-	for (const problem of keepAliveProblems) {
+	// Each server's problems are of its own sites: a site of the same name on another is not meant
+	const here = (item) => (item.server || "") === (site.harbor_server || "");
+	for (const problem of keepAliveProblems.filter(here)) {
 		const env = problemEnvironment(site, problem.name);
 		if (!env) continue;
 		found.push({ env, tone: problem.check === "certificate_soon" ? "warn" : "bad", why: `${KEEP_ALIVE_WORDS[problem.check] || problem.check}: ${problem.message}`,
@@ -1593,8 +1971,9 @@ function siteProblems(site) {
 	}
 	// Past a size limit (Usage): the site's, an environment's, or its user's
 	// A part past its own share is what is wrong: the site past its limit then is not said as well
-	const partOver = (currentUser.usage_over || []).some((item) => item.kind === "environment" && item.site === site.name);
-	for (const item of currentUser.usage_over || []) {
+	const overHere = (currentUser.usage_over || []).filter(here);
+	const partOver = overHere.some((item) => item.kind === "environment" && item.site === site.name);
+	for (const item of overHere) {
 		if (partOver && item.kind === "site" && item.name === site.name) continue;
 		const env = item.kind === "site" && item.name === site.name ? site.environments.find((other) => !isTarget(other))
 			: item.kind === "environment" && item.site === site.name ? site.environments.find((other) => envKeyOf(other) === item.target) : null;
@@ -1620,7 +1999,7 @@ function renderSiteAttention(sites) {
 		...rows.slice(0, 8).map((row) => {
 			const label = environmentLabel(row.site, row.env);
 			const open = () => { siteEnvFocus = { site: row.site.name, env: envKeyOf(row.env) }; go(siteLink(row.site.name)); };
-			return el("div", { className: "site-attention-row " + row.tone },
+			return el("div", { className: "site-attention-row " + row.tone, ...(row.site.harbor_server ? { "data-harbor-server": row.site.harbor_server } : {}) },
 				el("i", { className: "site-attention-dot" }),
 				el("strong", { className: "site-attention-site", textContent: siteTitle(row.site), title: row.site.name }),
 				el("span", { className: "badge env-" + label.toLowerCase(), textContent: label }),
@@ -2925,6 +3304,17 @@ function needsServer(card, needed, kind = "linux", after = null) {
 }
 // Add environment offers a Linux or Windows server when Servers has one; else its card says where to add one
 function offerProdTarget(target, count) {
+	// One other Linux server: its card is that server (its name beside This server), with no list of one under it
+	if (target === "remote") {
+		const card = $("#prod-target-row").querySelector("input[value=remote]")?.closest("label");
+		const title = card?.querySelector(".tc-title");
+		if (title) {
+			if (title.dataset.text === undefined) title.dataset.text = title.textContent;
+			const only = count === 1 ? keptServers.find((item) => item.kind === "linux") : null;
+			title.textContent = only ? only.name : title.dataset.text;
+		}
+		$("#dlg-prod").classList.toggle("one-remote", count === 1);
+	}
 	needsServer($("#prod-target-row").querySelector(`input[value=${target}]`)?.closest("label"), !count, target === "windows" ? "windows" : "linux", async (name) => {
 		// Added: the card is a card again, chosen, with the new server in its list
 		await refreshServerPickers();
@@ -3456,7 +3846,7 @@ $("#settings-windows-import").onclick = () => {
 		renderWindowsImported(result.imported);
 		// Under the name this page is reached by (admin.<name>), which reaches this server now, also while it borrows
 		// another server's address; else its own full name
-		const reached = location.hostname.replace(/^admin\./, "");
+		const reached = pageHost().replace(/^admin\./, "");
 		suggestAlias(windowsForm.elements.alias, /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(reached) && !/^[0-9.]+$/.test(reached) ? reached.toLowerCase() : result.name);
 		fillWindowsServers(result.servers);
 		showWindowsLogin();
@@ -4016,7 +4406,43 @@ $("#setup-site-dns").replaceChildren(dnsCard($("#form-setup-site").binding, { on
 // The binding's message is about the certificate choice as well: any change clears it, or the browser keeps
 // refusing the form before it is checked again
 for (const type of ["input", "change"]) siteForm.addEventListener(type, () => siteForm.binding.setCustomValidity(""));
-$("#btn-new-site").onclick = () => { siteForm.reset(); siteForm.elements.template.setCustomValidity(""); siteForm.binding.setCustomValidity(""); delete siteForm.binding.dataset.edited; delete siteForm.elements.publish.dataset.edited; tempDomain = null; showTempDomains(); syncSiteForm(); limitFieldIn(siteForm, "Size limit of the site"); siteForm.limitNote.textContent = "Optional. The site and every environment it gets later, wherever they run. Past it, it shows in Usage and is mailed with the usage alerts. Changed later under Settings, Usage."; dialog.showModal(); siteForm.site.focus(); };
+$("#btn-new-site").onclick = () => { showSiteServerChoice(); siteForm.reset(); siteForm.elements.template.setCustomValidity(""); siteForm.binding.setCustomValidity(""); delete siteForm.binding.dataset.edited; delete siteForm.elements.publish.dataset.edited; tempDomain = null; showTempDomains(); syncSiteForm(); limitFieldIn(siteForm, "Size limit of the site"); siteForm.limitNote.textContent = "Optional. The site and every environment it gets later, wherever they run. Past it, it shows in Usage and is mailed with the usage alerts. Changed later under Settings, Usage."; dialog.showModal(); siteForm.site.focus(); };
+// On a master, which hosts nothing itself: New site is made on a member, chosen as the dialog's first thing (its
+// templates and the rest read from it); the page goes on as every server's once the dialog closes
+function chooseSiteServer(name) {
+	serverContext = name;
+	templateRequest = null;
+	dotnetTemplates = [];
+	templatesLoaded = false;
+	// As the form's default too: the dialog's own reset as it opens keeps it
+	for (const input of $("#site-server-choice").querySelectorAll("input")) input.checked = input.defaultChecked = input.value === name;
+	// The templates offered are that server's
+	if (siteForm.type.value === "csharp") loadDotnetTemplates().catch(() => {});
+}
+let siteServerChosen = false;
+function showSiteServerChoice() {
+	const box = $("#site-server-choice");
+	siteServerChosen = false;
+	// A user's site is made on the server they may make sites on: no server is named to them, unless they may on more
+	if (!currentUser.admin && (currentUser.create_on || []).length === 1) {
+		box.hidden = true;
+		box.replaceChildren(el("input", { type: "radio", name: "site_server", value: currentUser.create_on[0], hidden: true }));
+		chooseSiteServer(currentUser.create_on[0]);
+		siteServerChosen = true;
+		return;
+	}
+	// An administrator's every member; a user's those they may make sites on
+	const members = currentUser.admin && currentUser.master ? joinedMembers() : !currentUser.admin ? currentUser.create_on || [] : [];
+	siteServerChosen = members.length > 0;
+	box.hidden = !members.length;
+	if (!members.length) return box.replaceChildren();
+	box.replaceChildren(el("div", { className: "ns-section", textContent: "Where does it run?" }),
+		el("div", { className: "type-cards site-server-cards" }, ...members.map((name) => el("label", { className: "type-card" },
+			el("input", { type: "radio", name: "site_server", value: name, onchange: () => chooseSiteServer(name) }),
+			el("span", { className: "tc-title" }, svgIcon("server"), name), el("span", { className: "tc-sub", textContent: "A member: the site is made there" })))));
+	chooseSiteServer(members[0]);
+}
+dialog.addEventListener("close", () => { if (siteServerChosen) userContext(); });
 $("#btn-new-site").addEventListener("click", () => {
 	siteHttps.reset();
 	siteDnsState = "empty";
@@ -4124,7 +4550,7 @@ siteForm.onsubmit = (event) => {
 // site (its app folder) or a static site (its files). Harbor puts it in place: harbor site receive-build here
 // (harbor/sites/receive_build.py)
 function localPublishScript({ site, binding, https, environment, kind = "csharp", system = "unix", access = "token", sshHost = "" }) {
-	const server = location.hostname.replace(/^admin\./, "");
+	const server = pageHost().replace(/^admin\./, "");
 	// SSH by the server's internal address, where it is usually open; its public name only when it has none
 	const ssh = sshHost || server;
 	const admin = location.origin;
@@ -4352,7 +4778,7 @@ function showLocalPublish(options) {
 // saves it where the script looks, or none. Without one the script uses SSH as root
 async function renderPublishToken(made = null) {
 	const box = $("#local-publish-token");
-	const server = location.hostname.replace(/^admin\./, "");
+	const server = pageHost().replace(/^admin\./, "");
 	const dialog = $("#dlg-local-publish");
 	if (made) shownPublishToken = made.token || null;
 	const info = made || await api("/api/publish-token").catch(() => ({ exists: false }));
@@ -4500,9 +4926,9 @@ function syncProdForm() {
 const serverWildcards = {};
 function onServer(name, server) {
 	// A wildcard on the server's own domain (*.kikayo.dk to it): the site's own part under it, umb18.kikayo.dk
-	const here = location.hostname.replace(/^admin\./, "").toLowerCase();
+	const here = pageHost().replace(/^admin\./, "").toLowerCase();
 	if (server?.wildcard && name.toLowerCase().endsWith("." + here)) return name.slice(0, -here.length) + server.wildcard;
-	const own = location.hostname.replace(/^admin\./, "").split(".")[0].toLowerCase();
+	const own = pageHost().replace(/^admin\./, "").split(".")[0].toLowerCase();
 	const other = String(server?.fqdn || server?.name || "").split(".")[0].toLowerCase();
 	if (!own || !other || own === other || !/^[a-z0-9-]+$/.test(other)) return name;
 	return name.replace(new RegExp(`(^|\\.)${own.replace(/[-]/g, "\\-")}(?=\\.|$)`, "i"), `$1${other}`);
@@ -4536,8 +4962,32 @@ function forgetProdSuggestion() {
 	for (const key of ["suggestedFolder", "suggestedBinding", "suggestedPath"]) delete prodForm.dataset[key];
 }
 function openCreateProdDialog(site, moveEnv, copying = false) {
-	refreshServerPickers();
+	// Another server (Linux or Windows) is an administrator's, as Servers is: a user's environment is on this server
+	// (where the site is), the only choice, so none is asked
+	// A master's user: another of the servers they may make sites on (not the one the site is on), as Linux servers
+	const siteServer = site?.harbor_server || serverContext;
+	const master = !currentUser.admin && (currentUser.members || []).length > 0;
+	const elsewhere = master && (currentUser.env_hosts || []).some((name) => name !== siteServer);
+	// Here: always for an administrator or a server's own user; a master's user where this server hosts their environments
+	const here = !master || (currentUser.env_hosts || []).includes(siteServer);
+	const anywhere = Boolean(currentUser.admin) || elsewhere;
+	if (anywhere) refreshServerPickers();
 	prodForm.reset();
+	const cardOf = (value) => $("#prod-target-row").querySelector(`input[value=${value}]`)?.closest("label");
+	if (cardOf("local")) { cardOf("local").hidden = !here; cardOf("local").querySelector("input").disabled = !here; }
+	if (cardOf("remote")) cardOf("remote").hidden = !anywhere;
+	if (cardOf("windows")) cardOf("windows").hidden = !currentUser.admin;
+	$("#prod-target-row").hidden = !anywhere || (!here && !currentUser.admin);
+	const where = $("#prod-target-row").previousElementSibling;
+	if (where?.classList.contains("ns-section")) {
+		where.hidden = $("#prod-target-row").hidden && !elsewhere;
+		where.classList.add("prod-where");
+	}
+	// A user with one place for it (this server, or one other) is not shown a server: it is made there
+	const places = (here ? 1 : 0) + (master ? (currentUser.env_hosts || []).filter((name) => name !== siteServer).length : 0);
+	$("#dlg-prod").classList.toggle("one-place", !currentUser.admin && places <= 1);
+	// Where on the server it is kept is an administrator's to change: a user's goes where Harbor puts it
+	$("#dlg-prod").classList.toggle("for-user", !currentUser.admin);
 	delete prodForm.dataset.httpsChoice;
 	delete prodForm.dataset.copy;
 	if (copying) prodForm.dataset.copy = "1";
@@ -4573,7 +5023,8 @@ function openCreateProdDialog(site, moveEnv, copying = false) {
 	prodForm.dataset.siteLabel = siteLabel(site);
 	prodForm.dataset.mainBinding = binding;
 	forgetProdSuggestion();
-	prodForm.elements.target.value = moveEnv?.mode === "remote" ? "same" : "local";
+	// Here, unless a master's user's environments are not hosted here: then the first server that hosts them
+	prodForm.elements.target.value = moveEnv?.mode === "remote" ? "same" : !here && elsewhere ? "remote" : "local";
 	setProdHttps(main && main.scheme === "http" ? "n" : "y");
 	prodMoveContext = moveEnv ? { site, moveEnv, binding } : null;
 	if (moveEnv) {
@@ -7007,7 +7458,8 @@ function activate(id) {
 
 function connectTerminal(t) {
 	const scheme = location.protocol === "https:" ? "wss://" : "ws://";
-	const ws = new WebSocket(`${scheme}${location.host}/ws/term/${t.id}`);
+	// One opened on a member is bridged by the master to that member's admin
+	const ws = new WebSocket(`${scheme}${location.host}${t.server ? `/ws/via/${encodeURIComponent(t.server)}` : "/ws"}/term/${t.id}`);
 	t.ws = ws;
 	ws.onopen = () => {
 		t.term.reset();
@@ -7070,7 +7522,7 @@ function openTerminal(id, title, autoClose, sites = [], running = true, scope = 
 	const fit = new FitAddon.FitAddon();
 	term.loadAddon(fit);
 	term.open(pane);
-	const t = { id, term, fit, pane, tab, title: titleNode, taskTitle: title, sites, scope, targets: targets || [], exited: !running, ws: null, autoClose: !!autoClose, remove: null,
+	const t = { id, term, fit, pane, tab, title: titleNode, taskTitle: title, sites, scope, targets: targets || [], exited: !running, ws: null, autoClose: !!autoClose, remove: null, server: serverContext,
 		steps: [], lastLine: "", taskState: running ? "running" : "done", started: Date.now(), taskWindow: false, outputOpen: false, keepOutput: !!keepOutput };
 	// Steps a harbor command reports: not shown in the terminal itself
 	term.parser.registerOscHandler(7777, (data) => {
@@ -7126,9 +7578,19 @@ function openTerminal(id, title, autoClose, sites = [], running = true, scope = 
 }
 
 async function openTask(payload) {
-	const data = await api("/api/term", { json: payload });
-	terminalInput[data.id] = data.input;
-	openTerminal(data.id, data.title, data.auto_close, data.sites, data.running, data.scope, data.targets, data.keep_output);
+	// A user's task on a site of a member's runs there, its window bridged from there
+	const before = serverContext;
+	// On a site of a member's (a user's list, every server's), or done in a member's section of the master's Settings
+	const server = userServerOf(payload?.site) || (!serverContext ? actionServer : "");
+	let data;
+	try {
+		if (server) serverContext = server;
+		data = await api("/api/term", { json: payload });
+		terminalInput[data.id] = data.input;
+		openTerminal(data.id, data.title, data.auto_close, data.sites, data.running, data.scope, data.targets, data.keep_output);
+	} finally {
+		serverContext = before;
+	}
 	// An action gets a window of its own; a shell, or a task that asks for input, stays a terminal
 	if (terminals[data.id] && data.process) {
 		const t = terminals[data.id];
@@ -7296,18 +7758,20 @@ function applySqlTab() {
 		button.setAttribute("aria-selected", String(button.dataset.tab === shown));
 	}
 	$("#sql-tabs").hidden = !ready.databases;
-	// The filter is an administrator's: a user has their own few
-	$("#sql-filter-box").hidden = !ready.databases || !currentUser.admin;
+	// The filter is an administrator's (a user has their own few), once there are more than three databases of their
+	// own to filter (system databases not counted); one typed in already stays, so it can be cleared
+	const many = Number($("#sql-databases-count").textContent) > 3;
+	$("#sql-filter-box").hidden = !ready.databases || !currentUser.admin || (!many && !$("#sql-filter").value);
 	for (const [tab, panel] of Object.entries(SQL_TABS)) $(panel).classList.toggle("tab-off", tab !== shown);
 	// Rows drawn again keep to the filter
 	applySqlFilter();
 }
 // The connection chosen last, also after a reload: the page opened on the first one and left the one being worked on
 function savedSqlConnection() {
-	try { return localStorage.getItem("vns-sql-connection") || ""; } catch (error) { return ""; }
+	try { return localStorage.getItem(sqlKey("connection")) || ""; } catch (error) { return ""; }
 }
 function saveSqlConnection(id) {
-	try { if (id) localStorage.setItem("vns-sql-connection", id); } catch (error) { /* none */ }
+	try { if (id) localStorage.setItem(sqlKey("connection"), id); } catch (error) { /* none */ }
 }
 // Who made something and who it is given to, for an administrator, in words: Made by …, Users: … (three at most, with
 // how many more; all of them in its title). One who made it and alone has it: Owner: …, one chip.
@@ -7360,12 +7824,114 @@ let sqlEngine = "";
 let sqlAfterAdd = null;
 // The connections of the engine worked with: all of them, when there is one engine
 let sqlShownConnections = [];
-try { sqlEngine = localStorage.getItem("vns-sql-engine") || ""; } catch (error) { /* none */ }
+try { sqlEngine = localStorage.getItem(sqlKey("engine")) || ""; } catch (error) { /* none */ }
+// A master's members and their SQL connections (phase 13): asked behind the page's own, a group a member, each
+// connection opened on its member, on the SQL page there
+let memberSql = [];
+let memberSqlAsked = null;
+function loadMemberSql() {
+	if (memberSqlAsked) return memberSqlAsked;
+	memberSqlAsked = api("/api/master/sql").then((data) => { memberSql = data.members; })
+		.catch((error) => { memberSql = [{ server: "Members", reachable: false, error: error.message, connections: [] }]; })
+		.finally(() => { memberSqlAsked = null; renderMemberSql(); });
+	return memberSqlAsked;
+}
+// A member's head: its page here, on that server (the same page: Web Server or SQL Server)
+// The member's name in its head is the way to it: a link that opens the same page there
+const memberName = (server, hash) => el("a", { className: "member-name", href: hash, title: `${server}, as if you were there`,
+	onclick: (event) => { event.preventDefault(); chooseServer(server, hash); } }, server, svgIcon("arrow-right"));
+// A master asking its members: until they answer, the page says so, not that there is nothing here
+const memberSqlWaiting = () => Boolean(currentUser?.master) && !serverContext && memberSql === null;
+const memberSitesWaiting = () => Boolean(currentUser?.master) && !serverContext && memberSites === null;
+// Harbor's own ring, as Settings has it while it waits for a server
+const askingMembers = () => loadingState("Asking the members…");
+const memberSqlShown = () => Boolean(currentUser?.master) && !serverContext && (memberSql || []).some((member) => member.connections.length);
+// Each member's databases, by connection: a line a database, opened on its member's SQL page with its connection chosen
+function renderMemberSql() {
+	const box = $("#member-sql");
+	// Not a master, or on a member: the page is that server's own, without the master's lists
+	if (!currentUser?.master || serverContext) {
+		box.hidden = true;
+		$("#view-sql").classList.remove("only-members");
+		return;
+	}
+	if (memberSqlShown()) $("#sql-tools-required").hidden = true;
+	// Only the members' databases (no SQL of this server's own): they alone, at the top, as Web Server has its members' sites
+	$("#view-sql").classList.toggle("only-members", memberSqlShown() && !sqlConnections.length && !sqlToolsAvailable);
+	if (memberSqlWaiting()) {
+		box.hidden = false;
+		box.replaceChildren(askingMembers());
+		return;
+	}
+	// The page's own empty states, now that the members have answered
+	$("#sql-no-connections").hidden = !sqlToolsAvailable || sqlConnections.length > 0 || memberSqlShown();
+	if (!memberSqlShown()) $("#sql-tools-required").hidden = sqlToolsAvailable;
+	// Only members with SQL (or that do not answer): a web server alone has none
+	const members = (memberSql || []).filter((member) => !member.reachable || member.connections.length);
+	box.hidden = !currentUser?.master || Boolean(serverContext) || !members.length;
+	if (box.hidden) return;
+	// The connection chosen there, then the page on that member; with create, its New database dialog at once
+	const open = (member, connection, create = false) => (event) => {
+		event?.preventDefault();
+		try { localStorage.setItem(sqlKey("connection", member.server), connection.id); localStorage.setItem(sqlKey("engine", member.server), connection.engine || "mssql"); } catch (error) { /* none */ }
+		chooseServer(member.server, "#sql", create ? () => $("#sql-create")?.click() : null);
+	};
+	const size = (mb) => mb == null ? "" : mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.round(mb * 10) / 10} MB`;
+	box.replaceChildren(el("div", { className: "member-sql-head" }, el("strong", { textContent: "On the members" }),
+		el("small", { textContent: "Each server's own SQL Server: a database opens there, as if you were there" })),
+	...members.map((member) => {
+		const count = member.connections.reduce((all, connection) => all + connection.databases.length, 0);
+		const engines = member.connections.map((connection) => ENGINE_NAMES[connection.engine || "mssql"]);
+		return el("section", { className: "member-group" },
+			el("div", { className: "member-head" },
+				el("span", { className: "member-icon" + (member.reachable ? "" : " bad") }, svgIcon("database")),
+				el("div", { className: "member-title" }, member.reachable ? memberName(member.server, "#sql") : el("strong", { textContent: member.server }),
+					el("small", { textContent: member.reachable ? `${engines.join(" · ")} · ${count} database${count === 1 ? "" : "s"}` : member.error || "Not reachable" }))),
+			// Its SQL Server a part each (Microsoft SQL Server, PostgreSQL): the engine with New database, its databases under it
+			...member.connections.map((connection) => {
+				const engine = connection.engine || "mssql";
+				const create = open(member, connection, true);
+				const first = addFirstCard("Create the first database", `In ${ENGINE_NAMES[engine]} on ${member.server}, with a login of its own that owns it`, create);
+				first.classList.add("row", "member-first");
+				return el("div", { className: `member-engine engine-${engine}` },
+					el("div", { className: "member-engine-head" },
+						el("span", { className: "member-engine-name" }, el("span", { className: "sql-engine-dot", ariaHidden: "true" }), ENGINE_NAMES[engine]),
+						el("span", { className: "member-count", textContent: String(connection.databases.length) }),
+						...(connection.databases.length ? [tonedButton("New database", "plus", "green", create)] : [])),
+					connection.error ? el("p", { className: "muted member-none", textContent: connection.error })
+						: connection.databases.length ? el("div", { className: "member-list" }, ...connection.databases.map((database) => el("a", { className: "member-site", href: "#sql",
+							title: `${database.name} on ${member.server}`, onclick: open(member, connection) },
+							el("span", { className: "member-dot " + (String(database.state || "").toUpperCase() === "ONLINE" ? "active" : "inactive"), title: database.state || "" }),
+							el("span", { className: "member-site-name" }, el("strong", { textContent: database.name }), el("small", { textContent: database.owner ? `Owner ${database.owner}` : database.state || "" })),
+							el("span", { className: "member-size", textContent: size(database.size_mb) }),
+							svgIcon("arrow-right"))))
+						: first);
+			}));
+	}));
+}
 async function loadSqlConnections(selected = $("#sql-connection").value || savedSqlConnection()) {
-	const data = await api("/api/sql/connections");
-	sqlConnections = data.connections;
+	// On a master: its members' connections under its own, without keeping these waiting
+	// Every server's connections in one list (a user's those given), each knowing where it is
+	const userMembers = joinedMembers();
+	if (userMembers.length) serverContext = "";
+	// A user given SQL on a member only has none here: this server's refusal is no connections, theirs elsewhere follow
+	const data = await api("/api/sql/connections").catch((error) => {
+		if (userMembers.length) return { connections: [], tools_available: false, tools: { mssql: false, postgres: false } };
+		throw error;
+	});
+	sqlConnections = data.connections || [];
 	sqlToolsAvailable = data.tools_available === true;
 	sqlTools = data.tools || { mssql: sqlToolsAvailable, postgres: false };
+	if (userMembers.length) {
+		const found = await Promise.all(userMembers.map((name) => api(`/api/via/${encodeURIComponent(name)}/sql/connections`).then((there) => ({ name, there })).catch(() => null)));
+		for (const item of found.filter(Boolean)) {
+			sqlConnections.push(...(item.there.connections || []).map((connection) => ({ ...connection, harbor_server: item.name })));
+			sqlToolsAvailable = sqlToolsAvailable || item.there.tools_available === true;
+			for (const engine of ["mssql", "postgres"]) sqlTools[engine] = sqlTools[engine] || Boolean(item.there.tools?.[engine]);
+		}
+	}
+	// Drawn once this server's own is known: whether its members' stand alone at the top is decided right at once
+	renderMemberSql();
 	// The engines worked with here: an administrator's, those whose tools this server has or that have connections; a
 	// user's, those of the connections they were given (with none yet, those they may add one to)
 	const given = ["mssql", "postgres"].filter((engine) => sqlConnections.some((item) => engineOf(item) === engine));
@@ -7373,7 +7939,7 @@ async function loadSqlConnections(selected = $("#sql-connection").value || saved
 		: ["mssql", "postgres"].filter((engine) => given.includes(engine) || (sqlTools[engine] && (currentUser.connection_engines || []).includes(engine)));
 	const chosen = sqlConnections.find((item) => item.id === selected);
 	sqlEngine = chosen ? engineOf(chosen) : engines.includes(sqlEngine) ? sqlEngine : engines[0] || "mssql";
-	try { localStorage.setItem("vns-sql-engine", sqlEngine); } catch (error) { /* none */ }
+	try { localStorage.setItem(sqlKey("engine"), sqlEngine); } catch (error) { /* none */ }
 	// Both: a choice of which one, each with how many connections it has, and the connections of that one
 	const switcher = $("#sql-engine");
 	switcher.hidden = engines.length < 2;
@@ -7384,7 +7950,7 @@ async function loadSqlConnections(selected = $("#sql-connection").value || saved
 			onclick: () => {
 				if (engine === sqlEngine) return;
 				sqlEngine = engine;
-				try { localStorage.setItem("vns-sql-engine", engine); } catch (error) { /* none */ }
+				try { localStorage.setItem(sqlKey("engine"), engine); } catch (error) { /* none */ }
 				run(() => loadSqlConnections(sqlConnections.find((item) => engineOf(item) === engine)?.id || ""));
 			} }, el("span", { className: "sql-engine-dot", ariaHidden: "true" }), el("span", { textContent: ENGINE_NAMES[engine] }));
 	})));
@@ -7396,9 +7962,16 @@ async function loadSqlConnections(selected = $("#sql-connection").value || saved
 	select.value = shown.some((item) => item.id === selected) ? selected : shown[0]?.id || "";
 	// The page's own dropdown in place of the browser's: an administrator's connections first, then those users added,
 	// apart, each with who added it (the select under it keeps the value the page reads)
-	const ordered = [...shown.filter((item) => !item.added_by_user), ...shown.filter((item) => item.added_by_user)];
+	// Every server named (an administrator's, a user's who makes sites on more than one): a group a server (This server
+	// first), those added by users last in each
+	const servers = namesServers() ? joinedMembers() : [];
+	const ordered = servers.length
+		? ["", ...servers].flatMap((server) => { const here = shown.filter((item) => (item.harbor_server || "") === server); return [...here.filter((item) => !item.added_by_user), ...here.filter((item) => item.added_by_user)]; })
+		: [...shown.filter((item) => !item.added_by_user), ...shown.filter((item) => item.added_by_user)];
 	const pick = premiumSelect({ label: "Connection", className: "sql-connection-select", value: select.value,
-		options: ordered.map((item) => ({ value: item.id, label: item.name, ...(item.added_by_user ? { group: "Added by users", sub: item.added_by } : {}) })) });
+		options: ordered.map((item) => ({ value: item.id, label: item.name,
+			...(servers.length ? { group: (item.harbor_server || "This server") + (item.added_by_user ? " · added by users" : ""), ...(item.added_by_user ? { sub: item.added_by } : {}) }
+				: item.added_by_user ? { group: "Added by users", sub: item.added_by } : {}) })) });
 	pick.addEventListener("change", () => {
 		select.value = pick.value;
 		select.dispatchEvent(new Event("change"));
@@ -7411,6 +7984,8 @@ async function loadSqlConnections(selected = $("#sql-connection").value || saved
 	$("#sql-connection-name").textContent = single ? shown[0].name : "";
 	$("#sql-connection-name").title = single ? shown[0].name : "";
 	saveSqlConnection(select.value);
+	// A user's page on the server of the connection chosen
+	userContext();
 	await refreshSql();
 }
 
@@ -7466,8 +8041,9 @@ async function refreshSql() {
 		: sqlEngine === "postgres"
 		? "Connect to a PostgreSQL, here or on another server, to manage its databases, logins and backups."
 		: "Connect to a Microsoft SQL Server, here or on another server, to manage its databases and backups.";
-	$("#sql-tools-required").hidden = sqlToolsAvailable;
-	$("#sql-no-connections").hidden = !sqlToolsAvailable || hasConnections;
+	// A master whose members have SQL does not ask for tools of its own: their connections are shown instead
+	$("#sql-tools-required").hidden = sqlToolsAvailable || memberSqlShown() || memberSqlWaiting();
+	$("#sql-no-connections").hidden = !sqlToolsAvailable || hasConnections || memberSqlWaiting() || memberSqlShown();
 	$("#sql-heading").hidden = !hasConnections && $("#sql-engine").hidden;
 	// One connection they can neither change nor add to: no box to choose in, its name by the heading, and the spinner
 	// there while it loads
@@ -7883,14 +8459,14 @@ async function askSqlTransfer(database, mode) {
 	// The site it is the database of, when one alone: a move takes it along (its connection string follows)
 	const siteUser = users.length === 1 ? users[0] : null;
 	if (!formDialog.open || !sqlTransferInfo || sqlTransferInfo.key !== `${connection}|${database.name}`) {
-		convertConnections = (await api("/api/convert/connections")).connections || [];
+		convertConnectionsOf[actionServer || serverContext || ""] = (await api("/api/convert/connections")).connections || [];
 		// What a move with its site needs (its login, and whether only it has it): read at once, while Copy is shown
 		sqlTransferInfo = { key: `${connection}|${database.name}`, info: siteUser ? api(`/api/convert/move?${new URLSearchParams({ unit: siteUser.unit, ...(siteUser.where ? { where: siteUser.where } : {}) })}`) : null };
 		sqlTransferInfo.info?.catch(() => {});
 		formDialog.addEventListener("close", () => { sqlTransferInfo = null; }, { once: true });
 	}
 	const shared = mode === "move" && users.length > 1;
-	const others = convertConnections.filter((item) => engineOf(item) === engine && item.id !== connection);
+	const others = convertConns().filter((item) => engineOf(item) === engine && item.id !== connection);
 	const here = { id: "", name: current?.name || "This server", host: current?.host, port: current?.port, files: true, here: true };
 	const choices = mode === "copy" ? [here, ...others] : others;
 	const engineName = DATABASE_ENGINES[engine];
@@ -7937,7 +8513,7 @@ async function askSqlTransfer(database, mode) {
 		el("span", { className: "sync-option-text" }, el("span", { className: "sync-option-title" }),
 			el("span", { className: "sync-option-sub", textContent: "The backup is carried between the servers' backup folders: turn on SSH for backup files in its connection" })),
 		tonedButton("Edit connection…", "pencil", "amber", () => editConvertConnection(chosen.value || connection, () => askSqlTransfer(database, mode))));
-	const sourceReaches = reaches(convertConnections.find((item) => item.id === connection) || here);
+	const sourceReaches = reaches(convertConns().find((item) => item.id === connection) || here);
 	const nameField = el("label", {}, "Database name", el("input", { name: "name", required: true, maxLength: 63, pattern: "[A-Za-z0-9][A-Za-z0-9._\\-]*", autocomplete: "off", spellcheck: false }));
 	const loginFields = el("div", { className: "convert-server-fields" },
 		el("label", {}, "Username", el("input", { name: "login", required: true, maxLength: 63, pattern: "[A-Za-z0-9][A-Za-z0-9._\\-]*", autocomplete: "off", spellcheck: false })),
@@ -8197,9 +8773,14 @@ function decorateSql() {
 	decorate($("#view-sql"));
 }
 
-$("#switch-sites").onclick = () => go("#sites");
-$("#switch-sql").onclick = () => go("#sql");
-$("#switch-dns").onclick = () => go("#dns");
+// The top menu opens its part at the top: the window is not left where the part before was scrolled to
+const fromTheTop = (hash) => () => {
+	window.scrollTo({ top: 0, behavior: "instant" });
+	go(hash());
+};
+$("#switch-sites").onclick = fromTheTop(() => "#sites");
+$("#switch-sql").onclick = fromTheTop(() => "#sql");
+$("#switch-dns").onclick = fromTheTop(() => "#dns");
 // The DNS page's buttons as the SQL page's: an icon and a colour each
 function decorateDns() {
 	const styles = { "New record": ["plus", "green"], "Purge cache…": ["eraser", "amber"], "Edit…": ["pencil", "blue"] };
@@ -8212,7 +8793,7 @@ function decorateDns() {
 	decorate($("#view-dns"));
 }
 decorateDns();
-$("#switch-server").onclick = () => go("#server/" + serverTab);
+$("#switch-server").onclick = fromTheTop(() => "#server/" + serverTab);
 // With SQL Server as the start page, it is the home: its page has no link back to the sites
 function applyStartView() {
 	const sql = startView === "sql";
@@ -8269,7 +8850,9 @@ async function openServerSettings() {
 	try {
 		const [server, keepAlive] = await Promise.all([loadServerAddress().catch(() => null),
 			api("/api/keep-alive").catch(() => ({ installed: false, enabled: false, interval_minutes: 5 }))]);
-		const [domains, signIn] = await Promise.all([api("/api/temp-domains").catch(() => ({ domains: [] })), api("/api/sign-in").catch(() => null)]);
+		// A member's users sign in on the master (Forgot password and the addresses it took over are the master's): not its
+		const member = Boolean(pickedServer || currentUser?.member_of);
+		const [domains, signIn] = await Promise.all([api("/api/temp-domains").catch(() => ({ domains: [] })), member ? null : api("/api/sign-in").catch(() => null)]);
 		// The address and the temporary addresses, then keep-alive (its mail and the mail server are under Notifications),
 		// then the sign-in page
 		list.replaceChildren(publicAddressCard(server), tempDomainsCard(domains.domains, server), keepAliveCard(keepAlive), ...(signIn ? [signInCard(signIn)] : []));
@@ -8281,22 +8864,27 @@ async function openServerSettings() {
 // The sign-in page: Forgot password (with the mail server), and the addresses Harbor took over, whose visitors are told
 // their old password does not work here
 function signInCard(signIn) {
-	const moved = signIn.moved_from || [];
+	// Those given, and the admin site's own aliases, which count by themselves
+	const moved = [...(signIn.moved_from || []), ...(signIn.aliases || []).filter((host) => !(signIn.moved_from || []).includes(host))];
 	const card = toolCard({ icon: "lock", tone: "purple", title: "Sign-in",
 		detail: signIn.forgot ? "Forgot password mails a link to set a new one" : "Forgot password needs the mail server (Notifications)",
 		state: signIn.forgot ? "Forgot password on" : "No Forgot password", stateClass: signIn.forgot ? "ok" : "",
 		text: moved.length ? `Harbor took over ${moved.join(", ")}: one who comes from there is told the old password does not work, and to use Forgot password.`
+			+ ((signIn.aliases || []).length ? ` ${signIn.aliases.join(", ")} ${signIn.aliases.length === 1 ? "is" : "are"} the admin site's own alias${signIn.aliases.length === 1 ? "" : "es"}, counted by ${signIn.aliases.length === 1 ? "itself" : "themselves"}.` : "")
 			: "An address Harbor took over, such as an older admin's: one who comes from it is told the old password does not work here.",
 		actions: [tonedButton(moved.length ? "Edit…" : "Add an address…", moved.length ? "pencil" : "plus", moved.length ? "amber" : "green", () => askMovedFrom(signIn))] });
 	card.querySelector(".tool-head").append(...card.querySelectorAll(":scope > .tool-actions"));
 	return card;
 }
 function askMovedFrom(signIn) {
-	const hosts = el("input", { name: "moved_from", autocomplete: "off", spellcheck: false, autocapitalize: "off", value: (signIn.moved_from || []).join(", "), placeholder: "account.example.com" });
+	const hosts = el("input", { name: "moved_from", autocomplete: "off", spellcheck: false, autocapitalize: "off", value: (signIn.moved_from || []).join(", "), placeholder: "old.example.com", "data-1p-ignore": true, "data-lpignore": "true", "data-form-type": "other" });
 	const here = signIn.admin_site || location.host;
 	openFormDialog({ icon: "lock", title: "Addresses Harbor took over", ok: "Save",
 		text: "One who comes from one of them is told on the sign-in page that the old password does not work here, and to use Forgot password.",
-		fields: [el("label", { className: "dns-field" }, "Addresses", hosts, el("small", { className: "hint", textContent: "Commas between them. Bound to Harbor, it is seen at once; redirected, send it on to " + `https://${here}/login?from=<the address>` + "." }))],
+		// The hint outside the label: Safari reads a label's words (login, account) as a sign-in's, and offers the saved ones
+		fields: [el("label", { className: "dns-field" }, "Add\u200Bresses", hosts),
+			el("p", { className: "hint", textContent: "Commas between them. Bound to Harbor, it is seen at once; redirected, send it on to " + `https://${here}/login?from=<the address>` + "." }),
+			...((signIn.aliases || []).length ? [el("p", { className: "hint", textContent: `Also, by themselves: the admin site's aliases (${signIn.aliases.join(", ")}).` })] : [])],
 		submit: async () => {
 			const list = hosts.value.split(/[\s,]+/).map((host) => host.trim()).filter(Boolean);
 			await api("/api/sign-in", { method: "PUT", json: { moved_from: list } });
@@ -8451,16 +9039,26 @@ function openWindowsSettings() {
 const DATABASE_ENGINES = { sqlite: "SQLite", ...ENGINE_NAMES };
 // The environments whose kept databases are unfolded: they stay so when the list is drawn again
 const convertUnfolded = new Set();
-async function openConvertSettings() {
-	const list = $("#server-convert-list");
+async function openConvertSettings(server = "", list = $("#server-convert-list")) {
+	// The master's own: every member's, a section each
+	if (!server && masterSettings()) {
+		const parts = await openOnMembers(list, "#convert-count", (name, into) => openConvertSettings(name, into));
+		const many = parts.reduce((all, part) => all + (Number(part.dataset.count) || 0), 0) > 2;
+		$("#convert-filter-box").hidden = !many;
+		if (!many) $("#convert-filter").value = "";
+		applyConvertFilter();
+		return;
+	}
 	list.setAttribute("aria-busy", "true");
 	if (!list.childElementCount) list.replaceChildren(loadingState("Reading the sites' databases…"));
 	try {
-		const data = await api("/api/convert");
-		convertConnections = data.connections;
+		const data = await api(viaPath(server, "/api/convert"));
+		convertConnectionsOf[server] = data.connections;
+		data.sites = data.sites.filter((item) => !managedElsewhere.has(`${server}|${item.site}`));
 		// A site without a database has nothing to convert: it is not shown. One on a server that did not answer is, with why
 		const withDatabase = data.sites.filter((item) => item.engine || item.unreached);
-		$("#convert-count").textContent = withDatabase.length ? String(withDatabase.length) : "";
+		list.dataset.count = String(withDatabase.length);
+		if (!server) $("#convert-count").textContent = withDatabase.length ? String(withDatabase.length) : "";
 		const engineBadge = (engine) => el("span", { className: "badge engine-badge engine-" + (engine || "none"), textContent: DATABASE_ENGINES[engine] || "No database" });
 		// What each environment ran on before a conversion, kept until it is deleted: folded under its row
 		// An environment by its server and service: one on another server may have the name of one here
@@ -8578,10 +9176,13 @@ async function openConvertSettings() {
 				el("ul", { className: "convert-kept" }, ...orphans.map((item) => keptLine(item, true)))));
 		}
 		list.replaceChildren(...cards);
-		// The filter, once there are more than two sites: it keeps what was typed when the list is drawn again
-		$("#convert-filter-box").hidden = groups.size <= 2;
-		if (groups.size <= 2) $("#convert-filter").value = "";
-		applyConvertFilter();
+		// The filter, once there are more than two sites: it keeps what was typed when the list is drawn again (the
+		// master's sections: when they are all drawn)
+		if (!server) {
+			$("#convert-filter-box").hidden = groups.size <= 2;
+			if (groups.size <= 2) $("#convert-filter").value = "";
+			applyConvertFilter();
+		}
 	} finally {
 		list.removeAttribute("aria-busy");
 	}
@@ -8690,18 +9291,29 @@ function sideLines(sub, kind = "", where = "") {
 // zip to download or its link to send (deleted the time chosen after its first download), and Restore of a site deleted with one
 // The sites whose exports are unfolded: they stay so when the list is drawn again
 const exportUnfolded = new Set();
-async function openExportSettings() {
-	const list = $("#server-export-list");
+async function openExportSettings(server = "", list = $("#server-export-list")) {
+	// The master's own: every member's, a section each
+	if (!server && masterSettings()) {
+		const parts = await openOnMembers(list, "#export-count", (name, into) => openExportSettings(name, into));
+		const many = parts.reduce((all, part) => all + (Number(part.dataset.count) || 0), 0) > 2;
+		$("#export-filter-box").hidden = !many;
+		if (!many) $("#export-filter").value = "";
+		applyExportFilter();
+		return;
+	}
 	list.setAttribute("aria-busy", "true");
 	if (!list.childElementCount) list.replaceChildren(loadingState("Reading the sites…"));
 	try {
-		const data = await api("/api/exports");
-		$("#export-count").textContent = data.sites.length ? String(data.sites.length) : "";
+		const data = await api(viaPath(server, "/api/exports"));
+		data.sites = data.sites.filter((item) => !managedElsewhere.has(`${server}|${item.site}`));
+		// What it shows: its sites and the exports kept of sites gone
+		list.dataset.count = String(data.sites.length + (data.exports || []).length);
+		if (!server) $("#export-count").textContent = data.sites.length ? String(data.sites.length) : "";
 		// The columns of Convert DB's rows: the folder and where it runs, the environment (a Python or HTML site has one,
 		// Live, as its card says), the database it runs on and what it is, from the site's page (the list of sites)
 		const envLabel = (site, env) => site.kind === "python" || site.kind === "html" ? "Live" : env.label;
 		const engines = { "SQLite": "sqlite", "MS SQL": "mssql", "SQL Express": "mssql", "Azure SQL": "mssql", "PostgreSQL": "postgres" };
-		const shown = (site, env) => allSites.find((item) => item.name === site.site)?.environments.find((item) => envKeyOf(item) === env.target || (env.target === "main" && !isTarget(item)));
+		const shown = (site, env) => allSites.find((item) => item.name === site.site && (!server || item.harbor_server === server))?.environments.find((item) => envKeyOf(item) === env.target || (env.target === "main" && !isTarget(item)));
 		const databaseOf = (site, env) => {
 			const info = shown(site, env);
 			const engine = engines[info?.database] || "";
@@ -8770,6 +9382,7 @@ async function openExportSettings() {
 			el("ul", { className: "export-items" }, ...orphans.map(exportLine))));
 		list.replaceChildren(...cards);
 		// The filter, once there are more than two sites: it keeps what was typed when the list is drawn again
+		if (server) return;
 		$("#export-filter-box").hidden = data.sites.length <= 2;
 		if (data.sites.length <= 2) $("#export-filter").value = "";
 		applyExportFilter();
@@ -8814,7 +9427,7 @@ function exportLine(item) {
 			...(item.link ? [tonedButton("Download", "download", "green", () => {
 				// One kept on the server the site is managed from is read from there as it comes
 				const from = item.server ? `?server=${encodeURIComponent(item.server)}&file=${encodeURIComponent(item.file || "")}` : "";
-				el("a", { href: `/api/exports/${item.id}/zip${from}`, download: item.file || "" }).click();
+				el("a", { href: apiPath(`/api/exports/${item.id}/zip${from}`), download: item.file || "" }).click();
 			}),
 				tonedButton("Copy link", "copy", "blue", copyLink)] : []),
 			...(item.restorable ? [tonedButton("Restore…", "undo", "teal", () => restoreExport(item))] : []),
@@ -8923,7 +9536,10 @@ function askExport(site) {
 	ready();
 }
 // Every connection here (no password), as Settings, Convert last read them: Move chooses among them
-let convertConnections = [];
+// The SQL connections a conversion may go to, a server each (the master's Settings list every member's): those of the
+// server the action is on
+const convertConnectionsOf = {};
+const convertConns = () => convertConnectionsOf[actionServer || serverContext || ""] || convertConnectionsOf[""] || [];
 // A database on a server: moved to another server of its kind, or converted to SQLite. Two cards at the top of either
 // dialog; choosing the other opens its dialog in this one's place
 function convertModes(active, item) {
@@ -8945,11 +9561,11 @@ function convertModes(active, item) {
 					try {
 						return await askMove(item);
 					} catch (error) {
-						askConvert(item, convertTargets(item, convertConnections));
+						askConvert(item, convertTargets(item, convertConns()));
 						throw error;
 					}
 				}
-				askConvert(item, convertTargets(item, convertConnections));
+				askConvert(item, convertTargets(item, convertConns()));
 			}) }),
 			el("strong", { textContent: title }), el("small", { textContent: line }))));
 }
@@ -8975,10 +9591,10 @@ async function askMoveRead(item) {
 	Object.assign(item, { engine: found.engine, ...(item.database ? {} : { database: found.database, server: found.server || `${found.host}${found.port ? "," + found.port : ""}`,
 		login: found.login, ...(found.umbraco !== undefined && found.umbraco !== null ? { umbraco: found.umbraco } : {}) }), ...(found.source ? { source: found.source } : {}) });
 	const engineName = DATABASE_ENGINES[found.engine];
-	const connections = convertConnections.filter((connection) => engineOf(connection) === found.engine && connection.id !== found.source);
+	const connections = convertConns().filter((connection) => engineOf(connection) === found.engine && connection.id !== found.source);
 	// What Move lacks here, said on a card with Add connection: the dialog still opens, Convert to SQLite beside it
 	// Microsoft SQL Server's backup is carried between the servers' backup folders: both must be reached, here or by SSH
-	const reaches = (id) => found.engine !== "mssql" || convertConnections.find((connection) => connection.id === id)?.files !== false;
+	const reaches = (id) => found.engine !== "mssql" || convertConns().find((connection) => connection.id === id)?.files !== false;
 	const missing = !found.source
 		? { title: `No connection to ${found.host}${found.port ? ":" + found.port : ""} here`, sub: `Where ${found.database} is now: Move copies it from there`,
 			run: () => addConvertConnection(item, found.engine, { host: found.host, port: found.port }, () => { delete item.moveInfo; return askMove(item); }) }
@@ -9153,7 +9769,7 @@ function askConvert(item, connections) {
 		el("span", { className: "sync-option-icon", ariaHidden: "true" }, svgIcon("database")),
 		el("span", { className: "sync-option-text" }, el("span", { className: "sync-option-title", textContent: `No connection to ${where ? where.host + (where.port ? ":" + where.port : "") : databaseServer(item)} here` }),
 			el("span", { className: "sync-option-sub", textContent: `Where ${item.database} is: it is read from there` })),
-		tonedButton("Add connection…", "plus", "amber", () => addConvertConnection(item, item.engine, where, () => askConvert(item, convertTargets(item, convertConnections))))) : null;
+		tonedButton("Add connection…", "plus", "amber", () => addConvertConnection(item, item.engine, where, () => askConvert(item, convertTargets(item, convertConns()))))) : null;
 	const box = el("div", { className: "convert-form" }, ...(toServer ? [] : [convertModes("sqlite", item)]), ...(lacking ? [lacking] : [serverField]), flow,
 		...(toServer ? [serverFields] : [fileFields]), ...notes, error);
 	openFormDialog({ icon: "sync", title: `Convert ${item.unit}`, text: `${item.label} of ${item.site}${item.where ? ", on " + item.where : ""}`,
@@ -9424,6 +10040,14 @@ function openFormDialog({ icon, title, text = "", fields, ok = "", submit = null
 	$("#form-dialog-title").textContent = title;
 	$("#form-dialog-text").textContent = text;
 	$("#form-dialog-fields").replaceChildren(...fields);
+	// No field of these dialogs is a login: the browser's saved logins and suggestions are kept off them (read only
+	// until clicked, which Safari's password filling skips)
+	for (const input of $("#form-dialog-fields").querySelectorAll('input:not([type]), input[type="text"], input[type="email"], input[type="url"], input[type="search"]')) {
+		if (input.dataset.autofill) continue;
+		input.dataset.autofill = "off";
+		input.setAttribute("autocomplete", "off");
+		noAutofill(input);
+	}
 	// Buttons beside the dialog's own, such as a test of what is typed
 	$("#form-dialog-extra").replaceChildren(...extra);
 	// Only to look at and copy from: one Close button, where the dialog's button stands, and no Cancel
@@ -9459,6 +10083,11 @@ function openFormDialog({ icon, title, text = "", fields, ok = "", submit = null
 	else if (formDialog.contains(document.activeElement)) document.activeElement.blur();
 }
 $("#form-dialog-cancel").onclick = () => formDialog.close();
+// A field kept read only against suggestions is writable again before the dialog's own check of what is required (the
+// browser skips read only fields), also on Enter, which clicks this button
+$("#form-dialog-ok").addEventListener("click", () => {
+	for (const input of $("#form-dialog-fields").querySelectorAll("[data-autofill]")) input.readOnly = false;
+}, true);
 
 // ---- Health: how the server is (lib/server_health.py samples it every 5 minutes, and keeps 7 days), and its OS updates
 let healthData = null;
@@ -9467,13 +10096,28 @@ let healthDays = 1;
 const HEALTH_NAMES = { disk: "Disk almost full", memory: "Memory almost full", swap: "Swap in use", updates: "Updates waiting", reboot: "Restart needed" };
 const HEALTH_TONES = { memory: "var(--blue)", swap: "var(--purple)", load: "#39c5bb", disk: "#db61a2" };
 
+// The master's own Health: this server's and every member's, each its Now, and the charts of the one chosen
+let healthOf = null;
+let healthServer = "";
 async function openHealth() {
 	const list = $("#server-health-list");
 	list.setAttribute("aria-busy", "true");
 	if (!list.childElementCount) list.replaceChildren(loadingState("Reading the server's health…"));
+	const read = async (server) => {
+		const [data, alerts] = await Promise.all([api(viaPath(server, "/api/health")), api(viaPath(server, "/api/health/alerts")).catch(() => null)]);
+		return { ...data, alerts };
+	};
 	try {
-		const [data, alerts] = await Promise.all([api("/api/health"), api("/api/health/alerts").catch(() => null)]);
-		healthData = { ...data, alerts };
+		if (masterSettings() && joinedMembers().length) {
+			const servers = ["", ...joinedMembers()];
+			const answers = await Promise.all(servers.map((server) => read(server).catch((error) => ({ error: error.message }))));
+			healthOf = Object.fromEntries(servers.map((server, index) => [server, answers[index]]));
+			if (!(healthServer in healthOf) || healthOf[healthServer].error) healthServer = servers.find((server) => !healthOf[server].error) ?? "";
+		} else {
+			healthOf = null;
+			healthServer = "";
+		}
+		healthData = healthOf ? healthOf[healthServer] : await read("");
 		drawHealth();
 	} finally {
 		list.removeAttribute("aria-busy");
@@ -9487,7 +10131,32 @@ function healthRange() {
 }
 
 function drawHealth() {
-	const data = healthData, now = data.now, limits = data.alerts || data.settings || {};
+	if (!healthOf) return $("#server-health-list").replaceChildren(...healthCards(healthData));
+	// Every server's Now, a section each (one not answering says so), then the charts of the one chosen
+	const names = Object.keys(healthOf);
+	const label = (server) => server || "This server";
+	const nows = names.map((server) => {
+		const data = healthOf[server];
+		const body = data.error ? el("section", { className: "tool-card tool-card-wide health-now" }, el("p", { className: "muted", textContent: data.error }))
+			: healthCards(data, server)[0];
+		return el("section", { className: "member-pane", "data-harbor-server": server },
+			el("div", { className: "site-server-head" }, el("span", { className: "site-server-icon" }, svgIcon("server")), el("strong", { textContent: label(server) })), body);
+	});
+	const chosen = healthOf[healthServer];
+	const charts = chosen && !chosen.error ? healthCards(chosen, healthServer)[1] : null;
+	// Which server's charts: chosen beside the time shown
+	const pick = el("div", { className: "crontab-output health-range health-server", role: "group", ariaLabel: "Server shown" },
+		...names.filter((server) => !healthOf[server].error).map((server) => el("button", { type: "button", className: "crontab-seg", textContent: label(server),
+			ariaPressed: String(server === healthServer), onclick: () => { healthServer = server; healthData = healthOf[server]; drawHealth(); } })));
+	charts?.querySelector(".tool-head .tool-actions")?.prepend(pick);
+	// The servers two by two, each its tiles two by two; with an odd number, this server the whole row above them, its
+	// tiles four in a row; the charts the whole row under them
+	$("#server-health-list").replaceChildren(el("div", { className: "health-servers" + (nows.length % 2 ? " odd" : "") }, ...nows), ...(charts ? [el("section", { className: "member-pane" }, charts)] : []));
+}
+
+// One server's health: its Now and its charts (server: the member's, on the master's own Health)
+function healthCards(data, server = "") {
+	const now = data.now, limits = data.alerts || data.settings || {};
 	const since = Date.now() / 1000 - healthDays * 86400;
 	const open = Object.entries(data.open || {});
 	const past = new Set(open.map(([key]) => key));
@@ -9521,7 +10190,7 @@ function drawHealth() {
 		...(open.length ? [el("ul", { className: "health-open" }, ...open.map(([key, item]) => el("li", {}, svgIcon(key === "updates" ? "shield" : key === "reboot" ? "restart" : "alert"),
 			el("strong", { textContent: HEALTH_NAMES[key.split(":")[0]] + (key.startsWith("disk:") ? " " + key.slice(5) : "") }),
 			el("span", { textContent: item.why }), el("small", { textContent: "since " + formatDate(item.since * 1000) }),
-			...(key === "updates" || key === "reboot" ? [tonedButton("Updates", "download", "amber", () => go("#server/updates"))] : []))))] : []),
+			...(key === "updates" || key === "reboot" ? [tonedButton("Updates", "download", "amber", () => server ? chooseServer(server, "#server/updates") : go("#server/updates"))] : []))))] : []),
 		...(data.installed ? [] : [el("p", { className: "server-action-note", textContent: "Nothing samples it yet: Harbor's next update installs the job, or save Server health under Notifications." })]));
 	const charts = el("section", { className: "tool-card tool-card-wide tone-purple health-charts" },
 		el("div", { className: "tool-head" }, el("span", { className: "tool-icon" }, svgIcon("activity")),
@@ -9533,7 +10202,7 @@ function drawHealth() {
 				...(now.swap === null ? [] : [healthChart("Swap", samples, (item) => item.swap, { max: 100, unit: " %", limit: limits.swap, tone: HEALTH_TONES.swap })]),
 				healthChart(`Load (${now.cpus} CPU${now.cpus === 1 ? "" : "s"})`, samples, (item) => item.load, { max: Math.max(1, ...samples.map((item) => item.load)) * 1.25, unit: "", digits: 2, tone: HEALTH_TONES.load }),
 				...disks.map(([mount]) => healthChart(`Disk ${mount}`, samples, (item) => item.disks?.[mount]?.used, { max: 100, unit: " %", limit: limits.disk, tone: HEALTH_TONES.disk }))));
-	$("#server-health-list").replaceChildren(overview, charts);
+	return [overview, charts];
 }
 
 // One measure over time: a line with its area, the limit dashed, a crosshair and the value where the pointer is.
@@ -9771,15 +10440,63 @@ async function openNotifications() {
 	list.setAttribute("aria-busy", "true");
 	if (!list.childElementCount) list.replaceChildren(loadingState("Reading the notifications…"));
 	try {
-		const [keepAlive, usage, crontab, alerts, health] = await Promise.all([api("/api/keep-alive").catch(() => null), api("/api/usage").catch(() => null),
-			api("/api/server/crontab").catch(() => null), api("/api/server/cron-alerts").catch(() => null), api("/api/health/alerts").catch(() => null)]);
+		const [keepAlive, usage, crontab, alerts, health, own] = await Promise.all([api("/api/keep-alive").catch(() => null), api("/api/usage").catch(() => null),
+			api("/api/server/crontab").catch(() => null), api("/api/server/cron-alerts").catch(() => null), api("/api/health/alerts").catch(() => null),
+			// On a member: which it keeps its own, the rest the master's
+			pickedServer || currentUser?.member_of ? api("/api/notifications/own").catch(() => null) : null]);
 		if (crontab) crontabEntries = crontab.entries || [];
 		cronAlerts = alerts;
-		list.replaceChildren(await mailCard(), ...(keepAlive?.installed ? [siteReportCard(keepAlive)] : []),
-			...(usage ? [usageCard(usage)] : []), ...(alerts && crontab ? [cronAlertsCard()] : []), ...(health ? [healthAlertsCard(health)] : []));
+		notificationsOwn = own?.member ? new Set(own.own) : null;
+		// On the master: what is over on every member, as each checked it, in its Usage alerts
+		if (usage && masterSettings() && joinedMembers().length) {
+			const found = await Promise.all(joinedMembers().map((server) => api(viaPath(server, "/api/usage")).catch(() => null)));
+			found.forEach((theirs, index) => {
+				if (!theirs) return;
+				usage.over = [...(usage.over || []), ...(theirs.over || []).map((item) => ({ ...item, server: joinedMembers()[index] }))];
+				usage.checked = Math.max(usage.checked || 0, theirs.checked || 0) || null;
+			});
+			usage.members = joinedMembers();
+		}
+		const cards = [[await mailCard(), "mail"], ...(keepAlive?.installed ? [[siteReportCard(keepAlive), "report"]] : []),
+			...(usage ? [[usageCard(usage), "usage"]] : []), ...(alerts && crontab ? [[cronAlertsCard(), "jobs"]] : []), ...(health ? [[healthAlertsCard(health), "health"]] : [])];
+		// On the master's own: they are its members' too, said once above them
+		const note = masterSettings() && joinedMembers().length ? [el("div", { className: "tool-card tool-card-wide tone-purple notifications-inherit-note" },
+			el("span", { className: "tool-icon" }, svgIcon("link")),
+			el("div", { className: "tool-title" }, el("strong", { textContent: "Every member's too" }),
+				el("small", { textContent: `What is set here is sent to ${joinedMembers().join(", ")}, and to a server when it joins. On a member, any of them can be overridden: choose it at the top of Settings.` })))] : [];
+		list.replaceChildren(...note, ...cards.map(([card, kind]) => inheritedCard(card, kind)));
 	} finally {
 		list.removeAttribute("aria-busy");
 	}
+}
+// On a member: the notifications it keeps its own (the rest are the master's); null where there is no master
+let notificationsOwn = null;
+const NOTIFICATION_EDITS = /^(Edit…|Turn off|Turn on…|Set up…)$/;
+// A notification's card on a member: the master's, said so, and only to be overridden; or its own, to give back
+function inheritedCard(card, kind) {
+	if (!notificationsOwn) return card;
+	const own = notificationsOwn.has(kind);
+	const actions = card.querySelector(".tool-head .tool-actions") || card.querySelector(".tool-head").appendChild(el("div", { className: "tool-actions" }));
+	const keep = async (next) => {
+		const set = new Set(notificationsOwn);
+		next ? set.add(kind) : set.delete(kind);
+		await api("/api/notifications/own", { method: "PUT", json: { own: [...set] } });
+		if (!next) {
+			// The master's again: sent at once from the master's page, else at its next change
+			if (pickedServer) await api("/api/master/notifications/push", { method: "POST", json: { member: pickedServer } });
+			else toast("The master's settings come at its next change.");
+		}
+		await refreshNotifications();
+	};
+	card.classList.add(own ? "notification-own" : "notification-inherited");
+	if (!own) for (const button of actions.querySelectorAll("button")) if (NOTIFICATION_EDITS.test(button.textContent.trim())) button.remove();
+	// The jobs watched are the server's own, whoever's the alerts are: chosen here without overriding them
+	if (!own && kind === "jobs") actions.append(tonedButton("Jobs to watch…", "clock", "pink", () => askCronAlerts("jobs")));
+	actions.prepend(el("span", { className: "tool-state " + (own ? "own" : "inherited"), title: own ? "Set on this server: the master's changes do not reach it" : "Set on the master and sent here",
+		textContent: own ? "Overridden here" : "From the master" }),
+		own ? tonedButton("Use the master's", "restart", "purple", () => run(() => keep(false)))
+			: tonedButton("Override here", "pencil", "amber", () => run(() => keep(true))));
+	return card;
 }
 // After a change in a notification's card or dialog: the pane it was made from, drawn again
 async function refreshNotifications() {
@@ -9859,12 +10576,12 @@ function askReport(keepAlive) {
 // each user), checked once an hour
 // From 1000 MB in GB (1.0 GB, not 1020.6 MB); under it in MB, whole from 10 MB
 const usageSize = (mb) => mb >= 1000 ? `${(mb / 1024).toFixed(1)} GB` : `${mb >= 10 ? Math.round(mb) : Math.round(mb * 10) / 10} MB`;
-function usageLines(over) {
+function usageLines(over, members = null) {
 	return over.length
 		? over.map((item) => el("li", { className: "report-problem" }, el("span", { className: "dot bad" }),
-			el("div", {}, el("strong", { textContent: `${item.kind === "site" ? "Site" : "Database"} ${item.name}` }),
-				el("small", { textContent: `${item.user}: ${usageSize(item.size_mb)} of ${usageSize(item.limit_mb)}` }))))
-		: [el("li", { className: "report-ok" }, svgIcon("check"), el("span", { textContent: "Nothing is over its limit." }))];
+			el("div", {}, el("strong", { textContent: `${item.kind === "site" ? "Site" : item.kind === "environment" ? "Environment" : "Database"} ${item.name}` }),
+				el("small", { textContent: [item.server, `${item.user || "Server limit"}: ${usageSize(item.size_mb)} of ${usageSize(item.limit_mb)}`].filter(Boolean).join(" · ") }))))
+		: [el("li", { className: "report-ok" }, svgIcon("check"), el("span", { textContent: members ? `Nothing is over its limit, here or on ${members.join(", ")}.` : "Nothing is over its limit." }))];
 }
 function usageCard(usage) {
 	const card = toolCard({ icon: "archive", tone: "amber", title: "Usage alerts",
@@ -9880,7 +10597,7 @@ function usageCard(usage) {
 				: [tonedButton(usage.emails.length ? "Turn on…" : "Set up…", "bell", "amber", () => askUsage(usage))])] });
 	card.querySelector(".tool-head").append(...card.querySelectorAll(":scope > .tool-actions"));
 	if (usage.checked) {
-		card.append(el("ul", { className: "report-problems usage-over" }, ...usageLines(usage.over)),
+		card.append(el("ul", { className: "report-problems usage-over" }, ...usageLines(usage.over, usage.members)),
 			el("p", { className: "hint", textContent: `Last checked ${formatDate(usage.checked * 1000)}` + (usage.mail_error ? ` · the last mail failed: ${usage.mail_error}` : "") }));
 	}
 	return card;
@@ -9948,32 +10665,62 @@ function showUsageMeasured(all) {
 		busy ? "Measuring now…" : all?.measured ? `Measured ${syncAgo(all.measured * 1000)}` : ""),
 		...(busy ? [] : [tonedButton("Measure now", "sync", "blue", () => run(() => openUsageSettings(true)))]));
 }
-async function openUsageSettings(fresh = false) {
-	const list = $("#server-usage-list");
-	if (fresh && usageMeasuring) return usageMeasuring;
+let usageStale = false;
+async function openUsageSettings(fresh = false, server = "", list = $("#server-usage-list")) {
+	if (fresh && !server && usageMeasuring) return usageMeasuring;
+	// The master's own: every member's sites and databases, a section each, measured there
+	if (!server && masterSettings()) {
+		const measured = {};
+		usageStale = false;
+		const job = openOnMembers(list, null, async (name, into) => { measured[name] = await openUsageSettings(fresh, name, into); });
+		if (fresh) {
+			usageMeasuring = job;
+			showUsageMeasured(null);
+		}
+		try {
+			await job;
+		} finally {
+			if (fresh) usageMeasuring = null;
+		}
+		if (!serverTabOpen("usage")) return;
+		// When the oldest of them was measured
+		const times = Object.values(measured).map((all) => all?.measured).filter(Boolean);
+		showUsageMeasured(times.length ? { measured: Math.min(...times) } : null);
+		if (usageStale && !fresh) setTimeout(() => { if (serverTabOpen("usage")) run(() => openUsageSettings(true)); });
+		return;
+	}
+	// A site of the server measured: on the master, the one of that member
+	const siteOf = (name) => allSites.find((site) => site.name === name && (!server || site.harbor_server === server));
 	list.setAttribute("aria-busy", "true");
 	const measuring = el("div", { className: "tool-card tool-card-wide usage-overview" }, loadingState("Measuring the sites and databases…"));
 	// Fresh sizes are measured behind what is shown; only an empty page shows the measuring
 	if (!fresh || !list.querySelector(".usage-overview:not(:has(.loading-state))")) list.replaceChildren(measuring);
 	let all, known, servers;
 	try {
-		const request = api("/api/usage/all" + (fresh ? "?fresh=1" : ""));
-		if (fresh) {
+		const request = api(viaPath(server, "/api/usage/all" + (fresh ? "?fresh=1" : "")));
+		if (fresh && !server) {
 			usageMeasuring = request;
 			showUsageMeasured(null);
 		}
 		try {
-			[all, known, servers] = await Promise.all([request, sitesLoaded ? Promise.resolve({ sites: allSites }) : api("/api/sites").catch(() => ({ sites: [] })),
+			[all, known, servers] = await Promise.all([request, sitesLoaded ? Promise.resolve({ sites: allSites.filter((site) => !server || site.harbor_server === server) })
+				: api(viaPath(server, "/api/sites")).catch(() => ({ sites: [] })),
 				// The servers Harbor knows: a remote environment is named by its server's name, where it is one of them
-				api("/api/servers/kept").catch(() => ({ servers: [] }))]);
+				api(viaPath(server, "/api/servers/kept")).catch(() => ({ servers: [] }))]);
 		} finally {
-			if (fresh) usageMeasuring = null;
+			if (fresh && !server) usageMeasuring = null;
+		}
+		// An environment managed from a site on another member is shown there, under its site
+		if (server) {
+			all.sites = all.sites.filter((item) => !managedElsewhere.has(`${server}|${item.name}`));
+			all.environments = (all.environments || []).filter((item) => !managedElsewhere.has(`${server}|${item.site}`));
 		}
 		// Gone to another page meanwhile: nothing to draw
 		if (fresh && !serverTabOpen("usage")) return;
 		if (!list.contains(measuring)) list.replaceChildren(measuring);
-		showUsageMeasured(all);
-		if (all.stale && !fresh) setTimeout(() => { if (serverTabOpen("usage")) run(() => openUsageSettings(true)); });
+		if (server) usageStale = usageStale || Boolean(all.stale);
+		else showUsageMeasured(all);
+		if (all.stale && !fresh && !server) setTimeout(() => { if (serverTabOpen("usage")) run(() => openUsageSettings(true)); });
 		const serverName = (host) => (servers?.servers || []).find((server) => server.host === host)?.name || host;
 		// Each site's kind beside its name, as its card on Web Server has it
 		const kindOf = Object.fromEntries((known.sites || []).map((site) => [site.name, site.kind]));
@@ -10145,7 +10892,7 @@ async function openUsageSettings(fresh = false) {
 			const unmeasured = mine.filter((env) => env.size_mb == null);
 			const total = limit ? Math.max(limit, item.size_mb) : sectionSum;
 			const envName = (env) => env.environment || env.target;
-			const where = (env) => env.in_site ? "" : env.local ? " (own folder)" : env.windows ? " (Windows)" : ` (${allSites.find((site) => site.name === env.site)?.environments.find((other) => envKeyOf(other) === env.target)?.host || "another server"})`;
+			const where = (env) => env.in_site ? "" : env.local ? " (own folder)" : env.windows ? " (Windows)" : ` (${siteOf(env.site)?.environments.find((other) => envKeyOf(other) === env.target)?.host || "another server"})`;
 			// Named by its address where its kind is not enough (several Production)
 			const same = (env) => measured.filter((other) => envName(other) === envName(env)).length > 1;
 			const parts = [{ label: "The site itself", short: "Site", mb: item.main_mb ?? item.size_mb, className: "part-site" },
@@ -10247,7 +10994,7 @@ async function openUsageSettings(fresh = false) {
 		};
 		// A database opens the SQL page on its connection, its tab Databases
 		const openDatabase = (connection) => () => {
-			try { localStorage.setItem("vns-sql-connection", connection.id); localStorage.setItem("vns-sql-tab", "databases"); } catch (error) { /* none */ }
+			try { localStorage.setItem(sqlKey("connection"), connection.id); localStorage.setItem("vns-sql-tab", "databases"); } catch (error) { /* none */ }
 			sqlTab = "databases";
 			if ($("#sql-connection").querySelector(`option[value="${CSS.escape(connection.id)}"]`)) $("#sql-connection").value = connection.id;
 			go("#sql");
@@ -10256,7 +11003,7 @@ async function openUsageSettings(fresh = false) {
 		// each under its site, its name after a bend as in Export
 		const environments = all.environments || [];
 		const environmentLine = (item, siteLimit = null, siteServerLimit = null, site = null) => {
-			const env = allSites.find((site) => site.name === item.site)?.environments.find((other) => envKeyOf(other) === item.target);
+			const env = siteOf(item.site)?.environments.find((other) => envKeyOf(other) === item.target);
 			const label = item.binding || item.folder || `${item.site} (${item.target})`;
 			// Where it is, and so whether the site's size above has it: in the site's folder it does, else it is its own. With
 			// a limit on the site, said by it: in the limit, or not
@@ -10302,7 +11049,7 @@ async function openUsageSettings(fresh = false) {
 		const environmentLines = (site, siteLimit = null, siteServerLimit = null) => {
 			const mine = environments.filter((item) => item.site === site.name);
 			if (!mine.length) return [];
-			const main = allSites.find((other) => other.name === site.name)?.environments.find((env) => !isTarget(env));
+			const main = siteOf(site.name)?.environments.find((env) => !isTarget(env));
 			const itself = { site: site.name, target: "main", environment: main ? (main.environment || main.label || "Main") : "Main",
 				binding: (main && bindingLabel(main)) || site.name, local: true, in_site: true, size_mb: site.main_mb, server_limit_mb: site.main_limit_mb ?? null };
 			return [itself, ...mine].map((item) => environmentLine(item, siteLimit, siteServerLimit, site));
@@ -10316,6 +11063,7 @@ async function openUsageSettings(fresh = false) {
 			...orphans.map(environmentLine))] : [];
 		// Nothing made yet: the empty state the other pages have, with the first site to make where the user may
 		if (!all.sites.length && !orphans.length && !all.connections.some((connection) => connection.databases.length)) {
+			list.dataset.count = "0";
 			measuring.replaceWith(el("section", { className: "tool-card tool-card-wide usage-nothing" }, panelEmpty({ icon: "archive", title: "Nothing to measure yet",
 				text: "Sites and databases show here once there are some, with what each takes beside its limit.",
 				button: currentUser.create_sites ? panelEmptyButton("Create the first site", () => $("#btn-new-site").click()) : null })));
@@ -10331,10 +11079,12 @@ async function openUsageSettings(fresh = false) {
 				if (name) name.replaceWith(el("span", { className: "usage-title-row" }, name.cloneNode(true), engineBadge(connection)));
 				return part;
 			}), ...environmentsPart);
+		list.dataset.count = String(all.sites.length + orphans.length + all.connections.filter((connection) => connection.databases.length).length);
+		return all;
 	} catch (error) {
 		// Measured again behind what is shown: that stays, and the error is told as any other
 		if (!list.contains(measuring)) {
-			showUsageMeasured(all);
+			if (!server) showUsageMeasured(all);
 			throw error;
 		}
 		measuring.replaceChildren(el("p", { className: "error", textContent: error.message }));
@@ -10345,12 +11095,22 @@ async function openUsageSettings(fresh = false) {
 
 // What is past its limit, as the checks find it: read again now and then, so Needs attention and the banners follow a
 // check that ran since the page loaded (behind a change, the hourly one, or a limit sent from another server)
-async function refreshUsageOver() {
-	if (!currentUser || document.hidden) return;
+// The master's own page (not a member chosen in Settings): its members' are its too
+const onMasterItself = () => Boolean(currentUser?.master) && !serverContext && joinedMembers().length > 0;
+// What is over on the master and each of its members, each said by its server
+async function usageOverEverywhere() {
 	const { over } = await api("/api/usage/over");
+	if (!onMasterItself() || !currentUser.admin) return over;
+	const found = await Promise.all(joinedMembers().map((server) => api(viaPath(server, "/api/usage/over"))
+		.then((data) => (data.over || []).map((item) => ({ ...item, server }))).catch(() => [])));
+	return [...over, ...found.flat()];
+}
+async function refreshUsageOver(quiet = false) {
+	if (!currentUser || document.hidden) return;
+	const over = await usageOverEverywhere();
 	if (JSON.stringify(over) === JSON.stringify(currentUser.usage_over || [])) return;
 	currentUser.usage_over = over;
-	if (sitesLoaded) renderSites();
+	if (sitesLoaded && !quiet) renderSites();
 	showUsageBanner();
 }
 // Quietly: a read that fails now is tried at the next
@@ -11218,7 +11978,7 @@ async function runSqlQuery() {
 	if (button.disabled) return;
 	button.disabled = true;
 	$("#sql-query-status").textContent = "Running…";
-	const send = (query) => fetch(`/api/sql/${encodeURIComponent(sqlQueryDialog.dataset.connection)}/query`, {
+	const send = (query) => fetch(apiPath(`/api/sql/${encodeURIComponent(sqlQueryDialog.dataset.connection)}/query`), {
 		method: "POST", headers: { "Content-Type": "application/json", "X-CSRF-Token": csrf },
 		body: JSON.stringify({ database: sqlQueryDialog.dataset.database, query }),
 	});
@@ -11419,7 +12179,7 @@ $("#sql-query-text").onkeydown = (event) => {
 		runSqlQuery();
 	}
 };
-$("#sql-connection").onchange = () => { saveSqlConnection($("#sql-connection").value); run(refreshSql); };
+$("#sql-connection").onchange = () => { saveSqlConnection($("#sql-connection").value); userContext(); run(refreshSql); };
 $("#sql-create").onclick = () => run(async () => {
 	const connection = sqlSelected();
 	const values = await askSqlDatabase();
@@ -11655,7 +12415,7 @@ $("#form-sql-connection").onsubmit = (event) => {
 			if (currentView === "sql" || !after) await loadSqlConnections(saved.id);
 			if (after) {
 				// The dialog it was added from takes it up: with the connections as they are now
-				convertConnections = (await api("/api/convert/connections")).connections || [];
+				convertConnectionsOf[actionServer || serverContext || ""] = (await api("/api/convert/connections")).connections || [];
 				await after();
 			}
 		} catch (error) {
@@ -11788,7 +12548,11 @@ function showWindowsMenu() {
 	$("#server-tab-windows").hidden = !copy && !windowsServerCount;
 	if (serverTabOpen("windows")) openWindowsSettings();
 }
-$("#server-tab-admin").onclick = () => { const admin = allSites.find((s) => s.admin); if (admin) go(siteLink(admin.name)); };
+// The admin site of the server Settings are of: this one's, or the member's chosen at the top
+$("#server-tab-admin").onclick = () => {
+	const admin = allSites.find((s) => s.admin && (s.harbor_server || "") === pickedServer) || allSites.find((s) => s.admin && !s.harbor_server);
+	if (admin) go(siteLink(admin.name));
+};
 
 // A site's page is in the main column; the admin site's is a part of Settings, to the right of its menu, with Settings
 // lit at the top and Admin site in its menu
@@ -12342,8 +13106,13 @@ function drawDnsRecords() {
 	$("#dns-records-count").replaceChildren(
 		el("span", { className: "dns-chip", textContent: `${dnsRecords.length} record${dnsRecords.length === 1 ? "" : "s"}` }),
 		...(proxiedCount ? [el("span", { className: "dns-chip proxied" }, svgIcon("cloud"), `${proxiedCount} proxied`)] : []));
-	$("#dns-filter").value = "";
+	// The filter stays while the domain is the same (its records drawn again after a change); another domain, none
+	if (dnsFilterZone !== dnsZone.id) {
+		$("#dns-filter").value = "";
+		dnsFilterZone = dnsZone.id;
+	}
 	if (!dnsRecords.length) {
+		$("#dns-filter").value = "";
 		const first = addFirstCard("Add your first record", `An address, an alias or mail for ${dnsZone.name}`, () => editDnsRecord());
 		first.classList.add("cf-first");
 		return $("#dns-records").replaceChildren(first);
@@ -12359,7 +13128,17 @@ function drawDnsRecords() {
 			el("div", { className: "dns-group-rows" }, ...records.map(dnsRecordRow)));
 	}));
 	decorateDns();
+	// The filter as it was, kept to; when nothing it finds is left (the last of them deleted), all of them again
+	if ($("#dns-filter").value.trim()) {
+		$("#dns-filter").dispatchEvent(new Event("input"));
+		if (!document.querySelector("#dns-records .dns-record[data-search]:not([hidden])")) {
+			$("#dns-filter").value = "";
+			$("#dns-filter").dispatchEvent(new Event("input"));
+		}
+	}
 }
+// The domain the filter was typed for
+let dnsFilterZone = null;
 // A record's name without the domain (@ for the domain itself), as it is typed
 const dnsShortName = (name) => name === dnsZone.name ? "@" : name.endsWith("." + dnsZone.name) ? name.slice(0, -dnsZone.name.length - 1) : name;
 // A click that waits for Cloudflare: the button's icon a spinner and the button still until it has answered, so the
@@ -12714,7 +13493,8 @@ async function drawCfRules(box) {
 		el("code", { className: "dns-record-content", textContent: rule.target || rule.target_expression, title: rule.target || rule.target_expression }),
 		el("div", { className: "dns-record-chips" }, el("span", { className: "dns-chip", textContent: String(rule.status) }),
 			...(rule.keep_query ? [el("span", { className: "dns-chip", textContent: "Keeps query" })] : []),
-			...(rule.enabled ? [] : [el("span", { className: "dns-chip", textContent: "Off" })])),
+			// On or Off, as a page rule says it
+			el("span", { className: "dns-chip" + (rule.enabled ? " on" : ""), textContent: rule.enabled ? "On" : "Off" })),
 		el("div", { className: "dns-record-actions" }, tonedButton("Edit…", "pencil", "blue", () => editCfRedirect(index, save)))));
 	box.replaceChildren(
 		cfRuleSection({ title: "Redirects", about: "From a host (and a path) to another address, by Cloudflare before the server is asked", used: cfRules.length, limit: limits.redirects,
@@ -12821,7 +13601,19 @@ function cfWildcardExample(patternInput, targetInput, style) {
 		const ref = (n) => style === "page" ? `$${n}` : `\${${n}}`;
 		let at = 0;
 		const parts = [];
-		const example = pattern.replace(/\*/g, () => { parts.push(samples[at] || `part${at + 1}`); return `\u0000${at++}\u0000`; });
+		// What a * takes depends on where it stands: s in http*:// (https), a name before the domain (www), words in the path
+		let pathAt = 0;
+		const sampleAt = (offset) => {
+			const before = pattern.slice(0, offset), after = pattern.slice(offset + 1);
+			if (/http$/i.test(before) && after.startsWith("://")) return "s";
+			const inHost = !before.includes("://") ? !before.includes("/") : !before.slice(before.indexOf("://") + 3).includes("/");
+			// At the start of the name: a name of its own before the domain (www.), or a whole one before a dot
+			const hostStart = /(^|\/\/)$/.test(before);
+			if (inHost && after.startsWith(".")) return hostStart || before.endsWith(".") ? "www" : "shop";
+			if (inHost) return hostStart ? "www." : "shop";
+			return samples[pathAt++] || `part${at + 1}`;
+		};
+		const example = pattern.replace(/\*/g, (star, offset) => { parts.push(sampleAt(offset)); return `\u0000${at++}\u0000`; });
 		const shown = (text) => text.split("\u0000").map((piece, index) => index % 2 ? el("mark", { className: `cf-wild-part p${Number(piece) % 4}`, textContent: parts[Number(piece)] }) : piece);
 		// A pattern alone (a page rule's own settings) shows nothing until it has a *: the field's hint says the rest
 		box.hidden = !targetInput && !stars;
@@ -13030,7 +13822,8 @@ function editCfRedirect(index, save) {
 	const description = el("input", { autocomplete: "off", value: rule?.description || "", placeholder: "Old site to the new" });
 	const target = el("input", { autocomplete: "off", spellcheck: false, value: rule?.target || "", placeholder: `https://www.${dnsZone.name}/\${1}` });
 	let example = null;
-	const match = cfMatchFields(rule, "cf_match", { placeholder: `https://old.${dnsZone.name}/*`, hint: `The whole address with its https://, such as https://*.${dnsZone.name}/files/*`,
+	const match = cfMatchFields(rule, "cf_match", { placeholder: `https://old.${dnsZone.name}/*`,
+		hint: `The whole address with its https://, such as https://*.${dnsZone.name}/files/*. Without a path, every page of it (/* is added).`,
 		expressionPlaceholder: `http.host eq "old.${dnsZone.name}"` }, (mode) => {
 		example.hidden = mode !== "wildcard";
 		target.placeholder = mode === "wildcard" ? `https://www.${dnsZone.name}/\${1}` : `https://www.${dnsZone.name}`;
@@ -13147,20 +13940,23 @@ function editCfSettingsRule(kind, index, rules, save) {
 // Administrators make users here: a role, and for a user the sites, environments and actions, and SQL Server.
 const userDialog = $("#dlg-user");
 const userForm = $("#form-user");
+// Their username and email are not filled in by Safari with the admin's own login
+noAutofill(userForm.elements.handle);
+noAutofill(userForm.email);
 // The user's passwords: an eye, and one made at random with a click
-generatablePassword(userForm.password);
-generatablePassword(userForm.sftp_password);
+generatablePassword(userForm.elements.secret_new);
+generatablePassword(userForm.elements.sftp_secret);
 // Mail them their login: only where there is a password typed, an email (or a username that is one) and a mail server
 function syncSendLogin() {
 	const row = userForm.querySelector(".user-send-login");
-	const to = userForm.email.value.trim() || (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(userForm.username.value.trim()) ? userForm.username.value.trim() : "");
+	const to = userForm.email.value.trim() || (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(userForm.elements.handle.value.trim()) ? userForm.elements.handle.value.trim() : "");
 	// A user changed with no new password: their password is not known, so the mail has a link to choose one
-	const withPassword = Boolean(userForm.password.value);
+	const withPassword = Boolean(userForm.elements.secret_new.value);
 	row.hidden = userForm.dataset.mode === "template" || !usersData?.can_mail || (!withPassword && !userForm.dataset.id) || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to);
 	row.querySelector("small").textContent = withPassword ? `Username, password and where to log in, to ${to}` : `Username, where to log in and a link to choose a password, to ${to}`;
 	if (row.hidden) userForm.send_login.checked = false;
 }
-for (const name of ["email", "username", "password"]) userForm.elements[name].addEventListener("input", syncSendLogin);
+for (const name of ["email", "handle", "secret_new"]) userForm.elements[name].addEventListener("input", syncSendLogin);
 let usersData = null;
 // The rules of the template a new user started from: what a site or connection ticked for them gives
 let grantRules = null;
@@ -13226,12 +14022,95 @@ function userCard(user) {
 	return card;
 }
 
+// Users as cards or as a list (a line each, for many), the choice kept; and a filter once there are more than four
+let usersLayout = "grid";
+try { if (localStorage.getItem("vns-user-layout") === "list") usersLayout = "list"; } catch (error) { /* none */ }
+$("#users-layout-grid").append(svgIcon("grid"));
+$("#users-layout-list").append(svgIcon("rows"));
+for (const layout of ["grid", "list"]) {
+	$("#users-layout-" + layout).onclick = () => {
+		usersLayout = layout;
+		try { localStorage.setItem("vns-user-layout", layout); } catch (error) { /* none */ }
+		renderUsers();
+	};
+}
+$("#people-filter").addEventListener("input", () => renderUsers());
+$("#people-filter-clear").onclick = () => { $("#people-filter").value = ""; renderUsers(); $("#people-filter").focus(); };
+// What a user is found by: who they are, their role, their Linux user, and what they were given
+function userText(user) {
+	return [user.name, user.username, user.email, user.linux, user.role === "admin" ? "administrator" : "user", user.disabled ? "locked" : "",
+		...Object.keys(user.sites || {}), ...Object.keys(user.connections || {}), ...(user.dns_domains || [])].filter(Boolean).join(" ").toLowerCase();
+}
+// What a user may, as chips: an icon and how many for each part, and the members they have access on
+function userChips(user) {
+	if (user.role === "admin") return [el("span", { className: "user-chip admin" }, svgIcon("shield"), "Everything")];
+	const count = (object) => Object.keys(object || {}).length;
+	const chip = (icon, tone, text, title = text) => el("span", { className: `user-chip tone-${tone}`, title }, svgIcon(icon), text);
+	const chips = [
+		...(user.web ? [chip("globe", "blue", `${count(user.sites)} site${count(user.sites) === 1 ? "" : "s"}` + (user.create_sites ? " · makes" : ""))] : []),
+		...(user.sql ? [chip("database", "purple", `${count(user.connections)} SQL`, `${count(user.connections)} SQL connection${count(user.connections) === 1 ? "" : "s"}`)] : []),
+		...(user.dns ? [chip("cloud", "orange", `${(user.dns_domains || []).length} domain${(user.dns_domains || []).length === 1 ? "" : "s"}`, (user.dns_domains || []).join(", "))] : []),
+		...Object.keys(user.servers || {}).map((name) => chip("server", "teal", name, `Access on ${name}`)),
+	];
+	return chips.length ? chips : [el("span", { className: "user-chip none" }, "No access yet")];
+}
+// A user in a line: their initial, who they are, their role, what they may, when they last signed in, and Edit
+function userLine(user) {
+	const admin = user.role === "admin";
+	// What the column is says itself: signed in when, or never
+	const login = user.last_login ? `Signed in ${syncAgo(user.last_login * 1000)}` : "Never signed in";
+	return el("div", { className: "user-line" + (user.disabled ? " user-locked" : "") },
+		el("span", { className: "user-line-initial", textContent: (user.username || "?").slice(0, 1).toUpperCase() }),
+		el("span", { className: "user-line-who" }, el("strong", { textContent: user.name || user.username }), el("small", { textContent: user.name ? user.username : admin ? "Administrator" : "User" })),
+		el("span", { className: "tool-state " + (user.disabled ? "bad" : admin ? "role admin" : "role"), textContent: user.disabled ? "Locked" : admin ? "Administrator" : "User" }),
+		el("span", { className: "user-line-access", title: userSummary(user) }, ...userChips(user)),
+		el("span", { className: "user-line-login", title: user.last_login ? formatDate(user.last_login * 1000) : "Never signed in" },
+			el("span", { className: "dot" + (user.last_login ? " on" : "") }), login),
+		el("span", { className: "user-line-linux", title: user.linux ? `Linux user ${user.linux}` : "No Linux user" }, svgIcon("terminal"), el("code", { textContent: user.linux || "—" })),
+		tonedButton("Edit…", "pencil", "amber", () => openUserEditor(user)));
+}
+// On a member, users are made on its master: who is here is shown, nothing to make or change, and where to go instead
+function memberUsersNote() {
+	const master = currentUser.member_of;
+	return el("div", { className: "member-users-note" },
+		el("span", { className: "member-icon" }, svgIcon("users")),
+		el("div", { className: "member-title" }, el("strong", { textContent: `Users are made on ${master.name || "the master"}` }),
+			el("small", { textContent: "This server is its member: who may log in and what they may do is given there, for every server at once." })),
+		el("a", { className: "button-link tool-open-admin", href: `${master.address}/#server/users`, target: "_blank", rel: "noopener noreferrer" }, svgIcon("external"), `Open ${master.name || "the master"}`));
+}
 function renderUsers() {
+	if (currentUser.member_of) {
+		const users = usersData.users;
+		$("#users-count").textContent = users.length ? String(users.length) : "";
+		$("#users-layout-toggle").hidden = $("#people-filter-box").hidden = true;
+		$("#users-list").classList.remove("as-list");
+		$("#users-list").replaceChildren(memberUsersNote(), ...users.map((user) => {
+			const card = userCard(user);
+			card.querySelector(".tool-actions")?.remove();
+			return card;
+		}));
+		$("#templates-count").textContent = "";
+		$("#templates-list").replaceChildren(memberUsersNote());
+		return;
+	}
 	const users = usersData.users;
 	$("#users-count").textContent = users.length ? String(users.length) : "";
-	// Three beside each other, and a dashed card after them that adds one, as everywhere on the Server page
-	$("#users-list").replaceChildren(...users.map(userCard),
-		addFirstCard(users.length ? "Add a user" : "Add your first user", "Give someone a login of their own, with only the sites and databases they may use", () => openUserEditor()));
+	$("#users-layout-toggle").hidden = users.length < 2;
+	$("#people-filter-box").hidden = users.length <= 4;
+	if (users.length <= 4) $("#people-filter").value = "";
+	$("#users-layout-grid").setAttribute("aria-pressed", String(usersLayout === "grid"));
+	$("#users-layout-list").setAttribute("aria-pressed", String(usersLayout === "list"));
+	const words = $("#people-filter").value.trim().toLowerCase().split(/\s+/).filter(Boolean);
+	const shown = users.filter((user) => words.every((word) => userText(user).includes(word)));
+	const list = usersLayout === "list" && users.length > 1;
+	$("#users-list").classList.toggle("as-list", list);
+	const add = addFirstCard(users.length ? "Add a user" : "Add your first user", "Give someone a login of their own, with only the sites and databases they may use", () => openUserEditor());
+	if (list) add.classList.add("row");
+	// Three beside each other, and a dashed card after them that adds one, as everywhere on the Server page; in a list,
+	// a line each and the low dashed card after them
+	$("#users-list").replaceChildren(...shown.map(list ? userLine : userCard),
+		...(words.length && !shown.length ? [el("p", { className: "muted users-none", textContent: "No user matches the filter." })] : []), add);
+	decorate($("#users-list"));
 	const templates = usersData.templates || [];
 	$("#templates-count").textContent = templates.length ? String(templates.length) : "";
 	$("#templates-list").replaceChildren(...templates.map(templateCard),
@@ -13453,7 +14332,8 @@ function connectionGrantRow(connection, grant, user = null) {
 		loaded = true;
 		list.replaceChildren(el("span", { className: "sql-loading", role: "status" }, el("span", { className: "sql-connection-spinner", ariaHidden: "true" }), "Reading the databases…"));
 		try {
-			const data = await api("/api/sql/" + encodeURIComponent(connection.id));
+			// The connection's databases from the server the window shows: this one, or a member
+			const data = await api((userServer ? `/api/via/${encodeURIComponent(userServer)}/sql/` : "/api/sql/") + encodeURIComponent(connection.id));
 			const names = data.databases.filter((database) => database.id > 4).map((database) => database.name);
 			// A database named in the grant that is gone is still shown, so it can be taken away
 			for (const name of chosen) if (name !== "*" && !names.includes(name)) names.push(name);
@@ -13621,61 +14501,32 @@ function openUserEditor(user = null, template = null, editTemplate = undefined) 
 	$("#template-name-field").hidden = !asTemplate;
 	userForm.template_name.required = asTemplate;
 	userForm.template_name.value = editTemplate?.name || "";
-	userForm.username.required = !asTemplate;
-	userForm.username.value = user?.username || "";
+	userForm.elements.handle.required = !asTemplate;
+	userForm.elements.handle.value = user?.username || "";
 	userForm.elements.name.value = user?.name || "";
 	userForm.email.value = user?.email || "";
-	userForm.password.required = !editing && !asTemplate;
-	userForm.password.placeholder = editing ? "Leave empty to keep it" : "At least 12 characters";
+	userForm.elements.secret_new.required = !editing && !asTemplate;
+	userForm.elements.secret_new.placeholder = editing ? "Leave empty to keep it" : "At least 12 characters";
 	// Changing a user or a template: no templates; a new user: the templates, the one it started from lit
 	showUserTemplates(editing || asTemplate ? null : template || undefined);
 	userForm.querySelector(`input[name=role][value=${asTemplate ? "user" : user?.role || "user"}]`).checked = true;
 	userForm.disabled.checked = Boolean(user?.disabled);
 	userForm.send_login.checked = false;
 	syncSendLogin();
-	// A new user has nothing chosen: each part is turned on as it is wanted
-	userForm.web.checked = Boolean(user?.web);
-	userForm.create_sites.checked = Boolean(user?.create_sites);
-	// Limits: how many they may make, and how big each may be (MB, shown in GB when it is whole GB); empty is none
-	const limits = user?.limits || {};
-	for (const kind of ["site"]) {
-		const count = limits[kind + "s"], size = limits[kind + "_mb"];
-		userForm.elements[`limit_${kind}s`].value = count ?? "";
-		const gb = size == null || size % 1024 === 0;
-		userForm.elements[`limit_${kind}_size`].value = size == null ? "" : gb ? size / 1024 : size;
-		userForm.querySelector(`input[name=limit_${kind}_unit][value=${gb ? "GB" : "MB"}]`).checked = true;
-	}
-	showUserLimits();
-	userForm.sftp.checked = Boolean(user?.sftp);
-	userForm.sftp_password.placeholder = user?.sftp ? "Leave empty to keep it" : "At least 12 characters";
-	userForm.sftp_keys.dataset.loaded = "";
-	$("#user-sftp-address").textContent = user?.linux ? `sftp://${user.linux}@${location.hostname}` : "made when you save";
-	if (editing && user.sftp) {
-		api(`/api/users/${encodeURIComponent(user.id)}/sftp`).then((data) => {
-			userForm.sftp_keys.value = data.keys || "";
-			userForm.sftp_keys.dataset.loaded = data.keys || "";
-			if (data.linux) $("#user-sftp-address").textContent = `sftp://${data.linux}@${data.host}` + (data.port && data.port !== 22 ? `:${data.port}` : "");
-		}).catch(() => {});
-	}
-	userForm.sql.checked = Boolean(user?.sql);
-	userForm.manage_connections.checked = Boolean(user?.manage_connections);
-	// DNS: where a Cloudflare account is set up, the domains of it they may keep
+	// The servers it may have access on (a master's members), this one first; what it has on each is kept as it is chosen
+	userServer = "";
+	userDrafts = { "": user || {} };
+	for (const [name, access] of Object.entries(user?.servers || {})) userDrafts[name] = access;
+	userServerData = { "": usersData };
+	drawUserServers(asTemplate);
+	// DNS: where a Cloudflare account is set up, the domains of it they may keep (the master's own, on this server)
 	userForm.dns.checked = Boolean(user?.dns);
 	fillUserDns(user?.dns_domains || []);
 	// The parts of Cloudflare they may use: DNS for one given before there was a choice
 	const parts = user?.cloudflare_parts || ["dns"];
 	$("#user-cf-parts").replaceChildren(...CF_PARTS.map(([part, label, icon]) => el("label", { className: "grant-chip" },
 		el("input", { type: "checkbox", name: "cf_part", value: part, checked: parts.includes(part) }), el("span", {}, label))));
-	// To which SQL Servers: both for one given it before there was a choice
-	const engines = Array.isArray(user?.connection_engines) ? user.connection_engines : ["mssql", "postgres"];
-	for (const box of userForm.querySelectorAll("input[name=connection_engine]")) box.checked = engines.includes(box.value);
-	// A user: the sites and connections, each ticked or not; a template: what each one given to a user gives
-	$("#user-sites").replaceChildren(...(asTemplate ? [] : Object.entries(usersData.sites).sort(([a], [b]) => a.localeCompare(b))
-		.map(([name, envs]) => siteGrantRow(name, envs, user?.sites?.[name], user))));
-	userSitesSearch.reset(!asTemplate, keepUserFilter);
-	$("#user-sites-hint").hidden = asTemplate;
-	$("#user-connections").replaceChildren(...(asTemplate ? [] : usersData.connections.length ? usersData.connections.map((connection) => connectionGrantRow(connection, user?.connections?.[connection.id], user))
-		: [el("p", { className: "muted", textContent: "There are no SQL connections yet." })]));
+	fillUserAccess(user, user, asTemplate);
 	$("#template-site-rules").replaceChildren(...(asTemplate ? [templateSiteRules(user.site_rules || {})] : []));
 	$("#template-sql-rules").replaceChildren(...(asTemplate ? [templateSqlRules(user.sql_rules || {})] : []));
 	$("#template-site-rules").hidden = $("#template-sql-rules").hidden = !asTemplate;
@@ -13687,9 +14538,120 @@ function openUserEditor(user = null, template = null, editTemplate = undefined) 
 	// The name has focus when the window opens; drawn again after Save, the focus (and with it the scroll) stays
 	if (!userDialog.open) {
 		userDialog.showModal();
-		(asTemplate ? userForm.template_name : userForm.username).focus();
+		(asTemplate ? userForm.template_name : userForm.elements.handle).focus();
 	}
 }
+// What a user may on the server the window shows (this one, or a member): its parts, limits, SFTP, sites and
+// connections, from what is kept for that server (access), each site and connection of it (data) a row
+function fillUserAccess(access, owner, asTemplate = false) {
+	const data = userServerData[userServer] || usersData;
+	const editing = Boolean(owner?.id) && !asTemplate;
+	// A new user has nothing chosen: each part is turned on as it is wanted
+	userForm.web.checked = Boolean(access?.web);
+	userForm.create_sites.checked = Boolean(access?.create_sites);
+	// On a member: whether it hosts their environments (a master hosts nothing, so not asked there)
+	userForm.create_envs.checked = Boolean(access?.create_envs);
+	$("#user-create-envs").hidden = !userServer;
+	// Limits: how many they may make, and how big each may be (MB, shown in GB when it is whole GB); empty is none
+	const limits = access?.limits || {};
+	for (const kind of ["site"]) {
+		const count = limits[kind + "s"], size = limits[kind + "_mb"];
+		userForm.elements[`limit_${kind}s`].value = count ?? "";
+		const gb = size == null || size % 1024 === 0;
+		userForm.elements[`limit_${kind}_size`].value = size == null ? "" : gb ? size / 1024 : size;
+		userForm.querySelector(`input[name=limit_${kind}_unit][value=${gb ? "GB" : "MB"}]`).checked = true;
+	}
+	showUserLimits();
+	userForm.sftp.checked = Boolean(access?.sftp);
+	userForm.elements.sftp_secret.placeholder = access?.sftp ? "Leave empty to keep it" : "At least 12 characters";
+	userForm.sftp_keys.dataset.loaded = "";
+	// Their SFTP address: this server's as it knows it; on a member, made there when it is sent them
+	$("#user-sftp-address").textContent = !userServer && owner?.linux ? `sftp://${owner.linux}@${location.hostname}` : userServer ? `on ${userServer}, made when you save` : "made when you save";
+	if (editing && access?.sftp && !userServer) {
+		api(`/api/users/${encodeURIComponent(owner.id)}/sftp`).then((data) => {
+			userForm.sftp_keys.value = data.keys || "";
+			userForm.sftp_keys.dataset.loaded = data.keys || "";
+			if (data.linux) $("#user-sftp-address").textContent = `sftp://${data.linux}@${data.host}` + (data.port && data.port !== 22 ? `:${data.port}` : "");
+		}).catch(() => {});
+	}
+	userForm.sql.checked = Boolean(access?.sql);
+	userForm.manage_connections.checked = Boolean(access?.manage_connections);
+	// To which SQL Servers: both for one given it before there was a choice
+	const engines = Array.isArray(access?.connection_engines) ? access.connection_engines : ["mssql", "postgres"];
+	for (const box of userForm.querySelectorAll("input[name=connection_engine]")) box.checked = engines.includes(box.value);
+	// A user: the sites and connections, each ticked or not; a template: what each one given to a user gives
+	$("#user-sites").replaceChildren(...(asTemplate ? [] : Object.entries(data.sites).sort(([a], [b]) => a.localeCompare(b))
+		.map(([name, envs]) => siteGrantRow(name, envs, access?.sites?.[name], owner))));
+	userSitesSearch.reset(!asTemplate, keepUserFilter);
+	$("#user-sites-hint").hidden = asTemplate;
+	$("#user-connections").replaceChildren(...(asTemplate ? [] : data.connections.length ? data.connections.map((connection) => connectionGrantRow(connection, access?.connections?.[connection.id], owner))
+		: [el("p", { className: "muted", textContent: "There are no SQL connections yet." })]));
+	// Cloudflare is the master's own: not a member's
+	$("#dlg-user").classList.toggle("on-member-access", Boolean(userServer));
+	// A master hosts nothing: its own access is Cloudflare's alone (Web Server and SQL Server are its members')
+	$("#dlg-user").classList.toggle("on-master-access", !userServer && Boolean((usersData?.members || []).length));
+	// Once this server's sites are drawn: whether it may make environments for them
+	syncCreateEnvs();
+	// The servers above, their dots from what is filled in now (Cloudflare is set before this, the rest here)
+	if (usersData?.members?.length) drawUserServers(asTemplate);
+}
+// The server the user window shows the access on: "" this one, else a member; what is chosen on each is kept as it is
+// left (userDrafts), and what each has (its sites and connections) as it was read (userServerData)
+let userServer = "";
+let userDrafts = {};
+let userServerData = {};
+// A master's members as chips above the access: This server, then each, the one shown lit
+function drawUserServers(asTemplate) {
+	const box = $("#user-servers");
+	const members = usersData?.members || [];
+	box.hidden = !members.length;
+	if (box.hidden) return box.replaceChildren();
+	box.replaceChildren(el("span", { className: "user-templates-label", textContent: "Access on" }),
+		el("div", { className: "cf-segments user-server-segments", role: "radiogroup", ariaLabel: "Server" },
+			...["", ...members].map((name) => el("button", { type: "button", role: "radio", ariaChecked: String(name === userServer),
+				className: "cf-segment" + (name === userServer ? " active" : ""), onclick: () => run(() => switchUserServer(name)) },
+				svgIcon("server"), name || "This server",
+				// A dot where they have access: this server's Web Server, SQL Server or Cloudflare, a member's Web or SQL Server
+				...(hasAccessOn(name, name === userServer ? { ...userDrafts[name], ...(asTemplate ? templateServerParts() : userAccess()) } : userDrafts[name], asTemplate)
+					? [el("span", { className: "user-server-has", title: "Has access there" })] : [])))));
+}
+// Whether they have something on a server: on a member, Web Server with a site there or sites or environments to make,
+// SQL Server with a connection or connections to add (switched on with nothing on it is no access, and is not saved
+// so); on this server, also Cloudflare. A template has no sites of its own: its parts are what it gives
+function hasAccessOn(name, access, asTemplate = false) {
+	if (!access) return false;
+	const some = (value) => Boolean(value) && Object.keys(value).length > 0;
+	if (!name || asTemplate) return Boolean(access.web || access.sql || (!name && access.dns) || access.create_envs);
+	return Boolean((access.web && (some(access.sites) || access.create_sites || access.create_envs)) || (access.sql && (some(access.connections) || access.manage_connections)));
+}
+// Another server's access in the window: what was chosen here kept, that one's sites and connections read from it
+async function switchUserServer(name) {
+	if (name === userServer) return;
+	// A template has no sites or connections of its own: its parts on each server alone
+	const asTemplate = userForm.dataset.mode === "template";
+	userDrafts[userServer] = { ...(userDrafts[userServer] || {}), ...(asTemplate ? templateServerParts() : serverAccess(userAccess())) };
+	if (name && !asTemplate && !userServerData[name]) {
+		const data = await api(`/api/via/${encodeURIComponent(name)}/users`);
+		userServerData[name] = { sites: data.sites || {}, connections: data.connections || [] };
+	}
+	userServer = name;
+	const owner = usersData.users.find((user) => user.id === userForm.dataset.id) || null;
+	fillUserAccess(userDrafts[name] || {}, asTemplate ? null : owner, asTemplate);
+	showUserScope();
+	drawUserServers(asTemplate);
+}
+// May create environments is set as the window is gone through, top to bottom: whether it stays is decided when the
+// user is saved (only with a site given them that lets them add environments, on any server), and said if it does not
+function syncCreateEnvs() {}
+userForm.addEventListener("change", (event) => {
+	if (event.target.name !== "create_envs") syncCreateEnvs();
+	// Its dot follows the parts switched on or off
+	// (a site or connection ticked too: Web Server or SQL Server with nothing on a member is no access there)
+	if (!$("#user-servers").hidden && event.target.type !== "text" && event.target.type !== "search") drawUserServers(userForm.dataset.mode === "template");
+});
+// What of a user's access is a server's own (not who they are, nor Cloudflare's)
+const SERVER_ACCESS = ["web", "create_sites", "create_envs", "sftp", "sql", "manage_connections", "connection_engines", "sites", "connections", "limits"];
+const serverAccess = (access) => Object.fromEntries(SERVER_ACCESS.filter((key) => key in access).map((key) => [key, access[key]]));
 // A template's rules for each site a user is given: what they may do there, and whether environments added later follow
 function templateSiteRules(rules) {
 	const actions = siteActionChips(rules.actions || defaultSiteActions);
@@ -13724,13 +14686,22 @@ function templateSqlRules(rules) {
 		actions: actions.read(), ...(makes() ? { limits: limits.read() } : {}) });
 	return element;
 }
-// What the template window gives: the parts, the limits and the rules for each site and connection
-function templateAccess() {
-	return { web: userForm.web.checked, create_sites: userForm.create_sites.checked, sftp: userForm.sftp.checked, sql: userForm.sql.checked,
-		manage_connections: userForm.manage_connections.checked, connection_engines: connectionEngines(), limits: userLimits(), dns: userForm.dns.checked,
-		cloudflare_parts: [...userForm.querySelectorAll("input[name=cf_part]:checked")].map((box) => box.value),
-		site_rules: $("#template-site-rules").firstChild.read(), sql_rules: $("#template-sql-rules").firstChild.read() };
+// A template's parts on the server the window shows: what a user made from it has there
+function templateServerParts() {
+	return { web: userForm.web.checked, create_sites: userForm.create_sites.checked, create_envs: userForm.create_envs.checked, sftp: userForm.sftp.checked,
+		sql: userForm.sql.checked, manage_connections: userForm.manage_connections.checked, connection_engines: connectionEngines(), limits: userLimits() };
 }
+// What the template window gives: the parts and limits here and on each member, Cloudflare, and the rules for each
+// site and connection
+function templateAccess() {
+	userDrafts[userServer] = { ...(userDrafts[userServer] || {}), ...templateServerParts() };
+	const { create_envs: _envs, ...here } = { ...templateServerParts(), ...pickParts(userDrafts[""] || {}) };
+	const servers = Object.fromEntries(Object.entries(userDrafts).filter(([name]) => name).map(([name, parts]) => [name, pickParts(parts)]));
+	return { ...here, dns: userForm.dns.checked, cloudflare_parts: [...userForm.querySelectorAll("input[name=cf_part]:checked")].map((box) => box.value),
+		site_rules: $("#template-site-rules").firstChild.read(), sql_rules: $("#template-sql-rules").firstChild.read(), servers };
+}
+const TEMPLATE_PARTS = ["web", "create_sites", "create_envs", "sftp", "sql", "manage_connections", "connection_engines", "limits"];
+const pickParts = (parts) => Object.fromEntries(TEMPLATE_PARTS.filter((key) => key in parts).map((key) => [key, parts[key]]));
 function showUserScope() {
 	const admin = userForm.role.value === "admin";
 	$("#user-scope").hidden = admin;
@@ -13774,9 +14745,9 @@ function userAccess() {
 	const rows = [...$("#user-connections").children].filter((row) => row.collect);
 	rows.forEach((row, index) => {
 		const grant = row.collect();
-		if (grant) connections[usersData.connections[index].id] = grant;
+		if (grant) connections[(userServerData[userServer] || usersData).connections[index].id] = grant;
 	});
-	return { role: userForm.role.value, web: userForm.web.checked, create_sites: userForm.create_sites.checked, sql: userForm.sql.checked,
+	return { role: userForm.role.value, web: userForm.web.checked, create_sites: userForm.create_sites.checked, create_envs: userServer ? userForm.create_envs.checked : false, sql: userForm.sql.checked,
 		manage_connections: userForm.manage_connections.checked, connection_engines: connectionEngines(), sites, connections, sftp: userForm.sftp.checked, limits: userLimits(),
 		dns: userForm.dns.checked, dns_domains: [...userForm.querySelectorAll("input[name=dns_domain]:checked")].map((box) => box.value),
 		cloudflare_parts: [...userForm.querySelectorAll("input[name=cf_part]:checked")].map((box) => box.value) };
@@ -13795,10 +14766,10 @@ function showUserTemplates(chosen) {
 function useUserTemplate(template) {
 	// What is typed already (the username, name and password) stays; the parts and limits are the template's, and each
 	// site or connection ticked gives what its rules say
-	const typed = { username: userForm.username.value, name: userForm.elements.name.value, email: userForm.email.value, password: userForm.password.value };
+	const typed = { username: userForm.elements.handle.value, name: userForm.elements.name.value, email: userForm.email.value, password: userForm.elements.secret_new.value };
 	const { site_rules: _site, sql_rules: _sql, ...parts } = template.access;
 	openUserEditor({ ...parts, username: typed.username, name: typed.name, email: typed.email }, template);
-	userForm.password.value = typed.password;
+	userForm.elements.secret_new.value = typed.password;
 }
 // Save keeps the window open, Save and close (Enter) closes it
 $("#user-save-stay").dataset.tone = "teal";
@@ -13832,11 +14803,17 @@ function saveUserForm(close) {
 	const view = userView();
 	run(async () => {
 		const id = userForm.dataset.id;
-		const body = { username: userForm.username.value.trim(), name: userForm.elements.name.value.trim(), email: userForm.email.value.trim(), disabled: userForm.disabled.checked, ...userAccess() };
-		if (userForm.password.value) body.password = userForm.password.value;
+		// This server's access at the top, each member's (as chosen in the window, or as it was) under servers
+		const shown = userAccess();
+		userDrafts[userServer] = { ...(userDrafts[userServer] || {}), ...serverAccess(shown) };
+		const own = userServer ? { ...shown, ...serverAccess(userDrafts[""] || {}) } : shown;
+		const servers = Object.fromEntries(Object.entries(userDrafts).filter(([name]) => name).map(([name, access]) => [name, serverAccess(access)]));
+		const body = { username: userForm.elements.handle.value.trim(), name: userForm.elements.name.value.trim(), email: userForm.email.value.trim(), disabled: userForm.disabled.checked, ...own,
+			...((usersData.members || []).length ? { servers } : {}) };
+		if (userForm.elements.secret_new.value) body.password = userForm.elements.secret_new.value;
 		if (userForm.send_login.checked && !userForm.querySelector(".user-send-login").hidden) body.send_login = true;
 		const sftp = {};
-		if (userForm.sftp.checked && userForm.sftp_password.value) sftp.password = userForm.sftp_password.value;
+		if (userForm.sftp.checked && userForm.elements.sftp_secret.value) sftp.password = userForm.elements.sftp_secret.value;
 		if (userForm.sftp.checked && userForm.sftp_keys.value.trim() !== (userForm.sftp_keys.dataset.loaded || "").trim()) sftp.keys = userForm.sftp_keys.value;
 		let saved;
 		try {
@@ -13851,6 +14828,11 @@ function saveUserForm(close) {
 		toast(id ? "User saved" : "User added", "ok");
 		if (saved.mailed) toast(`Their login is mailed to ${saved.mailed}.`, "ok");
 		if (saved.mail_error) toast(saved.mail_error, "error");
+		if (saved.members_error) toast(`Saved here; the members were not all told: ${saved.members_error}`, "error");
+		// May create environments asked for, and none of their sites lets them add environments: it was turned off
+		const asked = Object.values(body.servers || {}).some((access) => access.create_envs);
+		const kept = Object.values(saved.user.servers || {}).some((access) => access.create_envs);
+		if (asked && !kept) toast("May create environments is off: none of their sites lets them add environments (Add environments).");
 		// A part sent on with nothing in it was turned off: said, so the switch that moved is understood
 		const off = [body.web && !saved.user.web && "Web Server (no site, and they may not make one)", body.sql && !saved.user.sql && "SQL Server (no connection, and they may not add one)"].filter(Boolean);
 		if (off.length) toast(`Turned off, as nothing is given in it: ${off.join("; ")}.`);
@@ -13858,9 +14840,15 @@ function saveUserForm(close) {
 		// Opened from Usage: it shows the limits just saved
 		if (serverTabOpen("usage")) await openUsageSettings();
 		if (close) return userDialog.close();
-		// Still open: the user as saved, where the window was, with the same filter and the same unfolded
+		// Still open: the user as saved, where the window was, with the same filter and the same unfolded, on the same
+		// server (a member's access stays shown; what was read of it is used again)
+		const stayOn = userServer, read = userServerData;
 		keepUserFilter = true;
 		openUserEditor(usersData.users.find((user) => user.id === saved.user.id) || saved.user);
+		if (stayOn) {
+			Object.assign(userServerData, read);
+			await switchUserServer(stayOn);
+		}
 		keepUserFilter = false;
 		restoreUserView(view);
 	});
@@ -13895,7 +14883,7 @@ $("#user-delete").onclick = () => run(async () => {
 		toast("Template deleted", "ok");
 		return;
 	}
-	const name = userForm.username.value;
+	const name = userForm.elements.handle.value;
 	const user = (usersData?.users || []).find((item) => item.id === userForm.dataset.id) || {};
 	// What they made and is still here: it can go with them, sites and databases each by choice
 	const sites = (user.made?.sites || []).filter((site) => (usersData?.sites || {})[site] !== undefined);
@@ -13978,7 +14966,16 @@ let serverTab = "settings";
 const paneOf = (tab) => TOOL_TABS.includes(tab) ? "tools" : tab;
 const serverTabOpen = (tab) => currentView === "server" && paneOf(serverTab) === paneOf(tab);
 let toolsDrawn = false;
+// What the master shows of every member at once, and what is the master's alone (its Cloudflare, top menu, users and
+// templates): not a member's tab, so a member chosen there opens on General
+const MASTER_WIDE_TABS = ["health", "usage", "convert", "export", "dns", "menu", "users", "templates"];
 async function showServerTab(tab) {
+	// A master hosts nothing: its own Settings have no software (.NET, Node.js, SQL Server), its members' have
+	const hostsNothing = !pickedServer && Boolean(currentUser?.master) && joinedMembers().length > 0 && ["dotnet", "node", "sql"].includes(tab);
+	if ((pickedServer && MASTER_WIDE_TABS.includes(tab)) || hostsNothing) {
+		tab = "settings";
+		history.replaceState(null, "", "#server/settings");
+	}
 	const before = paneOf(serverTab);
 	serverTab = tab;
 	for (const name of SERVER_TABS) {
@@ -14000,6 +14997,8 @@ async function showServerTab(tab) {
 		if (toolsDrawn && before === "tools") return;
 	}
 	await run({ tools: openServerTools, jobs: openCrontab, convert: openConvertSettings, export: openExportSettings, servers: openServers, dns: openDnsSettings, users: openUsers, templates: openUsers, usage: openUsageSettings, settings: openServerSettings, notifications: openNotifications, health: openHealth, menu: openMenuSettings, apache: openApacheSettings, windows: openWindowsSettings, updates: openUpdatesSettings }[paneOf(tab)]);
+	// Users: the filter has the focus, where there are users enough for one
+	if (tab === "users" && !$("#people-filter-box").hidden && !document.querySelector("dialog[open]")) $("#people-filter").focus({ preventScroll: true });
 }
 function showToolCards() {
 	// Access is two columns (SSH and Samba, then its shares and users); the other tools three
@@ -14169,7 +15168,8 @@ function serverToolCards(status) {
 				Object.assign(toolButton("Remove", () => confirmServerTool(`Remove .NET ${item.channel}?`,
 					"Its SDKs and runtimes go from this server. The newest host stays, so the other versions keep running.", "Remove", { tool: "dotnet_remove", channel: item.channel }, true), "ghost tool-danger"),
 					sites.length ? { disabled: true, title: `Used by ${sites.map((site) => site.site).join(", ")}: move them to another version first` }
-						: status.dotnet.length === 1 ? { disabled: true, title: "The only version here: it stays" } : {})],
+						// A master hosts nothing: its last version can go too
+						: status.dotnet.length === 1 && !(currentUser.master && !serverContext) ? { disabled: true, title: "The only version here: it stays" } : {})],
 		});
 		card.querySelector(":scope > .tool-actions").before(list);
 		card.dataset.tool = "dotnet";
@@ -14715,25 +15715,32 @@ function cronStatus(entry) {
 function cronAlertsCard() {
 	const alerts = cronAlerts;
 	const watched = crontabEntries.filter((entry) => entry.kind === "job" && cronWatched(entry)).length;
+	// On the master, who is mailed is its members' too, and the jobs are each server's own: chosen apart
+	const spread = masterSettings() && joinedMembers().length > 0;
+	const edit = () => askCronAlerts(spread ? "recipients" : "all");
 	const card = toolCard({ icon: "clock", tone: "pink", title: "Job alerts",
 		detail: alerts.enabled ? `${watched} job${watched === 1 ? "" : "s"} watched · mailed to ${alerts.emails.join(", ")}` + (alerts.mail ? "" : " · no mail server yet")
 			: alerts.emails.length ? `Off · set up for ${alerts.emails.join(", ")}` : "Not set up",
 		state: alerts.enabled ? (alerts.failing ? `${alerts.failing} failing` : "On") : "Off", stateClass: alerts.enabled ? (alerts.failing ? "bad" : "ok") : "",
 		text: "A mail when a job you watch fails, and when it works again: choose the jobs, and what is a failure for each.",
 		actions: alerts.enabled
-			? [tonedButton("Edit…", "pencil", "amber", askCronAlerts), tonedButton("Turn off", "stop", "red", async () => {
+			? [...(spread ? [tonedButton("Jobs to watch…", "clock", "pink", () => askCronAlerts("jobs"))] : []), tonedButton("Edit…", "pencil", "amber", edit), tonedButton("Turn off", "stop", "red", async () => {
 				await api("/api/server/cron-alerts", { method: "PUT", json: { enabled: false, emails: alerts.emails } });
 				toast("The job alerts are off.", "ok");
 				await refreshNotifications();
 			})]
-			: [tonedButton(alerts.emails.length ? "Turn on…" : "Set up…", "bell", "pink", askCronAlerts)] });
+			: [tonedButton(alerts.emails.length ? "Turn on…" : "Set up…", "bell", "pink", edit)] });
 	card.querySelector(".tool-head").append(...card.querySelectorAll(":scope > .tool-actions"));
 	if (alerts.enabled && alerts.mail_error) card.append(el("p", { className: "server-action-note", textContent: `The last alert could not be sent (${formatDate(alerts.mail_error.at * 1000)}): ${alerts.mail_error.error}` }));
 	return card;
 }
 
 // Who is mailed, and each job: watched or not, and what is a failure for it. Saved, the alerts are on.
-function askCronAlerts() {
+// mode: "all", who is mailed and the jobs watched; "jobs", the jobs alone (they are the server's own, in its crontab,
+// whoever's the alerts are: a member's that takes the master's, or the master's own); "recipients", who is mailed alone
+// (on the master, which sends them to its members)
+function askCronAlerts(mode = "all") {
+	const jobsOnly = mode === "jobs", recipientsOnly = mode === "recipients";
 	const alerts = cronAlerts;
 	const jobs = crontabEntries.map((entry, index) => [entry, index]).filter(([entry]) => entry.kind === "job")
 		.sort(([a], [b]) => cronName(a).localeCompare(cronName(b), undefined, { numeric: true, sensitivity: "base" }));
@@ -14765,11 +15772,12 @@ function askCronAlerts() {
 		return { entry, index, box, chips, minutes, node: el("div", { className: "cron-watch-job" }, option, conditions) };
 	});
 	const fields = [
-		el("label", {}, "To", el("input", { name: "emails", value: alerts.emails.join(", "), placeholder: "ops@example.com, another@example.com", autocomplete: "off", spellcheck: false, required: true })),
-		el("p", { className: "hint", textContent: "One address or more, with commas between them. Saved, the alerts are on: Turn off on the card stops them." }),
-		el("div", { className: "ns-section", textContent: "Jobs to watch" }),
-		jobs.length ? el("div", { className: "cron-watch-list" }, ...choices.map((choice) => choice.node)) : el("p", { className: "hint", textContent: "No scheduled jobs yet: add one first." }),
-		el("p", { className: "server-action-note", textContent: "While the alerts are on, root's crontab runs each job through harbor-cron-shell, which runs it as before and notes how it ended. Turn off puts it back as it was." }),
+		...(jobsOnly ? [] : [el("label", {}, "To", el("input", { name: "emails", value: alerts.emails.join(", "), placeholder: "ops@example.com, another@example.com", autocomplete: "off", spellcheck: false, required: true })),
+			el("p", { className: "hint", textContent: "One address or more, with commas between them. Saved, the alerts are on: Turn off on the card stops them." }),
+			...(recipientsOnly ? [] : [el("div", { className: "ns-section", textContent: "Jobs to watch" })])]),
+		...(recipientsOnly ? [el("p", { className: "server-action-note", textContent: `Sent to ${joinedMembers().join(", ")} too. The jobs watched are each server's own: Jobs to watch… on the card for this server's, and on each member's.` })]
+			: [jobs.length ? el("div", { className: "cron-watch-list" }, ...choices.map((choice) => choice.node)) : el("p", { className: "hint", textContent: "No scheduled jobs yet: add one first." }),
+				el("p", { className: "server-action-note", textContent: "While the alerts are on, root's crontab runs each job through harbor-cron-shell, which runs it as before and notes how it ended. Turn off puts it back as it was." })]),
 		...(alerts.mail ? [] : [el("p", { className: "server-action-note", textContent: "No mail server is set up yet: the alerts are sent once one is (Mail server, under Notifications)." })]),
 	];
 	const watchOf = (choice) => {
@@ -14780,11 +15788,13 @@ function askCronAlerts() {
 		}
 		return watch;
 	};
-	openFormDialog({ icon: "clock", title: "Job alerts", text: "A mail when a scheduled job fails, and when it works again", fields, ok: "Save",
-		extra: alerts.mail ? [Object.assign(tonedButton("Send test", "send", "purple", () => testCronAlerts(typedEmails($("#form-dialog")))),
+	openFormDialog({ icon: "clock", title: jobsOnly ? "Jobs to watch" : "Job alerts",
+		text: jobsOnly ? `The jobs of this server whose failure is mailed: the master's alerts say to whom${alerts.emails.length ? ` (${alerts.emails.join(", ")})` : ""}` : "A mail when a scheduled job fails, and when it works again",
+		fields, ok: "Save",
+		extra: alerts.mail && !jobsOnly ? [Object.assign(tonedButton("Send test", "send", "purple", () => testCronAlerts(typedEmails($("#form-dialog")))),
 			{ title: "Mail how each watched job is now to the addresses above: nothing is saved" })] : [],
 		submit: async (form) => {
-			const emails = typedEmails(form);
+			const emails = jobsOnly ? [] : typedEmails(form);
 			for (const choice of choices) {
 				if (choice.box.checked && !Object.keys(watchOf(choice)).length) throw new Error(`Choose what is a failure for ${cronName(choice.entry)}.`);
 			}
@@ -14797,6 +15807,10 @@ function askCronAlerts() {
 				if (Object.keys(watch).length && !entry.label && HARBOR_JOBS[entry.harbor]) { entry.label = HARBOR_JOBS[entry.harbor]; changed = true; }
 			}
 			if (changed) await api("/api/server/crontab", { json: { entries } });
+			if (jobsOnly) {
+				toast(changed ? "The jobs watched are saved." : "Nothing changed.", "ok");
+				return refreshNotifications();
+			}
 			await api("/api/server/cron-alerts", { method: "PUT", json: { enabled: true, emails } });
 			toast("The job alerts are on.", "ok");
 			await refreshNotifications();
@@ -15108,7 +16122,11 @@ function askServerTool(tool, options = {}) {
 			deleteConfirmation(),
 		]],
 		ssh_root: ["terminal", "Root login over SSH", "How root may log in to this server over SSH. Connections open now stay.", "Save", () => {
-			const choice = choiceCards("mode", "Root may log in", [["yes", "With a password or a key"], ["prohibit-password", "With a key only (recommended)"], ["no", "Not at all"]], options.current || "prohibit-password");
+			// A member is reached by its master as root with a key: not at all is not one of its choices
+			const member = Boolean(pickedServer || currentUser?.member_of);
+			const choice = choiceCards("mode", "Root may log in", [["yes", "With a password or a key"], ["prohibit-password", "With a key only (recommended)"], ...(member ? [] : [["no", "Not at all"]])],
+				member && options.current === "no" ? "prohibit-password" : options.current || "prohibit-password");
+			if (member) return [choice, el("p", { className: "hint", textContent: "Harbor Master reaches this server as root over SSH with a key, so root keeps its login here." })];
 			const note = el("p", { className: "server-action-note", hidden: true, textContent: "Servers that manage this one over SSH as root (its environments elsewhere, Copy site, Move) cannot reach it any more, and neither can you as root. Keep another way in before you turn it off." });
 			choice.addEventListener("change", () => { note.hidden = choice.querySelector("input:checked")?.value !== "no"; });
 			return [choice, note];
@@ -15298,10 +16316,15 @@ async function openServers() {
 			el("span", { className: "servers-group-sub", textContent: sub })),
 			...items.map((item) => belowActions(serverCard(item, data.release)))];
 		// Each kind its own dashed card after its servers, which adds one of that kind
-		const addLinux = addFirstCard("Add a Linux server", "Harbor installs and updates it from here, over SSH", () => askAddServer({ kind: "linux" }));
+		// On a master, one added becomes its member at once
+		const addLinux = addFirstCard(currentUser.master && !serverContext ? "Add a member" : "Add a Linux server",
+			currentUser.master && !serverContext ? "A Linux server: Harbor is installed there, and it joins this master at once" : "Harbor installs and updates it from here, over SSH",
+			() => askAddServer({ kind: "linux" }));
 		const addWindows = addFirstCard("Add a Windows server", "A share and its login, to import and copy sites from", () => askAddServer({ kind: "windows" }));
-		list.replaceChildren(...group("server", "Linux", "Harbor runs there: it installs and updates it from here", linux), addLinux,
-			...group("windows", "Windows", "Shares and their logins, to import and copy sites from", windows), addWindows);
+		// A master's own: its members are Linux servers; Windows shares are for importing sites, which a member does
+		const master = currentUser.master && !serverContext;
+		list.replaceChildren(...group("server", "Linux", master ? "Its members, and the servers Harbor installs and updates from here" : "Harbor runs there: it installs and updates it from here", linux), addLinux,
+			...(master ? [] : [...group("windows", "Windows", "Shares and their logins, to import and copy sites from", windows), addWindows]));
 	} catch (error) {
 		list.replaceChildren(el("div", { className: "server-tools-loading", textContent: error.message }));
 	} finally {
@@ -15386,7 +16409,8 @@ function serverCard(item, release) {
 				input: false, ok: "Leave" }))) return;
 			await runServers({ action: "leave", name: item.name });
 		})));
-	} else if (item.reachable && harbor && current) {
+	} else if (item.reachable && harbor && current && !currentUser.member_of) {
+		// Only a server that is no one's member makes members
 		actions.push(tonedButton("Make member", "users", "purple", () => runServers({ action: "join", name: item.name })));
 	}
 	actions.push(toolButton("Edit…", () => askEditServer(item)));

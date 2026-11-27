@@ -36,3 +36,8 @@ END
 
 CLOSE db_cursor
 DEALLOCATE db_cursor
+
+-- msdb's history of backups older than two weeks goes: each file holds only its newest backup (WITH INIT), so the
+-- older lines of it name backups no longer there, a line every four hours for each database
+DECLARE @oldest DATETIME = DATEADD(DAY, -14, GETDATE())
+EXEC msdb.dbo.sp_delete_backuphistory @oldest_date = @oldest

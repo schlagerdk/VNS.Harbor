@@ -206,7 +206,10 @@ Steps, roughly in order (each its own release, tried on linux-01 and linux-02 fi
    member in Servers; `harbor master sites`; a group a member under the master's own sites, each opened in the
    member's admin. A server is a master once one has joined it.)
 2. Users on the master only: login there, the members' admins for administrators; grants per (server, site,
-   environment) and per server (create sites, environments, databases), with limits per server.
+   environment) and per server (create sites, environments, databases), with limits per server. (1.0.102, started: a user's
+   access per member in the user window, sent to each member, which makes them its users from the master; the
+   master forwards their calls as them. A member makes no users of its own. Still to do: import the members' own
+   users once, and keep non-administrators from signing in on a member directly with users it made itself.)
 3. Creating and moving from the master: the server chosen for a new site, environment or database; Copy site and
    migrate between members started there.
 4. SQL Server and PostgreSQL connections of every member on the master's SQL page, with the users' grants per

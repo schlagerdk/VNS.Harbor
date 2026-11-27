@@ -163,13 +163,14 @@ def api_keep_alive():
             _keep_alive_module.save(settings)
             if "report" in changes:
                 audit("Changed the keep-alive report")
+                pushed = pushed_notification("report")
         # When it last ran: cron starts it each minute, and it runs once the interval has gone since then
         try:
             last_run = int(float((_keep_alive_module.STATE / "last-run").read_text()))
         except (OSError, ValueError):
             last_run = None
         return jsonify(**settings, installed=os.path.isfile("/etc/cron.d/vns-keep-alive"), last_run=last_run,
-                       mail=bool(_keep_alive_module.report.load_mail().get("host")) if is_admin() else None)
+                       mail=bool(_keep_alive_module.report.load_mail().get("host")) if is_admin() else None, **(pushed if request.method == "PUT" and "report" in changes else {}))
     except FileNotFoundError:
         return error("Keep-alive is not installed. Run harbor server init on this server.", 503)
     except ValueError as exc:
@@ -217,14 +218,7 @@ def api_usage():
     settings = _usage.load_settings(DATA)
     if request.method == "PUT":
         try:
-            settings = _usage.validate_settings(request.get_json(silent=True))
-            # The server's own limits stay as they are, with where each came from
-            saved = _usage.report.read_json(Path(DATA) / "usage.json", {})
-            _usage.write_json(os.path.join(DATA, "usage.json"), {**settings, "limits": _usage.load_limits(DATA),
-                                                                 "limits_from": saved.get("limits_from") or {}})
-            sync_usage_job()
-            # The servers its environments run on are told whether it mails their limits now: they mail them when it does not
-            resend_environment_limits()
+            settings = save_usage_alerts(request.get_json(silent=True))
         except ValueError as exc:
             return error(str(exc))
         except (OSError, subprocess.SubprocessError):
@@ -234,7 +228,21 @@ def api_usage():
     state = _keep_alive_module.report.read_json(Path(DATA) / "usage-state.json", {})
     opened = state.get("open") if isinstance(state.get("open"), dict) else {}
     return jsonify(**settings, installed=os.path.isfile(str(_usage.CRON)), checked=state.get("checked"), over=list(opened.values()),
-                   mail_error=state.get("mail_error"), mail=bool(_keep_alive_module.report.load_mail().get("host")))
+                   mail_error=state.get("mail_error"), mail=bool(_keep_alive_module.report.load_mail().get("host")),
+                   **(pushed_notification("usage") if request.method == "PUT" else {}))
+
+
+def save_usage_alerts(data):
+    """The usage alerts saved, the server's own limits kept as they are: what is saved now"""
+    settings = _usage.validate_settings(data)
+    # The server's own limits stay as they are, with where each came from
+    saved = _usage.report.read_json(Path(DATA) / "usage.json", {})
+    _usage.write_json(os.path.join(DATA, "usage.json"), {**settings, "limits": _usage.load_limits(DATA),
+                                                         "limits_from": saved.get("limits_from") or {}})
+    sync_usage_job()
+    # The servers its environments run on are told whether it mails their limits now: they mail them when it does not
+    resend_environment_limits()
+    return settings
 
 
 @app.route("/api/usage/limit", methods=["PUT"])
@@ -873,7 +881,10 @@ def api_sign_in():
             cfg["moved_from"] = hosts
             save_config()
         audit("Set the addresses Harbor took over: " + (", ".join(hosts) or "none"))
-    return jsonify(moved_from=moved_from(), forgot=can_mail(), admin_site=ADMIN_SITE)
+    # Those given here, and the admin site's aliases, which count by themselves
+    aliases = admin_aliases()
+    return jsonify(moved_from=[host for host in moved_from() if host not in aliases or host in cfg.get("moved_from", [])], aliases=aliases,
+                   forgot=can_mail(), admin_site=ADMIN_SITE)
 
 
 @app.route("/api/mail", methods=["GET", "PUT"])
@@ -884,8 +895,7 @@ def api_mail():
     current = site_report.load_mail()
     if request.method == "PUT":
         try:
-            current = site_report.validate_mail(request.get_json(silent=True), current)
-            site_report.save_mail(current)
+            current = save_mail_server(request.get_json(silent=True))
         except ValueError as exc:
             return error(str(exc))
         except OSError:
@@ -893,7 +903,15 @@ def api_mail():
             return error("The mail server could not be saved.", 500)
         audit("Changed the mail server")
     return jsonify(**{key: current.get(key, default) for key, default in (("host", ""), ("port", 587), ("security", "starttls"), ("user", ""), ("sender", ""))},
-                   password_set=bool(current.get("password")))
+                   password_set=bool(current.get("password")), **pushed_notification("mail"))
+
+
+def save_mail_server(data):
+    """The mail server saved (an empty password keeps the one saved): what is saved now"""
+    site_report = _keep_alive_module.report
+    current = site_report.validate_mail(data, site_report.load_mail())
+    site_report.save_mail(current)
+    return current
 
 
 @app.route("/api/mail/test", methods=["POST"])
@@ -930,6 +948,10 @@ MAX_FAILS_GLOBAL = 60
 
 
 def client_ip():
+    # Asked by the master: where the one on its page comes from, as it says (only the master's call says it)
+    if getattr(g, "from_master", False) and request.headers.get("X-Harbor-Client"):
+        from harbor.server.master import client_address
+        return client_address(request.headers["X-Harbor-Client"]) or request.remote_addr or ""
     ip = request.remote_addr or ""
     if ip in ("127.0.0.1", "::1"):
         # Apache appends the real client address as the last X-Forwarded-For entry
@@ -984,6 +1006,138 @@ def csrf_token():
 
 
 MASTER_TOKEN = "/etc/harbor/secrets/master-token"
+# On a member: the master it belongs to ({name, address, joined}), written by the master when it joins it
+MEMBERSHIP = "/var/lib/harbor/master.json"
+
+
+def member_of():
+    """The master this server is a member of: {name, address}, or None"""
+    try:
+        with open(MEMBERSHIP, encoding="utf-8") as stream:
+            found = json.load(stream)
+    except (OSError, ValueError):
+        return None
+    return found if isinstance(found, dict) and found.get("address") else None
+
+
+def users_from_master():
+    """On a member, users are made on the master: only its own calls change them here"""
+    master = member_of()
+    if master and not g.get("from_master"):
+        abort(403, f"Users are made on {master.get('name') or 'the master'} ({master['address']}), as this server is its member.")
+
+
+@app.route("/api/membership/users", methods=["PUT"])
+def api_membership_users():
+    """(On a member) the master's users that have something here, as the master sends them: each with what it may here,
+    checked against this server's own sites and connections. Those it sent before and no longer sends go. Its users
+    log in on the master; an administrator also here (with the master's password), should the master be down"""
+    if not g.get("from_master") or not access.is_admin(me()):
+        abort(403, "Only the master sends its users.")
+    given = (request.get_json(silent=True) or {}).get("users")
+    if not isinstance(given, list) or len(given) > 2000:
+        return error("Expected the users.")
+    skipped = []
+    with CONFIG_LOCK:
+        users = cfg.setdefault("users", [])
+        own = {user["username"].lower() for user in users if not user.get("from_master")}
+        kept = {user["id"]: user for user in users if user.get("from_master")}
+        sent = []
+        for data in given:
+            if not isinstance(data, dict) or not re.fullmatch(r"u_[0-9a-f]{6,32}", str(data.get("id", ""))):
+                continue
+            if str(data.get("username", "")).lower() in own:
+                # One of this server's own users has the name: kept, and said
+                skipped.append(str(data.get("username")))
+                continue
+            try:
+                user = access.clean(data, kept.get(data["id"]), sites=site_environments(), connections=sql_connection_ids())
+            except ValueError as exc:
+                skipped.append(f"{data.get('username')}: {exc}")
+                continue
+            user["id"] = data["id"]
+            user["from_master"] = True
+            user["version"] = int(data.get("version") or 1)
+            user["password_hash"] = str(data.get("password_hash") or "") if user["role"] == "admin" else ""
+            sent.append(user)
+        cfg["users"] = [user for user in users if not user.get("from_master")] + sent
+        save_config()
+    linux_users_changed()
+    audit(f"The master sent {len(sent)} user{'' if len(sent) == 1 else 's'}" + (f"; kept out: {', '.join(skipped)}" if skipped else ""))
+    return jsonify(users=len(sent), skipped=skipped)
+
+
+def left_master():
+    """(On a member that leaves its master) the master's users go, their Linux users with them: they log in on the
+    master, and have nothing here now. Its administrators stay only where this server has no administrator of its own,
+    as its own then, so it is never left with no one to log in. What the master set (notifications kept or not) goes
+    too. The names of the users taken away."""
+    with CONFIG_LOCK:
+        users = cfg.setdefault("users", [])
+        own_admin = any(access.is_admin(user) and not user.get("from_master") for user in users)
+        kept, gone = [], []
+        for user in users:
+            if not user.get("from_master"):
+                kept.append(user)
+            elif access.is_admin(user) and not own_admin and user.get("password_hash"):
+                kept.append({key: value for key, value in user.items() if key != "from_master"})
+            else:
+                gone.append(user.get("username") or user.get("id"))
+        cfg["users"] = kept
+        save_config()
+    try:
+        os.remove(NOTIFICATIONS_OWN)
+    except FileNotFoundError:
+        pass
+    linux_users_changed()
+    return gone
+
+
+@app.route("/api/master/forget-member", methods=["POST"])
+def api_master_forget_member():
+    """(On a master) a member that left or is removed: its access is taken off every user and template, so no one is
+    said to have something there, and nothing is sent there again"""
+    require_admin()
+    name = str((request.get_json(silent=True) or {}).get("member") or "")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,62}", name):
+        return error("Not a server.")
+    changed = 0
+    with CONFIG_LOCK:
+        for item in [*cfg.get("users", []), *[template.get("access") or {} for template in cfg.get("user_templates", [])]]:
+            servers = item.get("servers")
+            if isinstance(servers, dict) and name in servers:
+                del servers[name]
+                changed += 1
+        if changed:
+            save_config()
+    audit(f"{name} is no longer a member: its access taken off {changed} user{'' if changed == 1 else 's'} and template{'' if changed == 1 else 's'}")
+    return jsonify(changed=changed)
+
+
+@app.route("/api/membership", methods=["GET", "PUT", "DELETE"])
+def api_membership():
+    """(On a member) the master it belongs to: set by the master when it joins it (PUT), taken away when it leaves"""
+    require_admin()
+    if request.method != "GET":
+        if not g.get("from_master"):
+            abort(403, "Only the master makes this server its member.")
+        if request.method == "DELETE":
+            try:
+                os.remove(MEMBERSHIP)
+            except FileNotFoundError:
+                pass
+            gone = left_master()
+            audit("Left the master: users are made here again" + (f"; its users taken away: {', '.join(gone)}" if gone else ""))
+        else:
+            data = request.get_json(silent=True) or {}
+            name, address = str(data.get("name") or "")[:80], str(data.get("address") or "")[:300]
+            if not re.fullmatch(r"https://[A-Za-z0-9.-]+(:[0-9]+)?/?", address):
+                return error("The master's address starts with https://")
+            os.makedirs(os.path.dirname(MEMBERSHIP), exist_ok=True)
+            with open(MEMBERSHIP, "w", encoding="utf-8") as stream:
+                json.dump({"name": name, "address": address.rstrip("/"), "joined": int(time.time())}, stream)
+            audit(f"Joined the master {name} ({address}): users are made there")
+    return jsonify(member_of=member_of())
 
 
 def master_call():
@@ -1006,8 +1160,16 @@ def protect():
     if request.headers.get("X-Harbor-Master") is not None:
         if not master_call():
             return jsonify(error="Not the master"), 401
-        g.user = access.root_user(cfg)
         g.from_master = True
+        # For one of its users (the master sends them here): as that user, so what they may here decides
+        acting = request.headers.get("X-Harbor-As", "")
+        if acting:
+            user = access.find(cfg, acting)
+            if user is None or not user.get("from_master"):
+                return jsonify(error="Not a user the master gave this server"), 403
+            g.user = user
+        else:
+            g.user = access.root_user(cfg)
         return None
     # The VNS.Harbor package in a site: its own token, no session (harbor_api below)
     if request.path.startswith("/api/harbor/v1/"):
@@ -1050,7 +1212,9 @@ def protect():
         session.clear()
         if request.path.startswith("/api/") or request.path.startswith("/ws/"):
             return jsonify(error="Not logged in"), 401
-        return redirect("/login")
+        # Sent here from an address Harbor took over (?from=): the sign-in page is told so too
+        came = request.args.get("from", "")
+        return redirect("/login" + (f"?from={urllib.parse.quote(came)}" if re.fullmatch(r"[A-Za-z0-9.-]{1,253}", came) else ""))
 
 
 def session_user():
@@ -1151,19 +1315,43 @@ RESET_PER_USER = 3         # mails to one user in an hour
 
 
 def moved_from():
-    """The addresses Harbor took over (Settings, General, Sign-in): one who comes from them is told to set a new password"""
-    return [host for host in cfg.get("moved_from", []) if isinstance(host, str)]
+    """The addresses Harbor took over: those given in Settings (General, Sign-in), and the admin site's own aliases (an
+    old address pointed at Harbor, as account.vns.dk). One who comes from them is told to set a new password"""
+    given = [host for host in cfg.get("moved_from", []) if isinstance(host, str)]
+    return given + [host for host in admin_aliases() if host not in given]
+
+
+def admin_aliases():
+    """The admin site's other names in Apache (ServerAlias): not its own"""
+    if not ADMIN_SITE:
+        return []
+    try:
+        with open(f"/etc/apache2/sites-available/{ADMIN_SITE}.conf", encoding="utf-8") as stream:
+            text = stream.read()
+    except OSError:
+        return []
+    found = []
+    for line in text.splitlines():
+        parts = line.split()
+        if parts and parts[0].lower() == "serveralias":
+            found.extend(host.lower() for host in parts[1:] if re.fullmatch(r"[A-Za-z0-9.-]{1,253}", host) and host.lower() != ADMIN_SITE.lower())
+    return list(dict.fromkeys(found))
 
 
 def came_from_moved():
     """The address Harbor took over that this visit came from: it is that address (a binding), it was sent here from it
     (?from=, as a redirect is best made, since a browser seldom says where it came from), or a page there linked here"""
     hosts = {host.lower() for host in moved_from()}
-    if not hosts:
-        return ""
     for host in ((request.host or "").split(":")[0], request.args.get("from", ""), urlparse(request.referrer or "").hostname or ""):
         if host and host.lower() in hosts:
             return host.lower()
+    # Sent on by a redirect (?from=) from another name under Harbor's own domain (account.example.com to
+    # harbor.example.com): that is an address it took over, though none is given in Settings
+    came = request.args.get("from", "").lower()
+    if ADMIN_SITE and came != ADMIN_SITE.lower() and re.fullmatch(r"[a-z0-9-]+(\.[a-z0-9-]+)+", came) and "." in ADMIN_SITE:
+        domain = ".".join(ADMIN_SITE.lower().split(".")[-2:])
+        if came.endswith("." + domain):
+            return came
     return ""
 
 
@@ -1324,9 +1512,18 @@ def index():
 
 def site_tools():
     """Settings' Sites group: Convert DB with sites here, Export Site with sites or exports kept here (one of a site deleted
-    with its export is restored from there)"""
+    with its export is restored from there). A master's are its members': it has them while it has members"""
+    if has_members():
+        return {"convert": True, "export": True}
     sites = has_sites()
     return {"convert": sites, "export": sites or bool(glob.glob(os.path.join(EXPORTS_DIR, "*", "meta.json")))}
+
+
+@app.route("/api/site-tools")
+def api_site_tools():
+    """Settings' Sites group of this server: asked by a master's page working on it (the page itself has the master's)"""
+    require_admin()
+    return jsonify(site_tools())
 
 
 MENU_SETTINGS = ("auto", "show", "hide")
@@ -1353,10 +1550,20 @@ def menu_shown():
     """Web Server and SQL Server in the top menu for an administrator, {"web": bool, "sql": bool}: as set, or (auto)
     Web Server while there are sites here, SQL Server while SQL Server is installed here or there is a SQL connection.
     One of them is always shown: the admin has a start page."""
-    shown = {"web": menu_part_shown("web_menu", has_sites), "sql": menu_part_shown("sql_menu", sql_in_use)}
+    # A master (phase 13) shows its members' sites and SQL connections on them: on auto, both are there
+    master = has_members()
+    shown = {"web": menu_part_shown("web_menu", lambda: master or has_sites()), "sql": menu_part_shown("sql_menu", lambda: master or sql_in_use())}
     if not shown["web"] and not shown["sql"]:
         shown["web" if cfg.get("web_menu", "auto") != "hide" or cfg.get("sql_menu", "auto") == "hide" else "sql"] = True
     return shown
+
+
+@app.route("/api/menu-shown")
+def api_menu_shown():
+    """Web Server and SQL Server in this server's top menu: asked by a master's page working on it, whose own menu is
+    the master's (SQL Server hidden there may be on here)"""
+    require_admin()
+    return jsonify(menu_shown())
 
 
 def menu_part_shown(key, in_use):
@@ -3688,6 +3895,106 @@ def api_servers():
     return jsonify(servers=found, release=os.path.basename(current) if os.path.islink("/opt/harbor/current") else "")
 
 
+def member_entry(name):
+    """A member of this master, from Servers: its entry, or 404"""
+    try:
+        with open("/var/lib/harbor/servers.json", encoding="utf-8") as stream:
+            found = json.load(stream)
+    except (OSError, ValueError):
+        found = {}
+    entry = found.get(name) if isinstance(found, dict) else None
+    if not isinstance(entry, dict) or not entry.get("member"):
+        abort(404, "Not a member of this Harbor")
+    return entry
+
+
+@app.route("/api/via/<server>/<path:rest>", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
+def api_via(server, rest):
+    """A member's admin, from the master's page: the call sent on over SSH (harbor master call there) as it came, an
+    upload with its files too, and its answer given back as it is, a download with its name. So the master's page works
+    on a member as that member's own page does. An administrator is root there; a user is themselves there, as the
+    master sent them, so what they may there decides"""
+    user = me()
+    if not access.is_admin(user) and not (user.get("servers") or {}).get(server):
+        abort(403, "You have nothing on that server.")
+    from harbor.core.system import Stop, System
+    from harbor.server import master
+    entry = member_entry(server)
+    # The path as it was sent, its %-escapes kept (a site's name in it), from what the server read
+    sent = request.environ.get("RAW_URI") or request.environ.get("REQUEST_URI") or request.full_path
+    prefix = f"/api/via/{server}/"
+    path = "/api/" + sent[len(prefix):] if sent.startswith(prefix) else "/api/" + rest + ("?" + request.query_string.decode() if request.query_string else "")
+    raw = None if request.method == "GET" else {"type": request.content_type or "", "data": base64.b64encode(request.get_data()).decode()}
+    try:
+        answer = master.ask(System(), server, entry, request.method, path.rstrip("?"), raw=raw, as_user=None if access.is_admin(user) else user["id"],
+                            client=client_ip())
+    except Stop as exc:
+        return error(str(exc), 502)
+    # A member on an older Harbor (1.0.101) answers with its JSON only, not the bytes as they were
+    content = base64.b64decode(answer["data"]) if "data" in answer else json.dumps(answer.get("body")).encode()
+    response = Response(content, status=answer.get("status") or 502, content_type=answer.get("type") or "application/json")
+    if answer.get("disposition"):
+        response.headers["Content-Disposition"] = answer["disposition"]
+    return response
+
+
+@sock.route("/ws/via/<server>/term/<sid>")
+def ws_via(ws, server, sid):
+    """A member's terminal or task, from the master's page: its lines bridged over SSH (harbor master ws there)"""
+    origin = request.headers.get("Origin", "")
+    user = session_user()
+    if user is None or urlparse(origin).netloc != request.headers.get("Host", "") or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", sid):
+        return
+    if not access.is_admin(user) and not (user.get("servers") or {}).get(server):
+        return
+    from harbor.core.system import System
+    from harbor.server import master
+    try:
+        entry = member_entry(server)
+    except Exception:  # noqa: BLE001  (abort's 404: nothing to bridge to)
+        return
+    acting = "" if access.is_admin(user) else f" --as {user['id']}"
+    argv = [*master.ssh(System(), entry), *master.on(entry, f"{master.REMOTE_HARBOR} master ws /ws/term/{sid}{acting}")]
+    process = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1)
+
+    def pump():
+        try:
+            for line in process.stdout:
+                ws.send(line.rstrip("\n"))
+        except Exception:  # noqa: BLE001  (the page went: nothing to send to)
+            pass
+        try:
+            ws.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+    threading.Thread(target=pump, daemon=True).start()
+    try:
+        while process.poll() is None:
+            message = ws.receive()
+            if message is None:
+                break
+            process.stdin.write(str(message).replace("\n", " ") + "\n")
+            process.stdin.flush()
+    except Exception:  # noqa: BLE001  (the page or the member went)
+        pass
+    finally:
+        process.kill()
+
+
+@app.route("/api/master/sql")
+def api_master_sql():
+    """The master's members and their SQL connections, each as its own admin lists them (harbor master sql)"""
+    require_admin()
+    try:
+        result = subprocess.run(["/usr/bin/python3", HARBOR_COMMAND, "master", "sql"], capture_output=True, text=True, timeout=180)
+        found = json.loads(result.stdout or "[]")
+    except (OSError, subprocess.SubprocessError, ValueError) as exc:
+        app.logger.error("harbor master sql: %s", exc)
+        return error("The members could not be asked.", 502)
+    return jsonify(members=found)
+
+
 @app.route("/api/master/sites")
 def api_master_sites():
     """The master's members and their sites, each as its own admin lists them (harbor master sites)"""
@@ -3715,9 +4022,12 @@ def servers_command(data):
             abort(400, "Give the login and SSH port")
         if not isinstance(password, str) or len(password) > 256:
             abort(400, "Invalid password")
-        return f"Add server {name}", harbor + ["add", name, host, "--user", user, "--port", port], {"HARBOR_SSH_PASSWORD": password}
+        # On a master, a server added is its member at once (Harbor installed there and joined)
+        return f"Add server {name}", harbor + ["add", name, host, "--user", user, "--port", port, *(["--member"] if has_members() else [])], {"HARBOR_SSH_PASSWORD": password}
     if action == "install":
         return f"Install Harbor on {name}", harbor + ["install", name], {}
+    if action == "add_windows" and has_members():
+        abort(400, "This server is a master: Windows servers are a member's, which imports the sites it hosts.")
     if action == "add_windows":
         # A Windows server's share and login, kept for Import from Windows; the password in the task's environment
         share, user, domain = windows_login(data)
@@ -3725,6 +4035,9 @@ def servers_command(data):
     if action == "rollback":
         return f"Roll back Harbor on {name}", harbor + ["rollback", name], {}
     if action == "join":
+        # A member makes no members: only a server that is no one's member is a master
+        if member_of():
+            abort(400, "This server is a member of a master: only the master makes members.")
         return f"Make {name} a member", harbor + ["join", name], {}
     if action == "leave":
         return f"{name} no longer a member", harbor + ["leave", name], {}
@@ -3813,11 +4126,7 @@ def api_health_alerts():
     settings = _health.load_settings()
     if request.method == "PUT":
         try:
-            settings = _health.validate_settings(request.get_json(silent=True))
-            _health.write_json(_health.SETTINGS, settings)
-            os.chmod(_health.SETTINGS, 0o600)
-            if not _health.CRON.is_file():
-                _health.install()
+            settings = save_health_alerts(request.get_json(silent=True))
         except ValueError as exc:
             return error(str(exc))
         except OSError:
@@ -3826,7 +4135,17 @@ def api_health_alerts():
         audit("Changed the health alerts")
     saved = _health.read_json(_health.STATE / "alerts.json", {})
     return jsonify(**settings, installed=_health.CRON.is_file(), mail=bool(_keep_alive_module.report.load_mail().get("host")),
-                   open=saved.get("open") or {}, mail_error=saved.get("mail_error"))
+                   open=saved.get("open") or {}, mail_error=saved.get("mail_error"), **(pushed_notification("health") if request.method == "PUT" else {}))
+
+
+def save_health_alerts(data):
+    """The health alerts saved, their job installed when it is not: what is saved now"""
+    settings = _health.validate_settings(data)
+    _health.write_json(_health.SETTINGS, settings)
+    os.chmod(_health.SETTINGS, 0o600)
+    if not _health.CRON.is_file():
+        _health.install()
+    return settings
 
 
 @app.route("/api/health/alerts/test", methods=["POST"])
@@ -3855,13 +4174,7 @@ def api_cron_alerts():
     settings = _cron_watch.load_settings()
     if request.method == "PUT":
         try:
-            settings = _cron_watch.validate_settings(request.get_json(silent=True))
-            result = subprocess.run(["/usr/bin/python3", os.path.join(LIB_DIR, "cron_watch.py"), "--enable" if settings["enabled"] else "--disable"],
-                                    capture_output=True, text=True, timeout=30)
-            if result.returncode:
-                raise OSError((result.stderr.strip().splitlines() or ["cron_watch.py failed"])[-1])
-            _cron_watch.write_json(_cron_watch.SETTINGS, settings)
-            os.chmod(_cron_watch.SETTINGS, 0o600)
+            settings = save_job_alerts(request.get_json(silent=True))
         except ValueError as exc:
             return error(str(exc))
         except (OSError, subprocess.SubprocessError):
@@ -3870,7 +4183,148 @@ def api_cron_alerts():
         audit("Turned the job alerts " + ("on" if settings["enabled"] else "off"))
     saved = _cron_watch.read_json(_cron_watch.STATE / "alerts.json", {})
     return jsonify(**settings, installed=_cron_watch.CHECK.is_file(), mail=bool(_keep_alive_module.report.load_mail().get("host")),
-                   failing=len(saved.get("open") or {}), mail_error=saved.get("mail_error"))
+                   failing=len(saved.get("open") or {}), mail_error=saved.get("mail_error"), **(pushed_notification("jobs") if request.method == "PUT" else {}))
+
+
+def save_job_alerts(data):
+    """The job alerts saved, root's crontab's jobs watched or not as they say: what is saved now"""
+    settings = _cron_watch.validate_settings(data)
+    result = subprocess.run(["/usr/bin/python3", os.path.join(LIB_DIR, "cron_watch.py"), "--enable" if settings["enabled"] else "--disable"],
+                            capture_output=True, text=True, timeout=30)
+    if result.returncode:
+        raise OSError((result.stderr.strip().splitlines() or ["cron_watch.py failed"])[-1])
+    _cron_watch.write_json(_cron_watch.SETTINGS, settings)
+    os.chmod(_cron_watch.SETTINGS, 0o600)
+    return settings
+
+
+# ---------------------------------------------------------------- notifications from the master
+# A master's notifications (its mail server, the site report, the usage, health and job alerts) are its members' too:
+# sent to each when changed and when it joins. A member may keep any of them its own instead (overridden there)
+NOTIFICATION_KINDS = ("mail", "report", "usage", "health", "jobs")
+NOTIFICATIONS_OWN = os.path.join(DATA, "notifications-own.json")
+
+
+def notifications_own():
+    """The notifications this member keeps its own, not the master's"""
+    try:
+        with open(NOTIFICATIONS_OWN, encoding="utf-8") as stream:
+            found = json.load(stream)
+    except (OSError, ValueError):
+        return []
+    return [kind for kind in found if kind in NOTIFICATION_KINDS] if isinstance(found, list) else []
+
+
+def notification_settings():
+    """This master's notifications as a member takes them: {kind: settings} (the mail server with its password: it goes
+    over SSH to a member's root only)"""
+    found = {}
+    mail = _keep_alive_module.report.load_mail()
+    if mail.get("host"):
+        found["mail"] = {key: mail.get(key) for key in ("host", "port", "security", "user", "password", "sender")}
+    try:
+        report = _keep_alive_module.load().get("report")
+        if report:
+            found["report"] = report
+    except (OSError, ValueError):
+        pass
+    found["usage"] = _usage.load_settings(DATA)
+    found["health"] = _health.load_settings()
+    found["jobs"] = _cron_watch.load_settings()
+    return found
+
+
+def push_notifications(kinds=None, only=None):
+    """This master's notifications sent to its members (or one): {member: error} of those that did not take them"""
+    if not has_members():
+        return {}
+    from harbor.core.system import System
+    from harbor.server import master
+    system = System()
+    settings = {kind: value for kind, value in notification_settings().items() if kinds is None or kind in kinds}
+    if not settings:
+        return {}
+    failed = {}
+    for name, entry in master.members(system).items():
+        if only and name != only:
+            continue
+        try:
+            answer = master.ask(system, name, entry, "PUT", "/api/notifications/inherit", body=settings)
+            if answer.get("status") != 200:
+                failed[name] = (answer.get("body") or {}).get("error") or f"answered {answer.get('status')}"
+        except Exception as exc:  # noqa: BLE001  (a member that fails is said; the master's own are saved)
+            failed[name] = str(exc)
+    return failed
+
+
+def pushed_notification(kind):
+    """After the master's own were changed (not a member's, through the master): sent to its members, and what failed
+    said in the answer"""
+    if getattr(g, "from_master", False) or not has_members():
+        return {}
+    failed = push_notifications([kind])
+    return {"members_error": "; ".join(f"{name}: {why}" for name, why in failed.items())} if failed else {}
+
+
+@app.route("/api/notifications/inherit", methods=["PUT"])
+def api_notifications_inherit():
+    """On a member: the master's notifications taken, but for those it keeps its own"""
+    if not getattr(g, "from_master", False):
+        return error("Only the master sends its notifications.", 403)
+    sent = request.get_json(silent=True)
+    if not isinstance(sent, dict):
+        return error("Expected the master's notifications")
+    own = notifications_own()
+    save = {"mail": save_mail_server, "usage": save_usage_alerts, "health": save_health_alerts, "jobs": save_job_alerts}
+    taken = []
+    try:
+        for kind, value in sent.items():
+            if kind not in NOTIFICATION_KINDS or kind in own:
+                continue
+            if kind == "report":
+                try:
+                    settings = _keep_alive_module.load()
+                except FileNotFoundError:
+                    continue
+                _keep_alive_module.save(_keep_alive_module.validate({**settings, "report": value}))
+            else:
+                save[kind](value)
+            taken.append(kind)
+    except ValueError as exc:
+        return error(str(exc))
+    except (OSError, subprocess.SubprocessError):
+        app.logger.exception("Could not take the master's notifications")
+        return error("The master's notifications could not be saved. Inspect the admin app log.", 500)
+    if taken:
+        audit("Took the master's notifications: " + ", ".join(taken))
+    return jsonify(taken=taken, own=own)
+
+
+@app.route("/api/notifications/own", methods=["GET", "PUT"])
+def api_notifications_own():
+    """On a member: the notifications it keeps its own ({own: [kind]}); the rest are the master's"""
+    require_admin()
+    if request.method == "PUT":
+        own = (request.get_json(silent=True) or {}).get("own")
+        if not isinstance(own, list) or any(kind not in NOTIFICATION_KINDS for kind in own):
+            return error("Expected the notifications kept here")
+        _usage.write_json(NOTIFICATIONS_OWN, sorted(set(own)))
+        audit("Notifications kept here: " + (", ".join(sorted(set(own))) or "none (all the master's)"))
+    return jsonify(own=notifications_own(), member=bool(member_of()))
+
+
+@app.route("/api/master/notifications/push", methods=["POST"])
+def api_master_notifications_push():
+    """On a master: its notifications sent to its members again (or one: member), say when one joins or takes the
+    master's again"""
+    require_admin()
+    only = (request.get_json(silent=True) or {}).get("member") or None
+    if only is not None and only not in member_names():
+        return error("Not a member.")
+    failed = push_notifications(only=only)
+    if failed:
+        return error("; ".join(f"{name}: {why}" for name, why in failed.items()), 502)
+    return jsonify(ok=True)
 
 
 @app.route("/api/server/cron-alerts/test", methods=["POST"])
@@ -4002,9 +4456,15 @@ def api_server_tools():
         return error("The server's tools could not be read.", 502)
 
 
+# What installs something to host on: a master hosts nothing itself (its members do), so none of it is done there
+HOSTING_INSTALLS = ("sql_install", "pg_install", "pg_tools_install", "tools_install", "dotnet_install", "node_install")
+
+
 def server_tool_command(data):
     """A Server tools action as a harbor command, and the variables it gets (the sa password never on the command line)"""
     tool = data.get("tool")
+    if tool in HOSTING_INSTALLS and has_members():
+        abort(400, "This server is a master: it hosts nothing itself. Install it on the member that is to host it.")
     harbor = ["/usr/bin/python3", HARBOR_COMMAND]
     tools_flag = "--with-tools" if data.get("with_tools") is True else "--without-tools"
     env = {"DEBIAN_FRONTEND": "noninteractive"}
@@ -4061,7 +4521,8 @@ def server_tool_command(data):
         if not isinstance(channel, str) or not re.fullmatch(r"[0-9]{1,2}\.0", channel) or int(channel.split(".")[0]) < 8:
             abort(400, "Choose a .NET version")
         action = tool.split("_")[1]
-        return f"{action.capitalize()} .NET {channel}", harbor + ["server", "dotnet", action, channel], env
+        # A master hosts nothing: its last .NET can go too
+        return f"{action.capitalize()} .NET {channel}", harbor + ["server", "dotnet", action, channel, *(["--last"] if action == "remove" and has_members() else [])], env
     if tool == "node_install":
         major = str(data.get("major", ""))
         if not re.fullmatch(r"[0-9]{2}", major) or int(major) < 18:
@@ -4910,6 +5371,33 @@ def has_members():
     return isinstance(found, dict) and any(isinstance(entry, dict) and entry.get("member") for entry in found.values())
 
 
+def member_names():
+    """This master's members, by name"""
+    try:
+        with open("/var/lib/harbor/servers.json", encoding="utf-8") as stream:
+            found = json.load(stream)
+    except (OSError, ValueError):
+        return []
+    return sorted(name for name, entry in found.items() if isinstance(entry, dict) and entry.get("member")) if isinstance(found, dict) else []
+
+
+def member_hosts():
+    """Each member's own admin host (admin.<its name>, as Servers learnt it), for the page working on it"""
+    try:
+        with open("/var/lib/harbor/servers.json", encoding="utf-8") as stream:
+            found = json.load(stream)
+    except (OSError, ValueError):
+        return {}
+    hosts = {}
+    for name, entry in (found.items() if isinstance(found, dict) else []):
+        if isinstance(entry, dict) and entry.get("member"):
+            names = entry.get("names") or []
+            own = names[0] if names else entry.get("fqdn") or ""
+            if own:
+                hosts[name] = f"admin.{own}"
+    return hosts
+
+
 @app.route("/api/me")
 def api_me():
     """Who is logged in and what they may do: the page shows only what can be used"""
@@ -4918,6 +5406,14 @@ def api_me():
     return jsonify(id=user["id"], username=user["username"], name=user.get("name", ""), admin=admin, root=user["id"] == access.ROOT,
                    # A master (phase 13): its members' sites on Web Server, for an administrator
                    master=admin and has_members(),
+                   # The servers the page can work on: an administrator every member, a user those they were given
+                   members=member_names() if admin else [name for name in member_names() if (user.get("servers") or {}).get(name)],
+                   # Where each member's own admin is (admin.<its name>): the page names things on it by it, not the master's
+                   member_hosts=member_hosts(),
+                   # A master's user on a member: whether their environments may be made here, and on which others
+                   create_envs=bool(user.get("create_envs")), envs_on=user.get("envs_on") or [],
+                   # A member: its users are made on its master
+                   member_of=member_of() if admin else None,
                    # On with nothing in it (no site, no connection, nothing they may make) is no access: not shown
                    web=access.has_web(user), sql=access.has_sql(user),
                    # Made as many as they may: the buttons that make one more are not shown (the server refuses it too)
@@ -5105,6 +5601,7 @@ def api_user_templates():
     """A template saved: a new one, or the one its id names. Rules to start new users from: what they may do on each
     site and SQL connection they are given, never which."""
     require_admin()
+    users_from_master()
     with CONFIG_LOCK:
         templates = access.templates(cfg)
         data = request.get_json(silent=True) or {}
@@ -5127,6 +5624,7 @@ def api_user_templates():
 @app.route("/api/user-templates/<template_id>", methods=["DELETE"])
 def api_user_template(template_id):
     require_admin()
+    users_from_master()
     with CONFIG_LOCK:
         templates = access.templates(cfg)
         gone = next((item for item in templates if item["id"] == template_id), None)
@@ -5136,6 +5634,36 @@ def api_user_template(template_id):
         save_config()
     audit("Deleted the user template " + gone["name"])
     return jsonify(templates=cfg["user_templates"])
+
+
+def push_master_users():
+    """On a master: its users sent to its members, each with what it may there. {member: what it said}; nothing when
+    this server has no members"""
+    if not has_members():
+        return {}
+    from harbor.core.system import System
+    from harbor.server import master
+    try:
+        return master.push_users(System(), cfg.get("users", []))
+    except Exception as exc:  # noqa: BLE001  (a member that fails is said; the user is saved here)
+        app.logger.exception("Could not send the users to the members")
+        return {"members": {"error": str(exc)}}
+
+
+def pushed_said(result):
+    """What went wrong sending the users to the members, in a line: "" when nothing did"""
+    # The error names its member already where it says why (linux-02 runs a Harbor without …)
+    problems = [item["error"] if item["error"].startswith(name) else f"{name}: {item['error']}" for name, item in result.items() if item.get("error")]
+    problems += [f"{name} kept out {', '.join(item['skipped'])}" for name, item in result.items() if item.get("skipped")]
+    return "; ".join(problems)
+
+
+def hosts_nothing(user):
+    """On a master: a user's access here is Cloudflare's alone, as it hosts nothing (their sites and SQL are on the
+    members, under servers)"""
+    if has_members():
+        user.update(web=False, create_sites=False, sftp=False, sites={}, sql=False, manage_connections=False, connections={})
+    return user
 
 
 def mail_login(user, password, asked):
@@ -5180,7 +5708,10 @@ def api_users():
         listed = [dict(user, linux=names.get(user.get("id"), ""), last_login=logins.get(user.get("id"))) for user in access.visible_users(cfg, me())]
         return jsonify(users=listed, sites=sites, connections=sql_connections_public(),
                        site_actions=access.SITE_ACTIONS, sql_actions=access.SQL_ACTIONS, templates=access.templates(cfg),
-                       dns_zones=dns_zone_names(), can_mail=can_mail())
+                       dns_zones=dns_zone_names(), can_mail=can_mail(),
+                       # On a master: the members a user can be given access on, in the user window
+                       members=member_names() if has_members() and not member_of() else [])
+    users_from_master()
     data = request.get_json(silent=True) or {}
     password = data.get("password") or ""
     if len(password) < 12:
@@ -5192,6 +5723,7 @@ def api_users():
             return error(str(exc))
         if access.taken(cfg, user["username"]):
             return error("That username is taken.")
+        hosts_nothing(user)
         user["password_hash"] = generate_password_hash(password)
         user["created_by"] = me()["id"]
         cfg.setdefault("users", []).append(user)
@@ -5203,12 +5735,14 @@ def api_users():
         sync_usage_job(check_now=True)
     except (OSError, subprocess.SubprocessError):
         app.logger.exception("Could not set the usage check's cron job")
-    return jsonify(user=access.public(user), **mail_login(user, password, data.get("send_login") is True))
+    pushed = pushed_said(push_master_users())
+    return jsonify(user=access.public(user), **mail_login(user, password, data.get("send_login") is True), **({"members_error": pushed} if pushed else {}))
 
 
 @app.route("/api/users/<user_id>", methods=["PUT", "DELETE"])
 def api_user(user_id):
     require_admin()
+    users_from_master()
     with CONFIG_LOCK:
         users = cfg.setdefault("users", [])
         # Root is not among them: no one can change or remove it here, or learn that it exists
@@ -5222,7 +5756,8 @@ def api_user(user_id):
             save_config()
             linux_users_changed()
             audit("Deleted user " + existing["username"])
-            return jsonify(ok=True)
+            pushed = pushed_said(push_master_users())
+            return jsonify(ok=True, **({"members_error": pushed} if pushed else {}))
         data = request.get_json(silent=True) or {}
         try:
             user = access.clean(data, existing, sites=site_environments(), connections=sql_connection_ids())
@@ -5230,6 +5765,7 @@ def api_user(user_id):
             return error(str(exc))
         if access.taken(cfg, user["username"], user_id):
             return error("That username is taken.")
+        hosts_nothing(user)
         password = data.get("password") or ""
         if password:
             if len(password) < 12:
@@ -5250,7 +5786,8 @@ def api_user(user_id):
         sync_usage_job(check_now=True)
     except (OSError, subprocess.SubprocessError):
         app.logger.exception("Could not set the usage check's cron job")
-    return jsonify(user=access.public(user), **mail_login(user, password, data.get("send_login") is True))
+    pushed = pushed_said(push_master_users())
+    return jsonify(user=access.public(user), **mail_login(user, password, data.get("send_login") is True), **({"members_error": pushed} if pushed else {}))
 
 
 # ------------------------------------------------------------- terminal API
@@ -5669,11 +6206,15 @@ def kept_server(data, kind):
 
 @app.route("/api/servers/kept")
 def api_servers_kept():
-    """The servers in Servers, for the dialogs that choose one: never a password"""
-    require_admin()
+    """The servers in Servers, for the dialogs that choose one: never a password. A user (a master's) gets the Linux
+    servers the master lets them make sites on, for an environment there, and no other"""
+    user = me()
     from harbor.core.system import System
     from harbor.server import servers
     kept = learnt_servers()
+    if not access.is_admin(user):
+        allowed = set(user.get("envs_on") or [])
+        kept = {name: entry for name, entry in kept.items() if name in allowed and entry.get("kind") != "windows"}
     found = []
     for name, entry in sorted(kept.items()):
         if entry.get("kind") == "windows":
@@ -5851,6 +6392,8 @@ def build_command(data):
             abort(500, "Harbor is missing. Update VNS first.")
         title, argv, _ = server_tool_command(data)
         return title, argv, "/"
+    if kind == "install_sql_tools" and has_members():
+        abort(400, "This server is a master: it hosts nothing itself. Install the tools on a member.")
     if kind == "install_sql_tools":
         if not os.path.isfile(HARBOR_COMMAND):
             abort(500, "Harbor is missing. Update VNS first.")
@@ -6734,6 +7277,16 @@ def authorize_task(data):
         any(access.can(user, site, env, "publish") for env in target_ids(os.path.join(WEB_ROOT, site))) or deny()
     elif kind == "create_prod":
         any(access.can(user, site, env, "create_env") for env in ["main", *target_ids(os.path.join(WEB_ROOT, site))]) or deny()
+        # Another server only one the master lets them make sites on (a master's user); a Windows server never a user's
+        # A master's user: here only where this server hosts their environments, another server only one that does
+        target = data.get("target", "local")
+        if user.get("from_master"):
+            if target == "windows" or target == "remote" and str(data.get("remote_server", "")) not in (user.get("envs_on") or []):
+                deny()
+            if target == "local" and not user.get("create_envs"):
+                abort(403, "Their environments are not made on this server.")
+        elif target in ("windows", "remote"):
+            deny()
         before = set(target_ids(os.path.join(WEB_ROOT, site)))
         return lambda status: status == 0 and grant(uid, lambda target: [access.grant_environment(target, site, env)
                                                                     for env in set(target_ids(os.path.join(WEB_ROOT, site))) - before])
@@ -6956,7 +7509,8 @@ def api_term_close(sid):
 @sock.route("/ws/term/<sid>")
 def ws_term(ws, sid):
     origin = request.headers.get("Origin", "")
-    if session_user() is None or urlparse(origin).netloc != request.headers.get("Host", ""):
+    # The master's bridge (harbor master ws) is root here, as its calls are
+    if me() is None or urlparse(origin).netloc != request.headers.get("Host", ""):
         return
     s = SESSIONS.get(sid)
     if s is None or not sees_session(s):

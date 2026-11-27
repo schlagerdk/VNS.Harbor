@@ -106,6 +106,9 @@ class CronWatchTests(unittest.TestCase):
 		self.assertEqual(watch.with_shell(on, True), on, "once")
 		self.assertEqual(watch.with_shell(on, False), table)
 		self.assertEqual(watch.with_shell("", True), f"{watch.NOTE}\nSHELL={watch.SHELL}\n")
+		# The note in its older wording is not kept beside the new one
+		older = "# Harbor: each job runs through harbor-cron-shell, which notes how it ended (Scheduled jobs, Email alerts)\n"
+		self.assertEqual(watch.with_shell(on + older, True), on)
 
 	def test_a_job_runs_as_before_and_its_end_is_noted(self):
 		out = io.BytesIO()

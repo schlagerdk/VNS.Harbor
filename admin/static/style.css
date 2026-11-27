@@ -2722,6 +2722,10 @@ body:not([data-role="user"]) .header-tools { display: inline-flex; }
 .tool-state.ok { color: var(--green); background: rgba(63, 185, 80, .12); }
 .tool-state.warn { color: #d29922; background: rgba(210, 153, 34, .13); }
 .tool-state.bad { color: var(--red); background: rgba(248, 81, 73, .12); }
+.tool-state.inherited { color: #d2a8ff; background: rgba(163, 113, 247, .14); }
+.tool-state.own { color: #d29922; background: rgba(210, 153, 34, .13); }
+/* The master's own Notifications: that they are its members' too, a low line above them */
+.notifications-inherit-note { flex-direction: row; align-items: center; gap: 14px; min-height: 0; }
 .tool-state.next { color: var(--blue); background: rgba(88, 166, 255, .12); }
 /* What someone or something is (a user's role, a Samba login's kind), not a state: its own tone, no dot */
 .tool-state.role { color: var(--blue); background: rgba(88, 166, 255, .12); }
@@ -3417,6 +3421,8 @@ dialog.newsite .convert-form .hint { margin: 4px 0 16px; }
 #server-health-list { grid-template-columns: minmax(0, 1fr); }
 #server-health-list > .tool-card { grid-column: 1 / -1; min-height: 0; }
 .health-range { display: flex; }
+/* The master's own Health: which server's charts beside the time shown */
+.health-charts .tool-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
 @media (max-width: 800px) { .health-range { flex: 1; } .health-range .crontab-seg { flex: 1; justify-content: center; } }
 /* The tiles share the card's width, however many disks there are */
 .health-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
@@ -3431,6 +3437,15 @@ dialog.newsite .convert-form .hint { margin: 4px 0 16px; }
 /* Two charts a row; one left over on its own takes the whole row */
 .health-chart-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .health-chart-grid > .health-chart:last-child:nth-child(odd) { grid-column: 1 / -1; }
+/* The master's own Health: the servers two by two, each server's tiles two by two */
+.health-servers { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px 18px; min-width: 0; }
+.health-servers > .member-pane { grid-column: auto; grid-template-rows: auto 1fr; }
+.health-servers > .member-pane + .member-pane { margin-top: 0; }
+.health-servers .health-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+/* With an odd number of servers, this server (the master) the whole row above its members, its tiles four in a row */
+.health-servers.odd > .member-pane[data-harbor-server=""] { grid-column: 1 / -1; }
+.health-servers.odd > .member-pane[data-harbor-server=""] .health-tiles { grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+@media (max-width: 900px) { .health-servers { grid-template-columns: minmax(0, 1fr); } }
 @media (max-width: 560px) { .health-chart-grid { grid-template-columns: minmax(0, 1fr); } .health-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 .health-chart { display: grid; gap: 8px; min-width: 0; margin: 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: rgba(0, 0, 0, .14); }
 .health-chart figcaption { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; font-size: 13px; }
@@ -3929,6 +3944,9 @@ dialog .cf-page-on .switch:checked { border-color: var(--green); background: var
 
 /* A master's members on Web Server (phase 13): a group a server, its sites a line each, opened in its own admin */
 .member-sites { display: grid; gap: 18px; margin-top: 22px; }
+/* Only the members' (nothing of the master's own): their section alone at the top, on Web Server and SQL Server alike */
+#view-sites.only-members > :not(#member-sites), #view-sql.only-members > :not(#member-sql) { display: none !important; }
+#view-sites.only-members > #member-sites, #view-sql.only-members > #member-sql { margin-top: 0; }
 .member-sites[hidden] { display: none; }
 .member-group { display: grid; gap: 10px; padding: 16px 18px; border: 1px solid var(--line); border-radius: 14px; background: rgba(255, 255, 255, .02); min-width: 0; }
 .member-head { display: flex; align-items: center; gap: 12px; min-width: 0; }
@@ -3942,7 +3960,7 @@ dialog .cf-page-on .switch:checked { border-color: var(--green); background: var
 .member-list { display: grid; gap: 6px; }
 .member-site { display: flex; align-items: center; gap: 12px; min-width: 0; padding: 10px 14px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255, 255, 255, .02);
 	color: var(--text); text-decoration: none; transition: border-color .15s, background .15s; }
-a.member-site:hover { border-color: rgba(163, 113, 247, .5); background: rgba(163, 113, 247, .06); }
+a.member-site:hover:not(:where(:disabled, .disabled, .off)) { border-color: rgba(163, 113, 247, .5); background: rgba(163, 113, 247, .06); }
 .member-site > .ico { flex: none; width: 14px; height: 14px; margin: 0; color: var(--muted); }
 .member-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
 .member-dot.active { background: var(--green); box-shadow: 0 0 8px rgba(63, 185, 80, .6); }
@@ -3954,3 +3972,141 @@ a.member-site:hover { border-color: rgba(163, 113, 247, .5); background: rgba(16
 .member-none { margin: 0; font-size: 13px; }
 @media (max-width: 640px) { .member-envs { display: none; } }
 @media (prefers-reduced-motion: reduce) { .member-site { transition: none; } }
+/* On a master: the server Settings are of, at the top of their menu; purple while it is a member */
+.settings-server { display: grid; gap: 8px; margin: 0 0 6px; padding: 4px 0 14px; border-bottom: 1px solid var(--line); }
+.settings-server-label { margin: 0 10px; color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.settings-server-row { display: flex; align-items: center; gap: 8px; padding: 0 4px 0 12px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255, 255, 255, .03); }
+.settings-server-row > .ico { flex: none; width: 15px; height: 15px; margin: 0; color: var(--muted); }
+.settings-server.on-member .settings-server-row { border-color: rgba(163, 113, 247, .55); background: rgba(163, 113, 247, .12); }
+.settings-server.on-member .settings-server-row > .ico { color: #d2a8ff; }
+.settings-server .pselect { flex: 1; min-width: 0; }
+.settings-server .pselect-trigger { width: 100%; height: 40px; padding: 0 8px; border: 0; background: transparent; color: var(--text); font-size: 14px; font-weight: 600; }
+.settings-server .pselect-trigger:hover:not(:where(:disabled, .disabled, .off)) { background: transparent; }
+/* Users: the filter and grid/list beside the head, on one line; as a list, a line a user: who, role, what they may as
+   chips, last sign-in, Linux user and Edit, in columns that line up */
+.users-tools { display: flex; flex-wrap: nowrap; align-items: center; justify-content: flex-end; gap: 10px; }
+.users-tools .targets-search-box { flex: 0 1 300px; min-width: 180px; margin: 0; }
+.users-list.as-list { display: flex; flex-direction: column; gap: 6px; }
+#server-pane-users .users-list.as-list > .add-first-card { width: 100%; min-height: 0; margin-top: 6px; }
+.user-line { display: grid; grid-template-columns: 34px minmax(180px, 1.1fr) 108px minmax(0, 1.5fr) 160px minmax(140px, .9fr) auto; align-items: center; gap: 16px;
+	padding: 9px 12px 9px 14px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255, 255, 255, .02); min-width: 0; transition: border-color .15s; }
+.user-line:hover:not(:where(:disabled, .disabled, .off)) { border-color: rgba(88, 166, 255, .3); }
+.user-line.user-locked { opacity: .6; }
+.user-line-initial { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 10px; color: #fff; font-weight: 700;
+	background: linear-gradient(135deg, #7c3aed, #6366f1); }
+.user-line-who { display: grid; gap: 1px; min-width: 0; }
+.user-line-who strong, .user-line-who small, .user-line-linux { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.user-line-who small, .user-line-login { color: var(--muted); font-size: 12.5px; }
+.user-line > .tool-state { justify-self: start; }
+.user-line-access { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.user-chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap;
+	color: var(--blue); background: rgba(88, 166, 255, .12); }
+.user-chip .ico { width: 12px; height: 12px; margin: 0; }
+.user-chip.tone-purple { color: #d2a8ff; background: rgba(163, 113, 247, .14); }
+.user-chip.tone-orange { color: #ffb37a; background: rgba(240, 136, 62, .14); }
+.user-chip.tone-teal { color: #56d4c8; background: rgba(57, 197, 187, .13); }
+.user-chip.admin { color: #c9a8ff; background: rgba(163, 113, 247, .16); }
+.user-chip.none { color: var(--muted); background: rgba(255, 255, 255, .05); font-weight: 500; }
+.user-line-login { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+.user-line-linux { display: inline-flex; align-items: center; gap: 7px; min-width: 0; font-size: 12px; color: var(--muted); }
+.user-line-linux .ico { flex: none; width: 13px; height: 13px; margin: 0; }
+.user-line-linux code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.users-none { margin: 4px 0; }
+@media (prefers-reduced-motion: reduce) { .user-line { transition: none; } }
+@media (max-width: 1100px) { .user-line { grid-template-columns: 34px minmax(0, 1fr) auto minmax(0, 1fr) auto; } .user-line-login, .user-line-linux { display: none; } }
+@media (max-width: 640px) { .user-line { grid-template-columns: 34px minmax(0, 1fr) auto; } .user-line .tool-state, .user-line-access { display: none; } .users-tools { flex-wrap: wrap; } }
+/* On a member, from the master: the master's own settings are not shown as if they were the member's */
+body.on-member #server-tab-dns, body.on-member #server-tab-menu, body.on-member #server-tab-users, body.on-member #server-tab-templates,
+body.on-member #server-group-users,
+/* Nor what the master shows of every member at once (Health, Usage, Convert DB, Export Site): a member's Settings have
+   only what is its own, and what it may override (Notifications) */
+body.on-member #server-tab-health, body.on-member #server-tab-usage, body.on-member #server-tab-convert, body.on-member #server-tab-export,
+body.on-member #server-group-sites { display: none; }
+/* With the server picker the header has one more part: the search gives way first, then the addresses, so Files and
+   Terminal stay on the line */
+/* A master's SQL page: its members' connections under its own */
+#member-sql { margin-top: 26px; }
+/* Alone on the master's SQL page (no connections of its own): at the top */
+#sql-tools-required[hidden] + #sql-no-connections[hidden] ~ #member-sql { margin-top: 0; }
+.member-sql-head { display: grid; gap: 2px; }
+.member-sql-head strong { font-size: 16px; }
+.member-sql-head small { color: var(--muted); font-size: 13px; }
+.member-site > .badge { flex: none; }
+/* A member's SQL: its own SQL Server a part each (Microsoft SQL Server, PostgreSQL), the engine's dot and colour, its
+   databases under it, or the low dashed card that makes the first */
+.member-engine { display: grid; gap: 8px; min-width: 0; }
+.member-engine + .member-engine { margin-top: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
+.member-engine-head { display: flex; align-items: center; gap: 10px; min-height: 32px; }
+.member-engine-name { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; font-size: 14px; }
+.member-engine .sql-engine-dot { opacity: 1; }
+.member-engine.engine-mssql .sql-engine-dot { background: #ff7b72; }
+.member-engine.engine-postgres .sql-engine-dot { background: #79b8ff; }
+.member-engine-head > button { margin-left: auto; }
+.member-size { flex: none; color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.add-first-card.row.member-first { width: 100%; padding: 10px 14px; }
+/* Opening another server: its ring alone, none of the pages under it until it is read */
+body.switching-server main > section { display: none !important; }
+.server-opening { min-height: calc(100dvh - 220px); align-content: center; }
+/* On a member: users are made on its master */
+.member-users-note { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 14px; padding: 16px 18px; border: 1px solid rgba(163, 113, 247, .35);
+	border-radius: 12px; background: rgba(163, 113, 247, .08); }
+.member-users-note .member-title { flex: 1 1 280px; }
+/* A member's name: the link to it, its arrow showing on hover */
+.member-name { display: inline-flex; align-items: center; gap: 6px; justify-self: start; color: var(--text); font-size: 15px; font-weight: 700; text-decoration: none; }
+.member-name .ico { width: 14px; height: 14px; margin: 0; opacity: 0; transform: translateX(-4px); transition: opacity .15s, transform .15s; color: #d2a8ff; }
+.member-name:hover:not(:where(:disabled, .disabled, .off)) { color: #d2a8ff; }
+.member-name:hover:not(:where(:disabled, .disabled, .off)) .ico, .member-name:focus-visible .ico { opacity: 1; transform: none; }
+@media (prefers-reduced-motion: reduce) { .member-name .ico { transition: none; } }
+/* The user window on a master: the server whose access is shown, a segment each; a dot on those they have access on */
+/* Its own box, as specific as the templates' (which it is built like), with room from Locked above it */
+#dlg-user .user-templates.user-servers { margin-top: 16px; }
+.user-server-segments .cf-segment { display: inline-flex; align-items: center; gap: 6px; }
+.user-server-segments .cf-segment .ico { width: 13px; height: 13px; margin: 0; }
+.user-server-has { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
+#dlg-user.on-member-access #user-dns-part { display: none; }
+/* Safari's AutoFill key in a search field (it takes a field named for users for a login): never in a filter */
+input[type="search"]::-webkit-credentials-auto-fill-button, input[type="search"]::-webkit-contacts-auto-fill-button {
+	visibility: hidden; display: none !important; pointer-events: none; }
+/* A search field's own form (so Safari does not take it for a login): it adds nothing to the layout */
+.search-form { display: contents; margin: 0; }
+/* A name's DNS help in a dialog (.dns-card): its records are its own lines, not Cloudflare's list rows of the same class,
+   whose columns, padding and lines would push them past the card */
+.dns-card .dns-record { grid-template-columns: 58px minmax(0, auto) auto minmax(0, 1fr) 28px; gap: 8px; padding: 0; font-size: 12.5px; }
+.dns-card .dns-record + .dns-record { border-top: 0; }
+.dns-card .dns-record:hover:not(:where(:disabled, .disabled, .off)) { background: none; }
+.dns-card .dns-head { min-width: 0; }
+.dns-card .dns-status { flex: none; max-width: 60%; overflow: hidden; text-overflow: ellipsis; }
+/* An administrator's sites on every server: a head a server over its sites, the whole row */
+/* Sites grouped by server: the list a column of sections, each its head and a grid of its own */
+#sites.grouped { display: grid; grid-template-columns: minmax(0, 1fr); grid-auto-rows: auto; gap: 26px; }
+.site-server-group { display: grid; gap: 12px; min-width: 0; }
+.site-server-head { display: flex; align-items: center; gap: 10px; color: var(--text); }
+.site-server-icon { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; color: #d2a8ff; background: rgba(163, 113, 247, .14); }
+.site-server-icon .ico { width: 14px; height: 14px; margin: 0; }
+.site-server-head strong { font-size: 15px; }
+.site-server-count { padding: 1px 8px; border-radius: 999px; background: rgba(255, 255, 255, .07); color: var(--muted); font-size: 11.5px; font-weight: 600; }
+/* A master's own Usage, Convert DB and Export Site: a section a member, its head over that member's part, the whole row */
+.member-pane { grid-column: 1 / -1; display: grid; gap: 12px; min-width: 0; }
+.member-pane + .member-pane { margin-top: 14px; }
+.member-pane.only-empty > .site-server-head { display: none; }
+.server-tools.member-pane-list { grid-template-columns: minmax(0, 1fr); }
+.member-pane-list > .tool-card { grid-column: 1 / -1; min-height: 0; }
+/* A master's own Settings: no software to host sites with (.NET, Node.js, SQL Server): its members host them */
+body.is-master #server-group-software, body.is-master #server-tab-dotnet, body.is-master #server-tab-node, body.is-master #server-tab-sql { display: none; }
+/* New site on a master: the member it is made on, as the kind of site is chosen */
+.site-server-cards .tc-title { display: inline-flex; align-items: center; gap: 8px; }
+.site-server-cards .tc-title .ico { width: 15px; height: 15px; margin: 0; color: #d2a8ff; }
+/* Adding a server is an administrator's: its card in a dialog's servers is not a user's */
+body.not-admin .server-card.add { display: none; }
+/* Add environment for a user with one place for it: no server shown, nor where it runs */
+#dlg-prod.one-place .prod-where, #dlg-prod.one-place #prod-target-row, #dlg-prod.one-place #prod-remote-pick { display: none !important; }
+/* Add environment with one other Linux server: it is the card itself, no list of one under it */
+#dlg-prod.one-remote #prod-remote-pick { display: none !important; }
+/* A user's access on a master itself: Cloudflare's alone (it hosts no sites or databases) */
+#dlg-user.on-master-access #user-scope .user-part.tone-web, #dlg-user.on-master-access #user-scope .user-part.tone-sql,
+#dlg-user.on-master-access #user-sftp-part { display: none; }
+/* Add environment for a user: the folder on the server is Harbor's choice, not theirs to type */
+#dlg-prod.for-user #prod-local-options { display: none !important; }
+/* Folders on the server are Harbor's for a user (they follow the environment): an administrator's to change */
+body.not-admin .admin-only-field { display: none !important; }
+

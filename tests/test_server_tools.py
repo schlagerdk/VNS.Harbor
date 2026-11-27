@@ -210,6 +210,25 @@ class DotnetTests(Server):
         self.assertTrue(any(command.startswith("bash ") and "--channel 8.0" in command for command in system.commands))
         self.assertIn(".NET 8.0 is up to date", system.said[-1])
 
+    def test_the_last_version_stays_but_on_a_master_it_goes(self):
+        dotnet = self.root / "usr/lib/dotnet"
+        for folder in ("sdk/10.0.100", "shared/Microsoft.AspNetCore.App/10.0.1", "host/fxr/10.0.1"):
+            (dotnet / folder).mkdir(parents=True)
+        (dotnet / "dotnet").write_text("")
+        (self.root / "usr/bin").mkdir(parents=True)
+        os.symlink(dotnet / "dotnet", self.root / "usr/bin/dotnet")
+        answers = {"/usr/lib/dotnet/dotnet --list-sdks": "10.0.100 [x]\n", "/usr/lib/dotnet/dotnet --list-runtimes": "Microsoft.AspNetCore.App 10.0.1 [x]\n"}
+        system = self.system(**answers)
+        self.assertEqual(main(["server", "dotnet", "remove", "10.0"], system), 1)
+        self.assertIn("the only version here, so it stays", system.said[-1])
+        self.assertTrue((dotnet / "sdk/10.0.100").is_dir())
+        # A master hosts nothing: with --last it goes, its host and the dotnet command too
+        system = self.system(**answers)
+        self.assertEqual(main(["server", "dotnet", "remove", "10.0", "--last"], system), 0, system.said)
+        for folder in ("sdk/10.0.100", "shared/Microsoft.AspNetCore.App/10.0.1", "host/fxr/10.0.1"):
+            self.assertFalse((dotnet / folder).exists(), folder)
+        self.assertFalse(os.path.lexists(self.root / "usr/bin/dotnet"))
+
     def test_not_a_channel(self):
         for channel in ("7.0", "10", "10.0; rm -rf /"):
             system = self.system()
@@ -882,6 +901,17 @@ class SshRootLoginTests(Server):
         self.assertEqual((self.root / "etc/ssh/sshd_config.d/01-harbor-root-login.conf").read_text().splitlines()[-1], "PermitRootLogin prohibit-password")
         self.assertIn("systemctl try-reload-or-restart ssh", system.commands)
         self.assertEqual(system.said[-1], "Root may log in over SSH with a key only.")
+
+    def test_a_member_keeps_roots_login_for_its_master(self):
+        """Harbor Master reaches a member as root over SSH with a key: on a member, root's login is never turned off"""
+        from harbor.server import ssh
+        membership = self.root / "var/lib/harbor/master.json"
+        membership.parent.mkdir(parents=True, exist_ok=True)
+        membership.write_text("{}")
+        system = RecordingSystem(root=self.root, answers={"sshd -t": Result(0)})
+        self.assertNotEqual(main(["server", "ssh-root", "no"], system), 0)
+        self.assertIn("member of Harbor Master", " ".join(system.said))
+        self.assertFalse((self.root / "etc/ssh/sshd_config.d/01-harbor-root-login.conf").exists())
 
     def test_a_change_sshd_refuses_is_taken_back(self):
         from harbor.server import ssh

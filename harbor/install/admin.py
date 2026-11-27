@@ -166,6 +166,7 @@ def update(system, name=""):
     site.port_http = service_port(system, site)
     system.step(f"Restart the admin site {name}")
     install_service(system, site)
+    real_address(system, name)
     system.say(f"Admin site '{name}' runs Harbor from {CURRENT}.")
 
 
@@ -247,6 +248,7 @@ def install(system, name="", binding="", user="", https="", allowed=None):
         system.run("chown", "-R", "root:root", data)
         system.run("chmod", "700", data)
         install_apache_config(system, site, TEMPLATES / "apache.conf.tpl", certificate=https)
+        real_address(system, name)
         system.step("Start the admin site")
         install_service(system, site)
     finally:
@@ -270,6 +272,49 @@ LOCATION = re.compile(r"(?ms)^([ \t]*<Location />[ \t]*\n)(.*?)(^[ \t]*</Locatio
 
 def access_conf(system, name):
     return system.path(f"/etc/apache2/sites-available/{name}.conf")
+
+
+# The admin site behind Cloudflare's proxy: Apache sees Cloudflare's address, not the visitor's, so who may reach it
+# (Require ip), the sign-in's limits and Your address now would all be Cloudflare's. Cloudflare sends the visitor's own
+# in CF-Connecting-IP; Apache takes it only from Cloudflare's own addresses (www.cloudflare.com/ips), so no one else can
+# claim another's. The admin site's alone: a customer's site is not changed.
+CLOUDFLARE_RANGES = (
+    "173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22", "103.31.4.0/22", "141.101.64.0/18", "108.162.192.0/18",
+    "190.93.240.0/20", "188.114.96.0/20", "197.234.240.0/22", "198.41.128.0/17", "162.158.0.0/15", "104.16.0.0/13",
+    "104.24.0.0/14", "172.64.0.0/13", "131.0.72.0/22",
+    "2400:cb00::/32", "2606:4700::/32", "2803:f800::/32", "2405:b500::/32", "2405:8100::/32", "2a06:98c0::/29", "2c0f:f248::/32")
+REAL_ADDRESS_START = "# Harbor: the visitor's own address behind Cloudflare's proxy (CF-Connecting-IP, from Cloudflare only)"
+REAL_ADDRESS_END = "# Harbor: end of the visitor's own address"
+REAL_ADDRESS = re.compile(r"(?m)^[ \t]*" + re.escape(REAL_ADDRESS_START) + r"\n.*?^[ \t]*" + re.escape(REAL_ADDRESS_END) + r"\n", re.S)
+
+
+def with_real_address(text):
+    """The admin site's config with the visitor's own address taken from Cloudflare, in each of its hosts, once"""
+    text = REAL_ADDRESS.sub("", text)
+    block = "".join(f"  {line}\n" for line in (REAL_ADDRESS_START, "RemoteIPHeader CF-Connecting-IP",
+                                                 "RemoteIPTrustedProxy " + " ".join(CLOUDFLARE_RANGES), REAL_ADDRESS_END))
+    return re.sub(r"(?m)^([ \t]*ServerName[ \t].*\n)", lambda match: match.group(1) + block, text)
+
+
+def real_address(system, name):
+    """The visitor's own address behind Cloudflare, set in the admin site's config (mod_remoteip). Nothing changes when
+    it is there already; one Apache refuses is taken back."""
+    path = access_conf(system, name)
+    if not path.is_file():
+        return
+    before = path.read_text()
+    text = with_real_address(before)
+    if text == before:
+        return
+    system.run("a2enmod", "-q", "remoteip", capture=True)
+    path.write_text(text)
+    if not system.run("apache2ctl", "configtest", check=False, capture=True).ok:
+        path.write_text(before)
+        system.warn("Apache did not take the visitor's own address behind Cloudflare; the admin site's config is as it was.")
+        return
+    if system.run("systemctl", "is-active", "--quiet", "apache2", check=False).ok:
+        system.run("systemctl", "reload", "apache2")
+    system.say("The admin site sees a visitor's own address behind Cloudflare's proxy.")
 
 
 # What others get when the admin site is kept to some addresses: Apache's 403, a 404 as if nothing were there, or a

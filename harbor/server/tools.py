@@ -216,8 +216,9 @@ def cron(system, on, only=None):
         if not mine:
             system.say("The backup and log shrink jobs are not in root's crontab.")
             return
-        system.plan(["Take the backup and log shrink jobs out of root's crontab"])
-        system.step("Take the backup and log shrink jobs out of root's crontab")
+        step = "Take the backup and log shrink jobs out of root's crontab" if only is None else f"Take the job {HARBOR_LABELS[only]} out of root's crontab"
+        system.plan([step])
+        system.step(step)
         # A job's label and what of it is watched (the comment lines just above it) go with it
         above = cron_watch().WATCH
         gone = set()
@@ -241,7 +242,7 @@ def cron(system, on, only=None):
                 state["saved"][parts[1]] = now
         save_cron_state(system, state, {job_parts(line)[1] for line in lines if job_parts(line)})
     system.say(("Backups every 4 hours (at :15), logs shrunk every 4 hours." if only is None else "The job is in root's crontab.") if on
-               else "No backups or log shrinks are run by cron now.")
+               else "No backups or log shrinks are run by cron now." if only is None else f"The job {HARBOR_LABELS[only]} is out of root's crontab.")
 
 
 # ---- .NET
@@ -364,15 +365,17 @@ def node_usage(system):
     return sorted(found.values(), key=lambda item: item["site"])
 
 
-def dotnet_remove(system, channel):
-    """A channel's SDKs and runtimes taken out of /usr/lib/dotnet. Never one a site here uses, nor the only one. The
-    newest host (host/fxr) stays, also when its version goes: dotnet runs every version with the newest host there is,
-    and a newer host runs older versions."""
+def dotnet_remove(system, channel, last=False):
+    """A channel's SDKs and runtimes taken out of /usr/lib/dotnet. Never one a site here uses, nor the only one (unless
+    last: a master, which hosts nothing, has .NET taken out altogether, its host and dotnet command too). The newest host
+    (host/fxr) stays otherwise, also when its version goes: dotnet runs every version with the newest host there is, and
+    a newer host runs older versions."""
     channel = channel_of(channel)
     installed_channels = [item["channel"] for item in dotnet(system)]
     if channel not in installed_channels:
         raise Stop(f".NET {channel} is not installed.")
-    if len(installed_channels) == 1:
+    alone = len(installed_channels) == 1
+    if alone and not last:
         raise Stop(f".NET {channel} is the only version here, so it stays.")
     using = sites_using(system, channel)
     if using:
@@ -385,7 +388,8 @@ def dotnet_remove(system, channel):
 
     def version_key(path):
         return [int(part) if part.isdigit() else -1 for part in re.split(r"[.-]", path.name)]
-    newest_host = max(hosts, key=version_key, default=None)
+    # The last version: nothing else runs on its host, which goes with it
+    newest_host = None if alone else max(hosts, key=version_key, default=None)
     removed = 0
     for parent in ("sdk", "sdk-manifests", "templates", "host/fxr", "shared/Microsoft.NETCore.App", "shared/Microsoft.AspNetCore.App",
                    "packs/Microsoft.NETCore.App.Ref", "packs/Microsoft.AspNetCore.App.Ref", "packs/Microsoft.NETCore.App.Host.linux-x64",
@@ -395,6 +399,13 @@ def dotnet_remove(system, channel):
             if path.is_dir() and not path.is_symlink() and path != newest_host:
                 shutil.rmtree(path)
                 removed += 1
+    if alone:
+        # Nothing of .NET is left: its command goes too, where it is a link into it
+        link = system.path("/usr/bin/dotnet")
+        if link.is_symlink() and os.path.realpath(link).startswith(os.path.realpath(root) + os.sep):
+            link.unlink()
+        system.say(f".NET {channel} is removed ({removed} folders), the last version here: .NET is no longer on this server.")
+        return
     kept = f" Its host {newest_host.name} stays: the other versions run on it." if newest_host and newest_host.name.startswith(prefix) else ""
     system.say(f".NET {channel} is removed ({removed} folders). The other versions stay.{kept}")
 

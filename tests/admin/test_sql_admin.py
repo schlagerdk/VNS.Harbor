@@ -394,6 +394,16 @@ class SqlAdminTests(unittest.TestCase):
         self.assertNotIn("DECLARE", listing[listing.index("SELECT COALESCE(("):])
         self.assertIn("N'/var/opt/mssql/backup'", listing)
 
+    def test_only_the_backup_still_in_its_file_is_listed(self):
+        """Every backup written WITH INIT replaces the one before in its file, but msdb remembers each: SQL Server's
+        page listed a line every four hours, none of them there any more but the newest"""
+        history = [{"id": 3, "path": "/var/opt/mssql/backup/shop.bak", "media_set_id": 30, "finished": "2026-11-28T00:15"},
+                   {"id": 2, "path": "/var/opt/mssql/backup/shop.bak", "media_set_id": 20, "finished": "2026-11-27T20:15"},
+                   {"id": 4, "path": "/var/opt/mssql/backup/blog.bak", "media_set_id": 31, "finished": "2026-11-28T00:15"},
+                   {"id": 5, "path": "/var/opt/mssql/backup/copy.bak", "media_set_id": 40, "position": 1},
+                   {"id": 6, "path": "/var/opt/mssql/backup/copy.bak", "media_set_id": 40, "position": 2}]
+        self.assertEqual([item["id"] for item in sql.current_sets(history)], [3, 4, 5, 6])
+
     def test_directory_filenames_cannot_escape_backup_directory(self):
         with patch.object(sql, "query_json", side_effect=[[], [{"name": "../other.bak"}]]):
             with self.assertRaisesRegex(ValueError, "invalid backup filename"):
@@ -768,7 +778,9 @@ class SqlApiTests(unittest.TestCase):
                        SQL_LOCK=threading.Lock(), SQL_CONNECTIONS=self.store, SQL_HELPER=str(ROOT / "lib/sql_admin.py"),
                        _sql_module=sql, sys=sys, json=json, os=os, socket=__import__("socket"), HARBOR_DIR=str(ROOT), LIB_DIR=str(ROOT / "lib"), HARBOR_COMMAND=str(ROOT / "bin/harbor"),
                        error=lambda message, status=400: (jsonify(error=message), status),
-                       cfg={"users": []}, CONFIG_LOCK=threading.Lock(), save_config=lambda: None, time=__import__("time"))
+                       cfg={"users": []}, CONFIG_LOCK=threading.Lock(), save_config=lambda: None, time=__import__("time"),
+                       # Not a master: a master installs no SQL tools of its own (phase 13)
+                       has_members=lambda: False)
         source = ROOT / "admin/app.py"
         names = {"api_sql_connections", "api_sql_connection_test", "local_sa_password", "api_sql_status", "build_command",
                  "note_made", "forget_made_by", "made_by", "maker", "given_to"}

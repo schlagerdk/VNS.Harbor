@@ -65,6 +65,7 @@ CHECK = Path("/etc/cron.d/vns-cron-watch")
 # The shell root's crontab had before (SHELL=), kept beside harbor-cron-shell for the jobs under it
 OWN_SHELL = "HARBOR_CRON_SHELL"
 NOTE = "# Harbor: each job runs through harbor-cron-shell, which notes how it ended (Settings, Notifications, Job alerts)"
+NOTE_START = "# Harbor: each job runs through harbor-cron-shell"
 
 CONDITIONS = {
 	"exit": "Ended with an error code",
@@ -618,7 +619,8 @@ def wrapper(script):
 
 def with_shell(text, on):
 	"""Root's crontab with harbor-cron-shell as its SHELL (its own kept as HARBOR_CRON_SHELL, where it was), or back"""
-	lines = [line for line in text.splitlines() if line != NOTE and line.strip() != f"SHELL={SHELL}"]
+	# The note in any of its wordings (it was "(Scheduled jobs, Email alerts)"): once, as it is now
+	lines = [line for line in text.splitlines() if not line.startswith(NOTE_START) and line.strip() != f"SHELL={SHELL}"]
 	shell = re.compile(r"^\s*SHELL\s*=")
 	own = re.compile(rf"^\s*{OWN_SHELL}\s*=")
 	if on:

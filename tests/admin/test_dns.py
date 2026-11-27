@@ -276,6 +276,10 @@ class CloudflareTests(unittest.TestCase):
     def test_a_redirect_by_wildcard_pattern_and_its_parts(self):
         built = cloudflare.redirect_build({"mode": "wildcard", "pattern": "http://*", "target": "https://${1}", "status": 308, "keep_query": True})
         self.assertEqual(built["expression"], 'http.request.full_uri wildcard r"http://*"')
+        # An address with no path is every page of it: Cloudflare's address always has one, so it matched nothing
+        whole = cloudflare.redirect_build({"mode": "wildcard", "pattern": "http*://account.example.com", "target": "https://harbor.example.com", "status": 302})
+        self.assertEqual(whole["expression"], 'http.request.full_uri wildcard r"http*://account.example.com/*"')
+        self.assertEqual(cloudflare.whole_address("https://old.example.com/x"), "https://old.example.com/x")
         self.assertEqual(built["action_parameters"]["from_value"]["target_url"], {"expression": 'wildcard_replace(http.request.full_uri, r"http://*", r"https://${1}")'})
         # Read back as it was given
         read = cloudflare.redirect_read(built)

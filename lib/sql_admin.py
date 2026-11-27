@@ -392,6 +392,16 @@ FROM sys.tables t JOIN sys.schemas s ON s.schema_id=t.schema_id
 ORDER BY s.name,t.name""", database=database)
 
 
+def current_sets(history):
+    """The backups still in their files: a file written WITH INIT (Harbor's backups) holds only its newest media set, so
+    an older one of the same file is gone, though msdb remembers it (every four hours, a line each, none restorable)"""
+    newest = {}
+    for item in history:
+        key = str(item.get("path", "")).casefold()
+        newest[key] = max(newest.get(key, 0), int(item.get("media_set_id") or 0))
+    return [item for item in history if int(item.get("media_set_id") or 0) == newest[str(item.get("path", "")).casefold()]]
+
+
 def backups(settings):
     if postgres(settings):
         return pg().backups(settings)
@@ -399,11 +409,12 @@ def backups(settings):
 SELECT TOP (200) b.backup_set_id AS id, b.database_name AS database_name,
  CONVERT(varchar(30),b.backup_finish_date,126) AS finished,
  CAST(b.backup_size/1048576.0 AS decimal(18,1)) AS size_mb,
- m.physical_device_name AS path, b.position,
+ m.physical_device_name AS path, b.position, b.media_set_id,
  (SELECT COUNT(*) FROM msdb.dbo.backupmediafamily x WHERE x.media_set_id=b.media_set_id) AS media_count
 FROM msdb.dbo.backupset b JOIN msdb.dbo.backupmediafamily m ON m.media_set_id=b.media_set_id
 WHERE b.type='D' AND m.family_sequence_number=1 AND m.device_type=2
 ORDER BY b.backup_finish_date DESC""")
+    history = current_sets(history)
     if local_backup_access(settings):
         directory = Path(settings["backup_directory"]).resolve()
         history = [item for item in history if not (

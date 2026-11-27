@@ -124,17 +124,17 @@
         <button type="button" role="tab" id="server-tab-health" data-tab="health" aria-controls="server-pane-health" aria-selected="false"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg><span>Health</span></button>
         <button type="button" role="tab" id="server-tab-usage" data-tab="usage" aria-controls="server-pane-usage" aria-selected="false"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4h18v4H3zM5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8M10 12h4"/></svg><span>Usage</span></button>
         <button type="button" role="tab" id="server-tab-notifications" data-tab="notifications" aria-controls="server-pane-notifications" aria-selected="false"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg><span>Notifications</span></button>
-        <div class="server-nav-group">Users</div>
+        <div class="server-nav-group" id="server-group-users">Users</div>
         <button type="button" role="tab" id="server-tab-users" data-tab="users" aria-controls="server-pane-users" aria-selected="false"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg><span>Users</span></button>
         <button type="button" role="tab" id="server-tab-templates" data-tab="templates" aria-controls="server-pane-templates" aria-selected="false"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="7" rx="1"/><rect x="3" y="14" width="9" height="7" rx="1"/><rect x="16" y="14" width="5" height="7" rx="1"/></svg><span>Templates</span></button>
-        <div class="server-nav-group"{% if not (site_tools.convert or site_tools.export) %} hidden{% endif %}>Sites</div>
+        <div class="server-nav-group" id="server-group-sites"{% if not (site_tools.convert or site_tools.export) %} hidden{% endif %}>Sites</div>
         <button type="button" role="tab" id="server-tab-convert" data-tab="convert"{% if not site_tools.convert %} hidden{% endif %} aria-controls="server-pane-convert" aria-selected="false"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8M21 3v5h-5M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16M8 16H3v5"/></svg><span>Convert DB</span></button>
         <button type="button" role="tab" id="server-tab-export" data-tab="export"{% if not site_tools.export %} hidden{% endif %} aria-controls="server-pane-export" aria-selected="false"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg><span>Export Site</span></button>
         <div class="server-nav-group">This server</div>
         <button type="button" role="tab" id="server-tab-apache" data-tab="apache" aria-controls="server-pane-apache" aria-selected="false"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20.24 12.24a6 6 0 0 0-8.49-8.49L5 10.5V19h8.5zM16 8 2 22M17.5 15H9"/></svg><span>Apache</span></button>
         <button type="button" role="tab" id="server-tab-jobs" data-tab="jobs" aria-controls="server-pane-jobs" aria-selected="false"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM12 6v6l4 2"/></svg><span>Scheduled jobs</span></button>
         <button type="button" role="tab" id="server-tab-access" data-tab="access" aria-controls="server-pane-tools" aria-selected="false"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 11h14v10H5zM8 11V7a4 4 0 0 1 8 0v4"/></svg><span>Access</span></button>
-        <div class="server-nav-group">Software</div>
+        <div class="server-nav-group" id="server-group-software">Software</div>
         <button type="button" role="tab" id="server-tab-dotnet" data-tab="dotnet" aria-controls="server-pane-tools" aria-selected="false"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2l9 5v10l-9 5-9-5V7zM9 9l6 6M15 9l-6 6"/></svg><span>.NET</span></button>
         <button type="button" role="tab" id="server-tab-node" data-tab="node" aria-controls="server-pane-tools" aria-selected="false"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2l9 5v10l-9 5-9-5V7zM12 8v8M9 10v4M15 10v4"/></svg><span>Node.js</span></button>
         <button type="button" role="tab" id="server-tab-sql" data-tab="sql" aria-controls="server-pane-tools" aria-selected="false"><svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zM4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg><span>SQL Server</span></button>
@@ -201,7 +201,9 @@
           <div id="server-usage-list" class="server-tools"></div>
         </div>
         <div id="server-pane-users" class="server-pane" role="tabpanel" aria-labelledby="server-tab-users" hidden>
-        <div class="server-pane-head"><div><h3>Users <span id="users-count" class="server-pane-count"></span></h3><p id="users-text">Who can log in here, and what each of them may do</p></div></div>
+        <div class="server-pane-head"><div><h3>Users <span id="users-count" class="server-pane-count"></span></h3><p id="users-text">Who can log in here, and what each of them may do</p></div>
+          <div class="users-tools"><div id="people-filter-box" class="targets-search-box sql-filter-box convert-filter-box" hidden><svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><input id="people-filter" class="sql-filter" type="search" placeholder="Filter by name, domain, site…" autocomplete="off" spellcheck="false" aria-label="Filter the list" data-1p-ignore data-lpignore="true"><button type="button" id="people-filter-clear" class="search-clear" aria-label="Clear filter" title="Clear filter"><svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg></button></div>
+          <div id="users-layout-toggle" class="layout-toggle" role="group" aria-label="User layout" hidden><button id="users-layout-grid" type="button" title="Grid" aria-label="Grid" aria-pressed="true"></button><button id="users-layout-list" type="button" title="List" aria-label="List" aria-pressed="false"></button></div></div></div>
           <div id="users-list" class="server-tools users-list"></div>
         </div>
         <div id="server-pane-templates" class="server-pane" role="tabpanel" aria-labelledby="server-tab-templates" hidden>
@@ -322,6 +324,8 @@
       <p id="sql-logins-hint" class="hint">Microsoft SQL Server's own logins, and the databases each may use with its roles there. sa and this connection's login are changed elsewhere.</p>
       <div id="sql-logins" class="sql-logins"></div>
     </div>
+    <!-- On a master: each member's SQL connections, each opened on that member -->
+    <div id="member-sql" class="member-sites" hidden></div>
   </section>
   <dialog id="dlg-sql-connection" class="newsite">
     <form id="form-sql-connection">
@@ -423,7 +427,7 @@
       <button id="btn-multi-all" type="button" hidden>Select all</button>
       <button id="btn-multi-action" class="primary" type="button" hidden>Choose action</button>
       <button id="btn-multi-cancel" type="button" hidden>Cancel selection</button>
-      <button id="btn-new-site" class="primary">＋ New site</button>
+      <button id="btn-new-site" class="primary" hidden>＋ New site</button>
     </div>
     <div id="site-attention" class="site-attention" hidden></div>
     <div id="sites" class="cards"></div>
@@ -748,6 +752,8 @@
       <span class="ns-icon">＋</span>
       <div><h2>New site</h2><p>Creates the folder, Apache config, optional certificate and service.</p></div>
     </header>
+    <!-- On a master, which hosts nothing itself: the member the site is made on -->
+    <div id="site-server-choice" hidden></div>
     <div class="ns-section">What kind of site?</div>
     <div class="type-cards">
       <label class="type-card"><input type="radio" name="type" value="csharp" checked><span class="tc-title">C# / .NET</span><span class="tc-sub">Web project</span></label>
@@ -782,7 +788,8 @@
         <label class="csharp-here">Version (optional) <input name="version" placeholder="Installed template version" autocomplete="off" spellcheck="false"></label>
         <label><span id="project-label">C# project name</span> <input name="project" placeholder="same as folder name"></label>
         <label class="csharp-here">Build <select name="build"><option>Debug</option><option>Release</option></select></label>
-        <label class="csharp-here">Local publish folder <input name="publish" value="_development" placeholder="Site root when empty"></label>
+        <!-- An administrator's to change; a user's follows the environment (_development, _test, …) -->
+        <label class="csharp-here admin-only-field">Local publish folder <input name="publish" value="_development" placeholder="Site root when empty"></label>
       </div>
       <p id="template-status" class="hint template-status" role="status" hidden></p>
     </div>
@@ -1081,8 +1088,10 @@
     <label id="template-name-field" hidden>Template name <input name="template_name" maxlength="60" autocomplete="off" placeholder="Web developer"></label>
     <div id="user-identity">
     <div class="ns-grid">
-      <label>Username <input name="username" required maxlength="64" autocomplete="off" spellcheck="false"></label>
-      <label>Password <input name="password" type="password" minlength="12" maxlength="128" autocomplete="new-password"></label>
+      <!-- Safari offers the admin's own saved login in fields it takes for a login: its words (Username, Password) carry an
+           invisible joiner, the fields are named for nothing it knows, and the password is never a password field -->
+      <label>User&#8203;name <input name="handle" required maxlength="64" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-form-type="other"></label>
+      <label>Pass&#8203;word <input name="secret_new" type="text" class="masked-password" minlength="12" maxlength="128" autocomplete="off" spellcheck="false" data-1p-ignore data-lpignore="true" data-form-type="other"></label>
     </div>
     <!-- Name and email side by side: the email is where Forgot password sends its link (else the username, when it is one) -->
     <div class="ns-grid">
@@ -1104,6 +1113,8 @@
       <span class="option-text"><strong>Locked</strong><small>Cannot log in, and a session that is open ends at once</small></span>
       <input name="disabled" type="checkbox" class="switch small danger" aria-label="Locked"></label>
     </div>
+    <!-- On a master: the server whose access is shown below, this one or a member -->
+    <div id="user-servers" class="user-templates user-servers" hidden></div>
     <div id="user-scope">
       <!-- Web Server, SFTP and SQL Server: a part each, framed in its own colour, its switch at the top -->
       <section class="user-part tone-web">
@@ -1114,6 +1125,10 @@
         <label class="option-row"><span class="option-icon" data-header-icon="globe" aria-hidden="true"></span>
           <span class="option-text"><strong>May create sites</strong><small>A site they create is theirs, with everything on it</small></span>
           <input name="create_sites" type="checkbox" class="switch small" aria-label="May create sites"></label>
+        <!-- On a member: whether their sites' environments may be made here, whichever server the site itself is on -->
+        <label class="option-row" id="user-create-envs" hidden><span class="option-icon" data-header-icon="server" aria-hidden="true"></span>
+          <span class="option-text"><strong>May create environments</strong><small>Here, for a site whose main site lets them add environments, whichever server that site is on</small></span>
+          <input name="create_envs" type="checkbox" class="switch small" aria-label="May create environments"></label>
         <div id="user-site-limits" class="user-limits">
           <label>Sites they may make <input name="limit_sites" type="number" min="0" max="10000" step="1" inputmode="numeric" placeholder="No limit"></label>
           <div class="limit-size"><span class="limit-label">Size of each site</span>
@@ -1131,7 +1146,7 @@
         <input name="sftp" type="checkbox" class="switch" aria-label="SFTP"></label>
       <div id="user-sftp" class="grant-area sftp-area">
           <div class="sftp-address"><span class="muted">Connect to</span> <code id="user-sftp-address">—</code></div>
-          <label>SFTP password <input name="sftp_password" type="password" minlength="12" maxlength="128" autocomplete="new-password" placeholder="At least 12 characters"></label>
+          <label>SFTP pass&#8203;word <input name="sftp_secret" type="text" class="masked-password" minlength="12" maxlength="128" autocomplete="off" spellcheck="false" placeholder="At least 12 characters" data-1p-ignore data-lpignore="true" data-form-type="other"></label>
           <label>Public SSH keys <span class="muted">(optional, one per line)</span>
             <textarea name="sftp_keys" rows="3" spellcheck="false" placeholder="ssh-ed25519 AAAA… name@computer"></textarea></label>
           <p class="hint">A folder for each site they have Files or Terminal on, nothing else. Turned off, the password and keys stop working at once.</p>

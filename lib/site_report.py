@@ -580,24 +580,36 @@ def reset_mail_html(host, username, link, minutes, now=None):
 
 
 def login_mail_html(host, name, username, password, link, now=None, choose=None, days=7):
-    """A user's login, mailed when they are made or changed: where to log in, the username, and the password given
-    them, or (choose) a link to choose one themselves, as their password is not known; a button to either"""
+    """A user's login, mailed when they are made or changed: one framed box with where to log in, the username and the
+    password given them (or, as their password is not known, a link to choose one), a button to either, and what to do
+    after under it. In the page's own classes, so a mail program's dark mode keeps it readable"""
     now = now or time.time()
-    cell = 'style="padding:6px 0;font-size:14px;line-height:20px;color:#111827"'
-    label = 'style="padding:6px 16px 6px 0;font-size:13px;line-height:20px;color:#6b7280;white-space:nowrap"'
-    code = 'style="font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:14px;background:#f3f4f6;border-radius:6px;padding:2px 6px"'
-    details = (f'<table role="presentation" cellpadding="0" cellspacing="0" style="border-collapse:collapse;margin-bottom:18px">'
-               f'<tr><td {label}>Address</td><td {cell}><a href="{esc(link)}" style="color:#7c3aed">{esc(link)}</a></td></tr>'
-               f'<tr><td {label}>Username</td><td {cell}><span {code}>{esc(username)}</span></td></tr>'
-               + (f'<tr><td {label}>Password</td><td {cell}><span {code}>{esc(password)}</span></td></tr>' if password else "") + '</table>'
-               f'<a href="{esc(choose or link)}" style="display:inline-block;padding:12px 22px;border-radius:10px;background:#7c3aed;color:#ffffff;'
-               f'font-size:15px;font-weight:700;text-decoration:none">{"Choose your password" if choose else "Log in to Harbor"}</a>'
-               + (f'<div class="mu" style="margin-top:14px;font-size:12px;line-height:18px;color:#6b7280;word-break:break-all">'
-                  f'Or open this link: {esc(choose)}</div>' if choose else ""))
+    mono = "font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace"
+    # An address a mail program would make a mail link of is an anchor already: it is left as it is
+    plain = 'style="color:inherit;text-decoration:none"'
+
+    def line(label, value, first=False):
+        border = "" if first else "border-top:1px solid #e5e7eb;"
+        return (f'<tr><td class="mu{"" if first else " ln"}" style="{border}padding:14px 18px;width:112px;font-size:11px;line-height:18px;font-weight:700;'
+                f'letter-spacing:.08em;text-transform:uppercase;color:#6b7280;vertical-align:middle">{label}</td>'
+                f'<td class="tx{"" if first else " ln"}" style="{border}padding:14px 18px;font-size:15px;line-height:22px;font-weight:600;color:#111827;{mono};'
+                f'word-break:break-all;vertical-align:middle">{value}</td></tr>')
+    rows = [line("Address", f'<a href="{esc(link)}" {plain}>{esc(link.rstrip("/").replace("https://", ""))}</a>', first=True),
+            line("Username", f'<a href="{esc(link)}" {plain}>{esc(username)}</a>')]
+    if password:
+        rows.append(line("Password", f'<span style="letter-spacing:.04em">{esc(password)}</span>'))
+    box = (f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="rw" style="border-collapse:separate;'
+           f'border:1px solid #e5e7eb;border-radius:12px;background:#f9fafb;margin:0 0 20px">{"".join(rows)}</table>')
+    button = (f'<a href="{esc(choose or link)}" style="display:inline-block;padding:13px 24px;border-radius:10px;background:#7c3aed;color:#ffffff;'
+              f'font-size:15px;font-weight:700;text-decoration:none">{"Choose your password" if choose else "Log in to Harbor"}</a>')
+    after = (f'Choose your password with the button: it works once, within {days} days.' if choose
+             else 'Change the password under Profile once you are in, and delete this mail.')
+    fallback = (f'<div class="mu" style="margin-top:12px;font-size:12px;line-height:18px;color:#6b7280;word-break:break-all">'
+                f'Or open this link: {esc(choose)}</div>') if choose else ""
+    note = f'<div class="mu" style="margin-top:18px;font-size:13px;line-height:19px;color:#6b7280">{esc(after)}</div>'
     return page(host, "blue", "Your login for Harbor",
                 f"{'Hi ' + name + '. ' if name else ''}An account on Harbor is ready for you. This is how you log in.",
-                [section("Your account", details, note=f"Choose your password with the link: it works once, within {days} days." if choose
-                         else "Change the password under Profile once you are in, and delete this mail.")],
+                [section("Your login", box + button + fallback + note)],
                 f"Sent from <strong>{esc(host)}</strong> {stamp(now)}.", "Sign-in")
 
 

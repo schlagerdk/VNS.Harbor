@@ -356,7 +356,7 @@ console.log(JSON.stringify([same, other, server]));
         # Drawn again after Save, the name is not focused: that scrolled the window to the top
         self.assertIn("""	if (!userDialog.open) {
 		userDialog.showModal();
-		(asTemplate ? userForm.template_name : userForm.username).focus();
+		(asTemplate ? userForm.template_name : userForm.elements.handle).focus();
 	}""", source)
 
     def test_nothing_disabled_has_a_hover_effect(self):

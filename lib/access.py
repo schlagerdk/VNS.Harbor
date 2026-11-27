@@ -297,7 +297,7 @@ def forget_made(user, kind, name, connection=None):
 # A user template: rules under a name to start new users from. Which sites and SQL connections a user gets is chosen
 # for each user; the template says what they may do on each one they are given (1.0.77). A name, password, lock or
 # what they made is never in it.
-TEMPLATE_KEYS = ("web", "create_sites", "sftp", "sql", "manage_connections", "connection_engines", "limits", "site_rules", "sql_rules", "dns", "cloudflare_parts")
+TEMPLATE_KEYS = ("web", "create_sites", "sftp", "sql", "manage_connections", "connection_engines", "limits", "site_rules", "sql_rules", "dns", "cloudflare_parts", "servers")
 # The SQL Servers a connection can be to: Microsoft SQL Server and PostgreSQL
 ENGINES = ("mssql", "postgres")
 
@@ -449,6 +449,20 @@ def template_rules(given):
     if limits and {"create", "copy"} & set(sql_rules["actions"]):
         sql_rules["limits"] = limits
     rules["sql_rules"] = sql_rules
+    # On a master: what a user made from it has on each member (the parts and limits; their sites there are given in
+    # their own window, each by the rules above)
+    servers = {}
+    for name, part in given["servers"].items() if isinstance(given.get("servers"), dict) else []:
+        if not SERVER_NAME.fullmatch(str(name)) or not isinstance(part, dict):
+            continue
+        kept = {key: bool(part.get(key)) for key in ("web", "create_sites", "create_envs", "sftp", "sql", "manage_connections")}
+        if not (kept["web"] or kept["sql"] or kept["create_envs"]):
+            continue
+        kept["connection_engines"] = clean_engines(part.get("connection_engines"))
+        kept["limits"] = clean_limits(part.get("limits"))
+        servers[name] = kept
+    if servers:
+        rules["servers"] = servers
     return rules
 
 
@@ -576,17 +590,68 @@ def clean(data, existing=None, sites=None, connections=None):
     # one to, the Web Server without a site or the right to make one. On with nothing in it would be no access.
     if user["sql"] and not user["connections"] and not (user["manage_connections"] and user["connection_engines"]):
         user["sql"] = False
-    if user["web"] and not user["sites"] and not user["create_sites"]:
+    # Web Server with nothing in it is no access, unless their environments are hosted here (a master's user)
+    if user["web"] and not user["sites"] and not user["create_sites"] and not data.get("create_envs", existing.get("create_envs")):
         user["web"] = False
     user["limits"] = clean_limits(data.get("limits", existing.get("limits")))
     # What they made is kept by the admin as they make it, never sent by a form
     user["made"] = existing.get("made") or {}
+    # On a master: what they may on each member, as it would be there; that member checks it against its own sites
+    user["servers"] = clean_servers(data.get("servers", existing.get("servers")))
+    # Environments made on a member are for the sites given them that let them add environments (Add environments): May
+    # create sites is another thing. None on any server: no server makes environments for them
+    if not adds_environments(user):
+        for access in user["servers"].values():
+            access.pop("create_envs", None)
+        user["servers"] = {name: access for name, access in user["servers"].items() if access.get("web") or access.get("sql")}
+    # On a member: the other members (by name in Servers) the master lets them make sites on, for an environment there
+    given_on = data.get("create_on", existing.get("create_on"))
+    user["create_on"] = [str(name) for name in (given_on if isinstance(given_on, list) else []) if SERVER_NAME.fullmatch(str(name))][:50]
+    # A master's user on a member: their environments may be made here (create_envs), and on these other members
+    user["create_envs"] = bool(data.get("create_envs", existing.get("create_envs", False)))
+    given_envs = data.get("envs_on", existing.get("envs_on"))
+    user["envs_on"] = [str(name) for name in (given_envs if isinstance(given_envs, list) else []) if SERVER_NAME.fullmatch(str(name))][:50]
     if role == "admin":
         for key in ("sites", "connections"):
             user[key] = {}
         user["sftp"] = False
         user["limits"] = {}
+        user["servers"] = {}
     return user
+
+
+# What of a user's access a master keeps for each member: the parts that are a server's own (not Cloudflare's)
+SERVER_PARTS = ("web", "create_sites", "create_envs", "sftp", "sql", "manage_connections", "connection_engines", "sites", "connections", "limits")
+SERVER_NAME = re.compile(r"[a-z0-9][a-z0-9-]{0,62}")
+
+
+def adds_environments(user):
+    """Whether a user may add environments anywhere: a site given them that lets them (Add environments), here or on a
+    member. May create sites does not count: making sites and making environments are each their own"""
+    grants = [user.get("sites") or {}] + [(access or {}).get("sites") or {} for access in (user.get("servers") or {}).values()]
+    return any("create_env" in (grant.get("actions") or []) for sites in grants for grant in sites.values() if isinstance(grant, dict))
+
+
+def clean_servers(value):
+    """A user's access on each member of a master: {member: {web, sites, sql, connections, …}}, only what has some"""
+    import json
+    found = {}
+    for name, access in (value or {}).items() if isinstance(value, dict) else []:
+        if not SERVER_NAME.fullmatch(str(name)) or not isinstance(access, dict):
+            continue
+        part = {key: access[key] for key in SERVER_PARTS if key in access}
+        # Web Server with nothing on it there (no site, nor sites or environments to make) is no access there, nor
+        # SQL Server with no connection nor connections to add: turned off, so the server is not said to be theirs
+        if not (part.get("sites") or part.get("create_sites") or part.get("create_envs")):
+            part["web"] = False
+        if not (part.get("connections") or part.get("manage_connections")):
+            part["sql"] = False
+        if not (part.get("web") or part.get("sql") or part.get("create_envs")):
+            continue
+        if len(json.dumps(part)) > 200000:
+            raise ValueError(f"The access on {name} is too large.")
+        found[name] = part
+    return found
 
 
 def visible_users(config, viewer):
