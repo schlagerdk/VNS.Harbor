@@ -26,6 +26,9 @@ All notable changes to VNS Harbor are listed here, newest first.
 - Forgot password on the sign-in page: a link mailed to the user's email (or their username, when it is one), good once within 30 minutes, to set a new password that signs them out everywhere else. The answer is the same whether the account exists or not, it is limited per address and per user, only a hash of the link is kept, and root's password is never set this way. Users have an optional email for it, beside their name.
 - The sign-in page tells one who comes from an address Harbor took over (bound to Harbor, or redirected to /login?from=<address>) that the old password does not work here, and to use Forgot password; the addresses are kept under Settings, General, Sign-in.
 - The server named Harbor says Harbor Master in the top bar, not its name twice.
+- Cloudflare redirects as Cloudflare's own: a rule matches a wildcard pattern of the whole address, every request, or Cloudflare's own expression, and goes to a target with ${1}, ${2} for what each * took, as 301, 302, 307 or 308. A redirect with a target expression made in Cloudflare keeps it.
+- Cloudflare page rules do all Cloudflare's page rules can: one or more settings each (cache level, edge and browser cache TTL, SSL, security level, Rocket Loader and the rest) with their values, or Forwarding URL or Always Use HTTPS alone. Every page rule can be edited, and settings Harbor does not know are kept.
+- A rule's pattern shows, as it is typed, how * and $1 or ${1} work: an address it matches with each * a part of its own colour, and where it goes with the same parts.
 
 ## [1.0.98] - 2026-11-27
 

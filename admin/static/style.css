@@ -503,7 +503,7 @@ body.login { display: grid; place-items: center; min-height: 100vh; min-height: 
 /* Forgot password and Back to sign in: a quiet link under the button */
 .login-switch { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: 18px; color: var(--muted); font-size: 13px; text-decoration: none; }
 .login-switch .ico { width: 14px; height: 14px; margin: 0; }
-.login-switch:hover { color: var(--text); }
+.login-switch:hover:not(:where(:disabled, .disabled, .off)) { color: var(--text); }
 .login-card a.login-button { display: flex; align-items: center; justify-content: center; min-height: 44px; border-radius: 9px; background: linear-gradient(135deg, #5865d8, #7548ba); border: 1px solid #8580e6; color: #fff; font-weight: 600; text-decoration: none; }
 .login-footer { display: flex; justify-content: center; margin: 28px 0 0; }
 @media (max-width: 480px) { .login-heading { padding: 26px 24px 22px; } .login-card .card-body { padding: 24px; } }
@@ -3601,8 +3601,8 @@ button.meta-action:hover:not(:where(:disabled, .disabled, .off)), button.meta-ac
 .dns-chip.proxied .ico { color: #ffb37a; }
 /* Proxied as a toggle: a chip that reacts to the pointer as a button */
 button.dns-chip.dns-proxy-toggle { border: 1px solid transparent; font-family: inherit; cursor: pointer; transition: border-color .15s, background .15s; }
-button.dns-chip.dns-proxy-toggle:hover { border-color: rgba(139, 148, 158, .45); }
-button.dns-chip.dns-proxy-toggle.proxied:hover { border-color: rgba(240, 136, 62, .55); background: rgba(240, 136, 62, .22); }
+button.dns-chip.dns-proxy-toggle:hover:not(:where(:disabled, .disabled, .off)) { border-color: rgba(139, 148, 158, .45); }
+button.dns-chip.dns-proxy-toggle.proxied:hover:not(:where(:disabled, .disabled, .off)) { border-color: rgba(240, 136, 62, .55); background: rgba(240, 136, 62, .22); }
 /* Busy: the icon a spinner in the button's own colour, the button still and not reacting to the pointer */
 .btn-spinner { display: inline-block; flex: none; width: 13px; height: 13px; box-sizing: border-box; border: 2px solid currentColor; border-top-color: transparent; border-radius: 50%; animation: activity-spin .7s linear infinite; }
 @media (prefers-reduced-motion: reduce) { .btn-spinner { animation-duration: 2s; } }
@@ -3740,6 +3740,38 @@ dialog .dns-proxy-row .switch:checked { border-color: #f0883e; background: #f088
 .cf-used { margin-left: 10px; vertical-align: 2px; font-size: 11px; }
 .cf-used.full { background: rgba(210, 153, 34, .16); color: #e3b341; }
 .cf-full { margin: 0; font-size: 12.5px; }
+/* A rule's match as cards (wildcard, every request, own expression): three side by side, one under another on a phone */
+.type-cards.cf-match { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 640px) { .type-cards.cf-match { grid-template-columns: minmax(0, 1fr); } }
+#form-dialog .dns-field textarea { resize: none; min-height: 76px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+/* How * and $1 / ${1} work: a line of what they do, and an address it matches with each * a part of its own colour,
+   and where it goes with the same parts */
+.cf-wild { display: grid; gap: 10px; padding: 12px 14px; border: 1px solid rgba(88, 166, 255, .25); border-radius: 10px; background: rgba(88, 166, 255, .06); }
+.cf-wild[hidden] { display: none; }
+.cf-wild-text { display: flex; align-items: flex-start; gap: 9px; color: #c9d1d9; font-size: 12.5px; line-height: 1.5; }
+.cf-wild-text .ico { flex: none; width: 15px; height: 15px; margin: 2px 0 0; color: var(--blue); }
+.cf-wild-example { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; }
+.cf-wild-example small { flex: 1 1 100%; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
+.cf-wild-example code { min-width: 0; padding: 4px 8px; border-radius: 6px; background: rgba(0, 0, 0, .25); color: var(--text); font-size: 12.5px; overflow-wrap: anywhere; }
+.cf-wild-arrow { color: var(--muted); }
+.cf-wild-part { padding: 0 3px; border-radius: 4px; color: #0d1117; font-weight: 600; }
+.cf-wild-part.p0 { background: #79c0ff; } .cf-wild-part.p1 { background: #d2a8ff; } .cf-wild-part.p2 { background: #7ee787; } .cf-wild-part.p3 { background: #ffa657; }
+.cf-own-target { margin: 0; overflow-wrap: anywhere; }
+/* A page rule's settings: a card each with its name, what it does, its value and a remove; added from a list */
+.cf-page-actions { display: grid; gap: 10px; }
+.cf-page-actions:empty { display: none; }
+.cf-page-action { display: grid; gap: 10px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: rgba(255, 255, 255, .02); }
+.cf-page-action-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.cf-page-remove { display: grid; place-items: center; flex: none; width: 28px; height: 28px; padding: 0; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; }
+.cf-page-remove .ico { width: 13px; height: 13px; margin: 0; }
+.cf-page-remove:hover:not(:where(:disabled, .disabled, .off)) { border-color: rgba(248, 81, 73, .5); color: var(--red); }
+.cf-page-action .cf-segments { justify-self: start; flex-wrap: wrap; }
+.cf-page-action > .pselect { max-width: 260px; }
+.cf-page-novalue { font-size: 12.5px; }
+.cf-forward { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 10px; }
+@media (max-width: 640px) { .cf-forward { grid-template-columns: minmax(0, 1fr); } }
+.cf-page-add .pselect { width: 100%; }
+.cf-page-add .hint { margin: 0; }
 .cf-group-head { margin-top: 6px; color: var(--muted); font-size: 11px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
 .cf-setting.off .cf-setting-text { opacity: .6; }
 .dns-chip.on { background: rgba(63, 185, 80, .16); color: #56d364; }

@@ -143,10 +143,12 @@ class LoginCsrfTests(unittest.TestCase):
         self.ns = dict(app=app, request=request, jsonify=jsonify, g=g, hmac=__import__("hmac"), secrets=__import__("secrets"),
                        session=session, urlparse=__import__("urllib.parse").parse.urlparse, access=access, cfg={},
                        redirect=lambda path: ("redirect " + path, 302), session_user=lambda: None, harbor_token_site=lambda header: None,
-                       render_template=lambda name, **values: f"{name}: {values['error']}")
+                       render_template=lambda name, **values: f"{name}: {values['error']}", sign_in_page=lambda: {"forgot": False})
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "protect", "exec"), self.ns)
         app.add_url_rule("/login", "login", lambda: "signed in", methods=["GET", "POST"])
         app.add_url_rule("/logout", "logout", lambda: "signed out", methods=["POST"])
+        app.add_url_rule("/forgot", "forgot", lambda: "link mailed", methods=["GET", "POST"])
+        app.add_url_rule("/reset", "reset", lambda: "password set", methods=["GET", "POST"])
         app.add_url_rule("/api/sites", "sites", lambda: "sites", methods=["POST"])
         self.client = app.test_client()
 
@@ -159,6 +161,14 @@ class LoginCsrfTests(unittest.TestCase):
             sent = self.client.post("/login", data={"csrf": "old"}, headers={"Sec-Fetch-Site": site} if site else {})
             self.assertEqual(sent.status_code, 400)
             self.assertEqual(sent.get_data(as_text=True), "login.html: The sign-in page had expired. Sign in again.")
+
+    def test_forgot_password_and_its_link_are_kept_as_the_sign_in_is(self):
+        # Open without a session, and a stale form from this site goes on; from another, a fresh page
+        self.assertEqual(self.client.get("/forgot").get_data(as_text=True), "link mailed")
+        self.assertEqual(self.client.post("/reset", data={"csrf": "old"}, headers={"Sec-Fetch-Site": "same-origin"}).get_data(as_text=True), "password set")
+        for path in ("/forgot", "/reset"):
+            sent = self.client.post(path, data={"csrf": "old"}, headers={"Sec-Fetch-Site": "cross-site"})
+            self.assertEqual(sent.status_code, 400)
 
     def test_an_expired_session_is_sent_to_sign_in(self):
         self.assertEqual(self.client.post("/api/sites", headers={"X-CSRF-Token": "old"}).status_code, 401)

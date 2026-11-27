@@ -211,6 +211,36 @@ class CloudflareTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             cloudflare.set_managed_header({"token": "t" * 40}, ZONE, "add_everything", True, opener=fake)
 
+    def test_a_redirect_by_wildcard_pattern_and_its_parts(self):
+        built = cloudflare.redirect_build({"mode": "wildcard", "pattern": "http://*", "target": "https://${1}", "status": 308, "keep_query": True})
+        self.assertEqual(built["expression"], 'http.request.full_uri wildcard r"http://*"')
+        self.assertEqual(built["action_parameters"]["from_value"]["target_url"], {"expression": 'wildcard_replace(http.request.full_uri, r"http://*", r"https://${1}")'})
+        # Read back as it was given
+        read = cloudflare.redirect_read(built)
+        self.assertEqual((read["mode"], read["pattern"], read["target"], read["status"]), ("wildcard", "http://*", "https://${1}", 308))
+        # Without ${n} the target is a plain address; every request is "true"
+        self.assertEqual(cloudflare.redirect_build({"mode": "all", "target": "https://shop.dk"})["action_parameters"]["from_value"]["target_url"], {"value": "https://shop.dk"})
+        self.assertEqual(cloudflare.redirect_build({"mode": "all", "target": "https://shop.dk"})["expression"], "true")
+        # Cloudflare's own expression and target expression are kept as they are
+        own = {"expression": 'http.host eq "old.shop.dk"', "action_parameters": {"from_value": {"target_url": {"expression": 'concat("https://shop.dk", http.request.uri.path)'}}}}
+        read = cloudflare.redirect_read(own)
+        self.assertEqual((read["mode"], read["target_expression"]), ("custom", 'concat("https://shop.dk", http.request.uri.path)'))
+        self.assertEqual(cloudflare.redirect_build(read)["action_parameters"]["from_value"]["target_url"], {"expression": 'concat("https://shop.dk", http.request.uri.path)'})
+        for wrong in ({"mode": "wildcard", "pattern": "http://*", "target": "https://${2}"}, {"mode": "all", "target": "https://shop.dk/${1}"},
+                      {"mode": "wildcard", "pattern": 'x"y', "target": "https://shop.dk"}, {"mode": "all", "target": "https://shop.dk", "status": 303}):
+            with self.assertRaises(ValueError):
+                cloudflare.redirect_build(wrong)
+
+    def test_a_page_rule_with_the_settings_chosen(self):
+        body = cloudflare.page_rule_body({"pattern": "shop.dk/img/*", "actions": [{"id": "cache_level", "value": "cache_everything"}, {"id": "edge_cache_ttl", "value": 86400}, {"id": "disable_zaraz"}]})
+        self.assertEqual(body["actions"], [{"id": "cache_level", "value": "cache_everything"}, {"id": "edge_cache_ttl", "value": 86400}, {"id": "disable_zaraz"}])
+        # Harbor's first form still forwards; $n no further than the pattern's *
+        self.assertEqual(cloudflare.page_rule_body({"pattern": "www.shop.dk/*", "url": "https://shop.dk/$1"})["actions"][0]["value"], {"url": "https://shop.dk/$1", "status_code": 301})
+        for wrong in ([{"id": "forwarding_url", "value": {"url": "https://shop.dk/$2"}}], [{"id": "always_use_https"}, {"id": "ssl", "value": "full"}],
+                      [{"id": "ssl", "value": "full"}, {"id": "ssl", "value": "strict"}], [{"id": "cache_level", "value": "everything"}], []):
+            with self.assertRaises(ValueError):
+                cloudflare.page_rule_body({"pattern": "www.shop.dk/*", "actions": wrong})
+
     def test_the_domains_kept_until_refreshed_or_another_account(self):
         fake = FakeCloudflare({"/zones": ([{"id": ZONE, "name": "shop.dk", "status": "active"}], 1)})
         with tempfile.TemporaryDirectory() as folder:

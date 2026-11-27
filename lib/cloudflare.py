@@ -350,8 +350,10 @@ HOSTNAME = re.compile(r"(\*\.)?[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-
 
 
 def redirect_rules(settings, zone, opener=None):
-    """The zone's redirect rules: [{id, description, enabled, expression, target, status, keep_query}]; none when the
-    zone has no such ruleset yet"""
+    """The zone's redirect rules: [{id, description, enabled, mode, pattern, expression, target, target_expression,
+    status, keep_query}]. mode is how a rule matches: "wildcard" (a pattern of the whole address, * for any part, its
+    parts in the target as ${1}, ${2}), "all" (every request) or "custom" (Cloudflare's own expression, as it is);
+    none when the zone has no such ruleset yet"""
     if not ZONE_ID.fullmatch(zone or ""):
         raise ValueError("Unknown zone")
     try:
@@ -360,14 +362,37 @@ def redirect_rules(settings, zone, opener=None):
         if "not found" in str(error).lower() or "could not find" in str(error).lower():
             return []
         raise
-    found = []
-    for rule in ruleset.get("rules") or []:
-        redirect = ((rule.get("action_parameters") or {}).get("from_value") or {})
-        found.append({"id": rule.get("id", ""), "description": rule.get("description", ""), "enabled": rule.get("enabled", True),
-                      "expression": rule.get("expression", ""), "target": ((redirect.get("target_url") or {}).get("value")
-                      or (redirect.get("target_url") or {}).get("expression") or ""),
-                      "status": redirect.get("status_code", 301), "keep_query": bool(redirect.get("preserve_query_string"))})
+    return [redirect_read(rule) for rule in ruleset.get("rules") or []]
+
+
+WILDCARD = re.compile(r'^http\.request\.full_uri (?:strict_)?wildcard r?"((?:[^"\\]|\\.)*)"$')
+REPLACE = re.compile(r'^wildcard_replace\(\s*http\.request\.full_uri\s*,\s*r?"((?:[^"\\]|\\.)*)"\s*,\s*r?"((?:[^"\\]|\\.)*)"\s*(?:,[^)]*)?\)$')
+
+
+def redirect_read(rule):
+    """A redirect rule as Harbor shows and changes it"""
+    expression = (rule.get("expression") or "").strip()
+    redirect = (rule.get("action_parameters") or {}).get("from_value") or {}
+    target_url = redirect.get("target_url") or {}
+    found = {"id": rule.get("id", ""), "description": rule.get("description", ""), "enabled": rule.get("enabled", True),
+             "mode": "custom", "pattern": "", "expression": expression, "target": target_url.get("value") or "", "target_expression": "",
+             "status": redirect.get("status_code", 301), "keep_query": bool(redirect.get("preserve_query_string"))}
+    if expression == "true":
+        found["mode"] = "all"
+    elif WILDCARD.match(expression):
+        found.update(mode="wildcard", pattern=WILDCARD.match(expression).group(1))
+    if target_url.get("expression"):
+        replaced = REPLACE.match(target_url["expression"].strip())
+        if replaced and found["mode"] == "wildcard" and replaced.group(1) == found["pattern"]:
+            found["target"] = replaced.group(2)
+        else:
+            # Cloudflare's own target expression: kept as it is
+            found["target_expression"] = target_url["expression"]
     return found
+
+
+def wildcard_parts(pattern):
+    return pattern.count("*")
 
 
 def redirect_expression(source_host, source_path=""):
@@ -387,21 +412,50 @@ def redirect_expression(source_host, source_path=""):
     return expression
 
 
-def save_redirects(settings, zone, rules, opener=None):
-    """The zone's redirect rules as given ([{description, source_host, source_path, target, status, keep_query,
-    enabled}]), put in place of those there were: Cloudflare keeps a phase's rules as one list"""
-    built = []
-    for rule in rules:
-        target = str(rule.get("target") or "").strip()
-        if not URL.fullmatch(target):
+def redirect_build(rule):
+    """A rule for Cloudflare from one Harbor shows: how it matches (a wildcard pattern, every request, or Cloudflare's
+    own expression), where it goes (${1}, ${2} for what each * of the pattern matched), 301, 302, 307 or 308"""
+    status = int(rule.get("status") or 301)
+    if status not in (301, 302, 307, 308):
+        raise ValueError("A redirect is 301, 302, 307 or 308.")
+    mode = rule.get("mode") or ("custom" if rule.get("expression") else "host")
+    target = str(rule.get("target") or "").strip()
+    target_expression = str(rule.get("target_expression") or "").strip()
+    if mode == "host":
+        # Harbor's first redirects, by host and path
+        expression = redirect_expression(rule.get("source_host"), rule.get("source_path"))
+    elif mode == "all":
+        expression = "true"
+    elif mode == "wildcard":
+        pattern = str(rule.get("pattern") or "").strip()
+        if not pattern or len(pattern) > 500 or '"' in pattern or "\n" in pattern:
+            raise ValueError("Give the pattern, such as https://old.example.com/*")
+        expression = f'http.request.full_uri wildcard r"{pattern}"'
+    elif mode == "custom":
+        expression = str(rule.get("expression") or "").strip()
+        if not expression or len(expression) > 4096:
+            raise ValueError("Give Cloudflare's expression for the rule.")
+    else:
+        raise ValueError("Unknown kind of match")
+    if target_expression and not target:
+        to = {"expression": target_expression}
+    else:
+        if not URL.fullmatch(target) or '"' in target:
             raise ValueError("The address it goes to starts with https://")
-        status = int(rule.get("status") or 301)
-        if status not in (301, 302, 307, 308):
-            raise ValueError("A redirect is 301, 302, 307 or 308.")
-        expression = rule.get("expression") or redirect_expression(rule.get("source_host"), rule.get("source_path"))
-        built.append({"expression": expression, "description": str(rule.get("description") or "")[:500], "enabled": rule.get("enabled", True) is not False,
-                      "action": "redirect", "action_parameters": {"from_value": {"status_code": status, "target_url": {"value": target},
-                                                                                  "preserve_query_string": bool(rule.get("keep_query"))}}})
+        used = [int(number) for number in re.findall(r"\$\{(\d+)\}", target)]
+        if used and mode != "wildcard":
+            raise ValueError("${1}, ${2} take what the * of a wildcard pattern matched: choose Wildcard pattern for them.")
+        if used and max(used) > wildcard_parts(pattern):
+            raise ValueError(f"The pattern has {wildcard_parts(pattern)} *: ${{{max(used)}}} has nothing to take.")
+        to = {"expression": f'wildcard_replace(http.request.full_uri, r"{pattern}", r"{target}")'} if used else {"value": target}
+    return {"expression": expression, "description": str(rule.get("description") or "")[:500], "enabled": rule.get("enabled", True) is not False,
+            "action": "redirect", "action_parameters": {"from_value": {"status_code": status, "target_url": to,
+                                                                        "preserve_query_string": bool(rule.get("keep_query"))}}}
+
+
+def save_redirects(settings, zone, rules, opener=None):
+    """The zone's redirect rules as given, put in place of those there were: Cloudflare keeps a phase's rules as one list"""
+    built = [redirect_build(rule) for rule in rules]
     call(settings, "PUT", f"/zones/{zone}/rulesets/phases/{REDIRECT_PHASE}/entrypoint", {"rules": built}, opener=opener)
 
 
@@ -431,20 +485,78 @@ def page_rules(settings, zone, opener=None):
     return sorted(found, key=lambda item: -item["priority"])
 
 
+ON_OFF = ("on", "off")
+# What a page rule can do, as Cloudflare names it: its values (None for one without, "forward" for Forwarding URL)
+PAGE_ACTIONS = {
+    "always_use_https": None,
+    "automatic_https_rewrites": ON_OFF,
+    "browser_cache_ttl": (1800, 3600, 7200, 14400, 28800, 43200, 86400, 172800, 604800, 2678400, 31536000),
+    "browser_check": ON_OFF,
+    "cache_deception_armor": ON_OFF,
+    "cache_level": ("bypass", "basic", "simplified", "aggressive", "cache_everything"),
+    "disable_zaraz": None,
+    "edge_cache_ttl": (7200, 14400, 28800, 43200, 86400, 172800, 604800, 1209600, 2419200),
+    "email_obfuscation": ON_OFF,
+    "forwarding_url": "forward",
+    "ip_geolocation": ON_OFF,
+    "opportunistic_encryption": ON_OFF,
+    "explicit_cache_control": ON_OFF,
+    "rocket_loader": ON_OFF,
+    "security_level": ("essentially_off", "low", "medium", "high", "under_attack"),
+    "ssl": ("off", "flexible", "full", "strict"),
+}
+# These two are a page rule's only action when it has one of them
+PAGE_ALONE = ("forwarding_url", "always_use_https")
+ACTION_ID = re.compile(r"[a-z0-9_]{1,40}")
+
+
+def page_action(item, pattern):
+    """One action of a page rule, checked: one Harbor knows by its values; another, kept from Cloudflare, as it was"""
+    kind = str((item or {}).get("id") or "")
+    value = (item or {}).get("value")
+    if kind not in PAGE_ACTIONS:
+        if not ACTION_ID.fullmatch(kind) or len(json.dumps(value)) > 2000:
+            raise ValueError("Unknown setting")
+        return {"id": kind, **({"value": value} if value is not None else {})}
+    allowed = PAGE_ACTIONS[kind]
+    if allowed is None:
+        return {"id": kind}
+    if allowed == "forward":
+        value = value if isinstance(value, dict) else {}
+        url = str(value.get("url") or "").strip()
+        if not URL.fullmatch(url):
+            raise ValueError("The address it forwards to starts with https://")
+        used = [int(number) for number in re.findall(r"\$(\d+)", url)]
+        if used and max(used) > pattern.count("*"):
+            raise ValueError(f"The pattern has {pattern.count('*')} *: ${max(used)} has nothing to take.")
+        status = int(value.get("status_code") or 301)
+        if status not in (301, 302):
+            raise ValueError("A page rule forwards with 301 or 302.")
+        return {"id": kind, "value": {"url": url, "status_code": status}}
+    if value not in allowed:
+        raise ValueError(f"Choose a value for {kind.replace('_', ' ')}.")
+    return {"id": kind, "value": value}
+
+
 def page_rule_body(data):
-    """A forwarding page rule from what is typed: its URL pattern (* for any part), where it goes ($1 for the first *),
-    301 or 302, on or off"""
+    """A page rule from what is chosen: its URL pattern (* for any part), what it does there (one or more settings, or
+    Forwarding URL or Always use HTTPS alone), on or off. One sent as Harbor's first form ({url, status}) forwards"""
     pattern = str(data.get("pattern") or "").strip()
     if not PATTERN.fullmatch(pattern) or "." not in pattern:
         raise ValueError("Give the URL pattern, such as www.example.com/*")
-    url = str(data.get("url") or "").strip()
-    if not URL.fullmatch(url):
-        raise ValueError("The address it goes to starts with https://")
-    status = int(data.get("status") or 301)
-    if status not in (301, 302):
-        raise ValueError("A page rule forwards with 301 or 302.")
-    return {"targets": [{"target": "url", "constraint": {"operator": "matches", "value": pattern}}],
-            "actions": [{"id": "forwarding_url", "value": {"url": url, "status_code": status}}],
+    given = data.get("actions")
+    if given is None and data.get("url"):
+        given = [{"id": "forwarding_url", "value": {"url": data.get("url"), "status_code": data.get("status") or 301}}]
+    if not isinstance(given, list) or not given:
+        raise ValueError("Choose what the rule does.")
+    actions = [page_action(item, pattern) for item in given]
+    kinds = [action["id"] for action in actions]
+    if len(set(kinds)) != len(kinds):
+        raise ValueError("Each setting once in a rule.")
+    alone = [kind for kind in kinds if kind in PAGE_ALONE]
+    if alone and len(kinds) > 1:
+        raise ValueError(f"{'Forwarding URL' if alone[0] == 'forwarding_url' else 'Always use HTTPS'} is a rule's only setting.")
+    return {"targets": [{"target": "url", "constraint": {"operator": "matches", "value": pattern}}], "actions": actions,
             "status": "active" if data.get("enabled", True) is not False else "disabled"}
 
 

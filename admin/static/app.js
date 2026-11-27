@@ -1105,6 +1105,7 @@ const iconPaths = {
 	search: "M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-3.5-3.5",
 	x: "M18 6 6 18M6 6l12 12",
 	alert: "M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0zM12 9v4M12 17h.01",
+	info: "M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20ZM12 16v-4M12 8h.01",
 	link: "M10 13a5 5 0 0 0 7.07 0l3-3a5 5 0 0 0-7.07-7.07l-1.5 1.5M14 11a5 5 0 0 0-7.07 0l-3 3a5 5 0 0 0 7.07 7.07l1.5-1.5",
 	eye: "M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12zM12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6z",
 	"eye-off": "M3 3l18 18M10.6 5.1A10 10 0 0 1 12 5c6.5 0 10 7 10 7a17 17 0 0 1-3 3.9M6.6 6.6C3.7 8.4 2 12 2 12s3.5 7 10 7a9.7 9.7 0 0 0 5.4-1.6M9.9 9.9a3 3 0 0 0 4.2 4.2",
@@ -7606,6 +7607,8 @@ function premiumSelect({ options, value, label = "", className = "", search = fa
 			onmousedown: (event) => event.preventDefault(), onclick: () => choose(index), onmouseenter: () => mark(index) },
 			el("span", { className: "pselect-text" }, el("span", { textContent: option.label }), ...(option.sub ? [el("small", { textContent: option.sub })] : [])),
 			svgIcon("check"));
+		// A prompt in the field only (such as Add a setting…), never a choice in the list
+		item.hidden = Boolean(option.prompt);
 		list.append(item);
 		return item;
 	});
@@ -7615,7 +7618,7 @@ function premiumSelect({ options, value, label = "", className = "", search = fa
 		list.prepend(el("li", { className: "pselect-search-row", role: "presentation" }, find));
 		find.oninput = () => {
 			const words = find.value.toLowerCase().split(/\s+/).filter(Boolean);
-			items.forEach((item, at) => { item.hidden = !words.every((word) => items_[at].label.toLowerCase().includes(word)); });
+			items.forEach((item, at) => { item.hidden = Boolean(items_[at].prompt) || !words.every((word) => items_[at].label.toLowerCase().includes(word)); });
 			const first = items.findIndex((item) => !item.hidden);
 			if (first >= 0) mark(first);
 		};
@@ -7662,7 +7665,7 @@ function premiumSelect({ options, value, label = "", className = "", search = fa
 		trigger.setAttribute("aria-expanded", "true");
 		if (find) {
 			find.value = "";
-			for (const item of items) item.hidden = false;
+			items.forEach((item, at) => { item.hidden = Boolean(items_[at].prompt); });
 		}
 		place();
 		mark(Math.max(0, values.indexOf(current)));
@@ -12611,6 +12614,12 @@ function cfRuleFrom(expression) {
 	const path = expression.match(/starts_with\(http\.request\.uri\.path, "([^"]+)"\)/)?.[1] || "";
 	return host ? `From ${host}${path}` : expression;
 }
+// What a redirect matches, in a line: its pattern, every request, or Cloudflare's expression said as it is typed
+function cfRedirectFrom(rule) {
+	if (rule.mode === "wildcard") return rule.pattern;
+	if (rule.mode === "all") return "Every request";
+	return cfRuleFrom(rule.expression);
+}
 async function drawCfRules(box) {
 	// The redirects, the page rules, how many of each the domain may have, and its Managed Transforms: read together
 	const [redirects, pageRules, limits, headers] = await Promise.all([api(`/api/dns/zones/${dnsZone.id}/redirects`),
@@ -12624,9 +12633,9 @@ async function drawCfRules(box) {
 		await drawCfRules(box);
 	};
 	const rows = cfRules.map((rule, index) => el("div", { className: "dns-record cf-rule" + (rule.enabled ? "" : " off") },
-		el("div", { className: "dns-record-name" }, el("strong", { textContent: rule.description || cfRuleFrom(rule.expression) }), el("small", { textContent: cfRuleFrom(rule.expression), title: rule.expression })),
+		el("div", { className: "dns-record-name" }, el("strong", { textContent: rule.description || cfRedirectFrom(rule) }), el("small", { textContent: cfRedirectFrom(rule), title: rule.expression })),
 		el("span", { className: "dns-record-arrow", ariaHidden: "true", textContent: "→" }),
-		el("code", { className: "dns-record-content", textContent: rule.target, title: rule.target }),
+		el("code", { className: "dns-record-content", textContent: rule.target || rule.target_expression, title: rule.target || rule.target_expression }),
 		el("div", { className: "dns-record-chips" }, el("span", { className: "dns-chip", textContent: String(rule.status) }),
 			...(rule.keep_query ? [el("span", { className: "dns-chip", textContent: "Keeps query" })] : []),
 			...(rule.enabled ? [] : [el("span", { className: "dns-chip", textContent: "Off" })])),
@@ -12680,85 +12689,210 @@ function cfManagedHeaders(box, found) {
 	return el("div", { className: "cf-rule-section cf-managed" }, head, ...group("Request headers: what the server is told", found.request),
 		...group("Response headers: what the visitor gets", found.response));
 }
-// Page rules: a URL pattern and what it does, by priority. One that forwards is made and changed here; any is turned on
-// or off, and deleted. Others (cache level and the like) are shown as Cloudflare says them
-const CF_PAGE_ACTIONS = { forwarding_url: "Forward", always_use_https: "Always use HTTPS", cache_level: "Cache level", ssl: "SSL", browser_cache_ttl: "Browser cache TTL",
-	edge_cache_ttl: "Edge cache TTL", disable_security: "Disable security", security_level: "Security level", rocket_loader: "Rocket Loader", disable_performance: "Disable performance",
-	automatic_https_rewrites: "Automatic HTTPS rewrites", cache_deception_armor: "Cache deception armor", disable_apps: "Disable apps", email_obfuscation: "Email obfuscation" };
+// What a page rule can do, as Cloudflare's own list: its name, what it does, and its values with their names
+const CF_TTL = (seconds) => seconds % 86400 === 0 ? `${seconds / 86400} day${seconds === 86400 ? "" : "s"}` : seconds % 3600 === 0 ? `${seconds / 3600} h` : `${seconds / 60} min`;
+const CF_ON_OFF = [["off", "Off"], ["on", "On"]];
+const CF_PAGE_SETTINGS = {
+	always_use_https: ["Always Use HTTPS", "Every http:// visit to it goes to https://", null],
+	automatic_https_rewrites: ["Automatic HTTPS Rewrites", "http:// links in its pages become https://", CF_ON_OFF],
+	browser_cache_ttl: ["Browser Cache TTL", "How long a visitor's browser keeps what it fetched", [1800, 3600, 7200, 14400, 28800, 43200, 86400, 172800, 604800, 2678400, 31536000].map((value) => [value, CF_TTL(value)])],
+	browser_check: ["Browser Integrity Check", "Visitors with headers of known bad software are stopped", CF_ON_OFF],
+	cache_deception_armor: ["Cache Deception Armor", "Cached only when a file's type matches its extension", CF_ON_OFF],
+	cache_level: ["Cache Level", "What Cloudflare caches there: Cache everything caches pages too", [["bypass", "Bypass"], ["basic", "No query string"], ["simplified", "Ignore query string"], ["aggressive", "Standard"], ["cache_everything", "Cache everything"]]],
+	disable_zaraz: ["Disable Zaraz", "Zaraz's third-party tools are not loaded there", null],
+	edge_cache_ttl: ["Edge Cache TTL", "How long Cloudflare keeps what it cached there", [7200, 14400, 28800, 43200, 86400, 172800, 604800, 1209600, 2419200].map((value) => [value, CF_TTL(value)])],
+	email_obfuscation: ["Email Obfuscation", "Email addresses in its pages are hidden from bots", CF_ON_OFF],
+	forwarding_url: ["Forwarding URL", "Sends the visitor on to another address", "forward"],
+	ip_geolocation: ["IP Geolocation Header", "The server is told the visitor's country (CF-IPCountry)", CF_ON_OFF],
+	opportunistic_encryption: ["Opportunistic Encryption", "Browsers on http:// may use encryption all the same", CF_ON_OFF],
+	explicit_cache_control: ["Origin Cache Control", "Cloudflare follows the server's Cache-Control headers", CF_ON_OFF],
+	rocket_loader: ["Rocket Loader", "Scripts loaded after the page: faster, but it can break some", CF_ON_OFF],
+	security_level: ["Security Level", "How readily a visitor is challenged there", [["essentially_off", "Essentially off"], ["low", "Low"], ["medium", "Medium"], ["high", "High"], ["under_attack", "Under attack"]]],
+	ssl: ["SSL", "How Cloudflare reaches the server there", [["off", "Off"], ["flexible", "Flexible"], ["full", "Full"], ["strict", "Full (strict)"]]],
+};
+// Forwarding URL and Always Use HTTPS are a rule's only setting
+const CF_PAGE_ALONE = ["forwarding_url", "always_use_https"];
+// A page rule's setting said in a line: its name and its value's name
+function cfPageSaid(action) {
+	const [title, , values] = CF_PAGE_SETTINGS[action.id] || [action.id.replace(/_/g, " "), "", null];
+	if (action.id === "forwarding_url") return `${action.value?.status_code || 301} → ${action.value?.url || ""}`;
+	if (action.value == null || typeof action.value === "object") return title;
+	return `${title}: ${(Array.isArray(values) && values.find(([value]) => value === action.value)?.[1]) || action.value}`;
+}
+// How * and $1 / ${1} work, shown as it is typed: an address the pattern matches, each * given a part of its own, and
+// where it goes with those parts put in. style "page" for a page rule's $1, "redirect" for a redirect's ${1}
+function cfWildcardExample(patternInput, targetInput, style) {
+	const box = el("div", { className: "cf-wild" });
+	const samples = ["blog", "news/2024", "page.html", "img", "x"];
+	const draw = () => {
+		const pattern = patternInput.value.trim();
+		const target = targetInput?.value.trim() || "";
+		const stars = (pattern.match(/\*/g) || []).length;
+		const ref = (n) => style === "page" ? `$${n}` : `\${${n}}`;
+		let at = 0;
+		const parts = [];
+		const example = pattern.replace(/\*/g, () => { parts.push(samples[at] || `part${at + 1}`); return `\u0000${at++}\u0000`; });
+		const shown = (text) => text.split("\u0000").map((piece, index) => index % 2 ? el("mark", { className: `cf-wild-part p${Number(piece) % 4}`, textContent: parts[Number(piece)] }) : piece);
+		const filled = target.replace(style === "page" ? /\$(\d+)/g : /\$\{(\d+)\}/g, (all, n) => Number(n) >= 1 && Number(n) <= stars ? `\u0000${Number(n) - 1}\u0000` : all);
+		box.replaceChildren(
+			el("div", { className: "cf-wild-text" }, svgIcon("info"),
+				el("span", { textContent: !targetInput ? (stars ? "Each * takes any part of the address: the rule is for every address that matches, such as this one." : `Put * where any part of the address may stand, such as ${dnsZone.name}/images/*: the rule is then for all of them.`)
+					: stars ? `Each * takes any part of the address. In the address it goes to, ${Array.from({ length: Math.min(stars, 3) }, (_, n) => ref(n + 1)).join(", ")} ${stars === 1 ? "is" : "are"} what ${stars === 1 ? "the *" : "each * in turn"} took.`
+					: `Put * where any part of the address may stand, such as ${style === "page" ? `www.${dnsZone.name}/*` : `https://old.${dnsZone.name}/*`}: then ${ref(1)} in the address it goes to is what it took.` })),
+			...(stars && pattern ? [el("div", { className: "cf-wild-example" }, el("small", { textContent: "For example" }),
+				el("code", {}, ...shown(example.startsWith("http") || style === "page" ? example : example)),
+				...(target ? [el("span", { className: "cf-wild-arrow", textContent: "→" }), el("code", {}, ...shown(filled))] : []))] : []));
+	};
+	patternInput.addEventListener("input", draw);
+	targetInput?.addEventListener("input", draw);
+	draw();
+	return box;
+}
 function cfPageRulesSection(box, rules, limit = null) {
 	const reload = () => run(() => drawCfRules(box));
 	const section = { title: "Page Rules", about: "Cloudflare's older rules: a URL pattern (* for any part) and what is done there, the first that matches",
 		used: rules?.length || 0, limit, subhead: true, add: ["New page rule", () => editCfPageRule(null, reload)],
 		first: ["Add your first page rule", `Forward a pattern such as www.${dnsZone.name}/* to where it should go`] };
 	if (!rules) return cfRuleSection({ ...section, limit: null, note: el("p", { className: "muted", textContent: "Cloudflare did not give the page rules: the API token may lack Zone, Page Rules, Read (Settings, Cloudflare)." }) });
-	const said = (action) => action.id === "forwarding_url" ? `${action.value?.status_code || 301} → ${action.value?.url || ""}`
-		: `${CF_PAGE_ACTIONS[action.id] || action.id}${action.value != null && typeof action.value !== "object" ? ": " + action.value : ""}`;
 	return cfRuleSection({ ...section, rows: rules.map((rule, index) => el("div", { className: "dns-record cf-rule" + (rule.enabled ? "" : " off") },
 		el("div", { className: "dns-record-name" }, el("strong", { textContent: rule.pattern }), el("small", { textContent: `Position ${index + 1}` })),
 		el("span", { className: "dns-record-arrow", ariaHidden: "true", textContent: "→" }),
-		el("code", { className: "dns-record-content", title: rule.actions.map(said).join(" · "), textContent: rule.forward ? rule.forward.url : rule.actions.map(said).join(" · ") }),
+		el("code", { className: "dns-record-content", title: rule.actions.map(cfPageSaid).join(" · "), textContent: rule.forward ? rule.forward.url : rule.actions.map(cfPageSaid).join(" · ") }),
 		el("div", { className: "dns-record-chips" }, ...(rule.forward ? [el("span", { className: "dns-chip", textContent: String(rule.forward.status) })] : []),
 			el("span", { className: "dns-chip" + (rule.enabled ? " on" : ""), textContent: rule.enabled ? "On" : "Off" })),
-		el("div", { className: "dns-record-actions" }, rule.forward
-			? tonedButton("Edit…", "pencil", "blue", () => editCfPageRule(rule, reload))
-			: tonedButton(rule.enabled ? "Turn off" : "Turn on", rule.enabled ? "stop" : "play", rule.enabled ? "amber" : "green", () => run(async () => {
-				await api(`/api/dns/zones/${dnsZone.id}/pagerules/${rule.id}`, { method: "PATCH", json: { enabled: !rule.enabled } });
-				toast(`The page rule is ${rule.enabled ? "off" : "on"}.`, "ok");
-				await drawCfRules(box);
-			}))))) });
+		el("div", { className: "dns-record-actions" }, tonedButton("Edit…", "pencil", "blue", () => editCfPageRule(rule, reload))))) });
 }
+// A page rule: its pattern, and what it does there, a setting a line with its value, added from Cloudflare's list.
+// Forwarding URL and Always Use HTTPS are alone in a rule
 function editCfPageRule(rule, reload) {
 	const field = (label, input, hint = "") => el("label", { className: "dns-field" }, label, input, ...(hint ? [el("small", { className: "hint", textContent: hint })] : []));
 	const pattern = el("input", { autocomplete: "off", spellcheck: false, required: true, value: rule?.pattern || "", placeholder: `www.${dnsZone.name}/*` });
-	const target = el("input", { autocomplete: "off", spellcheck: false, required: true, value: rule?.forward?.url || "", placeholder: `https://${dnsZone.name}/$1` });
-	const status = premiumSelect({ label: "Kind", value: rule?.forward?.status || 301, options: [{ value: 301, label: "301", sub: "Moved for good" }, { value: 302, label: "302", sub: "For now" }] });
 	const enabledRow = checkOption("cf_page_enabled", "On", "Off keeps the rule without using it", rule ? rule.enabled : true, "check", "green");
+	// The settings chosen: {id, value}, each drawn as a line
+	let chosen = (rule?.actions || []).map((action) => ({ ...action }));
+	const lines = el("div", { className: "cf-page-actions" });
+	const adder = el("div", { className: "cf-page-add" });
+	let forwardTarget = null;
+	const example = el("div");
+	const segments = (values, current, onpick) => el("div", { className: "cf-segments", role: "radiogroup" },
+		...values.map(([value, label]) => el("button", { type: "button", role: "radio", ariaChecked: String(value === current), className: "cf-segment" + (value === current ? " active" : ""),
+			textContent: label, onclick: () => onpick(value) })));
+	const draw = () => {
+		forwardTarget = null;
+		lines.replaceChildren(...chosen.map((action, at) => {
+			const [title, about, values] = CF_PAGE_SETTINGS[action.id] || [action.id.replace(/_/g, " "), "Kept as Cloudflare has it", undefined];
+			let control;
+			if (values === "forward") {
+				const value = action.value && typeof action.value === "object" ? action.value : (action.value = { url: "", status_code: 301 });
+				forwardTarget = el("input", { autocomplete: "off", spellcheck: false, required: true, value: value.url || "", placeholder: `https://${dnsZone.name}/$1`,
+					oninput: () => { value.url = forwardTarget.value.trim(); } });
+				control = el("div", { className: "cf-forward" }, forwardTarget,
+					segments([[301, "301 For good"], [302, "302 For now"]], value.status_code || 301, (picked) => { value.status_code = picked; draw(); }));
+			} else if (values === null) {
+				control = el("span", { className: "muted cf-page-novalue", textContent: "On for what matches" });
+			} else if (values === undefined) {
+				control = el("code", { className: "cf-page-novalue", textContent: JSON.stringify(action.value ?? "") });
+			} else if (values.length > 5) {
+				const pick = premiumSelect({ label: title, value: action.value ?? values[0][0], options: values.map(([value, label]) => ({ value, label })) });
+				if (action.value == null) action.value = values[0][0];
+				pick.addEventListener("change", () => { action.value = pick.value; });
+				control = pick;
+			} else {
+				if (action.value == null) action.value = values[0][0];
+				control = segments(values, action.value, (picked) => { action.value = picked; draw(); });
+			}
+			return el("section", { className: "cf-page-action" + (values === "forward" ? " wide" : "") },
+				el("div", { className: "cf-page-action-head" }, el("div", { className: "cf-setting-text" }, el("strong", { textContent: title }), el("small", { textContent: about })),
+					el("button", { type: "button", className: "cf-page-remove", title: `Remove ${title}`, ariaLabel: `Remove ${title}`, onclick: () => { chosen.splice(at, 1); draw(); } }, svgIcon("x"))),
+				control);
+		}));
+		// Added from the settings not there yet; none beside one that is alone, and those only in an empty rule
+		const alone = chosen.some((action) => CF_PAGE_ALONE.includes(action.id));
+		const left = Object.entries(CF_PAGE_SETTINGS).filter(([id]) => !chosen.some((action) => action.id === id) && (!CF_PAGE_ALONE.includes(id) || !chosen.length));
+		if (alone || !left.length) {
+			adder.replaceChildren(...(alone ? [el("p", { className: "hint", textContent: `${CF_PAGE_SETTINGS[chosen.find((action) => CF_PAGE_ALONE.includes(action.id)).id][0]} is the rule's only setting: remove it to choose others.` })] : []));
+		} else {
+			const pick = premiumSelect({ label: "Setting", search: true, value: "", options: [{ value: "", label: chosen.length ? "Add a setting…" : "Pick a setting…", prompt: true },
+				...left.map(([id, [title, about]]) => ({ value: id, label: title, sub: about }))] });
+			pick.classList.add("cf-page-pick");
+			pick.addEventListener("change", () => {
+				if (!pick.value) return;
+				chosen.push({ id: pick.value, value: null });
+				draw();
+			});
+			adder.replaceChildren(pick);
+		}
+		example.replaceChildren(forwardTarget ? cfWildcardExample(pattern, forwardTarget, "page") : cfWildcardExample(pattern, null, "page"));
+	};
+	draw();
 	openFormDialog({ icon: "corner", title: rule ? `Page rule: ${rule.pattern}` : `New page rule in ${dnsZone.name}`, ok: "Save",
-		text: "Forwards the addresses that match the pattern: * stands for any part, and $1 in the address it goes to for what the first * matched.",
-		fields: [field("URL pattern", pattern, `Such as www.${dnsZone.name}/*`), el("div", { className: "ns-grid dns-grid-narrow" }, field("Forward to", target, "$1 for what the first * matched"),
-			el("label", { className: "dns-field" }, "Kind", status)), enabledRow],
+		text: "For the addresses that match its pattern, Cloudflare does what the rule says: forward them, or change its settings there.",
+		fields: [field("URL pattern", pattern, `Such as www.${dnsZone.name}/* or ${dnsZone.name}/images/*`), example,
+			el("div", { className: "ns-section", textContent: "Then the settings are" }), lines, adder, enabledRow],
 		extra: rule ? [tonedButton("Delete…", "trash", "red", () => run(async () => {
 			formDialog.close();
-			if (!await ask({ title: `Delete the page rule ${rule.pattern}?`, message: `${rule.pattern} → ${rule.forward?.url || ""}`, input: false, danger: true, ok: "Delete" })) return;
+			if (!await ask({ title: `Delete the page rule ${rule.pattern}?`, message: rule.actions.map(cfPageSaid).join(" · "), input: false, danger: true, ok: "Delete" })) return;
 			await api(`/api/dns/zones/${dnsZone.id}/pagerules/${rule.id}`, { method: "DELETE" });
 			toast("The page rule is deleted.", "ok");
 			reload();
 		}))] : [],
 		submit: async () => {
+			if (!chosen.length) throw new Error("Pick what the rule does.");
 			await api(`/api/dns/zones/${dnsZone.id}/pagerules${rule ? "/" + rule.id : ""}`, { method: rule ? "PUT" : "POST",
-				json: { pattern: pattern.value.trim(), url: target.value.trim(), status: Number(status.value), enabled: enabledRow.querySelector("input").checked } });
+				json: { pattern: pattern.value.trim(), actions: chosen, enabled: enabledRow.querySelector("input").checked } });
 			toast(rule ? "The page rule is saved." : "The page rule is made.", "ok");
 			reload();
 		} });
 }
+// A redirect as Cloudflare's own: what it matches (a wildcard pattern of the whole address, every request, or
+// Cloudflare's own expression), where it goes (${1}, ${2} for what each * took), and how
 function editCfRedirect(index, save) {
 	const rule = index == null ? null : cfRules[index];
-	const host = rule?.expression.match(/http\.host eq "([^"]+)"/)?.[1] || (rule?.expression.match(/ends_with\(http\.host, "\.([^"]+)"\)/)?.[1] ? "*." + rule.expression.match(/ends_with\(http\.host, "\.([^"]+)"\)/)[1] : "");
-	const path = rule?.expression.match(/starts_with\(http\.request\.uri\.path, "([^"]+)"\)/)?.[1] || "";
-	const custom = Boolean(rule) && !host;
 	const field = (label, input, hint = "") => el("label", { className: "dns-field" }, label, input, ...(hint ? [el("small", { className: "hint", textContent: hint })] : []));
 	const description = el("input", { autocomplete: "off", value: rule?.description || "", placeholder: "Old site to the new" });
-	const from = el("input", { autocomplete: "off", spellcheck: false, value: host, placeholder: `old.${dnsZone.name}`, required: !custom, disabled: custom });
-	const fromPath = el("input", { autocomplete: "off", spellcheck: false, value: path, placeholder: "/blog (optional)", disabled: custom });
-	const target = el("input", { autocomplete: "off", spellcheck: false, value: rule?.target || "", placeholder: `https://www.${dnsZone.name}`, required: true });
-	const status = premiumSelect({ label: "Kind", value: rule?.status || 301, options: [{ value: 301, label: "301", sub: "Moved for good" }, { value: 302, label: "302", sub: "For now" }, { value: 307, label: "307", sub: "For now, the same method" }, { value: 308, label: "308", sub: "For good, the same method" }] });
-	// Its options as Harbor's option cards
+	let mode = rule?.mode || "wildcard";
+	const modes = el("div", { className: "type-cards cf-match" }, ...[["wildcard", "Wildcard pattern", "The addresses that match a pattern, * for any part"],
+		["all", "Every request", "All of the domain's visits"], ["custom", "Own expression", "Cloudflare's rule language, as in its dashboard"]]
+		.map(([value, title, text]) => el("label", { className: "type-card" }, el("input", { type: "radio", name: "cf_match", value, checked: value === mode, onchange: () => { mode = value; show(); } }),
+			el("span", { className: "tc-title", textContent: title }), el("span", { className: "tc-sub", textContent: text }))));
+	const pattern = el("input", { autocomplete: "off", spellcheck: false, value: rule?.pattern || "", placeholder: `https://old.${dnsZone.name}/*` });
+	const expression = el("textarea", { rows: 3, spellcheck: false, value: rule?.mode === "custom" ? rule.expression : "", placeholder: `http.host eq "old.${dnsZone.name}"` });
+	const target = el("input", { autocomplete: "off", spellcheck: false, value: rule?.target || "", placeholder: `https://www.${dnsZone.name}/\${1}` });
+	const status = premiumSelect({ label: "Kind", value: rule?.status || 301, options: [{ value: 301, label: "301", sub: "Moved for good" }, { value: 302, label: "302", sub: "For now" },
+		{ value: 307, label: "307", sub: "For now, POST stays POST" }, { value: 308, label: "308", sub: "For good, POST stays POST" }] });
 	const keepRow = checkOption("cf_keep_query", "Keep the query string", "?a=1 goes with it to the new address", Boolean(rule?.keep_query), "link", "blue");
 	const enabledRow = checkOption("cf_enabled", "On", "Off keeps the rule without using it", rule ? rule.enabled : true, "check", "green");
-	const keep = keepRow.querySelector("input"), enabled = enabledRow.querySelector("input");
-	openFormDialog({ icon: "corner", title: rule ? `Redirect: ${rule.description || host || "rule"}` : `New redirect in ${dnsZone.name}`, ok: "Save",
-		text: custom ? "Made in Cloudflare with an expression of its own: only its target and kind are changed here." : "From the host (and a path under it) to the address given.",
-		fields: [field("Name", description), el("div", { className: "ns-grid dns-grid-narrow" }, field("From host", from, "* for every name under it: *.example.com"), field("Path", fromPath)),
-			el("div", { className: "ns-grid dns-grid-narrow" }, field("To", target), el("label", { className: "dns-field" }, "Kind", status)),
+	const patternField = field("Request URL", pattern, `The whole address with its https://, such as https://*.${dnsZone.name}/files/*`);
+	const expressionField = field("Expression", expression, "As Cloudflare writes it: http.host, http.request.uri.path and the like");
+	const example = cfWildcardExample(pattern, target, "redirect");
+	// A target Cloudflare made with its own expression: kept as it is unless an address is typed in its place
+	const ownTarget = rule?.target_expression ? el("p", { className: "hint cf-own-target" }, "Goes to Cloudflare's own expression, kept unless you type an address: ", el("code", { textContent: rule.target_expression })) : null;
+	const show = () => {
+		patternField.hidden = mode !== "wildcard";
+		example.hidden = mode !== "wildcard";
+		expressionField.hidden = mode !== "custom";
+		pattern.required = mode === "wildcard";
+		expression.required = mode === "custom";
+		target.placeholder = mode === "wildcard" ? `https://www.${dnsZone.name}/\${1}` : `https://www.${dnsZone.name}`;
+	};
+	show();
+	target.required = !rule?.target_expression;
+	openFormDialog({ icon: "corner", title: rule ? `Redirect: ${rule.description || rule.pattern || "rule"}` : `New redirect in ${dnsZone.name}`, ok: "Save",
+		text: "Cloudflare sends the visits it matches on to another address, before the server is asked.",
+		fields: [field("Name", description), el("div", { className: "ns-section", textContent: "If the request matches" }), modes, patternField, expressionField,
+			el("div", { className: "ns-section", textContent: "Then it goes to" }),
+			el("div", { className: "ns-grid dns-grid-narrow" }, field("Target URL", target, "${1}, ${2} for what each * of the pattern took"), el("label", { className: "dns-field" }, "Kind", status)),
+			...(ownTarget ? [ownTarget] : []), example,
 			el("div", { className: "cf-options" }, keepRow, enabledRow)],
 		extra: rule ? [tonedButton("Delete…", "trash", "red", () => run(async () => {
 			formDialog.close();
-			if (!await ask({ title: `Delete the redirect ${rule.description || host}?`, message: `${rule.expression} → ${rule.target}`, input: false, danger: true, ok: "Delete" })) return;
+			if (!await ask({ title: `Delete the redirect ${rule.description || rule.pattern || ""}?`, message: `${rule.pattern || rule.expression} → ${rule.target || rule.target_expression}`, input: false, danger: true, ok: "Delete" })) return;
 			await save(cfRules.filter((_, at) => at !== index), "The redirect is deleted.");
 		}))] : [],
 		submit: async () => {
-			const made = { description: description.value.trim(), target: target.value.trim(), status: Number(status.value), keep_query: keep.checked, enabled: enabled.checked,
-				...(custom ? { expression: rule.expression } : { source_host: from.value.trim(), source_path: fromPath.value.trim() }) };
+			const made = { description: description.value.trim(), mode, pattern: pattern.value.trim(), expression: expression.value.trim(), target: target.value.trim(),
+				target_expression: target.value.trim() ? "" : rule?.target_expression || "", status: Number(status.value),
+				keep_query: keepRow.querySelector("input").checked, enabled: enabledRow.querySelector("input").checked };
 			const rules = cfRules.map((item) => ({ ...item }));
 			if (rule) rules[index] = made; else rules.push(made);
 			await save(rules, rule ? "The redirect is saved." : "The redirect is made.");
