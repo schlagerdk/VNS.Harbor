@@ -419,8 +419,8 @@ def _env_import_off(args, system):
 
 
 def _server_unattended(args, system):
-    from harbor.server.tools import unattended_on
-    unattended_on(system)
+    from harbor.server.tools import unattended_off, unattended_on
+    (unattended_on if args.state == "on" else unattended_off)(system)
 
 
 def _server_crontab(args, system):
@@ -658,7 +658,8 @@ def parser():
     command = server.add_parser("os-update", help="install the OS updates now: the security updates, or all of them (none removed)")
     command.add_argument("scope", choices=("security", "all"))
     command.set_defaults(handler=_server_os_update)
-    command = server.add_parser("unattended-upgrades", help="install and turn on the automatic security updates (unattended-upgrades)")
+    command = server.add_parser("unattended-upgrades", help="the automatic security updates (unattended-upgrades): on (installed if it is not here) or off")
+    command.add_argument("state", nargs="?", choices=("on", "off"), default="on")
     command.set_defaults(handler=_server_unattended)
     command = server.add_parser("ssh-root", help="how root may log in over SSH: yes (a password or a key), prohibit-password (a key only) or no")
     command.add_argument("mode", choices=("yes", "prohibit-password", "no"))

@@ -907,9 +907,6 @@ function monitorUpdateCheck(state) {
 		}
 	}
 	renderCardUpdateChecks();
-	const button = $("#btn-check-updates");
-	button.disabled = state.running;
-	button.replaceChildren(svgIcon("download"), el("span", { textContent: state.running ? `Checking updates (${state.completed}/${state.total})…` : "Check for updates" }));
 	if (state.running && !updateCheckTimer) {
 		updateCheckTimer = setTimeout(() => {
 			updateCheckTimer = null;
@@ -1191,8 +1188,6 @@ let multiSelecting = false;
 const multiSites = new Set();
 const canMultiSelect = (site) => !site.admin && site.has_project && (site.kind === "csharp" || site.kind === "umbraco");
 const overviewSites = () => listedSites().filter((site) => !multiSelecting || canMultiSelect(site));
-// Check for updates covers the C# sites the overview shows now: the search and filter decide which
-const updateCheckSites = () => overviewSites().filter(matches).filter(canMultiSelect);
 
 function renderMultiSelection() {
 	const multipleProjects = listedSites().filter(canMultiSelect).length > 1;
@@ -1200,7 +1195,6 @@ function renderMultiSelection() {
 		multiSelecting = false;
 		multiSites.clear();
 	}
-	$("#btn-check-updates").hidden = !multipleProjects || updateCheckSites().length === 0;
 	$("#btn-multi").hidden = multiSelecting || !multipleProjects;
 	// Choose action appears once a site is chosen; Select all chooses every site shown, or none again
 	$("#btn-multi-action").hidden = !multiSelecting || multiSites.size === 0;
@@ -1248,10 +1242,6 @@ function renderSites() {
 	}
 	$("#search").hidden = hideSearch;
 	renderStats();
-	// Check for updates says how many sites it covers when a search or filter narrows them
-	const checkable = updateCheckSites().length;
-	const narrowed = checkable < listedSites().filter(canMultiSelect).length;
-	$("#btn-check-updates").title = narrowed ? `Check the ${checkable} C# ${checkable === 1 ? "site" : "sites"} shown` : "Check all C# sites";
 	for (const name of multiSites) {
 		if (!listedSites().some((site) => site.name === name && canMultiSelect(site))) multiSites.delete(name);
 	}
@@ -3653,23 +3643,7 @@ async function takeOverFromWindows(site) {
 	await openTask({ kind: "windows_take_over", site: site.name });
 }
 $("#btn-browse").onclick = () => run(() => openFiles("", "", true));
-$("#btn-check-updates").onclick = () => run(async () => {
-	// It asks NuGet about every project on the server, which takes a while: only on purpose
-	const sites = updateCheckSites().map((site) => site.name);
-	if (!sites.length) throw new Error("No sites with a C# project are shown. Change the search or filter.");
-	const all = sites.length === listedSites().filter(canMultiSelect).length;
-	const which = all ? `all ${sites.length} projects on this server` : `the ${sites.length} ${sites.length === 1 ? "project" : "projects"} shown`;
-	if (!await ask({ title: "Check for updates?", message: `Check NuGet for package updates in ${which}. It can take a few minutes. Nothing is installed.`, input: false, ok: "Check for updates" })) return;
-	$("#btn-check-updates").disabled = true;
-	try {
-		updateCheckCurrent.clear();
-		updateCheckFeedback = true;
-		monitorUpdateCheck(await api("/api/package-updates", { json: { sites } }));
-	} catch (error) {
-		$("#btn-check-updates").disabled = false;
-		throw error;
-	}
-});
+
 document.addEventListener("keydown", (event) => {
 	const typing = ["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName);
 	if (event.key === "/" && !typing && !$("#search").hidden && currentView !== "sql") { event.preventDefault(); if (currentView !== "sites") go("sites"); $("#search").focus(); }
@@ -4987,10 +4961,6 @@ $("#btn-multi-action").onclick = () => {
 	$("#multi-selection").replaceChildren(...Array.from(multiSites, (name) =>
 		el("span", { className: "multi-site-tag", role: "listitem" }, svgIcon("globe"), el("span", { textContent: name }))));
 	$("#multi-count").textContent = `${multiSites.size} site${multiSites.size === 1 ? "" : "s"} selected. Choose what to do with them.`;
-	// Clearing logs and sync are for Umbraco sites
-	const umbraco = listedSites().some((site) => multiSites.has(site.name) && site.kind === "umbraco");
-	$("#multi-maintenance").hidden = !umbraco;
-	$("#multi-sync").hidden = !umbraco;
 	// Each choice and section with its icon, once
 	for (const holder of multiDialog.querySelectorAll("[data-icon]")) {
 		const target = holder.matches(".multi-choice") ? holder.querySelector(".tc-icon") : holder;
@@ -9321,7 +9291,8 @@ function healthUpdatesCard(updates) {
 			: "Nothing installs updates by itself here: turn on the automatic security updates, so a hole is closed without waiting for someone.",
 		actions: [tonedButton("Check now", "search", "blue", checkHealthUpdates),
 			...(updates.count ? [tonedButton("Install updates…", "download", "green", () => askOsUpdate(updates))] : []),
-			...(updates.unattended ? [] : [tonedButton("Turn on automatic security updates…", "shield", "purple", turnOnUnattended)])] });
+			updates.unattended ? tonedButton("Turn off automatic security updates…", "stop", "red", turnOffUnattended)
+				: tonedButton("Turn on automatic security updates…", "shield", "purple", turnOnUnattended)] });
 	card.querySelector(".tool-head").append(...card.querySelectorAll(":scope > .tool-actions"));
 	card.append(el("div", { className: "health-update-chips" },
 		el("span", { className: "crontab-chip " + (updates.unattended ? "ok" : "warn") }, svgIcon(updates.unattended ? "check" : "alert"), updates.unattended ? "Automatic security updates on" : "Automatic security updates off"),
@@ -9377,6 +9348,12 @@ async function checkHealthUpdates() {
 async function afterOsUpdate() {
 	if (serverTabOpen("updates")) await openUpdatesSettings();
 	else if (serverTabOpen("health")) await openHealth();
+}
+async function turnOffUnattended() {
+	if (!await ask({ title: "Turn off automatic security updates?", message: "Ubuntu's security updates are no longer installed by themselves. They wait for someone, under Install updates, and Server health mails when they do (if it is on). unattended-upgrades stays installed.",
+		input: false, ok: "Turn off", danger: true })) return;
+	const t = await openTask({ kind: "server_tool", tool: "unattended_off" });
+	if (t) t.afterTask = async () => { await api("/api/health/updates", { method: "POST", json: {} }).catch(() => null); await afterOsUpdate(); };
 }
 async function turnOnUnattended() {
 	if (!await ask({ title: "Turn on automatic security updates?", message: "unattended-upgrades is installed if it is not here, and installs Ubuntu's security updates once a day by itself. Other updates still wait for someone. A security update of a service (such as Apache or SQL Server) restarts it.",

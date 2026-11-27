@@ -735,6 +735,17 @@ def logrotate(system, on, entries=None, quiet=False):
 
 
 # ---- the OS updates
+def unattended_off(system):
+    """The automatic security updates off: unattended-upgrades stays installed, it only no longer runs by itself"""
+    step = "Turn off the automatic security updates"
+    system.plan([step])
+    system.step(step)
+    path = system.path("/etc/apt/apt.conf.d/20auto-upgrades")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text('APT::Periodic::Update-Package-Lists "1";\nAPT::Periodic::Unattended-Upgrade "0";\n', encoding="utf-8")
+    system.say("Security updates are no longer installed by themselves: Install updates does it when you choose.")
+
+
 def unattended_on(system):
     """unattended-upgrades installed and on: the security updates installed by themselves, as Ubuntu chooses them"""
     steps = ["Install unattended-upgrades", "Turn on the automatic security updates"]

@@ -401,6 +401,14 @@ class CronLabelAndClearTests(Server):
         tools.crontab_save(self.system(), entries)
         self.assertEqual(self.crontab.splitlines(), ["# Harbor label: Old data", CUSTOM, "# Harbor watch: output"])
 
+    def test_automatic_security_updates_go_on_and_off(self):
+        """Once on they could not be turned off from the admin (1.0.93)"""
+        path = self.root / "etc/apt/apt.conf.d/20auto-upgrades"
+        tools.unattended_off(self.system())
+        self.assertIn('Unattended-Upgrade "0"', path.read_text())
+        tools.unattended_on(self.system(dpkg=Result(0, "install ok installed")))
+        self.assertIn('Unattended-Upgrade "1"', path.read_text())
+
     def test_the_security_updates_alone_are_installed_without_questions(self):
         """Install updates in Health (1.0.92): only the security packages, a changed config file kept, apt's lock waited for"""
         written = {}

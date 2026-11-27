@@ -2,6 +2,14 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.94] - Unreleased
+
+### Features
+
+- Web Server has no Check for updates button: Multi action's Packages, Check does it for the sites chosen.
+- Multi action no longer offers Sync (settings, content and media, everything) or Clear Umbraco logs: what is left is Publish and Packages.
+- Automatic security updates can be turned off again under Updates (OS updates): unattended-upgrades stays installed, and the updates wait for Install updates.
+
 ## [1.0.93] - 2026-11-27
 
 ### Fixes

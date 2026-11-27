@@ -207,11 +207,8 @@ const api = async url => {calls.push(url); if(failed) throw new Error("Offline")
 const run = action => {job = action().catch(error => toast(error.message, "error")); return job;};
 (async () => {
     monitorUpdateCheck({running: true, completed: 1, total: 3});
-    assert.equal(button.disabled, true);
-    assert.equal(button.children[1].textContent, "Checking updates (1/3)…");
     result = {running: false, total: 3, completed: 3, errors: []};
     callback(); await job;
-    assert.equal(button.disabled, false);
     assert.equal(loads, 1);
     assert.equal(notices.at(-1).type, "ok");
     assert.deepEqual(calls, ["/api/package-updates"]);
@@ -222,7 +219,6 @@ const run = action => {job = action().catch(error => toast(error.message, "error
     assert.ok(notices.at(-1).message.includes("broken.test"));
     monitorUpdateCheck({running: true, completed: 0, total: 1});
     failed = true; callback(); await job;
-    assert.equal(button.disabled, false);
     assert.equal(notices.at(-1).message, "Offline");
     for (const [updates, label] of [["available", "Updates available"], ["error", "Update check failed"]]) {
         assert.ok(kindBadges({kind:"csharp", updates}).children.some(child => child.textContent === label));

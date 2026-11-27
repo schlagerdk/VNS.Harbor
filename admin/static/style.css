@@ -1664,7 +1664,7 @@ dialog fieldset.snippet-choice { min-width: 0; margin: 0; padding: 0; border: 0;
 
 /* A user sees only what they may use: the server's tools and settings are an administrator's */
 body[data-role="user"] .admin-only, body[data-role="user"] .admin-only-block, body[data-role="user"] #btn-settings,
-body[data-role="user"] #settings-menu, body[data-role="user"] #btn-multi, body[data-role="user"] #btn-check-updates { display: none !important; }
+body[data-role="user"] #settings-menu, body[data-role="user"] #btn-multi { display: none !important; }
 /* ---- Users */
 #dlg-users { width: min(640px, 94vw); }
 #dlg-user { width: min(760px, 96vw); max-height: 92vh; overflow-y: auto; }

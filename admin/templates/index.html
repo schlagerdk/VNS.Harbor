@@ -380,7 +380,6 @@
       <button id="btn-multi-all" type="button" hidden>Select all</button>
       <button id="btn-multi-action" class="primary" type="button" hidden>Choose action</button>
       <button id="btn-multi-cancel" type="button" hidden>Cancel selection</button>
-      <button id="btn-check-updates" type="button" hidden>Check for updates</button>
       <button id="btn-new-site" class="primary">＋ New site</button>
     </div>
     <div id="site-attention" class="site-attention" hidden></div>
@@ -410,14 +409,6 @@
           <label class="type-card multi-choice" data-icon="rows"><input type="radio" name="action" value="both"><span class="tc-icon" aria-hidden="true"></span><span class="tc-text"><span class="tc-title">All</span><span class="tc-sub">The main site, then all its environments</span></span></label>
         </div>
       </section>
-      <section class="multi-group" id="multi-sync">
-        <div class="multi-group-head"><span class="multi-group-icon" data-icon="sync" aria-hidden="true"></span>Sync</div>
-        <div class="type-cards multi-choices">
-          <label class="type-card multi-choice" data-icon="sliders"><input type="radio" name="action" value="sync_settings"><span class="tc-icon" aria-hidden="true"></span><span class="tc-text"><span class="tc-title">Settings</span><span class="tc-sub">uSync settings, Views and assets to the environments</span></span></label>
-          <label class="type-card multi-choice" data-icon="database"><input type="radio" name="action" value="sync_data"><span class="tc-icon" aria-hidden="true"></span><span class="tc-text"><span class="tc-title">Content &amp; media</span><span class="tc-sub">Content and media to the environments</span></span></label>
-          <label class="type-card multi-choice" data-icon="sync"><input type="radio" name="action" value="sync_all"><span class="tc-icon" aria-hidden="true"></span><span class="tc-text"><span class="tc-title">Everything</span><span class="tc-sub">The settings first, then content and media</span></span></label>
-        </div>
-      </section>
       <section class="multi-group">
         <div class="multi-group-head"><span class="multi-group-icon" data-icon="package" aria-hidden="true"></span>Packages</div>
         <div class="type-cards multi-choices multi-choices-4">
@@ -425,14 +416,6 @@
           <label class="type-card multi-choice" data-icon="restart"><input type="radio" name="action" value="outdated"><span class="tc-icon" aria-hidden="true"></span><span class="tc-text"><span class="tc-title">Update outdated</span><span class="tc-sub">Upgrade every outdated package</span></span></label>
           <label class="type-card multi-choice" data-icon="download"><input type="radio" name="action" value="add"><span class="tc-icon" aria-hidden="true"></span><span class="tc-text"><span class="tc-title">Add</span><span class="tc-sub">A NuGet package</span></span></label>
           <label class="type-card multi-choice" data-icon="trash"><input type="radio" name="action" value="remove"><span class="tc-icon" aria-hidden="true"></span><span class="tc-text"><span class="tc-title">Remove</span><span class="tc-sub">A NuGet package</span></span></label>
-        </div>
-      </section>
-      <section class="multi-group" id="multi-maintenance">
-        <div class="multi-group-head"><span class="multi-group-icon" data-icon="eraser" aria-hidden="true"></span>Clear Umbraco logs</div>
-        <div class="type-cards multi-choices">
-          <label class="type-card multi-choice" data-icon="play"><input type="radio" name="action" value="clear_logs"><span class="tc-icon" aria-hidden="true"></span><span class="tc-text"><span class="tc-title">Main sites</span><span class="tc-sub">The logs of each site here</span></span></label>
-          <label class="type-card multi-choice" data-icon="server"><input type="radio" name="action" value="clear_logs_prod"><span class="tc-icon" aria-hidden="true"></span><span class="tc-text"><span class="tc-title">All environments</span><span class="tc-sub">The logs of every environment</span></span></label>
-          <label class="type-card multi-choice" data-icon="rows"><input type="radio" name="action" value="clear_logs_all"><span class="tc-icon" aria-hidden="true"></span><span class="tc-text"><span class="tc-title">All</span><span class="tc-sub">The main site and all its environments</span></span></label>
         </div>
       </section>
       <p id="multi-action-description" class="hint"></p>

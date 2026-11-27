@@ -3289,8 +3289,9 @@ def server_tool_command(data):
         if scope not in ("security", "all"):
             abort(400, "Install the security updates or all of them")
         return ("Install the security updates" if scope == "security" else "Install the OS updates"), harbor + ["server", "os-update", scope], env
-    if tool == "unattended_on":
-        return "Turn on automatic security updates", harbor + ["server", "unattended-upgrades"], env
+    if tool in ("unattended_on", "unattended_off"):
+        on = tool == "unattended_on"
+        return ("Turn on" if on else "Turn off") + " automatic security updates", harbor + ["server", "unattended-upgrades", "on" if on else "off"], env
     if tool in ("logrotate_on", "logrotate_off"):
         return ("Rotate the jobs' logs" if tool == "logrotate_on" else "Stop rotating the jobs' logs"), harbor + ["server", "crontab", tool.replace("_", "-")], env
     if tool == "cron_run":
