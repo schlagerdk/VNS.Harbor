@@ -62,7 +62,7 @@ class SiteToolsTests(unittest.TestCase):
         def shown(tools):
             page = template.render(**values, site_tools=tools)
             hidden = lambda ident: re.search(rf'id="{ident}"[^>]*\shidden[\s>]', page) is not None
-            group = re.search(r'<div class="server-nav-group"( hidden)?>Sites</div>', page)
+            group = re.search(r'<div class="server-nav-group" id="server-group-sites"( hidden)?>Sites</div>', page)
             return not group[1], not hidden("server-tab-convert"), not hidden("server-tab-export")
         self.assertEqual(shown({"convert": True, "export": True}), (True, True, True))
         self.assertEqual(shown({"convert": False, "export": True}), (True, False, True))

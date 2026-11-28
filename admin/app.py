@@ -3992,7 +3992,7 @@ def api_master_sql():
     except (OSError, subprocess.SubprocessError, ValueError) as exc:
         app.logger.error("harbor master sql: %s", exc)
         return error("The members could not be asked.", 502)
-    return jsonify(members=found)
+    return jsonify(members=in_server_order(found))
 
 
 @app.route("/api/master/sites")
@@ -4005,13 +4005,19 @@ def api_master_sites():
     except (OSError, subprocess.SubprocessError, ValueError) as exc:
         app.logger.error("harbor master sites: %s", exc)
         return error("The members could not be asked.", 502)
-    return jsonify(members=found)
+    return jsonify(members=in_server_order(found))
 
 
 def servers_command(data):
     """A Servers action as a harbor command, and its variables (the password never on the command line)"""
     action, name = data.get("action"), data.get("name", "")
     harbor = ["/usr/bin/python3", HARBOR_COMMAND, "servers"]
+    # Update all: Harbor's release here on each of the servers named, one after another
+    if action == "install_all":
+        names = data.get("names")
+        if not isinstance(names, list) or not names or len(names) > 50 or any(not isinstance(item, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", item) for item in names):
+            abort(400, "Name the servers to update")
+        return f"Update Harbor on {len(names)} servers", harbor + ["install", *dict.fromkeys(names)], {}
     if not isinstance(name, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", name):
         abort(400, "Give the server a name of lower case letters, digits and -")
     if action == "add":
@@ -5378,7 +5384,32 @@ def member_names():
             found = json.load(stream)
     except (OSError, ValueError):
         return []
-    return sorted(name for name, entry in found.items() if isinstance(entry, dict) and entry.get("member")) if isinstance(found, dict) else []
+    names = sorted(name for name, entry in found.items() if isinstance(entry, dict) and entry.get("member")) if isinstance(found, dict) else []
+    # In the order the administrator chose (Servers, Order), those not in it after them by name
+    chosen = [name for name in cfg.get("server_order") or [] if name in names]
+    return chosen + [name for name in names if name not in chosen]
+
+
+def in_server_order(items):
+    """A list of the members' (each {server, …}) in the order of the members"""
+    order = {name: index for index, name in enumerate(member_names())}
+    return sorted(items, key=lambda item: order.get(item.get("server"), len(order))) if isinstance(items, list) else items
+
+
+@app.route("/api/master/server-order", methods=["PUT"])
+def api_master_server_order():
+    """(On a master) the order its members are shown in everywhere: the server picker, Web Server, SQL Server, Health,
+    Usage, Servers"""
+    require_admin()
+    order = (request.get_json(silent=True) or {}).get("order")
+    members = member_names()
+    if not isinstance(order, list) or any(name not in members for name in order):
+        return error("Name the members in the order to show them.")
+    with CONFIG_LOCK:
+        cfg["server_order"] = list(dict.fromkeys(order))
+        save_config()
+    audit("Changed the order of the servers: " + ", ".join(cfg["server_order"]))
+    return jsonify(members=member_names())
 
 
 def member_hosts():
@@ -8269,16 +8300,20 @@ def sql_server_key(host, port, engine, there=""):
     return host, str(port or SQL_DEFAULT_PORTS.get(engine, ""))
 
 
-def sql_database_usage(connection_id):
+def sql_database_usage(connection_id, server=None):
     """{database (casefolded): [{label, site, unit, where}]} of the sites whose connection strings name a database on
-    this connection's server"""
+    this connection's server; or on a server given as {host, port, engine} (a master asks each member so, for a
+    database server on another member)"""
     from harbor.core.system import System
     from harbor.sites import convert
-    try:
-        with SQL_LOCK:
-            connection = _sql_module.connection(SQL_CONNECTIONS, connection_id)
-    except (OSError, ValueError):
-        return {}
+    if server:
+        connection = server
+    else:
+        try:
+            with SQL_LOCK:
+                connection = _sql_module.connection(SQL_CONNECTIONS, connection_id)
+        except (OSError, ValueError):
+            return {}
     engine = _sql_module.engine(connection)
     key = sql_server_key(connection.get("host"), connection.get("port"), engine)
     found = {}
@@ -8638,7 +8673,67 @@ def api_sql_usage():
     if not is_admin():
         return jsonify(usage={})
     identifier = request.args.get("connection", "")
+    # A database server by its address (asked by a master for one on another member)
+    host = request.args.get("host", "")
+    if host:
+        engine = request.args.get("engine", "mssql")
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.:-]{0,252}", host) or engine not in ("mssql", "postgres") or not re.fullmatch(r"[0-9]{0,5}", request.args.get("port", "")):
+            return error("Give the database server's address, port and engine.")
+        return jsonify(usage=sql_database_usage("", {"host": host, "port": request.args.get("port", ""), "engine": engine}))
     return jsonify(usage=sql_database_usage(identifier))
+
+
+@app.route("/api/master/sql-usage")
+def api_master_sql_usage():
+    """(On a master) which sites on any member run on the databases of a member's connection: that member's own, and
+    each other member's whose connection strings name its server (by the address the master reaches it at, which the
+    members were given too). Each site said by its member, so its page opens there"""
+    require_admin()
+    server, identifier = request.args.get("server", ""), request.args.get("connection", "")
+    if server not in member_names() or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", identifier):
+        return error("Name a member and its connection.")
+    from urllib.parse import quote, urlencode
+    from harbor.core.system import Stop, System
+    from harbor.server import master
+    system = System()
+    members = master.members(system)
+    found = {}
+
+    def merge(usage, member):
+        for database, users in (usage or {}).items():
+            found.setdefault(database, []).extend({**item, "server": member, "label": f"{item.get('label')} · {member}"} for item in users if isinstance(item, dict))
+    try:
+        own = master.ask(system, server, members[server], "GET", f"/api/sql/usage?connection={quote(identifier)}")
+        merge((own.get("body") or {}).get("usage"), server)
+        listed = master.ask(system, server, members[server], "GET", "/api/sql/connections")
+    except Stop as exc:
+        return error(str(exc), 502)
+    connection = next((item for item in (listed.get("body") or {}).get("connections") or [] if item.get("id") == identifier), None)
+    if connection:
+        # Its own server (localhost there) is, to the others, the address the master reaches it at
+        host = str(connection.get("host") or "").strip("[]")
+        if host.lower() in ("localhost", "127.0.0.1", "::1", ".", "(local)") or host.lower() == server.lower():
+            host = master.reached_at(members[server]["host"])
+        query = urlencode({"host": host, "port": connection.get("port") or "", "engine": connection.get("engine") or "mssql"})
+
+        def ask_other(name):
+            try:
+                return name, (master.ask(system, name, members[name], "GET", f"/api/sql/usage?{query}").get("body") or {}).get("usage")
+            except Stop:
+                return name, None
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            for name, usage in executor.map(ask_other, [name for name in members if name != server]):
+                merge(usage, name)
+    # An environment on one member managed from a site on another is told by both: once, as its site's (where its page
+    # is on the master), not again as the member's own
+    for database, users in found.items():
+        kept = {}
+        for item in users:
+            key = (item.get("unit"), item.get("where") or item.get("server"))
+            if key not in kept or (item.get("where") and not kept[key].get("where")):
+                kept[key] = item
+        found[database] = list(kept.values())
+    return jsonify(usage=found)
 
 
 @app.route("/api/convert/connections")

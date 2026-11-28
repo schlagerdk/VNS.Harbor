@@ -14,8 +14,10 @@ APP = ROOT_DIR / "admin"
 class ServerToolCommandTests(unittest.TestCase):
     def setUp(self):
         tree = ast.parse((APP / "app.py").read_text())
-        nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in ("server_tool_command", "servers_command")]
-        self.ns = {"abort": abort, "re": re, "HARBOR_COMMAND": "/vns/bin/harbor",
+        nodes = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in ("server_tool_command", "servers_command")
+                 or isinstance(node, ast.Assign) and any(getattr(target, "id", "") == "HOSTING_INSTALLS" for target in node.targets)]
+        # Not a master: a master installs nothing to host sites with, and adds every server as its member (phase 13)
+        self.ns = {"abort": abort, "re": re, "HARBOR_COMMAND": "/vns/bin/harbor", "has_members": lambda: False,
                    "SQL_EDITIONS": ("Developer", "Express", "Evaluation", "Standard", "Enterprise")}
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "server tools", "exec"), self.ns)
 
@@ -69,6 +71,12 @@ class ServerToolCommandTests(unittest.TestCase):
         self.assertEqual(argv[2:], ["servers", "add", "linux-02", "172.23.3.16", "--user", "root", "--port", "22"])
         self.assertEqual(env, {"HARBOR_SSH_PASSWORD": "pw 1"})
         self.assertEqual(self.ns["servers_command"]({"action": "install", "name": "linux-02"})[1][2:], ["servers", "install", "linux-02"])
+        # Update all: each named, once, one after another; nothing else on the command line
+        self.assertEqual(self.ns["servers_command"]({"action": "install_all", "name": "all", "names": ["linux-02", "linux-03", "linux-02"]})[1][2:],
+                         ["servers", "install", "linux-02", "linux-03"])
+        for names in ([], ["x; rm -rf /"], "linux-02"):
+            with self.assertRaises(Exception):
+                self.ns["servers_command"]({"action": "install_all", "name": "all", "names": names})
         # Harbor's key always goes (not while an environment runs there): no option for it
         self.assertEqual(self.ns["servers_command"]({"action": "remove", "name": "linux-02", "uninstall": True, "revoke_key": True})[1][2:],
                          ["servers", "remove", "linux-02", "--uninstall"])

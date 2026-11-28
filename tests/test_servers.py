@@ -76,6 +76,22 @@ class ServerTests(unittest.TestCase):
         system = self.system(ssh=Result(255, "", "ssh: connect to host 10.0.0.2 port 22: No route to host"))
         self.assertFalse(servers.status(system, "two")["reachable"])
 
+    def test_update_all_goes_on_past_one_that_fails(self):
+        """Update all: each server one after another; one that fails is said, the rest are still updated"""
+        from harbor.core.system import Stop
+        from harbor.server import servers
+        done = []
+
+        def install(system, name):
+            if name == "two":
+                raise Stop("did not answer")
+            done.append(name)
+        system = RecordingSystem(root=self.root)
+        with mock.patch.object(servers, "install", side_effect=install):
+            self.assertNotEqual(main(["servers", "install", "one", "two", "three"], system), 0)
+        self.assertEqual(done, ["one", "three"])
+        self.assertIn("Not updated: two", " ".join(system.said))
+
     def test_install_copies_the_release_and_uses_it(self):
         self.add(self.system(ssh=lambda argv: ""))
         release = self.root / "opt/harbor/releases/1.2.0-abc"

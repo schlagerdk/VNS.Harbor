@@ -3921,6 +3921,12 @@ dialog .cf-page-on .switch:checked { border-color: var(--green); background: var
 	.dns-title h2 { font-size: 20px; }
 	.view-switch button { padding-left: 9px; padding-right: 9px; }
 	.view-switch button:not(#switch-server) .ico { display: none; }
+	/* Settings in words as the others are, where the phone has room for it; the gear alone on the narrowest */
+	#switch-server .ico { display: none; }
+}
+@media (max-width: 359px) {
+	#switch-server .ico { display: inline-block; }
+	.settings-word { display: none; }
 }
 /* Cloudflare's welcome, with no domain chosen: as Harbor's other empty pages, the account's counts, and the domains
    opened last as cards */
@@ -4085,6 +4091,8 @@ input[type="search"]::-webkit-credentials-auto-fill-button, input[type="search"]
 .site-server-icon .ico { width: 14px; height: 14px; margin: 0; }
 .site-server-head strong { font-size: 15px; }
 .site-server-count { padding: 1px 8px; border-radius: 999px; background: rgba(255, 255, 255, .07); color: var(--muted); font-size: 11.5px; font-weight: 600; }
+/* Each server's own grid or list, at the end of its head */
+.site-server-head .site-server-layout { margin-left: auto; }
 /* A master's own Usage, Convert DB and Export Site: a section a member, its head over that member's part, the whole row */
 .member-pane { grid-column: 1 / -1; display: grid; gap: 12px; min-width: 0; }
 .member-pane + .member-pane { margin-top: 14px; }
@@ -4109,4 +4117,33 @@ body.not-admin .server-card.add { display: none; }
 #dlg-prod.for-user #prod-local-options { display: none !important; }
 /* Folders on the server are Harbor's for a user (they follow the environment): an administrator's to change */
 body.not-admin .admin-only-field { display: none !important; }
-
+/* A row without a state among rows with one: its place kept, so the names stand in line */
+.tool-row .dot.blank { visibility: hidden; }
+/* Update all, at the end of a group of servers' head */
+.servers-group > .toned-action, .servers-group > button { margin-left: 12px; flex: none; }
+/* The order of a master's servers: a row each, dragged by its grip or moved with its arrows */
+.server-order { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.server-order-row { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; background: var(--panel); cursor: grab; }
+.server-order-row.dragging { opacity: .5; }
+.server-order-row.drop-here { border-color: var(--purple); }
+.server-order-grip { display: grid; place-items: center; color: var(--muted); }
+.server-order-grip .ico { width: 14px; height: 14px; margin: 0; }
+.server-order-row strong { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.server-order-moves { display: inline-flex; gap: 4px; }
+.server-order-moves button { display: grid; place-items: center; width: 30px; height: 28px; padding: 0; border: 1px solid var(--line); border-radius: 7px; background: transparent; color: var(--muted); cursor: pointer; }
+.server-order-moves button:hover:not(:where(:disabled, .disabled, .off)) { color: var(--text); border-color: var(--purple); }
+.server-order-moves button:disabled { opacity: .35; cursor: default; }
+.server-order-moves .ico { width: 14px; height: 14px; margin: 0; }
+.server-order-up .ico { transform: rotate(-90deg); }
+.server-order-down .ico { transform: rotate(90deg); }
+/* On a narrow screen the server choice is above Settings' row of tabs, a line of its own */
+.settings-server.above-nav { margin: 0 0 10px; padding: 10px; border: 1px solid var(--line); border-radius: 14px; background: var(--panel); }
+/* Health on a phone: every server's tiles two by two, the master's own too */
+@media (max-width: 860px) {
+	.health-servers .health-tiles, .health-servers.odd > .member-pane[data-harbor-server=""] .health-tiles, .health-tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+	/* The charts' server choice: a row of its own, scrolled sideways when the servers are more than it holds */
+	.health-charts .tool-actions { width: 100%; min-width: 0; }
+	.health-charts .health-server { flex: 1 1 100%; min-width: 0; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+	.health-charts .health-server::-webkit-scrollbar { display: none; }
+	.health-charts .health-server .crontab-seg { flex: none; }
+}

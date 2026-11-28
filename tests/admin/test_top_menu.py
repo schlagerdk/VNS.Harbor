@@ -16,7 +16,8 @@ def lifted(**names):
 
 class TopMenuTests(unittest.TestCase):
     def shown(self, web="auto", sql="auto", sites=True, sql_here=True):
-        return lifted(cfg={"web_menu": web, "sql_menu": sql}, has_sites=lambda: sites, sql_in_use=lambda: sql_here)()
+        # Not a master (a master's auto shows both, for its members)
+        return lifted(cfg={"web_menu": web, "sql_menu": sql}, has_sites=lambda: sites, sql_in_use=lambda: sql_here, has_members=lambda: False)()
 
     def test_automatic_follows_what_the_server_has(self):
         self.assertEqual(self.shown(), {"web": True, "sql": True})

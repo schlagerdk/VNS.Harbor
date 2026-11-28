@@ -375,7 +375,18 @@ def _servers(args, system):
     elif args.command == "add-windows":
         servers.add_windows(system, args.name, args.share, args.user, os.environ.get("VNS_SMB_PASSWORD", ""), args.domain)
     elif args.command == "install":
-        servers.install(system, args.name)
+        # One after another (Update all): one that fails is said, and the rest are still updated
+        failed = []
+        for name in args.name:
+            try:
+                servers.install(system, name)
+            except Stop as error:
+                if len(args.name) == 1:
+                    raise
+                failed.append(name)
+                system.warn(f"{name} was not updated: {error}")
+        if failed:
+            raise Stop(f"Not updated: {', '.join(failed)}. The others are.")
     elif args.command == "rollback":
         servers.rollback(system, args.name)
     elif args.command == "set-host":
@@ -1135,7 +1146,7 @@ def parser():
     command.add_argument("--uninstall", action="store_true", help="also uninstall Harbor there (/opt/harbor and its command only)")
     command.set_defaults(handler=_servers)
     command = other.add_parser("install", help="install this server's Harbor release there and use it (an agent); again updates it")
-    command.add_argument("name")
+    command.add_argument("name", nargs="+", help="one server or more, one after another")
     command.set_defaults(handler=_servers)
     command = other.add_parser("add-windows", help="a Windows server's share and login, kept for Import from Windows (password in VNS_SMB_PASSWORD)")
     command.add_argument("name", help="a name of its own, such as windows-01")

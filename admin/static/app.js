@@ -122,7 +122,7 @@ function showServerPicker() {
 	box = el("div", { id: "server-picker", className: "settings-server" + (pickedServer ? " on-member" : "") },
 		el("span", { className: "settings-server-label", textContent: "Server" }), el("div", { className: "settings-server-row" }, svgIcon("server"), pick));
 	box.dataset.value = pickedServer;
-	$(".server-nav").prepend(box);
+	placeServerPicker(box);
 	if (pickedServer) {
 		// Settings say which server they are of: its name in their head, and the name a site there falls back to
 		const title = $(".server-page-title h2");
@@ -141,6 +141,17 @@ function showServerPicker() {
 		}).catch(() => {});
 	}
 }
+// The server choice at the top of Settings' menu; on a narrow screen, where the menu is a row to scroll sideways, above
+// it on a line of its own (in the row it scrolled away with the tabs and squeezed them)
+const narrowSettings = matchMedia("(max-width: 860px)");
+function placeServerPicker(box = $("#server-picker")) {
+	if (!box) return;
+	const nav = $(".server-nav");
+	box.classList.toggle("above-nav", narrowSettings.matches);
+	if (narrowSettings.matches) nav.before(box);
+	else nav.prepend(box);
+}
+narrowSettings.addEventListener("change", () => placeServerPicker());
 // On a member: its own top menu (Web Server, SQL Server), as it would show it; the master's is for the master
 let memberMenu = null;
 function applyAccess() {
@@ -1656,6 +1667,22 @@ for (const layout of ["grid", "list"]) {
 	};
 }
 
+// On a master, each server's sites as cards or as a list, its own choice (the overview's choice where none is made)
+let serverLayouts = {};
+try { serverLayouts = JSON.parse(localStorage.getItem("vns-site-layout-servers") || "{}") || {}; } catch (error) { serverLayouts = {}; }
+const serverLayout = (server) => layoutOf(serverLayouts[server] || siteLayoutChoice);
+function serverLayoutToggle(server) {
+	return el("div", { className: "layout-toggle site-server-layout", role: "group", ariaLabel: `Layout of ${server || "this server"}'s sites` },
+		...[["grid", "Grid"], ["list", "List"]].map(([layout, label]) => {
+			const button = el("button", { type: "button", title: label, ariaLabel: label, ariaPressed: String(serverLayout(server) === layout),
+				onclick: () => {
+					serverLayouts[server] = layout;
+					try { localStorage.setItem("vns-site-layout-servers", JSON.stringify(serverLayouts)); } catch (error) { /* none */ }
+					renderSites();
+				} }, svgIcon(layout === "grid" ? "grid" : "rows"));
+			return button;
+		}));
+}
 function renderSites() {
 	// On a master, its members' sites are found by the search too
 	const memberCount = currentUser?.master && !serverContext ? (memberSites || []).reduce((all, member) => all + member.sites.filter((site) => !site.admin).length, 0) : 0;
@@ -1698,15 +1725,27 @@ function renderSites() {
 	// An administrator's sites on every server: a group a server, its name over its sites (a user sees none of that)
 	const servers = namesServers() ? joinedMembers() : [];
 	box.classList.toggle("grouped", servers.length > 0);
+	// Grouped, each server has its own choice beside its name: the overview's one is not shown
+	$("#site-layout-toggle").hidden = servers.length > 0;
 	if (servers.length) {
-		// A section a server: its name, then a grid of its own sites (the rows of one grid are each as tall as a card)
-		for (const server of ["", ...servers]) {
-			const here = visible.filter((site) => (site.harbor_server || "") === server);
-			if (!here.length) continue;
-			box.append(el("section", { className: "site-server-group" },
-				el("div", { className: "site-server-head" }, el("span", { className: "site-server-icon" }, svgIcon("server")),
-					el("strong", { textContent: server || "This server" }), el("span", { className: "site-server-count", textContent: String(here.length) })),
-				el("div", { className: "cards" + (siteLayout === "list" ? " list" : "") }, ...here.map(siteCard))));
+		box.classList.remove("list");
+		// A section a server: its name and its layout, then its own sites as cards or a list (the rows of one grid are
+		// each as tall as a card)
+		const overall = siteLayout;
+		try {
+			for (const server of ["", ...servers]) {
+				const here = visible.filter((site) => (site.harbor_server || "") === server);
+				if (!here.length) continue;
+				siteLayout = serverLayout(server);
+				box.append(el("section", { className: "site-server-group" },
+					el("div", { className: "site-server-head" }, el("span", { className: "site-server-icon" }, svgIcon("server")),
+						el("strong", { textContent: server || "This server" }), el("span", { className: "site-server-count", textContent: String(here.length) }),
+						// On a phone every list is a list: no choice there
+						...(phoneWidth.matches ? [] : [serverLayoutToggle(server)])),
+					el("div", { className: "cards" + (siteLayout === "list" ? " list" : "") }, ...here.map(siteCard))));
+			}
+		} finally {
+			siteLayout = overall;
 		}
 	} else for (const site of visible) box.append(siteCard(site));
 	updateSiteActivity();
@@ -1910,11 +1949,15 @@ function compactEnvironmentRow(site, env, environment) {
 	// On a card beside the environment's badge; in the list in a column of its own
 	const folder = envFolderLabel(site, env);
 	if (folder) (siteLayout === "list" ? row : head).append(folder);
-	// The list has room for each environment's state, as its card on the site page shows it
+	// The list has room for each environment's state, as its card on the site page shows it; a card says it only where
+	// one is not running, so it is seen which of them is stopped
+	const known = env.unit || (env.mode === "windows" && env.state) || (env.mode === "remote" && env.state && env.state !== "unknown");
+	const state = known ? env.state || "unknown" : "";
+	const words = { active: "Active", inactive: "Stopped", failed: "Failed", activating: "Starting", deactivating: "Stopping", unknown: "Unknown" };
+	if (siteLayout !== "list" && ["inactive", "failed", "deactivating"].includes(state)) {
+		head.append(el("span", { className: "badge state-" + state, textContent: words[state], title: env.state_error || words[state] }));
+	}
 	if (siteLayout === "list") {
-		const known = env.unit || (env.mode === "windows" && env.state) || (env.mode === "remote" && env.state && env.state !== "unknown");
-		const state = known ? env.state || "unknown" : "";
-		const words = { active: "Active", inactive: "Stopped", failed: "Failed", activating: "Starting", deactivating: "Stopping", unknown: "Unknown" };
 		row.append(el("span", { className: "env-state", title: env.state_error || "" },
 			// A phone shows only the dot: its title says the state
 			el("span", { className: "dot " + state, title: state ? words[state] || state : env.mode === "remote" ? "Remote" : "Static" }),
@@ -1963,9 +2006,15 @@ function siteProblems(site) {
 	const found = [];
 	// Each server's problems are of its own sites: a site of the same name on another is not meant
 	const here = (item) => (item.server || "") === (site.harbor_server || "");
-	for (const problem of keepAliveProblems.filter(here)) {
-		const env = problemEnvironment(site, problem.name);
+	// One on a member whose site is an environment of this site (managed from here, so not listed on its own): this
+	// site's, on that environment, by its address there
+	const managedHere = (item) => item.server && managedElsewhere.has(`${item.server}|${item.name}`)
+		&& site.environments.some((env) => isRemoteEnv(env) && (env.binding === item.name || env.folder === item.name));
+	for (const problem of keepAliveProblems.filter((item) => here(item) || managedHere(item))) {
+		const env = here(problem) ? problemEnvironment(site, problem.name) : site.environments.find((other) => isRemoteEnv(other) && (other.binding === problem.name || other.folder === problem.name));
 		if (!env) continue;
+		// Started since keep-alive last looked: not said as stopped any more (it clears it at its next run)
+		if (problem.check === "stopped" && env.state === "active") continue;
 		found.push({ env, tone: problem.check === "certificate_soon" ? "warn" : "bad", why: `${KEEP_ALIVE_WORDS[problem.check] || problem.check}: ${problem.message}`,
 			since: problem.since, check: problem.check });
 	}
@@ -1981,6 +2030,8 @@ function siteProblems(site) {
 	}
 	for (const env of site.environments) {
 		if (env.state === "failed" && !found.some((item) => item.env === env && item.check === "service")) found.push({ env, tone: "bad", why: "Its service has failed" });
+		// Stopped as the list of sites reads it now: said at once, not first at keep-alive's next run
+		if (env.state === "inactive" && !found.some((item) => item.env === env && item.check === "stopped")) found.push({ env, tone: "bad", check: "stopped", why: `${KEEP_ALIVE_WORDS.stopped}: its service is stopped` });
 		if (isMissingEnv(env)) found.push({ env, tone: "bad", why: `Not found on ${env.host || "its server"}` });
 	}
 	return found;
@@ -2001,7 +2052,8 @@ function renderSiteAttention(sites) {
 			const open = () => { siteEnvFocus = { site: row.site.name, env: envKeyOf(row.env) }; go(siteLink(row.site.name)); };
 			return el("div", { className: "site-attention-row " + row.tone, ...(row.site.harbor_server ? { "data-harbor-server": row.site.harbor_server } : {}) },
 				el("i", { className: "site-attention-dot" }),
-				el("strong", { className: "site-attention-site", textContent: siteTitle(row.site), title: row.site.name }),
+				// The address of the environment that is wrong (account.example.com, not its site test.account.example.com)
+				el("strong", { className: "site-attention-site", textContent: bindingLabel(row.env) || siteTitle(row.site), title: `${row.site.name} · ${label}` }),
 				el("span", { className: "badge env-" + label.toLowerCase(), textContent: label }),
 				el("span", { className: "site-attention-why", textContent: row.why, title: row.why }),
 				...(row.since ? [el("small", { textContent: "since " + formatDate(row.since * 1000) })] : []),
@@ -7968,9 +8020,14 @@ async function loadSqlConnections(selected = $("#sql-connection").value || saved
 	const ordered = servers.length
 		? ["", ...servers].flatMap((server) => { const here = shown.filter((item) => (item.harbor_server || "") === server); return [...here.filter((item) => !item.added_by_user), ...here.filter((item) => item.added_by_user)]; })
 		: [...shown.filter((item) => !item.added_by_user), ...shown.filter((item) => item.added_by_user)];
+	// Each server's one connection named as the server (linux-01's linux-01, as Harbor names them): the name says the
+	// server, so the groups add nothing and are left out
+	const byServer = Object.groupBy(ordered, (item) => item.harbor_server || "");
+	const named = servers.length && Object.entries(byServer).every(([server, items]) => items.length === 1 && !items[0].added_by_user
+		&& items[0].name.toLowerCase() === (server || $("meta[name=server-hostname]")?.content || location.hostname).split(".")[0].toLowerCase());
 	const pick = premiumSelect({ label: "Connection", className: "sql-connection-select", value: select.value,
 		options: ordered.map((item) => ({ value: item.id, label: item.name,
-			...(servers.length ? { group: (item.harbor_server || "This server") + (item.added_by_user ? " · added by users" : ""), ...(item.added_by_user ? { sub: item.added_by } : {}) }
+			...(servers.length && !named ? { group: (item.harbor_server || "This server") + (item.added_by_user ? " · added by users" : ""), ...(item.added_by_user ? { sub: item.added_by } : {}) }
 				: item.added_by_user ? { group: "Added by users", sub: item.added_by } : {}) })) });
 	pick.addEventListener("change", () => {
 		select.value = pick.value;
@@ -8093,7 +8150,10 @@ async function refreshSql() {
 	try {
 		// Which of them the sites run on (an administrator's view), read beside them
 		const [data, usage] = await Promise.all([api("/api/sql/" + encodeURIComponent(id)),
-			currentUser.admin ? api(`/api/sql/usage?connection=${encodeURIComponent(id)}`).then((found) => found.usage || {}).catch(() => ({})) : {}]);
+			// On a master, a member's connection: the sites of every member that run on its databases, not that member's alone
+			currentUser.admin ? api(currentUser.master && serverContext && joinedMembers().length > 1
+				? `/api/master/sql-usage?server=${encodeURIComponent(serverContext)}&connection=${encodeURIComponent(id)}`
+				: `/api/sql/usage?connection=${encodeURIComponent(id)}`).then((found) => found.usage || {}).catch(() => ({})) : {}]);
 		if (generation !== sqlLoadGeneration) return;
 		sqlSnapshot = { ...data, usage };
 		$("#sql-backups-panel").hidden = data.backups.length === 0;
@@ -8802,12 +8862,17 @@ function applyStartView() {
 	brand.title = "Reload";
 }
 // The logo leads from a site back to the overview, from Settings to the start page (Web Server, or SQL Server for one
-// who starts there), and reloads the overview or SQL Server where you are. Opened in a new tab, its address leads to the
+// who starts there), from a domain on Cloudflare to Cloudflare's start, and reloads the overview or SQL Server where you are. Opened in a new tab, its address leads to the
 // start page.
 document.querySelector(".brand").onclick = (event) => {
 	event.preventDefault();
 	run(async () => {
 		if (currentView === "server") return go(startView === "sql" ? "#sql" : "#sites");
+		// On Cloudflare: its start, the account's domains, with none chosen (read again when it is open already)
+		if (currentView === "dns") {
+			window.scrollTo({ top: 0, behavior: "instant" });
+			return location.hash === "#dns" ? route() : go("#dns");
+		}
 		if (currentView !== "sql") await loadSites();
 		if (currentView === "site") go("#sites");
 		else await route();
@@ -12892,6 +12957,12 @@ const DNS_TTLS = [[1, "Auto"], [60, "1 min"], [120, "2 min"], [300, "5 min"], [6
 const dnsTtl = (ttl) => (DNS_TTLS.find(([value]) => value === ttl) || [ttl, `${ttl} s`])[1];
 // Cloudflare in the top menu: the domains on the left, nothing chosen until one is; the chosen one's parts as tabs
 async function openDns(zone = "") {
+	// Cloudflare's start, no domain chosen: the next domain opened from it opens on DNS, not on the part seen last
+	// (going from one domain to another keeps the part)
+	if (!zone) {
+		cfPart = "dns";
+		try { localStorage.setItem("vns-cf-part", "dns"); } catch (error) { /* none */ }
+	}
 	// Never the empty frame of a domain while the domains are read, nor when they cannot be: a state of its own each
 	$("#dns-zones").replaceChildren(loadingState("Reading the domains…"));
 	const reading = api("/api/dns/zones");
@@ -16308,12 +16379,23 @@ async function openServers() {
 		// With none yet, a dashed card beside this server's adds the first: Add server comes in the toolbar once there is one
 		// Linux and Windows apart, each under a heading with its count: this server first among the Linux ones
 		const windows = data.servers.filter((item) => item.kind === "windows");
-		const linux = data.servers.filter((item) => item.kind !== "windows").sort((a, b) => (b.this ? 1 : 0) - (a.this ? 1 : 0));
+		// This server first, then the members in the order chosen, then the others by name
+		const rank = (item) => item.this ? -1 : joinedMembers().includes(item.name) ? joinedMembers().indexOf(item.name) : 1000;
+		const linux = data.servers.filter((item) => item.kind !== "windows").sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
+		// Those whose Harbor is older than this server's: Update all updates them one after another, where there are two
+		// (on a member, not the other members: the master updates them)
+		const behind = (items) => items.filter((item) => !item.this && item.kind !== "windows" && serverBehind(item, data.release)
+			&& !(pickedServer && joinedMembers().includes(item.name)));
+		const updateAll = (items) => behind(items).length > 1 ? [tonedButton(`Update all (${behind(items).length})`, "sync", "green", () => run(() =>
+			confirmServers(`Update Harbor on ${behind(items).length} servers?`, `${behind(items).map((item) => item.name).join(", ")} get Harbor ${data.release.split("-")[0]}, one after another. One that fails is said, and the rest are still updated.`,
+				"Update all", { action: "install_all", name: "all", names: behind(items).map((item) => item.name) })))] : [];
 		const group = (icon, title, sub, items) => [el("div", { className: "servers-group" },
 			el("span", { className: "servers-group-icon" }, svgIcon(icon)),
 			el("span", { className: "servers-group-title", textContent: title }),
 			el("span", { className: "servers-group-count", textContent: String(items.length) }),
-			el("span", { className: "servers-group-sub", textContent: sub })),
+			el("span", { className: "servers-group-sub", textContent: sub }), ...updateAll(items),
+			// The members' order, everywhere they are shown: chosen here where there are two
+			...(icon === "server" && currentUser.master && !serverContext && joinedMembers().length > 1 ? [tonedButton("Order…", "rows", "purple", askServerOrder)] : [])),
 			...items.map((item) => belowActions(serverCard(item, data.release)))];
 		// Each kind its own dashed card after its servers, which adds one of that kind
 		// On a master, one added becomes its member at once
@@ -16323,7 +16405,8 @@ async function openServers() {
 		const addWindows = addFirstCard("Add a Windows server", "A share and its login, to import and copy sites from", () => askAddServer({ kind: "windows" }));
 		// A master's own: its members are Linux servers; Windows shares are for importing sites, which a member does
 		const master = currentUser.master && !serverContext;
-		list.replaceChildren(...group("server", "Linux", master ? "Its members, and the servers Harbor installs and updates from here" : "Harbor runs there: it installs and updates it from here", linux), addLinux,
+		list.replaceChildren(...group("server", "Linux", master ? "Its members, and the servers Harbor installs and updates from here"
+			: pickedServer ? "The other members, made known here by Harbor Master, and the servers of its own" : "Harbor runs there: it installs and updates it from here", linux), addLinux,
 			...(master ? [] : [...group("windows", "Windows", "Shares and their logins, to import and copy sites from", windows), addWindows]));
 	} catch (error) {
 		list.replaceChildren(el("div", { className: "server-tools-loading", textContent: error.message }));
@@ -16354,6 +16437,11 @@ function compareVersions(a, b) {
 	return 0;
 }
 
+// A server whose Harbor is older than this server's release (reached, able to run it)
+function serverBehind(item, release) {
+	const harbor = item.harbor && item.harbor.name;
+	return Boolean(item.reachable && item.compatible && harbor && release && compareVersions(releaseVersion(release), releaseVersion(harbor)) > 0);
+}
 function serverCard(item, release) {
 	// A Windows server: its share and login, for environments on it and Import from Windows, with the Windows logo. It
 	// stays while an environment here runs on it: what runs where is known from Servers.
@@ -16373,18 +16461,26 @@ function serverCard(item, release) {
 	const current = harbor && order <= 0;
 	const state = !item.reachable ? ["Not reachable", "bad"] : !item.compatible ? ["Cannot run Harbor", "bad"]
 		: !harbor ? ["No Harbor", "warn"] : order < 0 ? ["Newer than this server", "ok"] : current ? ["Up to date", "ok"] : ["Update available", "warn"];
+	// On a member chosen at the top: another member there was made known to it by Harbor Master (so its sites publish to
+	// its environments there, and copy and move to it): the master updates, rolls back and removes it, not this one
+	const fellow = Boolean(pickedServer) && !item.this && joinedMembers().includes(item.name);
 	const rows = item.reachable ? [
 		...(item.member ? [toolRow("Member", "Its sites are shown and administered here", { on: true })] : []),
-		toolRow("System", `${item.os || "—"} · Python ${item.python || "—"}`),
+		...(fellow ? [toolRow("Member", "Of Harbor Master too, which made it known here and updates it", { on: true })] : []),
+		// The system's own state too: lit where it can run Harbor (its Ubuntu and Python), as Member and Harbor are lit
+		toolRow("System", `${item.os || "—"} · Python ${item.python || "—"}`, { on: Boolean(item.compatible) }),
 		toolRow("Harbor", harbor || "Not installed", { on: Boolean(harbor) }),
 		...(item.vns ? [toolRow("Old installation", item.vns + (item.admin ? ` · admin ${item.admin}` : ""))] : []),
 		...(item.problems || []).map((problem) => toolRow("Needs", problem)),
 	] : [toolRow("Error", (item.error || []).join(" ") || "No answer")];
+	if (rows.some((row) => row.querySelector(".dot"))) for (const row of rows) if (!row.querySelector(".dot")) row.prepend(el("span", { className: "dot blank", ariaHidden: "true" }));
 	if (item.this) {
 		return toolCard({ icon: "server", tone: "purple", title: item.name, detail: item.host || "Installs and updates the others",
 			state: "This server", stateClass: "ok", rows,
 			actions: item.rollback ? [toolButton(`Roll back to ${item.rollback.version}`, () => rollbackHarbor(item.rollback))] : [] });
 	}
+	if (fellow) return toolCard({ icon: "server", tone: "blue", title: item.name, detail: `${item.user}@${item.host}${item.port !== 22 ? ":" + item.port : ""}`,
+		state: state[0], stateClass: state[1], rows, actions: [] });
 	const actions = [];
 	if (item.reachable && item.compatible && release && !current) {
 		actions.push(toolButton(harbor ? `Update to ${release.split("-")[0]}` : "Install Harbor", () => runServers({ action: "install", name: item.name }), "primary"));
@@ -16419,6 +16515,50 @@ function serverCard(item, release) {
 		state: state[0], stateClass: state[1], rows, actions });
 }
 
+// The order of a master's members: dragged, or moved with the arrows (a keyboard's too), saved for every list
+function askServerOrder() {
+	const order = [...joinedMembers()];
+	const list = el("ol", { className: "server-order" });
+	const draw = () => list.replaceChildren(...order.map((name, index) => {
+		const move = (by) => () => {
+			order.splice(index + by, 0, order.splice(index, 1)[0]);
+			draw();
+			list.children[index + by]?.querySelector(by < 0 ? ".server-order-up" : ".server-order-down")?.focus();
+		};
+		const row = el("li", { className: "server-order-row", draggable: true },
+			el("span", { className: "server-order-grip", ariaHidden: "true" }, svgIcon("grid")),
+			el("span", { className: "site-server-icon" }, svgIcon("server")),
+			el("strong", { textContent: name }),
+			el("span", { className: "server-order-moves" },
+				el("button", { type: "button", className: "server-order-up", title: "Up", ariaLabel: `Move ${name} up`, disabled: index === 0, onclick: move(-1) }, svgIcon("chevron")),
+				el("button", { type: "button", className: "server-order-down", title: "Down", ariaLabel: `Move ${name} down`, disabled: index === order.length - 1, onclick: move(1) }, svgIcon("chevron"))));
+		row.addEventListener("dragstart", (event) => { event.dataTransfer.setData("text/plain", String(index)); row.classList.add("dragging"); });
+		row.addEventListener("dragend", () => row.classList.remove("dragging"));
+		row.addEventListener("dragover", (event) => { event.preventDefault(); row.classList.add("drop-here"); });
+		row.addEventListener("dragleave", () => row.classList.remove("drop-here"));
+		row.addEventListener("drop", (event) => {
+			event.preventDefault();
+			const from = Number(event.dataTransfer.getData("text/plain"));
+			if (Number.isInteger(from) && from !== index) {
+				order.splice(index, 0, order.splice(from, 1)[0]);
+				draw();
+			}
+		});
+		return row;
+	}));
+	draw();
+	openFormDialog({ icon: "rows", title: "Order of the servers", text: "How the members are shown everywhere: the server choice, Web Server, SQL Server, Health, Usage and here. Drag them, or use the arrows.",
+		fields: [list], ok: "Save", submit: async () => {
+			const saved = await api("/api/master/server-order", { method: "PUT", json: { order } });
+			currentUser.members = saved.members;
+			$("#server-picker")?.remove();
+			showServerPicker();
+			sitesLoaded = false;
+			await loadSites();
+			toast("The order of the servers is saved.", "ok");
+			if (serverTabOpen("servers")) await openServers();
+		} });
+}
 async function runServers(payload) {
 	const t = await openTask({ kind: "servers", ...payload });
 	if (t) t.afterTask = async () => {

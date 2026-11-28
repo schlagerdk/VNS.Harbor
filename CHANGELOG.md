@@ -2,6 +2,26 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.105] - Unreleased
+
+### Features
+
+- Servers has Update all where two or more servers run an older Harbor than this one: each is updated after the other, and one that fails is said while the rest are still updated (harbor servers install takes more than one server).
+- A master's members in an order of the administrator's choosing (Servers, Order…: dragged or moved with arrows), shown so everywhere: the server choice, Web Server, SQL Server, Health, Usage and Servers; a new member comes after them.
+- On a master's SQL Server, a member's databases say which sites on any member run on them (Used by), not only that member's own: each member is asked which of its sites' connection strings name that server, by the address the master reaches it at. An environment managed from a site on another member is said once, as its site's.
+- On a master, each server's sites on Web Server as cards or a list, its own choice beside its name, kept in the browser.
+
+### Fixes
+
+- Needs attention on a master tells a stopped environment on another member as its site's (test.example.com's Production on prod-01), not not at all; one started since keep-alive last looked is not said as stopped; and a site's card says which environment is stopped or failed. Each line names the environment by its own address (account.example.com), its site on hover. An environment stopped is said at once, as the list of sites reads it, not first at keep-alive's next run.
+- On a phone, Settings' server choice is above its row of tabs, on a line of its own (in the row it scrolled away with them), and Health's tiles are two by two on every server.
+- The top menu says Settings in words on a phone, as Web, SQL and Cloudflare are (the gear alone on the narrowest).
+- A domain opened from Cloudflare's start opens on DNS, not on the part seen last (from one domain to another the part is kept).
+- The logo on Cloudflare goes to its start, the account's domains with none chosen: it opened the domain chosen again.
+- SQL Server's connection choice has no group a server when each server's one connection is named as the server: the name says it.
+- On a member chosen in Settings, the other members in its Servers (made known there by Harbor Master, so its sites publish to their environments and copy and move to them) say so and have no Update, Roll back, Edit, Remove or Open admin: the master does that.
+- A server's System row has its state dot as Member and Harbor have theirs: lit where it can run Harbor.
+
 ## [1.0.104] - 2026-11-28
 
 ### Other
