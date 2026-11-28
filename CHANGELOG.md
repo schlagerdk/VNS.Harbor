@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.104] - 2026-11-28
+
+### Other
+
+- Test: the publish script's test has the page's host as the page has it
+
 ## [1.0.103] - 2026-11-28
 
 ### Fixes
