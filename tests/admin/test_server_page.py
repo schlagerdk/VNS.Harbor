@@ -39,7 +39,7 @@ class ServerPageTests(unittest.TestCase):
         self.assertIn('name="start_view"', preferences)
         self.assertNotIn("public_address", preferences)
         self.assertNotIn("keep_alive", preferences)
-        self.assertIn('const views = ["sites", "site", "sql", "server", "dns"];', SOURCE)
+        self.assertIn('const views = ["sites", "site", "sql", "server", "dns", "mail"];', SOURCE)
         self.assertIn('$("#switch-server").hidden = !currentUser.admin;', SOURCE)
         # No code waits on the dialogs that went
         for gone in ("serverToolsDialog", "serversDialog", "crontabDialog.", "showModal(); // server"):

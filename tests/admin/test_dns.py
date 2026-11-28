@@ -360,6 +360,30 @@ class CloudflareTests(unittest.TestCase):
         self.assertIn("Invalid request headers", str(said.exception))
 
 
+class ZoneTests(unittest.TestCase):
+    def test_a_domain_is_added_and_removed(self):
+        """Added to an account with its records read from its DNS now (jump_start), its name servers answered; removed
+        by its id; a pending one looked at again"""
+        asked = []
+
+        def opener(request, timeout=None):
+            asked.append((request.get_method(), request.full_url, json.loads(request.data) if request.data else None))
+            result = {"id": ZONE, "name": "xn--ledernn-r1a.dk", "status": "pending", "name_servers": ["ana.ns.cloudflare.com", "bob.ns.cloudflare.com"]}
+            return Answer(json.dumps({"success": True, "result": result}).encode())
+        settings = {"token": "t" * 40}
+        zone = cloudflare.add_zone(settings, "Ledernøn.dk.", "a" * 32, opener=opener)
+        self.assertEqual(asked[0][:2], ("POST", cloudflare.API + "/zones"))
+        self.assertEqual(asked[0][2], {"name": "xn--ledernn-v1a.dk", "account": {"id": "a" * 32}, "type": "full", "jump_start": True})
+        self.assertEqual((zone["status"], zone["name_servers"][0]), ("pending", "ana.ns.cloudflare.com"))
+        with self.assertRaises(ValueError):
+            cloudflare.add_zone(settings, "not a domain", "a" * 32, opener=opener)
+        with self.assertRaises(ValueError):
+            cloudflare.add_zone(settings, "shop.dk", "", opener=opener)
+        cloudflare.remove_zone(settings, ZONE, opener=opener)
+        cloudflare.activation_check(settings, ZONE, opener=opener)
+        self.assertEqual([item[:2] for item in asked[1:]], [("DELETE", cloudflare.API + f"/zones/{ZONE}"), ("PUT", cloudflare.API + f"/zones/{ZONE}/activation_check")])
+
+
 class DnsAccessTests(unittest.TestCase):
     def test_a_user_keeps_only_the_domains_given(self):
         user = access.clean({"username": "anna", "role": "user", "dns": True, "dns_domains": ["Shop.DK.", "not a domain"]})

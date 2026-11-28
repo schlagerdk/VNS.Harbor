@@ -9,6 +9,7 @@ files and a note of where each is reached. Nothing is moved or changed on Window
   harbor servers windows-sites NAME on|off [--exclude FOLDER ...]
 """
 import json
+import re
 
 from harbor.core.system import Stop
 from harbor.state.store import write_json
@@ -56,17 +57,71 @@ def open_share(system, name, folder=""):
 	return share(system, unc, user, password, domain, folder)
 
 
+# What a site is, read from its files: classic Umbraco (7 and older) says its version in web.config, a newer one in the
+# build's deps.json; the .NET it runs in its runtimeconfig.json, or .NET Framework's in web.config
+CLASSIC_UMBRACO = re.compile(r'<add\s+key="umbracoConfigurationStatus"\s+value="([0-9][^"]*)"', re.I)
+FRAMEWORK = re.compile(r'targetFramework="([0-9][0-9.]*)"', re.I)
+BUILT_UMBRACO = re.compile(r'"Umbraco\.Cms/([0-9][^"]*)"')
+START_PAGES = {"index.html", "index.htm", "default.htm", "default.html"}
+
+
+def what_it_is(root, folder, files):
+	"""{kind, umbraco_version, dotnet, framework} of a site, from the files in its folder (the names given)"""
+	lower = {name.lower(): name for name in files}
+	found = {"kind": "html" if START_PAGES & set(lower) else "", "umbraco_version": "", "dotnet": "", "framework": ""}
+
+	def read(name):
+		return root.rclone("cat", f"{root.target}/{folder}/{name}", check=False, capture=True).stdout
+	runtime = next((name for name in files if name.lower().endswith(".runtimeconfig.json")), None)
+	if runtime:
+		found["kind"] = "csharp"
+		try:
+			options = json.loads(read(runtime) or "{}").get("runtimeOptions") or {}
+		except ValueError:
+			options = {}
+		frameworks = options.get("frameworks") or ([options["framework"]] if isinstance(options.get("framework"), dict) else [])
+		version = next((item.get("version", "") for item in frameworks if isinstance(item, dict)
+		                and item.get("name") in ("Microsoft.AspNetCore.App", "Microsoft.NETCore.App") and item.get("version")), "")
+		found["dotnet"] = ".".join(version.split(".")[:2])
+		deps = lower.get(runtime[:-len(".runtimeconfig.json")].lower() + ".deps.json")
+		match = BUILT_UMBRACO.search(read(deps)) if deps else None
+		if match:
+			found.update(kind="umbraco", umbraco_version=match[1])
+	if "web.config" in lower and not found["umbraco_version"]:
+		text = read(lower["web.config"])
+		match = CLASSIC_UMBRACO.search(text)
+		if match:
+			found.update(kind="umbraco", umbraco_version=match[1])
+		framework = FRAMEWORK.search(text)
+		if framework and not runtime:
+			found["framework"] = framework[1]
+			found["kind"] = found["kind"] if found["kind"] == "umbraco" else "csharp"
+	return found
+
+
 def folders(system, name, everything=False):
-	"""Each folder in the share, by name: [{folder, excluded}], without the excluded ones unless everything"""
+	"""Each folder in the share, by name: [{folder, excluded, umbraco, kind, umbraco_version, dotnet, framework}],
+	without the excluded ones unless everything (then without what each is: only to choose which are shown)"""
+	from concurrent.futures import ThreadPoolExecutor
 	entry = entry_of(system, name)
 	excluded = {folder.lower() for folder in entry.get("exclude") or []}
 	root = open_share(system, name)
-	# Two levels in one listing: the folders, and which of them has an umbraco folder (its backoffice is /umbraco)
-	paths = [line.strip().rstrip("/") for line in root.rclone("lsf", root.target, "--dirs-only", "--max-depth", "2", capture=True).stdout.splitlines() if line.strip()]
-	names = [path for path in paths if "/" not in path]
-	umbraco = {path.split("/", 1)[0].lower() for path in paths if path.count("/") == 1 and path.split("/", 1)[1].lower() == "umbraco"}
+	# Two levels in one listing: the folders, the files in each, and which has an umbraco folder (its backoffice)
+	paths = [line.strip() for line in root.rclone("lsf", root.target, "--max-depth", "2", capture=True).stdout.splitlines() if line.strip()]
+	names = [path.rstrip("/") for path in paths if path.endswith("/") and path.count("/") == 1]
+	umbraco = {path.split("/", 1)[0].lower() for path in paths if path.count("/") == 2 and path.endswith("/") and path.split("/", 1)[1].rstrip("/").lower() == "umbraco"}
+	files = {}
+	for path in paths:
+		if not path.endswith("/") and path.count("/") == 1:
+			files.setdefault(path.split("/", 1)[0].lower(), []).append(path.split("/", 1)[1])
 	found = [{"folder": folder, "excluded": folder.lower() in excluded, "umbraco": folder.lower() in umbraco} for folder in sorted(names, key=str.lower)]
-	return found if everything else [item for item in found if not item["excluded"]]
+	if everything:
+		return found
+	shown = [item for item in found if not item["excluded"]]
+	with ThreadPoolExecutor(max_workers=6) as executor:
+		for item, what in zip(shown, executor.map(lambda item: what_it_is(root, item["folder"], files.get(item["folder"].lower(), [])), shown)):
+			item.update(what)
+	return shown
 
 
 def site_files(system, name, folder):

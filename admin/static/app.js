@@ -30,6 +30,11 @@ syncModalScrollLock();
 // Who is logged in and what they may do (/api/me). The server checks every request; the page only leaves out
 // what cannot be used. An administrator may do everything.
 let currentUser = { admin: document.querySelector("meta[name=role]")?.content !== "user", sites: {}, connections: {} };
+// How many sites the list shows: none, and the empty page has its own New site
+let sitesListed = 0;
+function showNewSiteButton() {
+	$("#btn-new-site").hidden = !currentUser?.create_sites || !sitesListed;
+}
 const envKeyOf = (env) => (env.key === "main" ? "main" : env.target || "prod");
 function canSee(siteName, envKey) {
 	if (currentUser.admin) return true;
@@ -166,13 +171,17 @@ function applyAccess() {
 	$("#switch-sql").hidden = !currentUser.sql || menu?.sql === false;
 	// DNS: where a Cloudflare account is set up (Settings, DNS), for an administrator and a user given domains
 	$("#switch-dns").hidden = !currentUser.dns;
+	// Mail: where a mailcow server is set up (Settings, Mail), for an administrator and a user given domains
+	$("#switch-mail").hidden = !currentUser.mail;
 	// The server itself (its tools, scheduled jobs and the other servers) is the admins'
 	$("#switch-server").hidden = !currentUser.admin;
 	// Preferences is the start page: an administrator has it in the Server page's Settings
 	$("#menu-preferences").hidden = currentUser.admin || !(currentUser.web && currentUser.sql);
 	$("#switch-sites").closest("nav").hidden = [...$("#switch-sites").closest("nav").children].filter((button) => !button.hidden).length < 2;
 	// New site: never for one who may not make sites; shown by the sites list, once it knows there are some
-	if (!currentUser.create_sites) $("#btn-new-site").hidden = true;
+	// New site follows what the user may do at once, both ways (not only when the list is drawn again: on a master
+	// that waits for every member)
+	showNewSiteButton();
 	$("#menu-usage").hidden = !currentUser.usage;
 	showUsageBanner();
 	$("#sql-add-connection").hidden = !currentUser.manage_connections;
@@ -645,7 +654,7 @@ const takesNoSites = (server) => server ? [...(currentUser?.members_no_web || []
 const namesServers = () => Boolean(currentUser?.admin) || (currentUser?.create_on || []).length > 1;
 // Cloudflare's own (/api/dns/…) is the master's; a name's DNS checked for a site (/api/dns?name=) is the server's own
 const MASTER_PATHS = ["/api/me", "/api/master/", "/api/via/", "/api/users", "/api/user-templates", "/api/dns/", "/api/profile", "/api/preferences",
-	"/api/sign-in", "/api/your-address", "/api/windows-sites", "/api/windows-fs/"];
+	"/api/sign-in", "/api/your-address", "/api/windows-sites", "/api/windows-fs/", "/api/mail/"];
 // The SQL connection and engine chosen, kept a server each: one of a member's is not this server's
 // A user's are one list, kept as one: their connections on every server are theirs alike
 const sqlKey = (part, server = "") => `vns-sql-${part}` + (server ? `@${server}` : "");
@@ -766,7 +775,8 @@ async function api(url, options = {}) {
 			return { ...there, id: mine.id, username: mine.username, name: mine.name, master: mine.master, members: mine.members, member_hosts: mine.member_hosts,
 				// The member's own: it is a member (Servers there makes no members)
 				member_of: there.member_of,
-				header: mine.header, dns: mine.dns, dns_account: mine.dns_account, dns_domains: mine.dns_domains, cloudflare_parts: mine.cloudflare_parts };
+				header: mine.header, dns: mine.dns, dns_account: mine.dns_account, dns_domains: mine.dns_domains, cloudflare_parts: mine.cloudflare_parts,
+				mail: mine.mail, mail_server: mine.mail_server };
 		}
 		return mine.admin ? mine : userEverywhere(mine);
 	}
@@ -1084,7 +1094,7 @@ let remoteFilesSite = "";
 let serverFiles = false;
 let localFilesRoot = "";
 let currentView = "sites";
-const views = ["sites", "site", "sql", "server", "dns"];
+const views = ["sites", "site", "sql", "server", "dns", "mail"];
 
 function showView(name) {
 	currentView = name;
@@ -1093,7 +1103,7 @@ function showView(name) {
 	document.body.dataset.view = name;
 	// The switch in the header shows which of the two sections is open
 	for (const button of document.querySelectorAll(".view-switch button")) {
-		const active = button.dataset.view === (["sql", "server", "dns"].includes(name) ? name : "sites");
+		const active = button.dataset.view === (["sql", "server", "dns", "mail"].includes(name) ? name : "sites");
 		button.classList.toggle("active", active);
 		button.setAttribute("aria-pressed", String(active));
 	}
@@ -1113,7 +1123,7 @@ function userContext() {
 	const hash = decodeURIComponent(location.hash.slice(1));
 	const [view, ...rest] = hash.split("/");
 	// An administrator's Settings, files and terminal are the server chosen at the top
-	if (currentUser.admin && !["", "sites", "site", "sql", "dns"].includes(view)) { serverContext = pickedServer; markServer(); return; }
+	if (currentUser.admin && !["", "sites", "site", "sql", "dns", "mail"].includes(view)) { serverContext = pickedServer; markServer(); return; }
 	const name = rest.join("/");
 	if (view === "site") serverContext = allSites.find((site) => site.name === name)?.harbor_server || "";
 	else if (view === "sql") serverContext = sqlConnections.find((item) => item.id === $("#sql-connection").value)?.harbor_server || "";
@@ -1174,6 +1184,10 @@ async function route() {
 		if (filesDialog.open) filesDialog.close();
 		showView("sql");
 		await run(loadSqlConnections);
+	} else if (view === "mail" && (currentUser.mail || currentUser.mail_server)) {
+		if (filesDialog.open) filesDialog.close();
+		showView("mail");
+		await run(() => openMail(arg));
 	} else if (view === "dns" && (currentUser.dns || currentUser.dns_account)) {
 		if (filesDialog.open) filesDialog.close();
 		showView("dns");
@@ -1566,6 +1580,8 @@ const iconPaths = {
 	chevron: "M9 6l6 6-6 6",
 	corner: "M4 4v7a4 4 0 0 0 4 4h12M15 10l5 5-5 5",
 	cloud: "M17.5 19H8a5 5 0 1 1 .9-9.92A6 6 0 0 1 20 11.5a3.75 3.75 0 0 1-2.5 7.5z",
+	mail: "M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM22 6l-10 7L2 6",
+	minus: "M5 12h14",
 	"eye-off": "M9.88 9.88a3 3 0 1 0 4.24 4.24M10.73 5.08A10.4 10.4 0 0 1 12 5c7 0 10 7 10 7a13.2 13.2 0 0 1-1.67 2.68M6.61 6.61A13.5 13.5 0 0 0 2 12s3 7 10 7a9.7 9.7 0 0 0 5.39-1.61M2 2l20 20",
 	check: "M20 6 9 17l-5-5",
 	windows: "M3 5.6 10 4.6V11H3ZM12 4.3 21 3v8h-9ZM3 13h7v6.4l-7-1ZM12 13h9v8l-9-1.3Z",
@@ -1729,7 +1745,8 @@ function renderSites() {
 	box.replaceChildren();
 	const visible = overviewSites().filter(matches);
 	$("#no-sites").hidden = visible.length > 0;
-	$("#btn-new-site").hidden = visible.length === 0 || !currentUser.create_sites;
+	sitesListed = visible.length;
+	showNewSiteButton();
 	// Grid or list is a choice only when there are sites to show
 	$("#site-layout-toggle").hidden = visible.length === 0;
 	// The empty page's own New site, too: only for those who may create sites
@@ -1791,14 +1808,20 @@ function renderSites() {
 // A Windows server's sites, listed where they are (Servers, a Windows server's List sites…): [{name, share, error, sites}]
 let windowsSites = [];
 let windowsSitesAsked = null;
-async function refreshWindowsSites(fresh = false) {
-	if (windowsSitesAsked && !fresh) return windowsSitesAsked;
-	windowsSitesAsked = api("/api/windows-sites" + (fresh ? "?fresh=1" : "")).then((data) => {
+// Each reading numbered: an answer asked for before a newer one (the list read again every few seconds, a binding just
+// saved) never draws over it
+let windowsSitesAsks = 0;
+async function refreshWindowsSites(fresh = false, again = false) {
+	if (windowsSitesAsked && !fresh && !again) return windowsSitesAsked;
+	const ask = ++windowsSitesAsks;
+	const asked = api("/api/windows-sites" + (fresh ? "?fresh=1" : "")).then((data) => {
+		if (ask !== windowsSitesAsks) return;
 		const before = JSON.stringify(windowsSites);
 		windowsSites = data.servers || [];
 		if (JSON.stringify(windowsSites) !== before && currentView === "sites") renderSites();
-	}).catch(() => {}).finally(() => { windowsSitesAsked = null; });
-	return windowsSitesAsked;
+	}).catch(() => {}).finally(() => { if (windowsSitesAsked === asked) windowsSitesAsked = null; });
+	windowsSitesAsked = asked;
+	return asked;
 }
 // A group a Windows server: its name with the Windows logo, then a card a site (its folder), found by the search too
 function windowsSiteGroups() {
@@ -1840,7 +1863,7 @@ function windowsSiteCard(server, site) {
 	return el("article", { className: "site winlist-site", onclick: files, title: `${site.folder}: its files` },
 		el("div", { className: "site-head" }, emblem,
 			el("div", { className: "site-identity" }, el("h3", { className: "site-title", textContent: site.folder, title: site.folder }),
-				el("div", { className: "badges" }, el("span", { className: "badge windows", textContent: "Windows" }))),
+				windowsSiteBadges(site)),
 			el("span", { className: "dot", title: "On Windows: its state is not read" })),
 		el("div", { className: "site-links" },
 			el("div", { className: "site-link-group" },
@@ -1853,6 +1876,14 @@ function windowsSiteCard(server, site) {
 				el("div", { className: "site-environment-links winlist-actions" },
 					own(Object.assign(tonedButton("Files", "folder", "blue", files), { title: `The files of ${site.folder}` })),
 					own(Object.assign(tonedButton("Edit…", "pencil", "amber", () => editWindowsSite(server, site)), { title: "Its binding and backend, as noted here" }))))));
+}
+// What a Windows site is, as the other sites' badges say it (read from its web.config or build), and Windows beside it
+function windowsSiteBadges(site) {
+	const badges = site.kind ? kindBadges(site) : el("div", { className: "badges" });
+	// .NET Framework (classic ASP.NET, Umbraco 7 and older): its version as it is, in the colour of an old .NET
+	if (site.framework && !site.dotnet) badges.append(el("span", { className: "badge dotnet", textContent: `.NET Framework ${site.framework}`, title: "Runs on Windows only" }));
+	badges.append(el("span", { className: "badge windows", textContent: "Windows" }));
+	return badges;
 }
 // Where a Windows site is reached, noted here only: its binding and its backend's address (nothing on Windows changes)
 function editWindowsSite(server, site) {
@@ -1876,8 +1907,11 @@ function editWindowsSite(server, site) {
 		ok: "Save", submit: async () => {
 			const saved = await api(`/api/windows-sites/${encodeURIComponent(server.name)}/${encodeURIComponent(site.folder)}`,
 				{ method: "PUT", json: { binding: binding.value.trim(), backend: backend.value.trim() } });
+			// Drawn at once, and read again after it: a reading asked for before the save does not draw over it
+			for (const item of windowsSites.find((entry) => entry.name === server.name)?.sites || []) if (item.folder === site.folder) Object.assign(item, saved);
 			Object.assign(site, saved);
 			renderSites();
+			refreshWindowsSites(false, true);
 		} });
 }
 
@@ -3410,6 +3444,13 @@ function serverCardsFor(select, kind, added, labelOf = (option) => option.title 
 const serverPickers = [];
 // The servers in Servers, as last asked: a DNS check uses a server's public address when its own is internal
 let keptServers = [];
+// Servers in the order chosen for the members (the master's Servers, Order…), everywhere one is chosen: the members
+// first as ordered, then the others by name
+function inServerOrder(items) {
+	const order = joinedMembers();
+	const rank = (name) => order.includes(name) ? order.indexOf(name) : order.length;
+	return [...items].sort((a, b) => rank(a.name) - rank(b.name) || a.name.localeCompare(b.name));
+}
 const publicAddressOf = (host) => (keptServers.find((item) => item.kind === "linux" && item.host === host)?.public) || "";
 function serverPicker(kind, fields, fill, { place = null, heading = null, onKept = null } = {}) {
 	// Named by kind: a dialog can have both, and its own field called server (an SQL connection)
@@ -3448,7 +3489,7 @@ function serverPicker(kind, fields, fill, { place = null, heading = null, onKept
 	const picker = {
 		row,
 		async refresh() {
-			const all = (await api("/api/servers/kept")).servers;
+			const all = inServerOrder((await api("/api/servers/kept")).servers);
 			keptServers = all;
 			kept = all.filter((item) => item.kind === kind);
 			select.replaceChildren(...kept.map((item) => el("option", { value: item.name, textContent: `${item.name} (${item.label})` })));
@@ -8977,6 +9018,7 @@ const fromTheTop = (hash) => () => {
 $("#switch-sites").onclick = fromTheTop(() => "#sites");
 $("#switch-sql").onclick = fromTheTop(() => "#sql");
 $("#switch-dns").onclick = fromTheTop(() => "#dns");
+$("#switch-mail").onclick = fromTheTop(() => "#mail");
 // The DNS page's buttons as the SQL page's: an icon and a colour each
 function decorateDns() {
 	const styles = { "New record": ["plus", "green"], "Purge cache…": ["eraser", "amber"], "Edit…": ["pencil", "blue"] };
@@ -13026,7 +13068,8 @@ async function openDnsSettings() {
 		text: configured ? `Its domains are under Cloudflare in the top menu${dnsSettings.zones != null ? `: ${dnsSettings.zones} domain${dnsSettings.zones === 1 ? "" : "s"}, read ${dnsSettings.zones_read ? syncAgo(dnsSettings.zones_read * 1000) : "before"}. Kept until refreshed, as they seldom change` : ""}. The key or token is kept for root only, and never shown again.`
 			: "Connect the Cloudflare account, and its domains are kept under Cloudflare in the top menu: DNS, cache, SSL/TLS, rules and security, by administrators and the users given a domain.",
 		actions: [tonedButton(configured ? "Change…" : "Connect…", configured ? "pencil" : "cloud", configured ? "blue" : "green", askDnsAccount),
-			...(configured ? [refresh, tonedButton("Open Cloudflare", "cloud", "teal", () => go("#dns")), tonedButton("Remove…", "trash", "red", () => run(removeDnsAccount))] : [])] });
+			...(configured ? [refresh, tonedButton("Accounts…", "users", "purple", () => run(askDnsAccounts)), tonedButton("Open Cloudflare", "cloud", "teal", () => go("#dns")),
+				tonedButton("Remove…", "trash", "red", () => run(removeDnsAccount))] : [])] });
 	card.classList.add("tool-card-wide", "actions-below");
 	$("#server-dns-list").replaceChildren(card);
 }
@@ -13069,6 +13112,26 @@ function askDnsAccount() {
 			await openDnsSettings();
 		} });
 }
+// Which of the Cloudflare accounts the login reaches domains may be added to (Cloudflare, Add domain…): one alone, and
+// Add domain asks for none
+async function askDnsAccounts() {
+	const { accounts } = await api("/api/dns/accounts");
+	const cards = accounts.map((account) => checkOption("cf_allowed", account.name, account.allowed ? "Domains may be added to it" : "Not offered for new domains", account.allowed, "cloud", "orange"));
+	cards.forEach((card, index) => {
+		card.querySelector("input").value = accounts[index].id;
+		card.querySelector("input").onchange = (event) => { card.querySelector(".sync-option-sub").textContent = event.target.checked ? "Domains may be added to it" : "Not offered for new domains"; };
+	});
+	const error = el("p", { className: "error", role: "alert" });
+	openFormDialog({ icon: "cloud", title: "Accounts for new domains", ok: "Save",
+		text: "The Cloudflare accounts Add domain may put a domain in. With one, it asks for none. The domains already there are not touched.",
+		fields: [el("div", { className: "cf-account-cards" }, ...cards), error],
+		submit: async (form) => {
+			const allowed = [...form.querySelectorAll("input[name=cf_allowed]:checked")].map((box) => box.value);
+			if (!allowed.length) { error.textContent = "Choose at least one account."; return false; }
+			await api("/api/dns/accounts", { method: "PUT", json: { allowed } });
+			toast(`New domains go in ${accounts.filter((account) => allowed.includes(account.id)).map((account) => account.name).join(" or ")}.`, "ok");
+		} });
+}
 async function removeDnsAccount() {
 	if (!await ask({ title: "Remove the Cloudflare account?", message: "Cloudflare goes from the top menu for everyone, until an account is set up again. The domains and their records in Cloudflare are not touched.",
 		input: false, danger: true, ok: "Remove" })) return;
@@ -13080,6 +13143,482 @@ async function removeDnsAccount() {
 async function refreshDnsMenu() {
 	try { currentUser = await api("/api/me"); } catch (error) { /* goes on with what it had */ }
 	applyAccess();
+}
+
+// ---- Mail (phase 15): the mailcow server under Settings, Mail; its domains, mailboxes and aliases under Mail in the
+// top menu, and each domain's DNS made in Cloudflare
+let mailSettings = {};
+async function openMailSettings() {
+	mailSettings = await api("/api/mail/settings");
+	const configured = mailSettings.configured;
+	const card = toolCard({ icon: "mail", tone: "blue", title: "mailcow",
+		detail: configured ? mailSettings.host : "Not set up", state: configured ? "Connected" : "Not set up", stateClass: configured ? "ok" : "",
+		text: configured ? "Its domains are under Mail in the top menu. The API key is kept for root only, and never shown again."
+			: "Connect the mailcow server, and its domains, mailboxes and aliases are kept under Mail in the top menu, by administrators and the users given a domain. A new domain gets its DNS records in Cloudflare.",
+		actions: [tonedButton(configured ? "Change…" : "Connect…", configured ? "pencil" : "mail", configured ? "blue" : "green", askMailServer),
+			...(configured ? [tonedButton("Open Mail", "mail", "teal", () => go("#mail")), tonedButton("Remove…", "trash", "red", () => run(removeMailServer))] : [])] });
+	card.classList.add("tool-card-wide", "actions-below");
+	const cards = [card];
+	if (configured) {
+		const state = toolCard({ icon: "activity", tone: "green", title: "Server state", detail: mailSettings.host, state: "Reading…", rows: [] });
+		state.classList.add("tool-card-wide");
+		cards.push(state);
+		api("/api/mail/status").then((found) => {
+			const allUp = found.running === found.total;
+			const down = found.containers.filter((item) => item.state !== "running");
+			state.replaceWith(Object.assign(toolCard({ icon: "activity", tone: allUp ? "green" : "amber", title: `mailcow ${found.version}`, detail: found.host,
+				state: allUp ? "Runs" : `${down.length} stopped`, stateClass: allUp ? "ok" : "warn",
+				rows: [toolRow("Containers", `${found.running} of ${found.total} running`, { on: allUp }),
+					...(found.disk.total ? [toolRow("Mail storage", `${found.disk.used} of ${found.disk.total} (${found.disk.percent} %)`, { on: Number(found.disk.percent) < 90 })] : []),
+					...down.map((item) => toolRow(item.name, item.state || "stopped", { on: false }))] }), { className: "tool-card tool-card-wide tone-" + (allUp ? "green" : "amber") }));
+		}).catch((failure) => {
+			state.querySelector(".tool-state").textContent = "Not reached";
+			state.querySelector(".tool-state").className = "tool-state bad";
+			state.append(el("p", { className: "tool-text", textContent: failure.message }));
+		});
+	}
+	$("#server-mail-list").replaceChildren(...cards);
+}
+// The server and its API key, tried before they are kept
+function askMailServer() {
+	const ignore = { autocomplete: "off", spellcheck: false, "data-1p-ignore": "", "data-lpignore": "true", "data-bwignore": "true", "data-form-type": "other" };
+	const host = el("input", { name: "mailcow_host", type: "text", ...ignore, autocapitalize: "off", placeholder: "mail.example.com", value: mailSettings.host || "", required: true });
+	const key = el("input", { name: "mailcow_api_key", type: "password", ...ignore, required: !mailSettings.configured,
+		placeholder: mailSettings.configured ? "Kept: leave empty to keep it" : "Paste the API key" });
+	openFormDialog({ icon: "mail", title: mailSettings.configured ? "mailcow server" : "Connect mailcow", ok: mailSettings.configured ? "Save" : "Connect",
+		text: "Harbor tries it against mailcow before it is kept. The key is kept for root only, and never shown again.",
+		fields: [el("div", { className: "ns-grid" }, el("label", {}, "Server", host), el("label", {}, "API key", key)),
+			el("p", { className: "hint", textContent: "mailcow, Configuration, Access, API: the key with read and write access, and this server's public address under Allow API access from." })],
+		submit: async () => {
+			const saved = await api("/api/mail/settings", { method: "PUT", json: { host: host.value.trim(), key: key.value.trim() } });
+			toast(`mailcow ${saved.version} reached.`, "ok");
+			await refreshDnsMenu();
+			await openMailSettings();
+		} });
+}
+async function removeMailServer() {
+	if (!await ask({ title: "Remove the mailcow server?", message: "Mail goes from the top menu for everyone, until a server is set up again. Its domains and mailboxes in mailcow are not touched.",
+		input: false, danger: true, ok: "Remove" })) return;
+	await api("/api/mail/settings", { method: "DELETE" });
+	await refreshDnsMenu();
+	await openMailSettings();
+}
+
+// The Mail page: the domains on the left, the chosen one's mailboxes, aliases and DNS on the right
+let mailDomains = [];
+let mailAdmin = false;
+let mailDomain = null;
+let mailData = null;
+const mailSize = (mb) => mb >= 1024 ? `${Math.round(mb / 102.4) / 10} GB` : `${mb} MB`;
+const mailPath = (name) => encodeURIComponent(name);
+async function openMail(domain = "") {
+	$("#mail-domains").replaceChildren(loadingState("Reading the domains…"));
+	$("#mail-panel").replaceChildren(loadingState("Reading mailcow…"));
+	let found;
+	try {
+		found = await api("/api/mail/domains");
+	} catch (failure) {
+		$("#mail-domains").replaceChildren();
+		return $("#mail-panel").replaceChildren(el("div", { className: "cf-welcome" },
+			el("div", { className: "sites-empty-icon cf-welcome-icon", ariaHidden: "true" }, svgIcon("mail")),
+			el("h2", { textContent: "mailcow did not answer" }), el("p", { textContent: failure.message }),
+			el("div", { className: "cf-welcome-stats" }, tonedButton("Try again", "sync", "blue", () => run(() => openMail(domain))))));
+	}
+	mailDomains = found.domains;
+	mailAdmin = found.admin;
+	$("#mail-new-domain").hidden = !mailAdmin;
+	$("#mail-rspamd").hidden = !mailAdmin;
+	$("#mail-rspamd").classList.toggle("active", domain === "rspamd");
+	$("#mail-domains-count").textContent = mailDomains.length ? String(mailDomains.length) : "";
+	$("#mbox-domain-find").value = "";
+	const chosen = mailDomains.find((item) => item.domain === domain);
+	mailDomain = chosen?.domain || null;
+	drawMailDomains();
+	$("#mbox-domain-find").focus({ preventScroll: true });
+	if (chosen) return showMailDomain(chosen.domain);
+	if (domain === "rspamd" && mailAdmin) return showRspamd();
+	drawMailWelcome();
+}
+function drawMailDomains() {
+	const words = $("#mbox-domain-find").value.toLowerCase().split(/\s+/).filter(Boolean);
+	const shown = mailDomains.filter((item) => words.every((word) => item.domain.includes(word)));
+	$("#mail-domains").replaceChildren(...(shown.length ? shown.map((item) => el("button", { type: "button", className: "dns-zone" + (item.domain === mailDomain ? " active" : ""),
+		ariaCurrent: item.domain === mailDomain ? "true" : "false", onclick: () => run(() => showMailDomain(item.domain)) }, svgIcon("mail"), el("span", { textContent: item.name }),
+		...(item.relay ? [el("span", { className: "mail-relay-badge", textContent: mailRelayName(item.relay), title: MAIL_RELAYS.find(([value]) => value === item.relay)[2] })] : []),
+		...(item.relay === "all" ? [] : [el("small", { className: "mail-domain-count", textContent: `${item.mailboxes}/${item.limit ?? item.max_mailboxes}`, title: "Mailboxes, and how many it may have" })])))
+		: [el("p", { className: "muted dns-zones-none", textContent: mailDomains.length ? "No domain matches." : "No domains yet." })]));
+}
+// Safari takes a field named for mail as an email address, and offers saved logins in it: not named so, and read only
+// until it is clicked, which its filling skips (as the dialogs' fields)
+noAutofill($("#mbox-domain-find"));
+$("#mbox-domain-find").addEventListener("input", drawMailDomains);
+$("#mbox-domain-find").addEventListener("keydown", (event) => {
+	if (event.key !== "Enter") return;
+	event.preventDefault();
+	$("#mail-domains .dns-zone")?.click();
+});
+$("#mail-new-domain").onclick = () => newMailDomain();
+$("#mail-rspamd").onclick = () => run(showRspamd);
+$("#mail-rspamd").prepend(svgIcon("shield"));
+$("#mail-rspamd").dataset.tone = "purple";
+$("#mail-new-domain").prepend(svgIcon("plus"));
+$("#mail-new-domain").dataset.tone = "green";
+// Nothing chosen: the domains at a glance, as Cloudflare's welcome: their counts, and the domains opened last as cards
+function drawMailWelcome() {
+	$("#mail-rspamd").classList.remove("active");
+	const boxes = mailDomains.reduce((all, item) => all + item.mailboxes, 0);
+	const relays = mailDomains.filter((item) => item.relay).length;
+	let recent = [];
+	try { recent = JSON.parse(localStorage.getItem("vns-mail-recent") || "[]"); } catch (error) { /* none */ }
+	const shown = recent.map((name) => mailDomains.find((item) => item.domain === name)).filter(Boolean).slice(0, 6);
+	const card = (item) => el("button", { type: "button", className: "cf-recent", onclick: () => run(() => showMailDomain(item.domain)) },
+		el("span", { className: "cf-recent-icon", ariaHidden: "true" }, svgIcon("mail")), el("span", { className: "cf-recent-name", textContent: item.name }), svgIcon("chevron"));
+	$("#mail-panel").replaceChildren(el("div", { className: "cf-welcome" },
+		el("div", { className: "sites-empty-icon cf-welcome-icon", ariaHidden: "true" }, svgIcon("mail")),
+		el("h2", { textContent: mailDomains.length ? "Mail" : "No mail domains yet" }),
+		el("p", { textContent: mailDomains.length ? `Find a domain on the left, or start typing, for its mailboxes, aliases${mailAdmin ? " and DNS" : ""}.`
+			: mailAdmin ? "A new domain gets its limits, its DKIM key and its DNS records in Cloudflare in one go." : "An administrator gives you the domains you keep." }),
+		...(mailDomains.length ? [el("div", { className: "cf-welcome-stats" },
+			el("span", { className: "dns-chip" }, svgIcon("globe"), `${mailDomains.length} domain${mailDomains.length === 1 ? "" : "s"}`),
+			el("span", { className: "dns-chip on" }, svgIcon("mail"), `${boxes} mailbox${boxes === 1 ? "" : "es"}`),
+			...(relays ? [el("span", { className: "dns-chip relay" }, svgIcon("send"), `${relays} relay${relays === 1 ? "" : "s"}`)] : []))] : []),
+		...(mailAdmin && !mailDomains.length ? [el("div", { className: "cf-welcome-stats" }, tonedButton("New domain…", "plus", "green", newMailDomain))] : []),
+		...(shown.length ? [el("div", { className: "cf-recent-head", textContent: "Opened last" }), el("div", { className: "cf-recent-list" }, ...shown.map(card))] : [])));
+}
+async function showMailDomain(name) {
+	mailDomain = name;
+	// The domains opened last, for the welcome
+	try {
+		const recent = JSON.parse(localStorage.getItem("vns-mail-recent") || "[]").filter((other) => other !== name);
+		localStorage.setItem("vns-mail-recent", JSON.stringify([name, ...recent].slice(0, 12)));
+	} catch (error) { /* none */ }
+	$("#mail-rspamd").classList.remove("active");
+	history.replaceState(null, "", "#mail/" + encodeURIComponent(name));
+	drawMailDomains();
+	$("#mail-panel").replaceChildren(loadingState(`Reading ${name}…`));
+	mailData = await api(`/api/mail/domains/${mailPath(name)}`);
+	drawMailDomain();
+}
+function drawMailDomain() {
+	const { domain, mailboxes, aliases, limit } = mailData;
+	const allowed = limit ?? domain.max_mailboxes;
+	const relayAll = domain.relay === "all";
+	const full = mailboxes.length >= allowed;
+	const chip = (icon, text, title = "", tone = "") => el("span", { className: "dns-chip" + (tone ? " " + tone : ""), title }, svgIcon(icon), text);
+	const head = el("div", { className: "mail-head" },
+		el("div", { className: "mail-title" }, el("h2", { textContent: domain.name }),
+			el("div", { className: "dns-title-chips" },
+				...(domain.relay ? [chip("send", mailRelayName(domain.relay), MAIL_RELAYS.find(([value]) => value === domain.relay)[2], "relay")] : []),
+				// Relay All keeps no mail here: no mailboxes, quota or aliases to count
+				...(relayAll ? [] : [chip("mail", `${mailboxes.length} of ${allowed} mailbox${allowed === 1 ? "" : "es"}`, limit != null ? "As many as you may have here" : "As many as the domain may have", full ? "full" : ""),
+					chip("archive", `${mailSize(domain.used_mb)} used of ${mailSize(domain.quota_mb)}`, `Each mailbox up to ${mailSize(domain.mailbox_quota_mb)}`),
+					chip("link", `${aliases.length} of ${domain.max_aliases} alias${domain.max_aliases === 1 ? "" : "es"}`)]))),
+		...(mailAdmin ? [el("div", { className: "mail-head-actions" }, tonedButton("Settings…", "sliders", "purple", () => editMailDomain(domain)),
+			tonedButton("Delete…", "trash", "red", () => run(() => deleteMailDomain(domain))))] : []));
+	const group = (icon, title, text, count, action, rows) => el("section", { className: "dns-group mail-group" },
+		el("div", { className: "dns-group-head" }, el("span", { className: "mail-group-icon" }, svgIcon(icon)), el("strong", { textContent: title }), el("small", { textContent: text }),
+			el("span", { className: "dns-group-count", textContent: String(count) }), ...(action ? [action] : [])),
+		el("div", { className: "dns-group-rows" }, ...rows));
+	const newMailbox = full ? null : tonedButton("New mailbox…", "plus", "green", () => editMailbox(null));
+	const boxRows = mailboxes.length ? mailboxes.map((box) => el("div", { className: "mail-row" + (box.active ? "" : " off") },
+		el("div", { className: "dns-record-name" }, el("strong", { textContent: box.address, title: box.address }), el("small", { textContent: box.name || "No name" })),
+		el("div", { className: "mail-usage", title: `${box.messages} messages` },
+			el("span", { className: "mail-bar" }, el("span", { style: `width: ${Math.min(100, box.percent ?? 0)}%` })),
+			el("small", { textContent: `${mailSize(box.used_mb)} of ${mailSize(box.quota_mb)}` })),
+		el("div", { className: "dns-record-chips" }, ...(box.active ? [] : [el("span", { className: "dns-chip off", textContent: "Off" })]),
+			el("span", { className: "dns-chip", title: "Last login" }, svgIcon("clock"), box.last_login ? syncAgo(box.last_login * 1000) : "Never logged in")),
+		el("div", { className: "dns-record-actions" }, tonedButton("Edit…", "pencil", "amber", () => editMailbox(box)))))
+		: [el("p", { className: "muted mail-none", textContent: full ? "No mailboxes may be made here." : "No mailboxes yet." })];
+	const aliasRows = aliases.length ? aliases.map((alias) => el("div", { className: "mail-row alias" + (alias.active ? "" : " off") },
+		el("div", { className: "dns-record-name" }, el("strong", { textContent: alias.address.startsWith("@") ? `Everything to ${alias.address}` : alias.address, title: alias.address })),
+		el("span", { className: "dns-record-arrow", ariaHidden: "true", textContent: "→" }),
+		el("code", { className: "dns-record-content", textContent: alias.goto.join(", "), title: alias.goto.join("\n") }),
+		el("div", { className: "dns-record-actions" }, tonedButton("Delete…", "trash", "red", () => run(() => deleteMailAlias(alias))))))
+		: [el("p", { className: "muted mail-none", textContent: "No aliases: mail to another address of the domain is not delivered." })];
+	const dns = el("div", { className: "mail-dns" });
+	// Relay All: what it is, in place of mailboxes and aliases it does not have
+	const relayNote = el("div", { className: "sync-option action-option prompt-option-note off tone-blue mail-relay-note" },
+		el("span", { className: "sync-option-icon", ariaHidden: "true" }, svgIcon("send")),
+		el("span", { className: "sync-option-text" }, el("span", { className: "sync-option-title", textContent: "All its mail is relayed" }),
+			el("span", { className: "sync-option-sub", textContent: `Mail to any address in ${domain.name} is passed on to its own mail server: it has no mailboxes or aliases here. Its DKIM key signs the mail sent through this server.` })));
+	$("#mail-panel").replaceChildren(head,
+		...(relayAll ? [relayNote] : [group("mail", "Mailboxes", "Each its own login and mail", mailboxes.length, newMailbox, boxRows),
+			group("link", "Aliases", "Addresses that forward to others", aliases.length, tonedButton("New alias…", "plus", "green", newMailAlias), aliasRows)]),
+		...(mailAdmin ? [dns] : []));
+	if (mailAdmin) drawMailDns(dns);
+}
+// The domain's DNS against what mailcow wants: each record's state, and the missing ones made with a click
+// quiet: drawn again in place when it has answered (the button clicked shows it is working), not first emptied
+async function drawMailDns(box, after = null, quiet = false) {
+	if (!quiet) box.replaceChildren(loadingState("Checking its DNS…"));
+	let found;
+	try {
+		found = await api(`/api/mail/domains/${mailPath(mailDomain)}/dns`);
+	} catch (failure) {
+		return box.replaceChildren(el("p", { className: "error", textContent: failure.message }));
+	}
+	if (after) after();
+	const states = { ok: ["Right", "ok"], missing: ["Missing", "missing"], differs: ["Differs", "differs"], unknown: ["Not checked", "unknown"] };
+	const missing = found.records.filter((item) => item.state === "missing");
+	// Each missing one has Add on its row; all of them at once where there are more than one. Where Harbor cannot make
+	// them (not in the Cloudflare account), Copy: what to make, to send on
+	const todo = found.records.filter((item) => item.state === "missing" || item.state === "differs");
+	const action = found.zone ? (missing.length > 1 ? busyButton(`Add ${missing.length} missing`, "plus", "green", () => fixMailDns(box, { kinds: missing.map((item) => item.kind) })) : null)
+		: todo.length > 1 ? Object.assign(tonedButton(`Copy all ${todo.length}`, "copy", "purple", () => copyMailDns(todo, `${todo.length} records`)), { title: "Every record to add or change, as text to send on" }) : null;
+	const rows = found.records.map((item) => {
+		const [label, tone] = states[item.state];
+		const short = item.name === mailDomain ? "@" : item.name.slice(0, -mailDomain.length - 1);
+		// What is there now, under one that differs: a line each, indented after a bent arrow
+		const now = item.state === "differs" ? item.current.map((record) => el("div", { className: "mail-dns-now" }, svgIcon("corner"),
+			el("span", { className: "mail-dns-now-label", textContent: item.current.length > 1 ? `Now (${record.type})` : "Now" }),
+			el("code", { className: "dns-record-content", textContent: record.content, title: record.content }))) : [];
+		return [el("div", { className: "dns-record mail-dns-row" + (now.length ? " has-now" : ""), title: item.what },
+			el("div", { className: "dns-record-name" }, el("strong", { textContent: short }), el("small", { textContent: item.what })),
+			el("span", { className: "badge dns-type dns-type-" + item.type.toLowerCase(), textContent: item.type }),
+			el("code", { className: "dns-record-content", textContent: item.content, title: item.content }),
+			el("div", { className: "dns-record-chips" }, el("span", { className: "dns-chip mail-state " + tone, textContent: label })),
+			el("div", { className: "dns-record-actions" }, ...(!found.zone && (item.state === "missing" || item.state === "differs")
+				? [Object.assign(tonedButton("Copy", "copy", "purple", () => copyMailDns([item], `${item.type} ${short}`)), { title: "What to add or change, as text to send on" })] : []),
+				...(found.zone && item.state === "missing" ? [Object.assign(busyButton("Add", "plus", "green", () => fixMailDns(box, { kinds: [item.kind] })),
+				{ title: `Make ${item.type} ${short} in ${found.zone.name} in Cloudflare` })] : []), ...(found.zone && item.state === "differs" ? [busyButton("Fix…", "sync", "amber", async () => {
+				if (!await ask({ title: `Change ${item.type} ${short}?`, input: false, ok: "Change",
+					message: `It is now ${item.current.map((record) => record.content).join(", ")}. It becomes ${item.kind === "spf" ? `the same, with ${item.allow} added so this server may send` : item.content}.` })) return;
+				await fixMailDns(box, { kinds: [item.kind], replace: true });
+			})] : []))), ...now];
+	});
+	box.replaceChildren(el("section", { className: "dns-group mail-group" },
+		el("div", { className: "dns-group-head" }, el("span", { className: "mail-group-icon" }, svgIcon("cloud")), el("strong", { textContent: "DNS" }),
+			el("small", { textContent: (found.zone ? `As mailcow wants it, in ${found.zone.name} in Cloudflare`
+				: found.public ? "Checked in public DNS as it answers now: make or change these where its DNS is kept (a change shows here once it has spread)"
+				: "Make these where its DNS is kept") + (found.relay ? ". A relay domain's MX stays with its own mail server" : "") }),
+			...(found.zone ? [] : [busyButton("Check again", "sync", "blue", () => drawMailDns(box, null, true))]),
+			...(action ? [action] : [])),
+		el("div", { className: "dns-group-rows" }, ...rows.flat())));
+}
+// A record as it is sent to whoever keeps the domain's DNS: what to make (or change), its name, type and value. An SPF
+// record there keeps its other senders: what lets this server send is put in after v=spf1
+function mailDnsText(item) {
+	const now = item.current[0]?.content || "";
+	const spf = item.kind === "spf" && item.state === "differs" && now
+		? now.replace(/"\s*"/g, "").replace(/^"|"$/g, "").replace(/^v=spf1\b/i, `v=spf1 ${item.allow}`) : "";
+	const value = item.type === "SRV" ? `${item.data.priority} ${item.data.weight} ${item.data.port} ${item.data.target}` : spf || item.content;
+	return [`${item.state === "differs" ? "Change" : "Add"} a ${item.type} record (${item.what})`, `Name: ${item.name}`,
+		...(item.type === "MX" ? [`Priority: ${item.priority}`] : []),
+		...(item.type === "SRV" ? ["Priority, weight, port and target: " + value] : [`Value: ${value}`]),
+		...(item.state === "differs" && now ? [`It is now: ${now.replace(/"\s*"/g, "").replace(/^"|"$/g, "")}`] : [])].join("\n");
+}
+async function copyMailDns(items, what) {
+	await copyText(items.map(mailDnsText).join("\n\n") + "\n", $("#mail-panel"));
+	toast(`${what} copied: send it to whoever keeps the domain's DNS.`, "ok");
+}
+// A button that waits for its work: its icon a spinner and the button still until it is done (busyClick)
+function busyButton(text, icon, tone, work) {
+	const button = tonedButton(text, icon, tone, () => busyClick(button, work));
+	return button;
+}
+async function fixMailDns(box, body) {
+	const done = await api(`/api/mail/domains/${mailPath(mailDomain)}/dns`, { method: "POST", json: body });
+	toast(done.steps.length ? done.steps.join(". ") + "." : "Nothing to change.", "ok");
+	await drawMailDns(box, null, true);
+}
+// How a domain takes mail, as mailcow's own badges say it: its mailboxes here, or relayed to its own mail server
+const MAIL_RELAYS = [["", "Mailboxes here", "Mail is delivered to its mailboxes on this server", "mail", "blue"],
+	["relay", "Relay", "Passed on to its own mail server, for addresses with a mailbox", "send", "purple"],
+	["all", "Relay All", "Passed on to its own mail server, for every address", "globe", "teal"],
+	["nonlocal", "Relay Non-Local", "Passed on to its own mail server, for addresses without a mailbox here", "corner", "amber"]];
+const mailRelayName = (relay) => (MAIL_RELAYS.find(([value]) => value === relay) || MAIL_RELAYS[0])[1];
+function mailRelayCards(relay = "", onchange = () => {}) {
+	// Each a card with its icon in its own colour, its name and what it does, two by two
+	return el("div", { className: "mail-relay-cards", role: "radiogroup", ariaLabel: "How it takes mail" }, ...MAIL_RELAYS.map(([value, title, text, icon, tone]) =>
+		el("label", { className: "mail-relay-card tone-" + tone }, el("input", { type: "radio", name: "mail_relay", value, checked: value === relay, onchange: () => onchange(value) }),
+			el("span", { className: "mail-relay-icon", ariaHidden: "true" }, svgIcon(icon)),
+			el("span", { className: "mail-relay-text" }, el("strong", { textContent: title }), el("small", { textContent: text })),
+			el("span", { className: "mail-relay-check", ariaHidden: "true" }, svgIcon("check")))));
+}
+const mailRelayOf = (form) => form.querySelector("input[name=mail_relay]:checked")?.value || "";
+// Rspamd, the spam filter (an administrator's): its counts, what it did, and the latest messages it scanned, found by
+// typing; each opens to the symbols that weighed most. Its own UI a click away
+const RSPAMD_TONES = { "no action": "ok", greylist: "grey", "add header": "warn", "rewrite subject": "warn", "soft reject": "warn", reject: "bad" };
+async function showRspamd() {
+	mailDomain = null;
+	history.replaceState(null, "", "#mail/rspamd");
+	drawMailDomains();
+	$("#mail-rspamd").classList.add("active");
+	$("#mail-panel").replaceChildren(loadingState("Asking Rspamd…"));
+	const found = await api("/api/mail/rspamd");
+	const total = Object.values(found.actions).reduce((all, count) => all + count, 0) || 1;
+	const chip = (icon, text, title = "") => el("span", { className: "dns-chip", title }, svgIcon(icon), text);
+	const days = Math.floor(found.uptime / 86400), hours = Math.floor(found.uptime % 86400 / 3600);
+	const head = el("div", { className: "mail-head" },
+		el("div", { className: "mail-title" }, el("h2", { textContent: "Rspamd" }),
+			el("div", { className: "dns-title-chips" }, chip("shield", `Version ${found.version || "?"}`), chip("activity", `${found.scanned} scanned`),
+				chip("alert", `${found.spam} spam`, "Rejected, or marked as spam"), chip("check", `${found.ham} ham`), chip("clock", `Up ${days ? days + " d " : ""}${hours} h`, "Since Rspamd started"))),
+		el("div", { className: "mail-head-actions" }, el("a", { className: "button-link tool-open-admin", href: `https://${found.host}/rspamd/`, target: "_blank", rel: "noopener noreferrer",
+			title: "Rspamd's own UI, with its password" }, svgIcon("external"), "Open Rspamd"),
+			tonedButton("Read again", "sync", "blue", showRspamd)));
+	// What it did, as one bar in parts, each action's share in its colour
+	const actions = Object.entries(found.actions).filter(([, count]) => count);
+	const bar = el("section", { className: "dns-group mail-group rspamd-actions" },
+		el("div", { className: "dns-group-head" }, el("span", { className: "mail-group-icon" }, svgIcon("sliders")), el("strong", { textContent: "What it did" }),
+			el("small", { textContent: "Since Rspamd started" })),
+		el("div", { className: "rspamd-bar-box" },
+			el("div", { className: "rspamd-bar" }, ...actions.map(([action, count]) => el("span", { className: "rspamd-part " + RSPAMD_TONES[action], style: `width: ${count / total * 100}%`, title: `${action}: ${count}` }))),
+			el("div", { className: "rspamd-legend" }, ...actions.map(([action, count]) => el("span", { className: "rspamd-key" }, el("i", { className: "rspamd-part " + RSPAMD_TONES[action] }),
+				`${action[0].toUpperCase() + action.slice(1)}: ${count} (${Math.round(count / total * 100)} %)`)))));
+	const filter = el("input", { type: "search", className: "sql-filter", placeholder: "Find a sender, recipient or subject…", autocomplete: "off", spellcheck: false });
+	const rows = found.history.map((item) => {
+		const symbols = el("div", { className: "rspamd-symbols", hidden: true }, ...(item.symbols.length ? item.symbols.map((symbol) =>
+			el("span", { className: "dns-chip" + (symbol.score > 0 ? " full" : " relay"), textContent: `${symbol.name} ${symbol.score > 0 ? "+" : ""}${symbol.score}` }))
+			: [el("span", { className: "muted", textContent: "No symbol weighed." })]),
+			el("small", { className: "muted", textContent: [item.ip && `From ${item.ip}`, item.user && item.user !== "unknown" && `sent by ${item.user}`, item.size && bytesText(item.size)].filter(Boolean).join(" · ") }));
+		const row = el("div", { className: "rspamd-row", "data-search": [item.from, ...item.to, item.subject, item.action, item.ip].join(" ").toLowerCase() },
+			el("button", { type: "button", className: "rspamd-line", ariaExpanded: "false", onclick: (event) => {
+				symbols.hidden = !symbols.hidden;
+				event.currentTarget.setAttribute("aria-expanded", String(!symbols.hidden));
+			} },
+				el("span", { className: "rspamd-time", textContent: new Date(item.time * 1000).toLocaleString(), title: new Date(item.time * 1000).toLocaleString() }),
+				el("span", { className: "dns-chip mail-state rspamd-action " + RSPAMD_TONES[item.action], textContent: item.action }),
+				el("span", { className: "rspamd-score", textContent: `${item.score} / ${item.required}`, title: "Score, and the score that rejects" }),
+				el("span", { className: "rspamd-who" }, el("strong", { textContent: item.subject || "(no subject)", title: item.subject }),
+					el("small", { textContent: `${item.from || "?"} → ${item.to.join(", ") || "?"}`, title: `${item.from} → ${item.to.join(", ")}` })),
+				svgIcon("chevron")), symbols);
+		return row;
+	});
+	filter.addEventListener("input", () => {
+		const words = filter.value.toLowerCase().split(/\s+/).filter(Boolean);
+		for (const row of rows) row.hidden = !words.every((word) => row.dataset.search.includes(word));
+	});
+	const historyBox = el("section", { className: "dns-group mail-group" },
+		el("div", { className: "dns-group-head" }, el("span", { className: "mail-group-icon" }, svgIcon("mail")), el("strong", { textContent: "Latest messages" }),
+			el("small", { textContent: "Newest first: open one for what weighed most" }), el("span", { className: "dns-group-count", textContent: String(rows.length) })),
+		el("div", { className: "rspamd-filter targets-search-box sql-filter-box" }, filter),
+		el("div", { className: "dns-group-rows" }, ...(rows.length ? rows : [el("p", { className: "muted mail-none", textContent: "Rspamd has scanned nothing yet." })])));
+	$("#mail-panel").replaceChildren(head, bar, historyBox);
+}
+// A domain's limits, side by side: mailboxes, aliases, the domain's quota and each mailbox's
+function mailLimitFields(domain = null) {
+	const number = (name, value, min = 0) => el("input", { name, type: "number", min, step: 1, required: true, value });
+	return el("div", { className: "mail-limits" },
+		el("div", { className: "ns-grid" }, el("label", {}, "Mailboxes", number("mailboxes", domain?.max_mailboxes ?? 10, 1)), el("label", {}, "Aliases", number("aliases", domain?.max_aliases ?? 100))),
+		el("div", { className: "ns-grid" }, el("label", {}, "Quota of the domain (MB)", number("quota_mb", domain?.quota_mb ?? 10240, 1)),
+			el("label", {}, "Quota of a mailbox (MB)", number("mailbox_quota_mb", domain?.mailbox_quota_mb ?? 3072, 1))));
+}
+// Shown, and asked, unless the domain relays all its mail
+function showMailLimits(limits, relay) {
+	limits.hidden = relay === "all";
+	for (const input of limits.querySelectorAll("input")) input.required = relay !== "all";
+}
+const mailLimitsOf = (form) => Object.fromEntries(["mailboxes", "aliases", "quota_mb", "mailbox_quota_mb"].map((name) => [name, Number(form.elements[name].value)]));
+function newMailDomain() {
+	const name = el("input", { name: "domain", required: true, placeholder: "example.com", autocomplete: "off", spellcheck: false, autocapitalize: "off" });
+	// Its DNS made in Cloudflare only where an account is connected (Settings, DNS); without one, the records it
+	// needs are listed under the domain, to be made where its DNS is kept
+	const cloudflare = Boolean(currentUser.dns_account);
+	const dnsText = (relay) => `${relay ? "SPF, DKIM and DMARC (its MX stays with its own mail server)" : "MX, autodiscover, SPF, DKIM and DMARC"}, where the domain is in the account. Records there now are not changed`;
+	const dns = cloudflare ? checkOption("make_dns", "Make its DNS records in Cloudflare", dnsText(""), true, "cloud", "orange") : null;
+	// Relay All has no mailboxes here: its limits are not asked, and are the least mailcow takes
+	const limits = mailLimitFields();
+	const relays = mailRelayCards("", (relay) => {
+		if (dns) dns.querySelector(".sync-option-sub").textContent = dnsText(relay);
+		showMailLimits(limits, relay);
+	});
+	openFormDialog({ icon: "mail", title: "New mail domain", ok: "Make domain",
+		text: cloudflare ? "Made in mailcow with its DKIM key; its DNS made in Cloudflare." : "Made in mailcow with its DKIM key. The DNS records it needs are listed under it.",
+		fields: [el("label", {}, "Domain", name), el("div", { className: "ns-section", textContent: "How it takes mail" }), relays, limits, ...(dns ? [dns] : [])],
+		submit: async (form) => {
+			const made = await api("/api/mail/domains", { method: "POST", json: { domain: name.value.trim(), relay: mailRelayOf(form), ...mailLimitsOf(form),
+				dns: Boolean(form.elements.make_dns?.checked) } });
+			toast(made.steps.join(". ") + ".", "ok");
+			await openMail(made.domain);
+		} });
+}
+function editMailDomain(domain) {
+	// One that relayed all had the least limits: it gets the usual ones as it is turned into another kind
+	const limits = mailLimitFields(domain.relay === "all" ? null : domain);
+	showMailLimits(limits, domain.relay);
+	// Made a relay: what the DNS no longer needs is said before it is saved
+	const relayNote = el("p", { className: "hint", hidden: true,
+		textContent: "As a relay, its MX, autodiscover and autoconfig records Harbor made are taken out of its DNS, and those it changed put back as they were (its MX its own mail server's again). Its SPF, DKIM and DMARC stay." });
+	openFormDialog({ icon: "sliders", title: `Settings of ${domain.name}`, text: "Kept by mailcow: it refuses a mailbox or alias past its limits.", ok: "Save",
+		fields: [el("div", { className: "ns-section", textContent: "How it takes mail" }), mailRelayCards(domain.relay, (relay) => {
+			showMailLimits(limits, relay);
+			relayNote.hidden = domain.relay || !relay;
+		}), relayNote, limits],
+		submit: async (form) => {
+			const saved = await api(`/api/mail/domains/${mailPath(domain.domain)}`, { method: "PUT", json: { ...mailLimitsOf(form), relay: mailRelayOf(form) } });
+			toast([`${domain.name} is saved`, ...(saved.steps || [])].join(". ") + ".", "ok");
+			await openMail(domain.domain);
+		} });
+}
+async function deleteMailDomain(domain) {
+	if (!await ask({ title: `Delete ${domain.name}?`, danger: true, ok: "Delete", match: domain.domain,
+		message: `Its ${domain.mailboxes} mailbox${domain.mailboxes === 1 ? "" : "es"} and all their mail, its aliases and its DKIM key are deleted in mailcow. In Cloudflare, the DNS records Harbor made for it are taken out, and those it changed put back as they were, all but its SPF (a site may still send its mail through the server). It cannot be undone. Type ${domain.domain} to confirm.` })) return;
+	const gone = await api(`/api/mail/domains/${mailPath(domain.domain)}`, { method: "DELETE", json: { confirmation: domain.domain } });
+	toast(gone.steps.join(". ") + ".", "ok");
+	await openMail();
+}
+// A mailbox, new or changed: its name, quota and password; on or off; Delete from the same dialog
+function editMailbox(box) {
+	const domain = mailData.domain;
+	const ignore = { autocomplete: "off", spellcheck: false, "data-1p-ignore": "", "data-lpignore": "true", "data-bwignore": "true", "data-form-type": "other" };
+	const local = el("input", { name: "local_part", required: true, placeholder: "name", ...ignore, autocapitalize: "off" });
+	const name = el("input", { name: "full_name", value: box?.name || "", placeholder: "Full name", ...ignore });
+	const quota = el("input", { name: "quota_mb", type: "number", min: 1, max: domain.mailbox_quota_mb, step: 1, required: true, value: box?.quota_mb || domain.default_quota_mb || domain.mailbox_quota_mb });
+	const secret = el("input", { name: "mailbox_secret", type: "password", minLength: 8, maxLength: 256, required: !box, ...ignore, autocomplete: "new-password",
+		placeholder: box ? "Leave empty to keep it" : "At least 8 characters" });
+	const again = el("input", { name: "mailbox_secret_again", type: "password", minLength: 8, maxLength: 256, required: !box, ...ignore, autocomplete: "new-password" });
+	let active = box ? Boolean(box.active) : true;
+	const states = box ? el("div", { className: "type-cards" }, ...[[true, "On", "It logs in, sends and receives"], [false, "Off", "No login, and no mail is delivered to it"]]
+		.map(([value, title, text]) => el("label", { className: "type-card" }, el("input", { type: "radio", name: "mailbox_active", checked: value === active, onchange: () => { active = value; } }),
+			el("span", { className: "tc-title", textContent: title }), el("span", { className: "tc-sub", textContent: text })))) : null;
+	const error = el("p", { className: "error", role: "alert" });
+	const extra = box ? [tonedButton("Delete…", "trash", "red", () => run(async () => {
+		if (!await ask({ title: `Delete ${box.address}?`, danger: true, ok: "Delete", match: box.address,
+			message: `The mailbox and all its mail are deleted in mailcow, and the aliases that only go to it. It cannot be undone. Type ${box.address} to confirm.` })) return;
+		await api(`/api/mail/mailboxes/${mailPath(box.address)}`, { method: "DELETE", json: { confirmation: box.address } });
+		formDialog.close();
+		toast(`${box.address} is deleted.`, "ok");
+		await showMailDomain(mailDomain);
+	}))] : [];
+	openFormDialog({ icon: "mail", title: box ? `Edit ${box.address}` : `New mailbox in ${domain.name}`, ok: box ? "Save" : "Make mailbox", extra,
+		text: box ? `${mailSize(box.used_mb)} used, ${box.messages} messages.` : `Up to ${mailSize(domain.mailbox_quota_mb)} each.`,
+		fields: [...(box ? [] : [el("label", {}, "Address", el("span", { className: "mail-address-field" }, local, el("span", { className: "mail-at", textContent: "@" + domain.domain })))]),
+			el("div", { className: "ns-grid" }, el("label", {}, "Name", name), el("label", {}, "Quota (MB)", quota)),
+			el("div", { className: "ns-grid" }, el("label", {}, box ? "New password" : "Password", secret), el("label", {}, "Repeat password", again)),
+			...(states ? [states] : []), error],
+		submit: async () => {
+			if (secret.value !== again.value) { error.textContent = "Passwords do not match."; return false; }
+			if (box) {
+				await api(`/api/mail/mailboxes/${mailPath(box.address)}`, { method: "PUT", json: { name: name.value.trim(), quota_mb: Number(quota.value), active,
+					...(secret.value ? { password: secret.value } : {}) } });
+				toast(`${box.address} is saved.`, "ok");
+			} else {
+				const made = await api(`/api/mail/domains/${mailPath(domain.domain)}/mailboxes`, { method: "POST",
+					json: { local_part: local.value.trim(), name: name.value.trim(), quota_mb: Number(quota.value), password: secret.value } });
+				toast(`${made.address} is made.`, "ok");
+			}
+			await showMailDomain(mailDomain);
+		} });
+}
+function newMailAlias() {
+	const domain = mailData.domain;
+	const local = el("input", { name: "local_part", placeholder: "info (empty: everything else)", autocomplete: "off", spellcheck: false, autocapitalize: "off" });
+	const goto = el("textarea", { name: "goto", rows: 3, required: true, placeholder: "name@example.com, one or more", spellcheck: false });
+	openFormDialog({ icon: "link", title: `New alias in ${domain.name}`, ok: "Make alias", text: "Mail to it is delivered to the addresses given, here or elsewhere.",
+		fields: [el("label", {}, "Address", el("span", { className: "mail-address-field" }, local, el("span", { className: "mail-at", textContent: "@" + domain.domain }))),
+			el("label", {}, "Goes to", goto)],
+		submit: async () => {
+			const made = await api(`/api/mail/domains/${mailPath(domain.domain)}/aliases`, { method: "POST", json: { local_part: local.value.trim(), goto: goto.value } });
+			toast(`${made.address} is made.`, "ok");
+			await showMailDomain(mailDomain);
+		} });
+}
+async function deleteMailAlias(alias) {
+	if (!await ask({ title: `Delete ${alias.address}?`, input: false, danger: true, ok: "Delete",
+		message: `Mail to it is no longer delivered to ${alias.goto.join(", ")}.` })) return;
+	await api(`/api/mail/domains/${mailPath(mailDomain)}/aliases/${alias.id}`, { method: "DELETE" });
+	toast(`${alias.address} is deleted.`, "ok");
+	await showMailDomain(mailDomain);
 }
 
 // The DNS page, as the SQL page: the domain chosen in the bar, its records in a table under it
@@ -13151,6 +13690,7 @@ async function openDns(zone = "") {
 		return cfNoAnswer(error, zone);
 	}
 	$("#dns-zones-count").textContent = dnsZones.length ? String(dnsZones.length) : "";
+	$("#dns-add-zone").hidden = !currentUser.admin;
 	// Only one asked for (its link): else none, and the domain is found first
 	const chosen = dnsZones.find((item) => item.id === zone);
 	dnsZone = chosen || null;
@@ -13162,6 +13702,7 @@ async function openDns(zone = "") {
 }
 // The domains could not be read: said in the panel with why, and Try again
 function cfNoAnswer(error, zone) {
+	$("#dns-zone-pending").hidden = true;
 	dnsZones = [];
 	$("#dns-zones").replaceChildren();
 	$("#dns-zones-count").textContent = "";
@@ -13240,6 +13781,7 @@ function cfPartsWords() {
 	return "its " + (words.length === 1 ? words[0] : words.slice(0, -1).join(", ") + " and " + words.at(-1));
 }
 function drawCfWelcome() {
+	$("#dns-zone-pending").hidden = true;
 	$("#cf-tabs").hidden = true;
 	for (const part of CF_PARTS) $("#cf-part-" + part[0]).hidden = true;
 	$(".dns-panel-head").hidden = true;
@@ -13291,6 +13833,7 @@ async function showDnsZone(id, known = null) {
 	drawDnsZones();
 	$(".dns-panel-head").hidden = false;
 	$("#dns-zone-name").textContent = dnsZone.name;
+	drawDnsZoneState();
 	$("#dns-records-count").replaceChildren();
 	$("#cf-part-dns .cf-part-bar").hidden = true;
 	const reading = `Reading ${dnsZone.name || "the domain"}…`;
@@ -13316,6 +13859,75 @@ async function showDnsZone(id, known = null) {
 		if (cfPart !== shown && cfPart !== "dns") await showCfPart(cfPart);
 	}
 }
+// A domain's own actions (Remove…, an administrator's) and, while it waits for its name servers, the ones to set at its
+// registrar with Copy and Check now
+function drawDnsZoneState() {
+	const zone = dnsZone;
+	$("#dns-zone-actions").replaceChildren(...(currentUser.admin && zone?.id ? [tonedButton("Remove…", "trash", "red", () => removeDnsZone(zone))] : []));
+	const pending = zone?.status && zone.status !== "active";
+	const box = $("#dns-zone-pending");
+	box.hidden = !pending;
+	if (!pending) return box.replaceChildren();
+	const servers = zone.name_servers || [];
+	const check = currentUser.admin ? busyButton("Check now", "sync", "blue", async () => {
+		const found = await api(`/api/dns/zones/${zone.id}/activation`, { method: "POST" });
+		if (found.zone) Object.assign(zone, found.zone);
+		toast(zone.status === "active" ? `${zone.name} is active in Cloudflare.` : "Cloudflare looks again: its name servers are not moved yet, or it takes a little while.", zone.status === "active" ? "ok" : "info");
+		drawDnsZones();
+		drawDnsZoneState();
+	}) : null;
+	box.replaceChildren(el("div", { className: "sync-option action-option prompt-option-note off tone-amber dns-pending" },
+		el("span", { className: "sync-option-icon", ariaHidden: "true" }, svgIcon("clock")),
+		el("span", { className: "sync-option-text" },
+			el("span", { className: "sync-option-title", textContent: `Waiting for its name servers (${zone.status})` }),
+			el("span", { className: "sync-option-sub", textContent: servers.length ? "Set these at the domain's registrar, in place of the ones it has now. Cloudflare takes over once they are moved." : "Cloudflare has not said its name servers yet." }),
+			...(servers.length ? [el("span", { className: "dns-title-chips dns-name-servers" }, ...servers.map((server) => el("code", { className: "dns-chip", textContent: server })))] : []),
+			...((zone.original_name_servers || []).length ? [el("small", { className: "muted", textContent: `Now: ${zone.original_name_servers.join(", ")}` })] : [])),
+		el("span", { className: "dns-pending-actions" },
+			...(servers.length ? [Object.assign(tonedButton("Copy", "copy", "purple", async () => {
+				await copyText(servers.join("\n") + "\n", box);
+				toast("The name servers are copied.", "ok");
+			}), { title: "The name servers, a line each, to send on" })] : []),
+			...(check ? [check] : []))));
+}
+// A domain added to the Cloudflare account: its records read from its DNS now (so nothing stops working), then its
+// name servers moved at its registrar
+async function addDnsZone() {
+	let accounts = [];
+	let failed = "";
+	try { accounts = (await api("/api/dns/accounts")).accounts.filter((account) => account.allowed); } catch (error) { failed = error.message; }
+	// The one used last is chosen first (where it may still be used)
+	let last = "";
+	try { last = localStorage.getItem("vns-cf-account") || ""; } catch (error) { /* none */ }
+	const first = accounts.find((account) => account.id === last)?.id || accounts[0]?.id;
+	const name = el("input", { name: "zone_name", required: true, placeholder: "example.com", autocomplete: "off", spellcheck: false, autocapitalize: "off" });
+	const chooser = accounts.length > 1 ? el("div", { className: "type-cards", role: "radiogroup", ariaLabel: "Account" }, ...accounts.map((account, index) =>
+		el("label", { className: "type-card" }, el("input", { type: "radio", name: "cf_account", value: account.id, checked: account.id === first }),
+			el("span", { className: "tc-title", textContent: account.name }), el("span", { className: "tc-sub", textContent: "Cloudflare account" })))) : null;
+	const scan = checkOption("jump_start", "Read its records from its DNS now", "Cloudflare copies the records it has today, so the sites and mail keep working when the name servers move", true, "sync", "blue");
+	openFormDialog({ icon: "cloud", title: "Add a domain to Cloudflare", ok: "Add domain",
+		text: "It is added in Cloudflare, and works once its name servers are moved to Cloudflare's at its registrar: Harbor shows which.",
+		fields: [el("label", {}, "Domain", name), ...(chooser ? [el("div", { className: "ns-section", textContent: "Account" }), chooser] : []), scan,
+			...(failed && !accounts.length ? [el("p", { className: "hint", textContent: `The accounts could not be read (${failed}): it goes in the only one there is.` })] : [])],
+		submit: async (form) => {
+			const added = await api("/api/dns/zones", { method: "POST", json: { name: name.value.trim(), account: form.querySelector("input[name=cf_account]:checked")?.value || (accounts[0]?.id || ""),
+				jump_start: form.elements.jump_start.checked } });
+			try { localStorage.setItem("vns-cf-account", form.querySelector("input[name=cf_account]:checked")?.value || accounts[0]?.id || ""); } catch (error) { /* none */ }
+			toast(`${added.zone.name} is added to Cloudflare: move its name servers to finish.`, "ok");
+			await openDns(added.zone.id);
+		} });
+}
+async function removeDnsZone(zone) {
+	if (!await ask({ title: `Remove ${zone.name} from Cloudflare?`, danger: true, ok: "Remove", match: zone.name,
+		message: `It goes from the Cloudflare account with all its ${dnsRecords.length} records, its rules and settings. If its name servers are Cloudflare's, its sites and mail stop being found until its DNS is kept elsewhere. It cannot be undone. Type ${zone.name} to confirm.` })) return;
+	await api(`/api/dns/zones/${zone.id}`, { method: "DELETE", json: { confirmation: zone.name } });
+	toast(`${zone.name} is removed from Cloudflare.`, "ok");
+	await openDns();
+}
+$("#dns-add-zone").onclick = () => run(addDnsZone);
+$("#dns-add-zone").prepend(svgIcon("plus"));
+$("#dns-add-zone").dataset.tone = "green";
+
 // The records grouped by type, each group framed as the sites' parts on Usage: its type and what it is for at its head,
 // a line per record under it with its name, what it points to, its TTL and proxy as chips, and Edit
 function drawDnsRecords() {
@@ -13560,7 +14172,7 @@ function drawCfSettings(box, part, current) {
 	});
 	const parts = [];
 	if (part === "cache") parts.push(cfPurgeCard());
-	if (!cards.length) parts.push(el("p", { className: "muted", textContent: "Cloudflare did not give these settings: the API token may lack Zone, Zone Settings, Read and Edit (Settings, Cloudflare)." }));
+	if (!cards.length) parts.push(el("p", { className: "muted", textContent: "Cloudflare did not give these settings: the API token may lack Zone, Zone Settings, Read and Edit (Settings, DNS)." }));
 	box.replaceChildren(...parts, ...cards);
 }
 // Purge: everything the domain has in Cloudflare's cache, or only the addresses typed
@@ -13744,7 +14356,7 @@ function cfRuleSection({ title, about, used, limit, add, first, rows, note = nul
 function cfManagedHeaders(box, found) {
 	const head = el("div", { className: "cf-part-bar cf-subhead" }, el("div", { className: "cf-setting-text" }, el("strong", { textContent: "Managed Transforms" }),
 		el("small", { textContent: "Headers Cloudflare adds to or takes from every request and answer, a click each" })));
-	if (found.error) return el("div", { className: "cf-rule-section" }, head, el("p", { className: "muted", textContent: `Cloudflare did not give them: ${found.error}. The API token may lack Zone, Transform Rules, Read and Edit (Settings, Cloudflare).` }));
+	if (found.error) return el("div", { className: "cf-rule-section" }, head, el("p", { className: "muted", textContent: `Cloudflare did not give them: ${found.error}. The API token may lack Zone, Transform Rules, Read and Edit (Settings, DNS).` }));
 	const all = [...found.request, ...found.response];
 	const card = (item) => {
 		const blocking = item.conflicts.map((id) => all.find((other) => other.id === id)).filter((other) => other?.enabled);
@@ -13856,7 +14468,7 @@ function cfPageRulesSection(box, rules, limit = null, converted = new Set()) {
 	if (rules && !rules.length) return null;
 	const section = { title: "Page Rules", about: "Cloudflare's older rules, on their way out: convert each to the newer rules above, from the top, so they keep their order",
 		used: rules?.length || 0, limit, subhead: true };
-	if (!rules) return cfRuleSection({ ...section, limit: null, note: el("p", { className: "muted", textContent: "Cloudflare did not give the page rules: the API token may lack Zone, Page Rules, Read (Settings, Cloudflare)." }) });
+	if (!rules) return cfRuleSection({ ...section, limit: null, note: el("p", { className: "muted", textContent: "Cloudflare did not give the page rules: the API token may lack Zone, Page Rules, Read (Settings, DNS)." }) });
 	return cfRuleSection({ ...section, rows: rules.map((rule, index) => el("div", { className: "dns-record cf-rule" + (rule.enabled ? "" : " off") },
 		el("div", { className: "dns-record-name" }, el("strong", { textContent: rule.pattern }), el("small", { textContent: `Position ${index + 1}` })),
 		el("span", { className: "dns-record-arrow", ariaHidden: "true", textContent: "→" }),
@@ -14106,7 +14718,7 @@ function cfSettingsRulesSection(box, kind, rules, limit = null) {
 	const section = { title: look.plural, about: look.about, used: rules?.length || 0, limit, subhead: true,
 		add: [`New ${look.title.toLowerCase()}`, () => editCfSettingsRule(kind, null, rules, save)],
 		first: [look.first[0], kind === "cache" ? `Cache everything under a path, such as www.${dnsZone.name}/images/*, and for how long` : look.first[1]] };
-	if (!rules) return cfRuleSection({ ...section, limit: null, note: el("p", { className: "muted", textContent: `Cloudflare did not give the ${look.plural.toLowerCase()}: the API token may lack Zone, ${look.permission}, Edit (Settings, Cloudflare).` }) });
+	if (!rules) return cfRuleSection({ ...section, limit: null, note: el("p", { className: "muted", textContent: `Cloudflare did not give the ${look.plural.toLowerCase()}: the API token may lack Zone, ${look.permission}, Edit (Settings, DNS).` }) });
 	return cfRuleSection({ ...section, rows: rules.map((rule, index) => {
 		const said = [...rule.actions.map(cfPageSaid), ...(Object.keys(rule.extra || {}).length ? ["and Cloudflare's own"] : [])].join(" · ");
 		return el("div", { className: "dns-record cf-rule" + (rule.enabled ? "" : " off") },
@@ -14190,6 +14802,7 @@ function userSummary(user) {
 	if (user.web) parts.push(`${Object.keys(user.sites || {}).length} site${Object.keys(user.sites || {}).length === 1 ? "" : "s"}${user.create_sites ? " · creates sites" : ""}`);
 	if (user.sql) parts.push(`${Object.keys(user.connections || {}).length} SQL connection${Object.keys(user.connections || {}).length === 1 ? "" : "s"}`);
 	if (user.dns) parts.push(`${(user.dns_domains || []).length} Cloudflare domain${(user.dns_domains || []).length === 1 ? "" : "s"}`);
+	if (user.mail) parts.push(`${Object.keys(user.mail_domains || {}).length} mail domain${Object.keys(user.mail_domains || {}).length === 1 ? "" : "s"}`);
 	return parts.join(" · ") || "No access yet";
 }
 // A card's buttons under it, at the bottom right: where cards stand three beside each other
@@ -14215,6 +14828,8 @@ function userCard(user) {
 		// Cloudflare: their domains, by name while they are few
 		...(user.dns ? [toolRow("Cloudflare", (user.dns_domains || []).length > 2 ? `${user.dns_domains.length} domains` : (user.dns_domains || []).join(", ") || "No domain yet",
 			{ on: Boolean(user.dns_domains?.length) })] : []),
+		...(user.mail ? [toolRow("Mail", Object.keys(user.mail_domains || {}).length > 2 ? `${Object.keys(user.mail_domains).length} domains` : Object.keys(user.mail_domains || {}).join(", ") || "No domain yet",
+			{ on: Boolean(Object.keys(user.mail_domains || {}).length) })] : []),
 		...(user.web || user.sql || user.dns ? [] : [toolRow("Access", "None yet", { on: false })]),
 	];
 	// When they last signed in: how long ago, the time itself on hover
@@ -14704,6 +15319,9 @@ let keepUserFilter = false;
 $("#user-sites").before(userSitesSearch);
 $("#user-sites").after(userSitesSearch.empty);
 // The DNS domains found the same way, with the dialog's own search field
+const userMailSearch = grantSearch($("#user-mail-domains"), "Find a domain…", ".grant-chip");
+$("#user-mail-domains").before(userMailSearch);
+$("#user-mail-domains").after(userMailSearch.empty);
 const userDnsSearch = grantSearch($("#user-dns-domains"), "Find a domain…", ".grant-chip");
 $("#user-dns-domains").before(userDnsSearch);
 $("#user-dns-domains").after(userDnsSearch.empty);
@@ -14750,6 +15368,8 @@ function openUserEditor(user = null, template = null, editTemplate = undefined) 
 	drawUserServers(asTemplate);
 	// DNS: where a Cloudflare account is set up, the domains of it they may keep (the master's own, on this server)
 	userForm.dns.checked = Boolean(user?.dns);
+	userForm.mail.checked = Boolean(user?.mail);
+	fillUserMail(user?.mail_domains || {});
 	fillUserDns(user?.dns_domains || []);
 	// The parts of Cloudflare they may use: DNS for one given before there was a choice
 	const parts = user?.cloudflare_parts || ["dns"];
@@ -14946,6 +15566,9 @@ function showUserScope() {
 	const asTemplate = userForm.dataset.mode === "template";
 	$("#user-dns-part").hidden = !usersData?.dns_zones;
 	$("#user-dns").hidden = !userForm.dns.checked;
+	// Mail where a mailcow server is set up; not a template's (its domains are each user's own)
+	$("#user-mail-part").hidden = !usersData?.mail_domains || asTemplate;
+	$("#user-mail").hidden = !userForm.mail.checked;
 	$("#user-dns-domains").hidden = asTemplate;
 	if (asTemplate) userDnsSearch.reset(false);
 	$("#user-dns-hint").textContent = asTemplate ? "A user made from it has DNS on: their domains are chosen in their own window."
@@ -14956,7 +15579,60 @@ function showUserScope() {
 	// SFTP reaches their sites' folders: a part of its own while the Web Server is theirs
 	$("#user-sftp-part").hidden = !userForm.web.checked;
 }
-userForm.onchange = (event) => { if (["role", "web", "sql", "sftp", "manage_connections", "dns"].includes(event.target.name)) showUserScope(); };
+userForm.onchange = (event) => { if (["role", "web", "sql", "sftp", "manage_connections", "dns", "mail"].includes(event.target.name)) showUserScope(); };
+// The mailcow server's domains as chips, those given ticked, as Cloudflare's; under them a short row for each one ticked,
+// with how many mailboxes they may have there (empty: as many as the domain allows)
+const userMailLimits = new Map();
+function fillUserMail(given) {
+	const domains = usersData?.mail_domains || [];
+	userMailLimits.clear();
+	for (const [name, grant] of Object.entries(given)) userMailLimits.set(name, grant?.mailboxes ?? "");
+	$("#user-mail-domains").replaceChildren(...(domains.length ? domains.map((name) => el("label", { className: "grant-chip", "data-search": name },
+		el("input", { type: "checkbox", name: "mail_domain", value: name, checked: name in given, onchange: drawUserMailLimits }), el("span", { textContent: name })))
+		: [el("p", { className: "muted", textContent: "The mailcow server has no domains." })]));
+	userMailSearch.reset(true);
+	drawUserMailLimits();
+}
+// A domain given now starts at 5 mailboxes; one given before keeps what it had (Any too)
+const USER_MAIL_DEFAULT = 5;
+function drawUserMailLimits() {
+	const chosen = [...$("#user-mail-domains").querySelectorAll("input[name=mail_domain]:checked")].map((box) => box.value);
+	for (const name of chosen) if (!userMailLimits.has(name)) userMailLimits.set(name, String(USER_MAIL_DEFAULT));
+	$("#user-mail-limits-box").hidden = !chosen.length;
+	$("#user-mail-limits").replaceChildren(...chosen.map((name) => {
+		// What it means, in words under the name, as the number is changed
+		const said = el("small");
+		const say = () => {
+			const value = userMailLimits.get(name);
+			said.textContent = value === "" ? "As many as the domain allows" : `Up to ${value} mailbox${value === "1" ? "" : "es"}`;
+		};
+		const count = el("input", { type: "number", min: 0, max: 10000, step: 1, placeholder: "Any", value: userMailLimits.get(name) ?? "", ariaLabel: `Mailboxes in ${name}`,
+			oninput: () => { userMailLimits.set(name, count.value); say(); } });
+		// − and + step it; − from 0 leaves it empty (Any), + from Any starts at 1
+		const step = (by) => {
+			const now = count.value === "" ? (by > 0 ? 0 : null) : Number(count.value);
+			const next = now === null ? "" : now + by < 0 ? "" : String(Math.min(10000, now + by));
+			count.value = next;
+			userMailLimits.set(name, next);
+			say();
+		};
+		say();
+		return el("div", { className: "mail-limit-row" },
+			el("span", { className: "mail-limit-icon", ariaHidden: "true" }, svgIcon("mail")),
+			el("span", { className: "mail-limit-text" }, el("strong", { textContent: name, title: name }), said),
+			el("span", { className: "mail-stepper" },
+				el("button", { type: "button", className: "mail-step", ariaLabel: `One fewer in ${name}`, onclick: () => step(-1) }, svgIcon("minus")),
+				count,
+				el("button", { type: "button", className: "mail-step", ariaLabel: `One more in ${name}`, onclick: () => step(1) }, svgIcon("plus"))));
+	}));
+}
+// What is given, as it is saved: {domain: {mailboxes}} (none: as many as the domain allows)
+function userMailDomains() {
+	return Object.fromEntries([...$("#user-mail-domains").querySelectorAll("input[name=mail_domain]:checked")].map((box) => {
+		const value = String(userMailLimits.get(box.value) ?? "");
+		return [box.value, value === "" ? {} : { mailboxes: Number(value) }];
+	}));
+}
 // The domains of the Cloudflare account as chips, those given ticked; a filter where there are many
 function fillUserDns(given) {
 	const zones = usersData?.dns_zones || [];
@@ -14985,6 +15661,7 @@ function userAccess() {
 	return { role: userForm.role.value, web: userForm.web.checked, create_sites: userForm.create_sites.checked, create_envs: userServer ? userForm.create_envs.checked : false, sql: userForm.sql.checked,
 		manage_connections: userForm.manage_connections.checked, connection_engines: connectionEngines(), sites, connections, sftp: userForm.sftp.checked, limits: userLimits(),
 		dns: userForm.dns.checked, dns_domains: [...userForm.querySelectorAll("input[name=dns_domain]:checked")].map((box) => box.value),
+		mail: userForm.mail.checked, mail_domains: userMailDomains(),
 		cloudflare_parts: [...userForm.querySelectorAll("input[name=cf_part]:checked")].map((box) => box.value) };
 }
 // A new user starts from a template: a chip each above the fields, the one used lit; templates are made under Users
@@ -15197,7 +15874,7 @@ $("#audit-clear").onclick = () => run(async () => {
 // Each tool is a part of its own in the side menu; they share one pane, drawn from one look at the server
 // SSH and Samba are one part, Access: how the server itself is reached
 const TOOL_TABS = ["sql", "dotnet", "node", "access"];
-const SERVER_TABS = [...TOOL_TABS, "apache", "jobs", "convert", "export", "settings", "dns", "notifications", "health", "servers", "users", "templates", "usage", "windows", "updates", "menu"];
+const SERVER_TABS = [...TOOL_TABS, "apache", "jobs", "convert", "export", "settings", "dns", "mail", "notifications", "health", "servers", "users", "templates", "usage", "windows", "updates", "menu"];
 const TOOL_OF_CARD = { "Microsoft SQL Server": "sql", "Microsoft SQL Server tools": "sql", "sa password": "sql", PostgreSQL: "sql", "PostgreSQL tools": "sql", "postgres password": "sql", Backups: "sql", "Node.js": "node", SSH: "access", Samba: "access" };
 // Settings opens on General: what most often is looked for
 let serverTab = "settings";
@@ -15206,7 +15883,7 @@ const serverTabOpen = (tab) => currentView === "server" && paneOf(serverTab) ===
 let toolsDrawn = false;
 // What the master shows of every member at once, and what is the master's alone (its Cloudflare, top menu, users and
 // templates): not a member's tab, so a member chosen there opens on General
-const MASTER_WIDE_TABS = ["health", "usage", "convert", "export", "dns", "menu", "users", "templates"];
+const MASTER_WIDE_TABS = ["health", "usage", "convert", "export", "dns", "mail", "menu", "users", "templates"];
 async function showServerTab(tab) {
 	// A master hosts nothing: its own Settings have no software (.NET, Node.js, SQL Server), its members' have
 	const hostsNothing = !pickedServer && Boolean(currentUser?.master) && joinedMembers().length > 0 && ["dotnet", "node", "sql"].includes(tab);
@@ -15220,7 +15897,7 @@ async function showServerTab(tab) {
 		$("#server-tab-" + name).setAttribute("aria-selected", String(name === tab));
 		$("#server-tab-" + name).classList.toggle("active", name === tab);
 	}
-	for (const pane of ["tools", "apache", "jobs", "convert", "export", "settings", "dns", "notifications", "health", "servers", "users", "templates", "usage", "windows", "updates", "menu"]) $("#server-pane-" + pane).hidden = pane !== paneOf(tab);
+	for (const pane of ["tools", "apache", "jobs", "convert", "export", "settings", "dns", "mail", "notifications", "health", "servers", "users", "templates", "usage", "windows", "updates", "menu"]) $("#server-pane-" + pane).hidden = pane !== paneOf(tab);
 	// The admin site's page, when it was open here, is not
 	$("#server-pane-admin").hidden = true;
 	$("#server-tab-admin").classList.remove("active");
@@ -15234,7 +15911,7 @@ async function showServerTab(tab) {
 		// Another tool is shown from what was read already; Refresh, or coming from another part, reads again
 		if (toolsDrawn && before === "tools") return;
 	}
-	await run({ tools: openServerTools, jobs: openCrontab, convert: openConvertSettings, export: openExportSettings, servers: openServers, dns: openDnsSettings, users: openUsers, templates: openUsers, usage: openUsageSettings, settings: openServerSettings, notifications: openNotifications, health: openHealth, menu: openMenuSettings, apache: openApacheSettings, windows: openWindowsSettings, updates: openUpdatesSettings }[paneOf(tab)]);
+	await run({ tools: openServerTools, jobs: openCrontab, convert: openConvertSettings, export: openExportSettings, servers: openServers, dns: openDnsSettings, mail: openMailSettings, users: openUsers, templates: openUsers, usage: openUsageSettings, settings: openServerSettings, notifications: openNotifications, health: openHealth, menu: openMenuSettings, apache: openApacheSettings, windows: openWindowsSettings, updates: openUpdatesSettings }[paneOf(tab)]);
 	// Users: the filter has the focus, where there are users enough for one
 	if (tab === "users" && !$("#people-filter-box").hidden && !document.querySelector("dialog[open]")) $("#people-filter").focus({ preventScroll: true });
 }
@@ -16645,7 +17322,8 @@ function serverCard(item, release) {
 		...(fellow ? [toolRow("Member", "Of Harbor Master too, which made it known here and updates it", { on: true })] : []),
 		...(item.member ? [toolRow("Web Server", item.no_web ? "Hosts no sites: its SQL Server only" : item.closed ? "Keeps its sites: no new site or environment" : "Hosts sites",
 			{ on: !item.no_web })] : []),
-		...(item.member ? [toolRow("SQL Server", item.sql_closed ? "Keeps its databases: none converted, moved or copied here" : "Takes new databases",
+		// Only where it has a SQL Server of its own (one told by an older Harbor, which does not say, too)
+		...(item.member && item.sql_server !== false ? [toolRow("SQL Server", item.sql_closed ? "Keeps its databases: none converted, moved or copied here" : "Takes new databases",
 			{ on: !item.sql_closed })] : []),
 		// The system's own state too: lit where it can run Harbor (its Ubuntu and Python), as Member and Harbor are lit
 		toolRow("System", `${item.os || "—"} · Python ${item.python || "—"}`, { on: Boolean(item.compatible) }),
@@ -16683,7 +17361,7 @@ function serverCard(item, release) {
 		// Whether it hosts sites: all it is given, only those it has (no new one), or none (a SQL Server's)
 		actions.push(tonedButton("Web Server…", "globe", "green", () => askWebState(item)));
 		// Whether its SQL Server takes databases from Convert, Move and Copy, or keeps its own
-		actions.push(tonedButton("SQL Server…", "database", "purple", () => askSqlState(item)));
+		if (item.sql_server !== false || item.sql_closed) actions.push(tonedButton("SQL Server…", "database", "purple", () => askSqlState(item)));
 		actions.push(tonedButton("Leave…", "x", "amber", () => run(async () => {
 			if (!(await ask({ title: `${item.name} no longer a member?`, message: `Its sites are no longer shown here. Nothing changes on ${item.name}: its sites keep running.`,
 				input: false, ok: "Leave" }))) return;

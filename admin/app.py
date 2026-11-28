@@ -84,6 +84,9 @@ _keep_alive_spec.loader.exec_module(_keep_alive_module)
 _cloudflare_spec = importlib.util.spec_from_file_location("vns_cloudflare", os.path.join(LIB_DIR, "cloudflare.py"))
 _cloudflare = importlib.util.module_from_spec(_cloudflare_spec)
 _cloudflare_spec.loader.exec_module(_cloudflare)
+_mailcow_spec = importlib.util.spec_from_file_location("vns_mailcow", os.path.join(LIB_DIR, "mailcow.py"))
+_mailcow = importlib.util.module_from_spec(_mailcow_spec)
+_mailcow_spec.loader.exec_module(_mailcow)
 _reset_spec = importlib.util.spec_from_file_location("vns_password_reset", os.path.join(LIB_DIR, "password_reset.py"))
 _password_reset = importlib.util.module_from_spec(_reset_spec)
 _reset_spec.loader.exec_module(_password_reset)
@@ -440,6 +443,432 @@ def api_usage_site(site):
 
 # ---- DNS, from Cloudflare (phase 14, lib/cloudflare.py)
 
+# ---- Mail (phase 15): the mailcow server, its domains, mailboxes and aliases, and each domain's DNS made in Cloudflare.
+# An administrator keeps every domain; a user the domains given them, and as many mailboxes there as they may have
+# The DNS records Harbor made for each mail domain, by their ids in Cloudflare: taken out with the domain
+MAIL_DNS = os.path.join(DATA, "mail-dns.json")
+MAIL_LOCK = threading.Lock()
+
+
+def mail_domain_names():
+    """The mailcow server's domains, by name, for the user dialog; None without a server (no Mail part)"""
+    settings = _mailcow.load()
+    if not settings:
+        return None
+    try:
+        return [item["domain"] for item in _mailcow.domains(settings)]
+    except _mailcow.MailcowError:
+        app.logger.exception("Could not read the mailcow domains")
+        return []
+
+
+def mail_server():
+    """The mailcow server, for one who has Mail"""
+    settings = _mailcow.load()
+    if not settings:
+        abort(404, "No mailcow server is set up.")
+    if not access.has_mail(me()):
+        abort(403, "Mail is not yours.")
+    return settings
+
+
+def mail_domain_of(name):
+    """A domain the user may keep, by its name"""
+    try:
+        name = _mailcow.domain_name(name)
+    except ValueError:
+        abort(404, "No such domain.")
+    if not access.mail_domain(me(), name):
+        abort(404, "No such domain.")
+    return name
+
+
+def mail_errors(work):
+    """mailcow's and Cloudflare's refusals, and a value that is wrong, as the page shows them"""
+    try:
+        return work()
+    except ValueError as exc:
+        return error(str(exc))
+    except _mailcow.MailcowError as exc:
+        return error(str(exc), 502)
+    except _cloudflare.CloudflareError as exc:
+        return error(f"Cloudflare: {exc}", 502)
+
+
+@app.route("/api/mail/settings", methods=["GET", "PUT", "DELETE"])
+def api_mail_settings():
+    """The mailcow server Mail uses: its host (never its key), tried before it is kept"""
+    require_admin()
+    current = _mailcow.load()
+    if request.method == "DELETE":
+        _mailcow.remove()
+        audit("Removed the mailcow server")
+        return jsonify(_mailcow.shown({}))
+    if request.method == "PUT":
+        try:
+            settings = _mailcow.validate(request.get_json(silent=True), current)
+            version = _mailcow.verify(settings)
+        except ValueError as exc:
+            return error(str(exc))
+        except _mailcow.MailcowError as exc:
+            return error(f"mailcow did not take it: {exc}")
+        _mailcow.save(settings)
+        audit(f"Set the mailcow server {settings['host']}")
+        return jsonify(**_mailcow.shown(settings), version=version)
+    return jsonify(_mailcow.shown(current))
+
+
+@app.route("/api/mail/status")
+def api_mail_status():
+    """The server's state: its version, containers and the mail storage's disk"""
+    require_admin()
+    settings = _mailcow.load()
+    if not settings:
+        return error("No mailcow server is set up.", 404)
+    return mail_errors(lambda: jsonify(**_mailcow.status(settings), host=settings["host"]))
+
+
+@app.route("/api/mail/rspamd")
+def api_mail_rspamd():
+    """Rspamd, the spam filter: its counts and the latest messages it scanned (an administrator's)"""
+    require_admin()
+    settings = _mailcow.load()
+    if not settings:
+        return error("No mailcow server is set up.", 404)
+    return mail_errors(lambda: jsonify(**_mailcow.rspamd(settings), host=settings["host"]))
+
+
+def mail_zone(name):
+    """The Cloudflare zone a mail domain's records go in ({id, name}), or None (no account, or not in it)"""
+    settings = _cloudflare.load()
+    if not settings:
+        return None, None
+    try:
+        zones = cloudflare_zones(settings)
+    except _cloudflare.CloudflareError:
+        return settings, None
+    found = [zone for zone in zones if name == zone["name"] or name.endswith("." + zone["name"])]
+    return settings, max(found, key=lambda zone: len(zone["name"])) if found else None
+
+
+def mail_dns(mailcow, name):
+    """A domain's DNS as mailcow wants it, checked against its zone: {zone, relay, records: [{..., state}]}. A relay
+    domain's MX stays with its own mail server"""
+    key = _mailcow.dkim(mailcow, name)
+    relay = _mailcow.domain(mailcow, name)["relay"]
+    wanted = _mailcow.wanted_records(mailcow["host"], name, key, relay)
+    cloudflare, zone = mail_zone(name)
+    if not zone:
+        # Kept elsewhere: checked in public DNS as it answers now (fixed there, not here)
+        public = _mailcow.public_records(wanted)
+        if public is None:
+            return {"zone": None, "relay": relay, "public": False, "records": [{**item, "state": "unknown", "current": []} for item in wanted]}
+        return {"zone": None, "relay": relay, "public": True, "records": _mailcow.check_records(wanted, public, _mailcow.Resolver())}
+    return {"zone": zone, "relay": relay, "records": _mailcow.check_records(wanted, _cloudflare.records(cloudflare, zone["id"]), _mailcow.Resolver()),
+            "settings": cloudflare}
+
+
+def mail_dns_made(name, entries=None, forget=False, drop=()):
+    """The records Harbor made or changed for a domain, kept as it does so: [{id, before, replaced}]. before is what a
+    record it changed was (None: one it made), so deleting the domain puts it back; replaced: it took the place of one
+    of another type (an address where the CNAME goes), which is made again. Read (and forgotten) as the domain goes"""
+    with MAIL_LOCK:
+        try:
+            with open(MAIL_DNS, encoding="utf-8") as stream:
+                kept = json.load(stream)
+        except (OSError, ValueError):
+            kept = {}
+        # Kept before as ids alone: records it made
+        found = [entry if isinstance(entry, dict) else {"id": entry, "before": None} for entry in kept.get(name, [])]
+        if entries:
+            for entry in entries:
+                # Changed twice: what it was the first time is what it goes back to
+                if not any(old["id"] == entry["id"] for old in found):
+                    found.append(entry)
+            kept[name] = found
+        if drop:
+            found = [entry for entry in found if entry["id"] not in drop]
+            kept[name] = found
+        if forget:
+            kept.pop(name, None)
+        if entries or forget or drop:
+            temporary = MAIL_DNS + ".tmp"
+            with open(temporary, "w", encoding="utf-8") as stream:
+                json.dump(kept, stream)
+            os.replace(temporary, MAIL_DNS)
+        return found
+
+
+def mail_record_body(record):
+    """A record as Cloudflare has it, as it is sent to make it again or put it back"""
+    body = {"type": record["type"], "name": record["name"], "ttl": record.get("ttl") or 1}
+    if record.get("data") and record["type"] in ("SRV", "CAA"):
+        body["data"] = record["data"]
+    else:
+        body["content"] = record["content"]
+    if record["type"] == "MX" and record.get("priority") is not None:
+        body["priority"] = record["priority"]
+    if record["type"] in ("A", "AAAA", "CNAME"):
+        body["proxied"] = bool(record.get("proxied"))
+    return body
+
+
+# What stays when a domain goes: its SPF (a site may still send its mail through the server)
+MAIL_DNS_KEPT = ("spf",)
+# What a relay domain does not need: its mail goes to its own server, which its MX and autodiscover are of
+MAIL_DNS_MAILBOXES_ONLY = ("mx", "autodiscover", "autoconfig", "srv")
+
+
+def mail_dns_kind(entry):
+    """What a kept record is for: kept with it since 1.0.113; before that told by what it was (an SPF record)"""
+    if entry.get("kind"):
+        return entry["kind"]
+    before = (entry.get("before") or {}).get("content", "")
+    return "spf" if str(before).strip('"').lower().startswith("v=spf1") else ""
+
+
+def mail_dns_undo(cloudflare, zone, entries):
+    """What Harbor did to a domain's DNS undone: what it made taken out, what it changed put back: (out, back, ids)"""
+    out = back = 0
+    undone = []
+    for entry in entries:
+        try:
+            if entry.get("before") is None:
+                _cloudflare.delete(cloudflare, zone["id"], entry["id"])
+                out += 1
+            elif entry.get("replaced"):
+                _cloudflare.delete(cloudflare, zone["id"], entry["id"])
+                _cloudflare.create(cloudflare, zone["id"], entry["before"])
+                back += 1
+            else:
+                _cloudflare.update(cloudflare, zone["id"], entry["id"], entry["before"])
+                back += 1
+            undone.append(entry["id"])
+        except (_cloudflare.CloudflareError, ValueError):
+            pass
+    return out, back, undone
+
+
+def mail_fix(mailcow, name, kinds=None, replace=False):
+    """The domain's records made in Cloudflare: the missing ones (those of kinds, or all), and with replace the ones
+    that differ, changed to what mailcow wants (an SPF record keeps its other senders): [what was done]. What each
+    changed one was is kept, to be put back when the domain is deleted"""
+    checked = mail_dns(mailcow, name)
+    if not checked["zone"]:
+        raise ValueError(f"{name} is not in the Cloudflare account: make its records where its DNS is kept.")
+    settings, zone_id = checked["settings"], checked["zone"]["id"]
+    done, kept = [], []
+    full = None
+    for item in checked["records"]:
+        if item["state"] == "ok" or (kinds and item["kind"] not in kinds) or (item["state"] == "differs" and not replace):
+            continue
+        current = item["current"][0] if item["current"] else None
+        if item["state"] == "differs" and current:
+            # What it is now, whole, to put it back later
+            if full is None:
+                full = {record["id"]: record for record in _cloudflare.records(settings, zone_id)}
+            before = mail_record_body(full[current["id"]]) if current["id"] in full else None
+            # A CNAME takes the name alone: an address record there (A or AAAA) is changed into it, never put beside it
+            if current["type"] != item["type"]:
+                _cloudflare.delete(settings, zone_id, current["id"])
+                result = _cloudflare.create(settings, zone_id, _mailcow.record_body(item))
+                entry = {"kind": item["kind"], "before": before, "replaced": True}
+            else:
+                result = _cloudflare.update(settings, zone_id, current["id"], _mailcow.record_body(item, current))
+                entry = {"kind": item["kind"], "before": before}
+            done.append(f"Changed {item['type']} {item['name']}")
+        else:
+            result = _cloudflare.create(settings, zone_id, _mailcow.record_body(item))
+            entry = {"kind": item["kind"], "before": None}
+            done.append(f"Made {item['type']} {item['name']}")
+        # Kept: one it made (taken out with the domain), and one it changed whose old form was read (put back); one it
+        # changed but could not read is left as it is then
+        made_new = item["state"] == "missing" or not current
+        if isinstance(result, dict) and result.get("id") and (made_new or entry["before"] is not None):
+            kept.append({"id": result["id"], **entry})
+    if kept:
+        mail_dns_made(name, kept)
+    if done:
+        audit(f"Mail: DNS of {name}: " + "; ".join(done))
+    return done
+
+
+@app.route("/api/mail/domains", methods=["GET", "POST"])
+def api_mail_domains():
+    """The domains the user keeps; POST (an administrator): a new domain with its DKIM key, and its DNS made in
+    Cloudflare where it is in the account"""
+    mailcow = mail_server()
+    if request.method == "GET":
+        user = me()
+        def listing():
+            found = [item for item in _mailcow.domains(mailcow) if access.mail_domain(user, item["domain"])]
+            for item in found:
+                item["limit"] = access.mail_limit(user, item["domain"])
+            return jsonify(domains=found, admin=is_admin(), host=mailcow["host"])
+        return mail_errors(listing)
+    require_admin()
+    data = request.get_json(silent=True) or {}
+
+    def make():
+        name = _mailcow.add_domain(mailcow, data)
+        audit(f"Mail: made the domain {name}")
+        steps = [f"Made {name} in mailcow, with its DKIM key"]
+        try:
+            if data.get("dns", True) is not False:
+                steps += mail_fix(mailcow, name)
+        except ValueError as exc:
+            steps.append(str(exc))
+        except _cloudflare.CloudflareError as exc:
+            steps.append(f"Its DNS was not made: Cloudflare said {exc}")
+        return jsonify(domain=name, steps=steps)
+    return mail_errors(make)
+
+
+@app.route("/api/mail/domains/<name>", methods=["GET", "PUT", "DELETE"])
+def api_mail_domain(name):
+    """A domain with its mailboxes and aliases (and, for an administrator, its DNS checked); PUT its limits; DELETE it
+    with its mailboxes, its DKIM key and the records Harbor made for it"""
+    mailcow = mail_server()
+    name = mail_domain_of(name)
+    if request.method == "GET":
+        def read():
+            found = {"domain": _mailcow.domain(mailcow, name), "mailboxes": _mailcow.mailboxes(mailcow, name), "aliases": _mailcow.aliases(mailcow, name),
+                     "limit": access.mail_limit(me(), name), "admin": is_admin(), "host": mailcow["host"]}
+            return jsonify(found)
+        return mail_errors(read)
+    require_admin()
+    if request.method == "PUT":
+        def change():
+            data = request.get_json(silent=True) or {}
+            was = _mailcow.domain(mailcow, name)["relay"]
+            _mailcow.edit_domain(mailcow, name, data)
+            audit(f"Mail: changed the settings of {name}")
+            steps = []
+            # Now a relay domain: what only mailboxes here need goes from its DNS (made: out; changed: back as it was,
+            # so its MX is its own mail server's again)
+            if not was and data.get("relay"):
+                made = mail_dns_made(name)
+                cloudflare, zone = mail_zone(name)
+                mine = [entry for entry in made if mail_dns_kind(entry) in MAIL_DNS_MAILBOXES_ONLY]
+                if mine and zone:
+                    out, back, undone = mail_dns_undo(cloudflare, zone, mine)
+                    mail_dns_made(name, drop=undone)
+                    if out:
+                        steps.append(f"Took out {out} DNS record{'s' if out != 1 else ''} it no longer needs")
+                    if back:
+                        steps.append(f"Put {back} DNS record{'s' if back != 1 else ''} back as {'they' if back != 1 else 'it'} were")
+                    audit(f"Mail: {name} is a relay domain: {out} DNS records taken out, {back} put back")
+            return jsonify(domain=_mailcow.domain(mailcow, name), steps=steps)
+        return mail_errors(change)
+    if (request.get_json(silent=True) or {}).get("confirmation") != name:
+        return error("Type the domain's name to delete it.")
+
+    def remove():
+        count = _mailcow.delete_domain(mailcow, name)
+        steps = [f"Deleted {name} in mailcow, with {count} mailbox{'es' if count != 1 else ''} and its mail"]
+        made = mail_dns_made(name)
+        cloudflare, zone = mail_zone(name)
+        if made and zone:
+            out, back, _undone = mail_dns_undo(cloudflare, zone, [entry for entry in made if mail_dns_kind(entry) not in MAIL_DNS_KEPT])
+            if out:
+                steps.append(f"Took out {out} DNS record{'s' if out != 1 else ''} Harbor made for it")
+            if back:
+                steps.append(f"Put {back} DNS record{'s' if back != 1 else ''} Harbor changed back as {'they' if back != 1 else 'it'} were")
+        mail_dns_made(name, forget=True)
+        audit(f"Mail: deleted the domain {name} ({count} mailboxes)")
+        return jsonify(steps=steps)
+    return mail_errors(remove)
+
+
+@app.route("/api/mail/domains/<name>/dns", methods=["GET", "POST"])
+def api_mail_domain_dns(name):
+    """A domain's DNS against what mailcow wants; POST: the records made (kinds, or every missing one), and with replace
+    those that differ changed"""
+    require_admin()
+    mailcow = mail_server()
+    name = mail_domain_of(name)
+    if request.method == "GET":
+        def check():
+            found = mail_dns(mailcow, name)
+            found.pop("settings", None)
+            return jsonify(found)
+        return mail_errors(check)
+    data = request.get_json(silent=True) or {}
+    kinds = data.get("kinds") if isinstance(data.get("kinds"), list) else None
+    return mail_errors(lambda: jsonify(steps=mail_fix(mailcow, name, kinds, replace=data.get("replace") is True)))
+
+
+def mail_mailbox_of(address):
+    """A mailbox the user may keep (its domain is theirs), by its address"""
+    try:
+        address = _mailcow.address(address)
+    except ValueError:
+        abort(404, "No such mailbox.")
+    mail_domain_of(address.rpartition("@")[2])
+    return address
+
+
+@app.route("/api/mail/domains/<name>/mailboxes", methods=["POST"])
+def api_mail_mailboxes(name):
+    """A new mailbox: as many as the user may have in the domain (mailcow keeps the domain's own limit too)"""
+    mailcow = mail_server()
+    name = mail_domain_of(name)
+
+    def make():
+        limit = access.mail_limit(me(), name)
+        if limit is not None and len(_mailcow.mailboxes(mailcow, name)) >= limit:
+            return error(f"You have as many mailboxes in {name} as you may ({limit}).", 403)
+        made = _mailcow.add_mailbox(mailcow, name, request.get_json(silent=True) or {})
+        audit(f"Mail: made the mailbox {made}")
+        return jsonify(address=made)
+    return mail_errors(make)
+
+
+@app.route("/api/mail/mailboxes/<address>", methods=["PUT", "DELETE"])
+def api_mail_mailbox(address):
+    """A mailbox changed (name, quota, password, on or off), or deleted with its mail"""
+    mailcow = mail_server()
+    address = mail_mailbox_of(address)
+    if request.method == "DELETE":
+        if (request.get_json(silent=True) or {}).get("confirmation") != address:
+            return error("Type the address to delete the mailbox.")
+
+        def remove():
+            _mailcow.delete_mailbox(mailcow, address)
+            audit(f"Mail: deleted the mailbox {address}")
+            return jsonify(ok=True)
+        return mail_errors(remove)
+
+    def change():
+        _mailcow.edit_mailbox(mailcow, address, request.get_json(silent=True) or {})
+        audit(f"Mail: changed the mailbox {address}")
+        return jsonify(ok=True)
+    return mail_errors(change)
+
+
+@app.route("/api/mail/domains/<name>/aliases", methods=["POST"])
+@app.route("/api/mail/domains/<name>/aliases/<int:alias>", methods=["DELETE"])
+def api_mail_aliases(name, alias=None):
+    """A new alias (or forward) in the domain, or one deleted"""
+    mailcow = mail_server()
+    name = mail_domain_of(name)
+    if request.method == "DELETE":
+        def remove():
+            found = next((item for item in _mailcow.aliases(mailcow, name) if str(item["id"]) == str(alias)), None)
+            if not found:
+                return error("No such alias.", 404)
+            _mailcow.delete_alias(mailcow, alias)
+            audit(f"Mail: deleted the alias {found['address']}")
+            return jsonify(ok=True)
+        return mail_errors(remove)
+
+    def make():
+        made = _mailcow.add_alias(mailcow, name, request.get_json(silent=True) or {})
+        audit(f"Mail: made the alias {made}")
+        return jsonify(address=made)
+    return mail_errors(make)
+
+
 @app.route("/api/dns/settings", methods=["GET", "PUT", "DELETE"])
 def api_dns_settings():
     """The Cloudflare account DNS uses: its kind and email (never its key or token), tried before it is kept"""
@@ -478,7 +907,7 @@ def api_dns_settings():
 
 
 CLOUDFLARE_LOCKS = os.path.join(DATA, "cloudflare-locks.json")
-# The account's domains, kept until refreshed under Settings, Cloudflare: every call needs them, and they seldom change
+# The account's domains, kept until refreshed under Settings, DNS: every call needs them, and they seldom change
 CLOUDFLARE_ZONES = os.path.join(DATA, "cloudflare-zones.json")
 
 
@@ -530,9 +959,108 @@ def api_dns_zones():
     return jsonify(zones=[item for item in found if access.dns_zone(user, item["name"])])
 
 
+# The Cloudflare accounts a domain may be added to (Settings, DNS, Accounts…): {"allowed": [ids]}; none kept, every one
+CLOUDFLARE_ACCOUNTS = os.path.join(DATA, "cloudflare-accounts.json")
+
+
+def cloudflare_allowed():
+    """The account ids domains may be added to, or None for every one"""
+    try:
+        with open(CLOUDFLARE_ACCOUNTS, encoding="utf-8") as stream:
+            found = json.load(stream).get("allowed")
+    except (OSError, ValueError, AttributeError):
+        return None
+    return found if isinstance(found, list) and found else None
+
+
+@app.route("/api/dns/accounts", methods=["GET", "PUT"])
+def api_dns_accounts():
+    """The Cloudflare accounts the login reaches, each with whether domains may be added to it; PUT: which may"""
+    require_admin()
+    settings = _cloudflare.load()
+    if not settings:
+        return error("No Cloudflare account is set up.", 404)
+    try:
+        found = _cloudflare.accounts(settings)
+    except _cloudflare.CloudflareError as exc:
+        return error(f"{exc} (the API token needs Account, Account Settings, Read)", 502)
+    if request.method == "PUT":
+        chosen = (request.get_json(silent=True) or {}).get("allowed")
+        known = {item["id"] for item in found}
+        if not isinstance(chosen, list) or not chosen or any(item not in known for item in chosen):
+            return error("Choose at least one account.")
+        temporary = CLOUDFLARE_ACCOUNTS + ".tmp"
+        with open(temporary, "w", encoding="utf-8") as stream:
+            json.dump({"allowed": sorted(set(chosen))}, stream)
+        os.replace(temporary, CLOUDFLARE_ACCOUNTS)
+        audit("Cloudflare: domains may be added to " + ", ".join(item["name"] for item in found if item["id"] in chosen))
+    allowed = cloudflare_allowed()
+    return jsonify(accounts=[{**item, "allowed": allowed is None or item["id"] in allowed} for item in found])
+
+
+@app.route("/api/dns/zones", methods=["POST"])
+def api_dns_zone_add():
+    """A domain added to the Cloudflare account (an administrator's): its records read from its DNS now, and the name
+    servers to set at its registrar"""
+    require_admin()
+    settings = _cloudflare.load()
+    if not settings:
+        return error("No Cloudflare account is set up.", 404)
+    data = request.get_json(silent=True) or {}
+    try:
+        account = data.get("account") or ""
+        allowed = cloudflare_allowed()
+        if not account:
+            found = [item for item in _cloudflare.accounts(settings) if allowed is None or item["id"] in allowed]
+            if len(found) != 1:
+                return error("Choose the Cloudflare account to add it to.")
+            account = found[0]["id"]
+        if allowed is not None and account not in allowed:
+            return error("Domains are not added to that account (Settings, DNS, Accounts…).")
+        zone = _cloudflare.add_zone(settings, data.get("name"), account, data.get("jump_start", True) is not False)
+        _cloudflare.kept_zones(settings, CLOUDFLARE_ZONES, fresh=True)
+    except ValueError as exc:
+        return error(str(exc))
+    except _cloudflare.CloudflareError as exc:
+        return error(f"Cloudflare did not add it: {exc}", 502)
+    audit(f"Cloudflare: added the domain {zone['name']}")
+    return jsonify(zone=zone)
+
+
+@app.route("/api/dns/zones/<zone>", methods=["DELETE"])
+def api_dns_zone_remove(zone):
+    """A domain taken out of the Cloudflare account with all its records (its name typed to confirm)"""
+    require_admin()
+    settings = dns_account()
+    found = dns_zone_of(settings, zone)
+    if (request.get_json(silent=True) or {}).get("confirmation") != found["name"]:
+        return error("Type the domain's name to remove it.")
+    try:
+        _cloudflare.remove_zone(settings, zone)
+        _cloudflare.kept_zones(settings, CLOUDFLARE_ZONES, fresh=True)
+    except (ValueError, _cloudflare.CloudflareError) as exc:
+        return error(f"Cloudflare did not remove it: {exc}", 502)
+    audit(f"Cloudflare: removed the domain {found['name']}")
+    return jsonify(ok=True)
+
+
+@app.route("/api/dns/zones/<zone>/activation", methods=["POST"])
+def api_dns_zone_activation(zone):
+    """A pending domain's name servers looked at again by Cloudflare now"""
+    require_admin()
+    settings = dns_account()
+    dns_zone_of(settings, zone)
+    try:
+        _cloudflare.activation_check(settings, zone)
+        found = next((item for item in _cloudflare.kept_zones(settings, CLOUDFLARE_ZONES, fresh=True)["zones"] if item["id"] == zone), None)
+    except (ValueError, _cloudflare.CloudflareError) as exc:
+        return error(f"Cloudflare: {exc}", 502)
+    return jsonify(zone=found)
+
+
 @app.route("/api/dns/zones/refresh", methods=["POST"])
 def api_dns_zones_refresh():
-    """The account's domains read again from Cloudflare (Settings, Cloudflare): one added or removed there is seen"""
+    """The account's domains read again from Cloudflare (Settings, DNS): one added or removed there is seen"""
     require_admin()
     settings = _cloudflare.load()
     if not settings:
@@ -5537,6 +6065,8 @@ def api_me():
                    # DNS in the menu: where a Cloudflare account is set up, for a user given domains, and for an
                    # administrator unless it is taken out of the menu (Settings, Top menu)
                    dns=bool(_cloudflare.load()) and access.has_dns(user) and not (admin and cfg.get("dns_menu") == "hide"),
+                   # Mail: where a mailcow server is set up, for an administrator and a user given domains
+                   mail=bool(_mailcow.load()) and access.has_mail(user), mail_server=admin and bool(_mailcow.load()),
                    dns_account=admin and bool(_cloudflare.load()),
                    dns_domains=[] if admin else user.get("dns_domains", []),
                    cloudflare_parts=list(_cloudflare.PARTS) if admin else user.get("cloudflare_parts", ["dns"]))
@@ -5809,7 +6339,7 @@ def api_users():
         listed = [dict(user, linux=names.get(user.get("id"), ""), last_login=logins.get(user.get("id"))) for user in access.visible_users(cfg, me())]
         return jsonify(users=listed, sites=sites, connections=sql_connections_public(),
                        site_actions=access.SITE_ACTIONS, sql_actions=access.SQL_ACTIONS, templates=access.templates(cfg),
-                       dns_zones=dns_zone_names(), can_mail=can_mail(),
+                       dns_zones=dns_zone_names(), mail_domains=mail_domain_names(), can_mail=can_mail(),
                        # On a master: the members a user can be given access on, in the user window
                        members=member_names() if has_members() and not member_of() else [])
     users_from_master()
@@ -9102,15 +9632,19 @@ def api_windows_sites():
     from harbor.server import servers
     listed = {name: entry for name, entry in servers.servers(System(), "windows").items() if entry.get("list_sites")}
     fresh = request.args.get("fresh") == "1"
-    notes = windows_sites_notes()
     with ThreadPoolExecutor(max_workers=4) as executor:
         answers = dict(zip(listed, executor.map(lambda name: windows_listing(name, fresh=fresh), listed)))
+    # Read after the shares have answered (that can take seconds): a binding saved meanwhile is in the answer
+    notes = windows_sites_notes()
     found = []
     for name, entry in sorted(listed.items()):
         sites, why = answers[name]
         mine = notes.get(name) if isinstance(notes.get(name), dict) else {}
         found.append({"name": name, "share": entry.get("share", ""), "error": why,
-                      "sites": [{"folder": item["folder"], "umbraco": bool(item.get("umbraco")), "binding": (mine.get(item["folder"]) or {}).get("binding", ""),
+                      "sites": [{"folder": item["folder"], "umbraco": bool(item.get("umbraco")),
+                                 # What it is, read from its files: as the other sites' badges
+                                 **{key: item.get(key, "") for key in ("kind", "umbraco_version", "dotnet", "framework")},
+                                 "binding": (mine.get(item["folder"]) or {}).get("binding", ""),
                                  "backend": (mine.get(item["folder"]) or {}).get("backend", "")} for item in sites]})
     return jsonify(servers=found)
 

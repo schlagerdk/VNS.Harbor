@@ -257,6 +257,10 @@ Notes:
 - On the master (phase 13), Mail is the master's: one mailcow for every member's customers.
 - Later: a new site's domain offered mail at once; more than one mailcow server.
 
+Done in 1.0.113: steps 1 to 4 (the server and its state, domains, mailboxes and aliases, a new domain with its DKIM and
+DNS records made in Cloudflare and the DNS check with Fix, and users with their domains and a number of mailboxes each).
+Left: the user's total quota per domain, forwards as their own kind, and Mail on a new site's domain.
+
 Steps:
 1. Settings: the mailcow server and its API key, tried before it is kept; its state on a card.
 2. Mail in the top menu: domains, mailboxes and aliases for an administrator.

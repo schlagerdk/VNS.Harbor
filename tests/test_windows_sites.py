@@ -24,7 +24,12 @@ class WindowsSitesTests(unittest.TestCase):
 		                            "web": {"host": "10.0.0.6", "user": "root", "port": "22"}}))
 
 	def system(self):
-		return RecordingSystem(root=self.root, answers={"rclone lsf :smb:sites --dirs-only": "Alpha/\nAlpha/Umbraco/\nAlpha/bin/\nold-backup/\nbeta/\nbeta/wwwroot/\n"})
+		return RecordingSystem(root=self.root, answers={
+			"rclone lsf :smb:sites --max-depth 2": "Alpha/\nAlpha/Umbraco/\nAlpha/bin/\nAlpha/Web.config\nold-backup/\nbeta/\nbeta/wwwroot/\nbeta/Shop.runtimeconfig.json\nbeta/Shop.deps.json\n",
+			"rclone cat :smb:sites/Alpha/Web.config": '<configuration><appSettings><add key="umbracoConfigurationStatus" value="7.15.11" /></appSettings>'
+			                                         '<system.web><compilation targetFramework="4.7.2" /></system.web></configuration>',
+			"rclone cat :smb:sites/beta/Shop.runtimeconfig.json": json.dumps({"runtimeOptions": {"frameworks": [{"name": "Microsoft.AspNetCore.App", "version": "8.0.0"}]}}),
+			"rclone cat :smb:sites/beta/Shop.deps.json": '{"libraries": {"Umbraco.Cms/13.13.0": {}}}'})
 
 	def entry(self):
 		return json.loads((self.root / "var/lib/harbor/servers.json").read_text())["iis"]
@@ -36,6 +41,12 @@ class WindowsSitesTests(unittest.TestCase):
 		self.assertEqual([item["folder"] for item in windows_sites.folders(system, "iis")], ["Alpha", "beta"])
 		# One with an umbraco folder says so: its backend is suggested as /umbraco
 		self.assertEqual([item["umbraco"] for item in windows_sites.folders(system, "iis")], [True, False])
+		# What each is, from its files: classic Umbraco in web.config, a newer one in its build
+		found = {item["folder"]: item for item in windows_sites.folders(self.system(), "iis")}
+		self.assertEqual({key: found["Alpha"][key] for key in ("kind", "umbraco_version", "framework", "dotnet")},
+		                 {"kind": "umbraco", "umbraco_version": "7.15.11", "framework": "4.7.2", "dotnet": ""})
+		self.assertEqual({key: found["beta"][key] for key in ("kind", "umbraco_version", "framework", "dotnet")},
+		                 {"kind": "umbraco", "umbraco_version": "13.13.0", "framework": "", "dotnet": "8.0"})
 		# Every folder, for choosing: the one left out marked
 		self.assertEqual([(item["folder"], item["excluded"]) for item in windows_sites.folders(system, "iis", everything=True)],
 		                 [("Alpha", False), ("beta", False), ("old-backup", True)])

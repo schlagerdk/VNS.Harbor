@@ -82,6 +82,9 @@ for name in sorted(os.listdir("/etc/systemd/system")) if os.path.isdir("/etc/sys
     if isinstance(login, dict) and login.get("secret_key"):
         admin = match.group(1)
 found["admin"] = admin
+# Whether it has a SQL Server of its own (Microsoft SQL Server, PostgreSQL): its card in Servers says what it keeps only then
+import glob
+found["sql_server"] = os.path.exists("/opt/mssql/bin/sqlservr") or bool(glob.glob("/usr/lib/postgresql/*/bin/postgres"))
 # Its own sites: the folders in /var/www that are not the admin, nor an environment managed from another server (a
 # note in /var/lib/vns-managed). While it has any, Harbor is needed there.
 try:

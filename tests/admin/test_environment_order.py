@@ -280,7 +280,7 @@ console.log(JSON.stringify([first, firstNone, none.hidden]));
         for gone in ("settings-sql", "settings-web", "settings-start-view", "settings-keep-alive", "dlg-start-view", "settings-update-group"):
             self.assertNotIn(gone, page)
         self.assertNotIn("sql-back-bar", page)
-        self.assertIn('const active = button.dataset.view === (["sql", "server", "dns"].includes(name) ? name : "sites");', source)
+        self.assertIn('const active = button.dataset.view === (["sql", "server", "dns", "mail"].includes(name) ? name : "sites");', source)
         self.assertIn('if (currentView === "site") go("#sites");', source)
         self.assertIn('body[data-view="sql"] .page-header .search-box { display: none; }', (APP / "static/style.css").read_text())
         for label in ("SQL Server", "Preferences…", "Files (/)", "Test config", "Error logs"):

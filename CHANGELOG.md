@@ -2,6 +2,28 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.113] - Unreleased
+
+### Features
+
+- Mail, from mailcow (phase 15): Settings, Mail connects the mailcow server (its host and an API key with read and write access, tried before it is kept, the key for root only) and shows its state: its version, its containers and the mail storage's disk. Mail in the top menu lists its domains: for each its mailboxes (with their use of their quota and last login), its aliases, and for an administrator its DNS checked against what mailcow wants (MX, autodiscover and autoconfig, the autodiscover SRV record, SPF, DMARC and DKIM), with the missing records made in Cloudflare with a click and one that differs fixed (an SPF record keeps its other senders, mx added). New domain makes the domain with its limits and DKIM key, and its DNS records in Cloudflare where it is in the account; Delete takes its mailboxes, its DKIM key and the records Harbor made with it (its name typed). Mailboxes are made, changed (name, quota, password, on or off) and deleted; aliases made and deleted.
+- A mail domain can be a relay, as mailcow's Relay, Relay All and Relay Non-Local: chosen as cards with a new domain and under its Settings…, and shown beside its name. A relay domain's MX stays with its own mail server: its DNS check wants SPF, DKIM and DMARC only. New domain offers to make its DNS records in Cloudflare only where a Cloudflare account is connected.
+- Cloudflare: Add domain… adds a domain to the account (the account chosen where the login reaches more than one), its records read from its DNS now so nothing stops working, and shows the name servers to set at its registrar, with Copy and Check now while it waits for them. Remove… takes a domain out of the account with all its records (its name typed). An administrator's. Settings, DNS, Accounts… chooses which of the accounts the login reaches domains may be added to: with one, Add domain asks for none; with more, the one used last is chosen.
+- Rspamd on the Mail page, for an administrator: what it has scanned (spam and ham) and done (one bar in parts: no action, greylist, add header, reject), and the latest messages it scanned, found by typing, each opening to the symbols that weighed most; Open Rspamd for its own UI. A Relay All domain is shown as all its mail relayed, without mailboxes or aliases (its limits the least mailcow takes, not asked).
+- A mail domain's DNS in Cloudflare is left as Harbor found it: deleting the domain takes out the records Harbor made and puts back those it changed, all but its SPF (a site may still send its mail through the server); made a relay, its MX, autodiscover and autoconfig records go the same way.
+- A mail domain whose DNS is kept elsewhere (not in the Cloudflare account) is checked in public DNS as it answers now, with Check again.
+- Users: Mail in the user window, with the domains given and how many mailboxes each may have there. A user sees only their domains under Mail and keeps their mailboxes and aliases there, up to the number given (the server refuses one more).
+- A Windows server's sites show what they are, as the other sites do: Umbraco and its version (classic Umbraco from web.config, a newer one from its build), .NET or .NET Framework.
+
+### Fixes
+
+- No text area can be resized any more (one in the SFTP part of the user window could): each has the height its place needs.
+- Settings' Cloudflare is called DNS, as Mail is (its provider, Cloudflare, a card in it): where other providers can be added later.
+- A binding saved on a Windows site could be drawn over by a reading of the list asked for before it was saved: it showed only after Read again.
+- New site could stay hidden for a while (until the sites were read again, on a master from every member) after the user's rights were read with a member's.
+- The servers to choose from (Add environment, copy and move) are in the order chosen for the members, not by name.
+- A member's card in Servers shows SQL Server and SQL Server… only where it has a SQL Server of its own.
+
 ## [1.0.112] - 2026-11-28
 
 ### Features

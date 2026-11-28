@@ -353,6 +353,29 @@ def dns_zone(user, name):
     return has_dns(user) and str(name or "").lower() in (user.get("dns_domains") or [])
 
 
+def has_mail(user):
+    """Whether Mail is a user's: on, with domains given. An administrator keeps every domain on the mailcow server"""
+    if is_admin(user):
+        return True
+    return bool(user and user.get("mail") and user.get("mail_domains"))
+
+
+def mail_domain(user, name):
+    """Whether the user may keep a mail domain (its mailboxes and aliases)"""
+    if is_admin(user):
+        return True
+    return has_mail(user) and str(name or "").lower() in (user.get("mail_domains") or {})
+
+
+def mail_limit(user, name):
+    """How many mailboxes the user may have in a domain: None for no limit (an administrator, or none set)"""
+    if is_admin(user):
+        return None
+    grant = (user.get("mail_domains") or {}).get(str(name or "").lower())
+    value = grant.get("mailboxes") if isinstance(grant, dict) else None
+    return value if isinstance(value, int) and value >= 0 else None
+
+
 def has_sql(user):
     """Whether SQL Server is a user's: on, and a connection given (or the right to add one to a SQL Server). On with
     nothing in it is no access: it is not shown."""
@@ -584,6 +607,27 @@ def clean(data, existing=None, sites=None, connections=None):
                                   if isinstance(name, str) and domain_name(str(name).strip().lower().rstrip("."))})
     if not user["dns_domains"]:
         user["dns"] = False
+    # Mail (phase 15): the mail domains on the mailcow server they keep, each with how many mailboxes they may have
+    user["mail"] = bool(data.get("mail", existing.get("mail", False)))
+    given = data.get("mail_domains", existing.get("mail_domains", {})) or {}
+    if not isinstance(given, dict):
+        raise ValueError("Invalid mail domains.")
+    user["mail_domains"] = {}
+    for name, grant in given.items():
+        name = str(name).strip().lower().rstrip(".")
+        if not domain_name(name):
+            continue
+        count = (grant or {}).get("mailboxes") if isinstance(grant, dict) else None
+        if count not in (None, ""):
+            try:
+                count = int(count)
+            except (TypeError, ValueError):
+                raise ValueError(f"Give the number of mailboxes in {name} as a number.") from None
+            if not 0 <= count <= 10000:
+                raise ValueError(f"The number of mailboxes in {name} is 0 to 10000.")
+        user["mail_domains"][name] = {"mailboxes": count} if isinstance(count, int) else {}
+    if not user["mail_domains"]:
+        user["mail"] = False
     # Which parts of Cloudflare they may use on those domains (DNS only for one given before there was a choice)
     parts = data.get("cloudflare_parts", existing.get("cloudflare_parts", ["dns"]))
     user["cloudflare_parts"] = [part for part in CLOUDFLARE_PARTS if isinstance(parts, list) and part in parts] or ["dns"]

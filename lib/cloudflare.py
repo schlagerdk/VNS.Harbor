@@ -126,9 +126,52 @@ def verify(settings, opener=None):
 
 
 def zones(settings, opener=None):
-    """[{id, name, status}], by name"""
-    return sorted(({"id": item["id"], "name": item["name"], "status": item.get("status", "")}
+    """[{id, name, status, name_servers}], by name: the name servers Cloudflare gave it, to be set at its registrar"""
+    return sorted(({"id": item["id"], "name": item["name"], "status": item.get("status", ""), "name_servers": item.get("name_servers") or [],
+                    "original_name_servers": item.get("original_name_servers") or []}
                    for item in pages(settings, "/zones", opener=opener)), key=lambda item: item["name"])
+
+
+def accounts(settings, opener=None):
+    """The Cloudflare accounts the login reaches, [{id, name}]: a domain added goes in one of them"""
+    return sorted(({"id": item["id"], "name": item.get("name", "")} for item in pages(settings, "/accounts", opener=opener)), key=lambda item: item["name"])
+
+
+def zone_name(value):
+    """A domain to add, checked, as Cloudflare takes it (æ, ø and å as punycode)"""
+    name = str(value or "").strip().lower().rstrip(".")
+    try:
+        ascii_name = name.encode("idna").decode("ascii")
+    except (UnicodeError, ValueError):
+        raise ValueError("That is not a domain.") from None
+    if not re.fullmatch(r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9-]{2,63}", ascii_name):
+        raise ValueError("That is not a domain.")
+    return ascii_name
+
+
+def add_zone(settings, name, account, jump_start=True, opener=None):
+    """A domain added to the account: {id, name, status, name_servers}. With jump_start, Cloudflare reads the records
+    its DNS has now, so they are there before the name servers are moved"""
+    if not ZONE_ID.fullmatch(account or ""):
+        raise ValueError("Choose the Cloudflare account.")
+    item = call(settings, "POST", "/zones", {"name": zone_name(name), "account": {"id": account}, "type": "full", "jump_start": bool(jump_start)},
+                opener=opener)["result"]
+    return {"id": item["id"], "name": item["name"], "status": item.get("status", ""), "name_servers": item.get("name_servers") or [],
+            "original_name_servers": item.get("original_name_servers") or []}
+
+
+def remove_zone(settings, zone, opener=None):
+    """A domain taken out of the account, with every record it has there"""
+    if not ZONE_ID.fullmatch(zone or ""):
+        raise ValueError("Unknown zone")
+    call(settings, "DELETE", f"/zones/{zone}", opener=opener)
+
+
+def activation_check(settings, zone, opener=None):
+    """Cloudflare asked to look at the domain's name servers again now (a pending domain), not hours later"""
+    if not ZONE_ID.fullmatch(zone or ""):
+        raise ValueError("Unknown zone")
+    call(settings, "PUT", f"/zones/{zone}/activation_check", opener=opener)
 
 
 def _account_of(settings):
