@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.118] - 2026-11-28
+
+### Fixes
+
+- A relayed mail domain's way showed `anything@example.com`, easily read as that one address: it now shows `*@example.com`, every address of the domain.
+
 ## [1.0.117] - 2026-11-28
 
 ### Fixes

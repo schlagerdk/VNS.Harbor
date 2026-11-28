@@ -13398,7 +13398,7 @@ function drawMailDomain() {
 			el("span", { className: "mail-relay-panel-text" }, el("strong", { textContent: "All its mail is relayed" }),
 				el("small", { textContent: "It has no mailboxes or aliases on this server: every address is passed on as it comes." }))),
 		el("div", { className: "mail-relay-flow" },
-			step("mail", `anything@${domain.name}`, "Mail to any of its addresses"), arrow(),
+			step("mail", `*@${domain.name}`, "Mail to any of its addresses, whatever comes before the @"), arrow(),
 			step("shield", mailData.host || "This server", "Takes it in, and signs what it sends with its DKIM key"), arrow(),
 			step("globe", "Its own mail server", "Where its MX points: the mail ends up there")));
 	$("#mail-panel").replaceChildren(head,
