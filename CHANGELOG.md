@@ -2,6 +2,13 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.106] - Unreleased
+
+### Fixes
+
+- An environment's appsettings.json on another server saved in Windows-1252 (æ ø å a byte each) no longer stops Harbor's update there: it is fetched and sent back as bytes, read as Windows-1252 where it is not UTF-8, and written as UTF-8 when it changes, which is what .NET reads.
+- A part of Settings opened from its menu opens at the top, not where the part before was scrolled to.
+
 ## [1.0.105] - 2026-11-28
 
 ### Features

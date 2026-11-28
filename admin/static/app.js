@@ -12615,6 +12615,7 @@ function showWindowsMenu() {
 }
 // The admin site of the server Settings are of: this one's, or the member's chosen at the top
 $("#server-tab-admin").onclick = () => {
+	window.scrollTo({ top: 0, behavior: "instant" });
 	const admin = allSites.find((s) => s.admin && (s.harbor_server || "") === pickedServer) || allSites.find((s) => s.admin && !s.harbor_server);
 	if (admin) go(siteLink(admin.name));
 };
@@ -15077,7 +15078,9 @@ function showToolCards() {
 	for (const card of $("#server-tools-list").children) card.hidden = card.dataset.tool !== serverTab;
 }
 // A part opens from the menu; the one open, clicked again, is read again (as the logo reloads the other pages)
+// Each opens at the top: never where the part before was scrolled to
 for (const tab of SERVER_TABS) $("#server-tab-" + tab).onclick = () => {
+	window.scrollTo({ top: 0, behavior: "instant" });
 	if (tab !== serverTab || location.hash !== "#server/" + tab) return go("#server/" + tab);
 	toolsDrawn = false;
 	run(() => showServerTab(tab));
@@ -15090,6 +15093,7 @@ $(".server-nav").addEventListener("keydown", (event) => {
 	// In the order the menu shows them, the parts hidden here left out
 	const shown = [...$(".server-nav").querySelectorAll("[data-tab]")].map((item) => item.dataset.tab).filter((tab) => SERVER_TABS.includes(tab) && !$("#server-tab-" + tab).hidden);
 	const next = shown[(shown.indexOf(serverTab) + step + shown.length) % shown.length];
+	window.scrollTo({ top: 0, behavior: "instant" });
 	go("#server/" + next);
 	$("#server-tab-" + next).focus();
 });

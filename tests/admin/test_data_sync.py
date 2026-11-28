@@ -109,6 +109,15 @@ class DataSyncTests(unittest.TestCase):
                 data_sync.apply_file(path, {}, "appsettings.json on prod")
             self.assertIn("// the site", path.read_text())
 
+    def test_a_file_saved_in_windows_1252_is_read_and_written_as_utf_8(self):
+        """An appsettings.json on another server saved in Windows-1252 (ø a byte of its own) stopped Harbor's update
+        there: it is read, and written as UTF-8 when it changes, which is what .NET reads"""
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "appsettings.json"
+            path.write_bytes('{\n  "Name": "Grøn",\n  "uSync": {"Settings": {"ImportAtStartup": "Settings"}}\n}\n'.encode("cp1252"))
+            self.assertTrue(data_sync.apply_file(path, {}, package=True))
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["Name"], "Grøn")
+
     def test_a_sender_writes_everything_at_startup(self):
         """Export on save only writes what is saved after: content made before has to be written once, at startup"""
         template = json.loads((ROOT / "templates/sites/csharp/umbraco/project/appsettings.json").read_text())

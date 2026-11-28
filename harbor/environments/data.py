@@ -9,6 +9,7 @@
 
 lib/data_sync.py decides who may sync what; the admin uses it too, so it stays where it is and harbor loads it.
 """
+import base64
 import importlib.util
 import os
 from pathlib import Path
@@ -133,12 +134,16 @@ class DataSync:
                 share.rclone("touch", f"{share.target}/web.config")
                 return
             path = shlex.quote(f"{environment.root}/appsettings.json")
-            Path(file).write_text(settings.remote_exec(system, environment, f"cat {path}", capture=True).stdout)
+            # As bytes (base64 over SSH): a file there need not be UTF-8 (one saved in Windows-1252, æ ø å as one byte
+            # each, stopped the update), and it comes back as it was unless it is changed
+            fetched = settings.remote_exec(system, environment, f"base64 -w0 {path}", capture=True).stdout
+            Path(file).write_bytes(base64.b64decode(fetched.strip()))
             result = self.appsettings(site_id, [file], f"appsettings.json on {display_name(system, site, site_id)}")
             if not force and "Updated" not in result:
                 system.say("Nothing changed, so the site is not restarted.")
                 return
-            settings.remote_exec(system, environment, f"tee {path} >/dev/null", input=Path(file).read_text(), capture=True)
+            settings.remote_exec(system, environment, f"bash -c {shlex.quote(f'base64 -d > {path}')}",
+                                 input=base64.b64encode(Path(file).read_bytes()).decode(), capture=True)
             settings.remote_exec(system, environment, f"chown www-data:www-data {path}")
             if not restart:
                 return

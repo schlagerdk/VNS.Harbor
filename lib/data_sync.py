@@ -218,7 +218,13 @@ def configuration_json(text, shown):
 
 def apply_file(path, settings, shown=None, package=False):
     shown = shown or str(path)
-    text = Path(path).read_text(encoding="utf-8-sig")
+    raw = Path(path).read_bytes()
+    try:
+        text = raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        # Saved in Windows-1252 (æ ø å a byte each), as a file made on Windows may be: read so, and written as UTF-8
+        # when it changes, which is what .NET reads it as
+        text = raw.decode("cp1252", errors="replace")
     data = configuration_json(text, shown)
     if not isinstance(data, dict):
         raise ValueError(f"{shown} is not a settings object")
