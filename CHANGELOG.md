@@ -2,6 +2,26 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.114] - Unreleased
+
+### Features
+
+- A mailbox's Setup… shows how its user sets it up: webmail, the automatic setup by address alone (Outlook, Apple Mail, Thunderbird and phones, where the domain's DNS has its autodiscover and autoconfig records; said so where it has not), and the servers and ports to type by hand. Copy gives it as text; Send… mails it to another address of its user (the new one is not set up yet) through Harbor's mail server, without its password. New mailbox can send it at once, with the password just typed.
+- A mailbox is On, No login (its mail still comes in, nobody logs in: mailcow's own) or Off, chosen as cards in its window and shown in its list in green, amber and red.
+- Users and Mail: Settings on a domain's row in the user window lets them change the domain's settings too (how it takes mail, its limits), and then the domain's own number of mailboxes holds, not one of theirs; deleting a domain stays an administrator's. A Relay All domain has no number of mailboxes to give; made one that takes mailboxes, the users given it with none may have 5. A user who keeps a mail domain's zone in Cloudflare sees its DNS under Mail and puts right what is missing (a record an administrator locked is left).
+- A mail domain's quotas, and a mailbox's, are typed as sizes in MB or GB, as the usage limits are.
+- New domain under Mail offers to make its DNS records in Cloudflare only where the domain is in the account; elsewhere it says they are listed under it.
+- A Relay All domain's page shows the way its mail goes: any of its addresses, through this server (which signs it with DKIM), to its own mail server.
+- Users' list says what each chip is: Web, SQL, DNS, Mail and each member, with what they have in full on hover.
+- The IIS snippets say they need URL Rewrite on the server (Compression: Dynamic Content Compression): without it the site answers 500.19.
+- The README's screenshots are of this version, with Mail and Cloudflare added.
+
+### Fixes
+
+- A user with Mail but neither Web Server nor SQL Server could not open Mail from the menu: they were sent to Cloudflare.
+- A web.config without <system.webServer> (a classic ASP.NET site's often has only <system.web>) gets one when a rule is put in from Snippets, or carried to a Windows environment: it said it had no place for the rule.
+- A dialog that is not taken (a mailcow key refused, a domain Cloudflare would not add, a value that is wrong) says why in the dialog itself, which stays open to be put right, not in a toast away from it.
+
 ## [1.0.113] - 2026-11-28
 
 ### Features

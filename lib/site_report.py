@@ -613,6 +613,54 @@ def login_mail_html(host, name, username, password, link, now=None, choose=None,
                 f"Sent from <strong>{esc(host)}</strong> {stamp(now)}.", "Sign-in")
 
 
+def mailbox_setup_text(address, mail_host, password="", automatic=True):
+    """How a mailbox is set up, as plain text (beside the HTML). The automatic setup only where the domain's DNS has
+    its autodiscover and autoconfig records: else the servers are typed in"""
+    return "\n".join([f"Your mailbox {address} is ready.", "",
+                      f"Webmail: https://{mail_host}/", "",
+                      *(["In Outlook, Apple Mail, Thunderbird or on a phone: add the account with the address and its password; the program finds the server itself.", "",
+                         "If it asks for the servers:"] if automatic else ["In Outlook, Apple Mail, Thunderbird or on a phone, set it up by hand with these:"]), f"Username: {address}", *([f"Password: {password}"] if password else []),
+                      f"Incoming (IMAP): {mail_host}, port 993, SSL/TLS", f"Outgoing (SMTP): {mail_host}, port 465, SSL/TLS (or 587, STARTTLS)",
+                      "The outgoing server logs in with the same username and password.",
+                      *([] if password else ["", "The password is sent to you on its own."])])
+
+
+def mailbox_setup_html(host, address, mail_host, password="", now=None, automatic=True):
+    """A mailbox's setup, mailed to another address of its user (the new one is not set up yet): webmail as a button,
+    and the address, its password when given, and the servers in one framed box, as the login mail has them"""
+    now = now or time.time()
+    mono = "font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace"
+    webmail = f"https://{mail_host}/"
+
+    def line(label, value, first=False):
+        border = "" if first else "border-top:1px solid #e5e7eb;"
+        return (f'<tr><td class="mu{"" if first else " ln"}" style="{border}padding:13px 18px;width:120px;font-size:11px;line-height:18px;font-weight:700;'
+                f'letter-spacing:.08em;text-transform:uppercase;color:#6b7280;vertical-align:middle">{label}</td>'
+                f'<td class="tx{"" if first else " ln"}" style="{border}padding:13px 18px;font-size:14px;line-height:21px;font-weight:600;color:#111827;{mono};'
+                f'word-break:break-all;vertical-align:middle">{value}</td></tr>')
+    plain = 'style="color:inherit;text-decoration:none"'
+    rows = [line("Address", f'<span {plain}>{esc(address)}</span>', first=True)]
+    if password:
+        rows.append(line("Password", f'<span style="letter-spacing:.04em">{esc(password)}</span>'))
+    rows += [line("Incoming", f"{esc(mail_host)} &middot; IMAP &middot; port 993 &middot; SSL/TLS"),
+             line("Outgoing", f"{esc(mail_host)} &middot; SMTP &middot; port 465 &middot; SSL/TLS<br>"
+                              f'<span class="mu" style="font-weight:500;color:#6b7280">or port 587 &middot; STARTTLS</span>')]
+    box = (f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="rw" style="border-collapse:separate;'
+           f'border:1px solid #e5e7eb;border-radius:12px;background:#f9fafb;margin:0 0 16px">{"".join(rows)}</table>')
+    button = (f'<a href="{esc(webmail)}" style="display:inline-block;padding:13px 24px;border-radius:10px;background:#2563eb;color:#ffffff;'
+              f'font-size:15px;font-weight:700;text-decoration:none">Open webmail</a>')
+    note = lambda text: f'<div class="mu" style="margin-top:12px;font-size:13px;line-height:19px;color:#6b7280">{esc(text)}</div>'
+    automatic = note("In Outlook, Apple Mail, Thunderbird or on a phone, add the account with the address and its password: "
+                     "the program finds the server itself. The servers above are for one that asks.") if automatic else note(
+        "Set it up by hand in your mail program, with the servers above: choose IMAP, not POP or Exchange.")
+    after = note("The outgoing server logs in with the same address and password." + ("" if password else " The password is sent to you on its own."))
+    return page(host, "blue", f"Your mailbox {address}",
+                "It is ready. This is how you read and send its mail, in a browser or in your mail program.",
+                [section("Webmail", button + note("In any browser: log in with the address and its password.")),
+                 section("In a mail program", box + automatic + after)],
+                f"Sent from <strong>{esc(host)}</strong> {stamp(now)}.", "Mailbox")
+
+
 def test_mail_html(host, now=None):
     """The test of the mail server, from Settings"""
     now = now or time.time()

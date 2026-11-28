@@ -64,6 +64,15 @@ class ServerTests(unittest.TestCase):
 		# A listing with nothing in it is {}
 		self.assertEqual(mailcow.domains(SETTINGS, opener=opener({})), [])
 
+	def test_a_mailbox_on_its_login_off_or_off(self):
+		"""mailcow's 1 (on), 2 (its login off, its mail still delivered) and 0 (off)"""
+		for sent, kept in ((True, 1), (2, 2), (False, 0), (0, 0)):
+			asked = []
+			mailcow.edit_mailbox(SETTINGS, "anna@shop.dk", {"active": sent}, opener=opener([{"type": "success", "msg": "mailbox_modified"}], asked))
+			self.assertEqual(asked[0][3]["attr"]["active"], kept)
+		with self.assertRaises(ValueError):
+			mailcow.edit_mailbox(SETTINGS, "anna@shop.dk", {"active": 3})
+
 	def test_a_new_domain_has_its_limits_and_dkim_key(self):
 		asked = []
 		mailcow.add_domain(SETTINGS, {"domain": "Shop.DK", "mailboxes": 5, "aliases": 20, "quota_mb": 5120, "mailbox_quota_mb": 1024},
@@ -170,7 +179,8 @@ class MailFixTests(unittest.TestCase):
 			      "_mailcow": mock.Mock(dkim=lambda settings, name: None, domain=lambda settings, name: {"relay": ""},
 			                            wanted_records=mailcow.wanted_records, check_records=mailcow.check_records,
 			                            record_body=mailcow.record_body),
-			      "_cloudflare": cloudflare, "mail_zone": lambda name: ({"token": "t"}, {"id": "z1", "name": "shop.dk"})}
+			      "_cloudflare": cloudflare, "mail_zone": lambda name: ({"token": "t"}, {"id": "z1", "name": "shop.dk"}),
+			      "is_admin": lambda: True, "CLOUDFLARE_LOCKS": os.path.join(folder, "locks.json")}
 			exec(compile(ast.Module(body=nodes, type_ignores=[]), str(app), "exec"), ns)
 			done = ns["mail_fix"](SETTINGS, "shop.dk")
 			# The differing one is left without replace: only the missing ones are made
@@ -194,6 +204,14 @@ class MailFixTests(unittest.TestCase):
 			self.assertIn("spf", ns["MAIL_DNS_KEPT"])
 			self.assertEqual(set(ns["MAIL_DNS_MAILBOXES_ONLY"]), {"mx", "autodiscover", "autoconfig", "srv"})
 			cloudflare.create.assert_called_with({"token": "t"}, "z1", {"type": "A", "name": "autodiscover.shop.dk", "ttl": 1, "content": "192.0.2.1", "proxied": False})
+			# A user who keeps the zone: a record an administrator locked is left, and said so
+			cloudflare.reset_mock()
+			cloudflare.is_locked.return_value = True
+			ns["is_admin"] = lambda: False
+			current[:] = [{"id": "a2", "type": "A", "name": "autoconfig.shop.dk", "content": "192.0.2.2"}]
+			done = ns["mail_fix"](SETTINGS, "shop.dk", ["autoconfig"], replace=True)
+			self.assertEqual(done, ["Left CNAME autoconfig.shop.dk: it is locked, an administrator changes it"])
+			cloudflare.delete.assert_not_called()
 
 
 class RspamdTests(unittest.TestCase):
@@ -240,6 +258,83 @@ class RelayTests(unittest.TestCase):
 		self.assertEqual(mailcow.record_body(spf, {"content": '"v=spf1 mx -all"'})["content"], '"v=spf1 a:mail.example.com mx -all"')
 
 
+class SetupMailTests(unittest.TestCase):
+	def test_the_setup_mailed_to_another_address(self):
+		"""What a mailbox's user is sent: webmail at the server's own address, the servers and ports, and its password
+		only when it is given"""
+		report_spec = importlib.util.spec_from_file_location("site_report_under_test", ROOT_DIR / "lib/site_report.py")
+		report = importlib.util.module_from_spec(report_spec)
+		report_spec.loader.exec_module(report)
+		text = report.mailbox_setup_text("anna@shop.dk", "mail.example.com")
+		self.assertIn("Webmail: https://mail.example.com/\n", text)
+		self.assertIn("port 993", text)
+		self.assertNotIn("Password:", text)
+		self.assertIn("sent to you on its own", text)
+		with_secret = report.mailbox_setup_html("harbor.example.com", "anna@shop.dk", "mail.example.com", "S3cret<pw>")
+		self.assertIn("S3cret&lt;pw&gt;", with_secret)
+		self.assertIn('href="https://mail.example.com/"', with_secret)
+		self.assertNotIn("SOGo", with_secret)
+		# Without the domain's autodiscover and autoconfig records: set up by hand, never said to find the server itself
+		by_hand = report.mailbox_setup_text("anna@shop.dk", "mail.example.com", automatic=False)
+		self.assertNotIn("finds the server itself", by_hand)
+		self.assertIn("by hand", by_hand)
+		self.assertIn("by hand", report.mailbox_setup_html("harbor.example.com", "anna@shop.dk", "mail.example.com", automatic=False))
+
+
+class MailMenuTests(unittest.TestCase):
+	def test_a_user_with_mail_reaches_it(self):
+		"""A user with Cloudflare and Mail, without Web Server or SQL Server, was sent to Cloudflare from Mail: the menu's
+		Mail did nothing. Each part they have is reached; one they do not have leads to the first they have"""
+		import subprocess
+		source = (ROOT_DIR / "admin/static/app.js").read_text()
+		start = source.index("	const wantsSql = location.hash.startsWith")
+		block = source[start:source.index("	const hash = decodeURIComponent(location.hash.slice(1));", start)]
+		harness = """
+const assert = require("node:assert/strict");
+const where = (user, hash) => {
+	const location = { hash };
+	const history = { replaceState: (state, title, to) => { location.hash = to; } };
+	const currentUser = user, startView = "sites";
+	%s
+	return location.hash;
+};
+const both = { dns: true, mail: true };
+assert.equal(where(both, "#mail"), "#mail");
+assert.equal(where(both, "#mail/502.dk"), "#mail/502.dk");
+assert.equal(where(both, "#dns"), "#dns");
+assert.equal(where(both, "#sites"), "#dns");
+assert.equal(where({ mail: true }, ""), "#mail");
+assert.equal(where({ dns: true }, "#mail"), "#dns");
+assert.equal(where({ web: true, mail: true }, "#mail"), "#mail");
+assert.equal(where({ sql: true, mail: true }, "#mail"), "#mail");
+assert.equal(where({ sql: true }, "#sites"), "#sql");
+assert.equal(where({ web: true }, "#sql"), "#sites");
+assert.equal(where({ admin: true }, "#mail"), "#mail");
+""" % block
+		result = subprocess.run(["node", "-e", harness], capture_output=True, text=True)
+		self.assertEqual(result.returncode, 0, result.stderr)
+
+
+class ReopenedTests(unittest.TestCase):
+	def test_users_of_a_relay_all_domain_get_mailboxes_again(self):
+		"""A Relay All domain is given with no mailbox; turned into one that takes mailboxes, its users may have the
+		usual number (5), not none. One given a number keeps it"""
+		import ast
+		import threading
+		app = ROOT_DIR / "admin/app.py"
+		nodes = [node for node in ast.parse(app.read_text()).body if isinstance(node, ast.FunctionDef) and node.name == "mail_grants_reopened"
+		         or isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") == "MAIL_USER_DEFAULT"]
+		saved = []
+		cfg = {"users": [{"id": "a", "mail_domains": {"schlager.dk": {"mailboxes": 0, "settings": True}}},
+		                 {"id": "b", "mail_domains": {"schlager.dk": {"mailboxes": 3}}}, {"id": "c", "mail_domains": {"other.dk": {"mailboxes": 0}}}]}
+		ns = {"cfg": cfg, "CONFIG_LOCK": threading.Lock(), "save_config": lambda: saved.append(True), "audit": lambda message: None}
+		exec(compile(ast.Module(body=nodes, type_ignores=[]), str(app), "exec"), ns)
+		self.assertEqual(ns["mail_grants_reopened"]("schlager.dk"), 1)
+		self.assertEqual([user["mail_domains"] for user in cfg["users"]],
+		                 [{"schlager.dk": {"mailboxes": 5, "settings": True}}, {"schlager.dk": {"mailboxes": 3}}, {"other.dk": {"mailboxes": 0}}])
+		self.assertEqual(saved, [True])
+
+
 class MailAccessTests(unittest.TestCase):
 	def test_a_user_keeps_their_domains_with_a_limit(self):
 		user = access.clean({"username": "anna", "role": "user", "mail": True,
@@ -255,6 +350,14 @@ class MailAccessTests(unittest.TestCase):
 		self.assertIsNone(access.mail_limit({"role": "admin"}, "any.dk"))
 		with self.assertRaises(ValueError):
 			access.clean({"username": "c", "role": "user", "mail": True, "mail_domains": {"shop.dk": {"mailboxes": -1}}})
+		# Its settings too, where given with the domain
+		given = access.clean({"username": "d", "role": "user", "mail": True, "mail_domains": {"shop.dk": {"mailboxes": 2, "settings": True}, "other.dk": {"settings": "yes"}}})
+		self.assertEqual(given["mail_domains"], {"shop.dk": {"mailboxes": 2, "settings": True}, "other.dk": {}})
+		self.assertTrue(access.mail_settings(given, "shop.dk"))
+		# Its settings theirs: the domain's own number of mailboxes holds, not one of theirs
+		self.assertIsNone(access.mail_limit(given, "shop.dk"))
+		self.assertFalse(access.mail_settings(given, "other.dk"))
+		self.assertTrue(access.mail_settings({"role": "admin"}, "any.dk"))
 
 
 if __name__ == "__main__":

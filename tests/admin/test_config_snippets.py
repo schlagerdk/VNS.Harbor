@@ -87,6 +87,21 @@ class ConfigSnippetTests(unittest.TestCase):
         rule = config_snippets.iis_rule({**snippet, "values": {**snippet["values"], "response": "forbidden"}})
         self.assertEqual(rule.find("match").get("url"), "^(?!\\.well-known/acme-challenge/)")
 
+    def test_a_web_config_with_only_system_web_gets_system_webserver(self):
+        """A classic ASP.NET site's web.config has no <system.webServer>: the rules carried get one, not an error; with
+        none to carry, it is left as it is"""
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "web.config"
+            original = '<?xml version="1.0"?>\n<configuration>\n  <system.web>\n    <customErrors mode="Off" />\n  </system.web>\n</configuration>\n'
+            path.write_text(original)
+            self.assertFalse(config_snippets.apply_iis(path, []))
+            self.assertEqual(path.read_text(), original)
+            self.assertTrue(config_snippets.apply_iis(path, config_snippets.read(MAIN)))
+            written = path.read_text()
+            self.assertIn("<system.webServer>", written)
+            self.assertIn("<rewrite>", written)
+            self.assertIn('<customErrors mode="Off" />', written)
+
     def test_web_config_gets_vns_rules_after_https_and_keeps_its_own(self):
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / "web.config"

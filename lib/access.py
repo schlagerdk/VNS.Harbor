@@ -372,8 +372,20 @@ def mail_limit(user, name):
     if is_admin(user):
         return None
     grant = (user.get("mail_domains") or {}).get(str(name or "").lower())
+    # One who may change its settings sets the domain's own number of mailboxes: that one holds, not one of theirs
+    if isinstance(grant, dict) and grant.get("settings") is True:
+        return None
     value = grant.get("mailboxes") if isinstance(grant, dict) else None
     return value if isinstance(value, int) and value >= 0 else None
+
+
+def mail_settings(user, name):
+    """Whether the user may change a mail domain's settings (how it takes mail, its limits): an administrator, or one given
+    it with the domain"""
+    if is_admin(user):
+        return True
+    grant = (user.get("mail_domains") or {}).get(str(name or "").lower()) if user else None
+    return has_mail(user) and isinstance(grant, dict) and grant.get("settings") is True
 
 
 def has_sql(user):
@@ -626,6 +638,9 @@ def clean(data, existing=None, sites=None, connections=None):
             if not 0 <= count <= 10000:
                 raise ValueError(f"The number of mailboxes in {name} is 0 to 10000.")
         user["mail_domains"][name] = {"mailboxes": count} if isinstance(count, int) else {}
+        # Whether they may change its settings too (how it takes mail, its limits)
+        if isinstance(grant, dict) and grant.get("settings") is True:
+            user["mail_domains"][name]["settings"] = True
     if not user["mail_domains"]:
         user["mail"] = False
     # Which parts of Cloudflare they may use on those domains (DNS only for one given before there was a choice)

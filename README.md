@@ -5,8 +5,12 @@
 </p>
 
 VNS Harbor hosts and manages web sites on an Ubuntu server: Apache with Let's Encrypt certificates, .NET and Umbraco,
-Python and static sites, SQL Server with backups, and each site's environments (Development, Test, Staging,
-Production) on this server, other Linux servers or IIS on Windows.
+Python and static sites, Microsoft SQL Server and PostgreSQL with backups, and each site's environments (Development,
+Test, Staging, Production) on this server, other Linux servers or IIS on Windows.
+
+Beside the sites it keeps their domains' DNS in Cloudflare and their mail on a mailcow server, and lists the sites of
+a Windows server for their files. A Harbor Master administers many servers from one place, with one login for its
+users.
 
 It is one command, `harbor`, and a web admin that runs it. Harbor runs as root; the sites run as `www-data`, each in a
 sandbox of its own, and builds run as the unprivileged user `vns-build`.
@@ -30,7 +34,7 @@ sandbox of its own, and builds run as the unprivileged user `vns-build`.
 
 <p align="center">
   <img src="assets/screenshots/scheduled-jobs.jpg" alt="Scheduled jobs: root's crontab, a job at a time, with how its last run ended and its log kept small" width="49%" />
-  <img src="assets/screenshots/user.jpg" alt="A user: Web Server, SFTP and SQL Server each a part, with the sites they may use, what they may do and how big a site of theirs may grow" width="49%" />
+  <img src="assets/screenshots/user.jpg" alt="A user: Web Server, SFTP, SQL Server, DNS and Mail each a part, here the mail domains they may use and how many mailboxes each may have" width="49%" />
 </p>
 
 <p align="center">
@@ -41,6 +45,11 @@ sandbox of its own, and builds run as the unprivileged user `vns-build`.
 <p align="center">
   <img src="assets/screenshots/convert.jpg" alt="Convert DB: each site's database, moved between SQLite and Microsoft SQL Server or PostgreSQL, here or on another server" width="49%" />
   <img src="assets/screenshots/export.jpg" alt="Export Site: a site and its environments for a customer, built for Windows or Linux with its source and databases, without Harbor" width="49%" />
+</p>
+
+<p align="center">
+  <img src="assets/screenshots/mail.jpg" alt="Mail: a mailcow domain with its mailboxes and aliases, and the DNS it needs checked and added in Cloudflare" width="49%" />
+  <img src="assets/screenshots/dns.jpg" alt="Cloudflare: each domain's DNS records by type, with the proxied ones and those locked to an administrator" width="49%" />
 </p>
 
 ## Installation
@@ -124,7 +133,7 @@ To take Harbor off another server it manages: Servers → **Remove**, with **Uni
 | `/var/www/<site>` | A site: its project or files, and its publish folder (`_publish`, `_development`, ...) |
 | `/var/www/<admin>/app` | The admin's data: its login (`config.json`), audit log, SQL connections, front-end libraries |
 | `/var/lib/harbor` | Harbor's state: each site's settings, environments, Sync setup and publish status, other servers, backups |
-| `/etc/harbor/secrets` | Passwords and keys (root only): environments' logins, the sa password, Harbor's SSH key |
+| `/etc/harbor/secrets` | Passwords and keys (root only): environments' logins, the sa password, Harbor's SSH key, the mail server, Cloudflare and mailcow |
 
 A site has no scripts of its own: what it does (publish, sync, clear logs, its service and Apache config) is a
 `harbor` command, and the admin runs it. A site's own scripts in its `scripts` folder stay, and the admin runs them.
@@ -135,14 +144,18 @@ A site has no scripts of its own: what it does (publish, sync, clear logs, its s
 
 | Group | What it does |
 | --- | --- |
-| `site` | A site here: create, set up, copy, move, delete, publish, bindings, certificate, service, permissions |
+| `site` | A site here: create, set up, copy, move, delete, publish, bindings, certificate, service, permissions, convert its database, export |
 | `env` | A site's environments: create, publish, sync settings and data, move, register, bindings, logs |
-| `server` | This server: init, status, Apache, cron jobs, .NET, Node.js |
-| `sql` | The local SQL Server: install, databases, backups, restore, the sa password |
-| `servers` | Other servers Harbor installs and updates over SSH |
+| `server` | This server: init, status, Apache, cron jobs, .NET, Node.js, whether it hosts sites and takes new databases |
+| `sql` | The local Microsoft SQL Server: install, databases, backups, restore, the sa password |
+| `postgres` | PostgreSQL here and its tools |
+| `servers` | Other servers Harbor installs and updates over SSH, and the Windows servers it reads |
+| `windows` | Sites from a Windows server (IIS): imported here, or listed where they are with their files |
+| `master` | A Harbor Master and its members |
 | `users` | A Linux user for each admin user: site folders, a locked-down terminal, SFTP |
 | `admin` | The admin site: install, update, set-password, uninstall |
 | `self` | Harbor itself: update, releases, rollback |
+| `state` | Harbor's own copy of the sites' state |
 | `migrate` | Moves a site that still has scripts in its folder into Harbor |
 
 ## The admin
@@ -151,11 +164,15 @@ The admin site is the web page for all of it:
 
 - the sites and their environments, publishing, syncing settings and data, and Sync setup
 - certificates and bindings
-- files with an editor, logs, terminals
+- files with an editor (with IIS and Apache rules to put in), logs, terminals
 - NuGet packages and update checks
-- SQL Server databases and backups
-- Server tools: SQL Server, .NET, Node.js and cron jobs
-- other servers, and users with access per site
+- Microsoft SQL Server and PostgreSQL databases and backups; a site's database converted or moved
+- Cloudflare: the domains' DNS, cache, SSL/TLS, rules and security, and domains added to or taken out of the account
+- Mail from mailcow: its state and Rspamd, domains (with their DNS made in Cloudflare and checked), relay domains,
+  mailboxes and aliases, and a mailbox's setup sent to its user
+- a Windows server's sites, listed with their files and where they are reached
+- Server tools: SQL Server, .NET, Node.js and cron jobs; health, usage and their alerts by mail
+- other servers, a Harbor Master over them, and users with access per site, SQL connection, domain and mail domain
 
 Each action runs as a task with its steps shown as they come, and its output folded out when something fails.
 

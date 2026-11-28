@@ -4256,10 +4256,11 @@ body.not-admin .admin-only-field { display: none !important; }
 .mail-relay-card.tone-purple { --tone: var(--purple); }
 .mail-relay-card.tone-teal { --tone: #39c5cf; }
 .mail-relay-card.tone-amber { --tone: #d29922; }
+.mail-relay-card.tone-green { --tone: var(--green); }
+.mail-relay-card.tone-red { --tone: var(--red); }
 .mail-relay-card input { position: absolute; opacity: 0; pointer-events: none; }
 .mail-relay-card:hover:not(:where(:disabled, .disabled, .off)) { border-color: color-mix(in srgb, var(--tone) 55%, var(--line)); }
 .mail-relay-card:has(input:checked) { border-color: var(--tone); background: color-mix(in srgb, var(--tone) 10%, transparent); box-shadow: 0 0 0 1px var(--tone) inset; }
-.mail-relay-card:has(input:focus-visible) strong { text-decoration: underline; text-underline-offset: 3px; }
 .mail-relay-icon { display: grid; flex: none; place-items: center; width: 34px; height: 34px; border-radius: 10px; color: var(--tone);
 	background: color-mix(in srgb, var(--tone) 14%, transparent); }
 .mail-relay-icon .ico { width: 17px; height: 17px; margin: 0; }
@@ -4332,3 +4333,110 @@ body.not-admin .admin-only-field { display: none !important; }
 #mail-panel .cf-recent-icon { color: #9ecbff; background: rgba(88, 166, 255, .14); }
 #mail-panel .cf-recent:hover:not(:where(:disabled, .disabled, .off)) { border-color: rgba(88, 166, 255, .5); background: rgba(88, 166, 255, .08); }
 .cf-account-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 8px; }
+/* The form dialog's error, under its fields and over its buttons: a red note with its icon, as the toasts say it */
+.form-dialog-error { display: flex; align-items: flex-start; gap: 10px; margin: 10px 0 0; padding: 11px 14px; border: 1px solid rgba(248, 81, 73, .45);
+	border-left-width: 3px; border-radius: 10px; background: rgba(248, 81, 73, .09); color: #ffa198; font-size: 13.5px; line-height: 1.45; overflow-wrap: anywhere; }
+.form-dialog-error[hidden] { display: none; }
+.form-dialog-error::before { content: "!"; display: grid; flex: none; place-items: center; width: 20px; height: 20px; margin-top: 1px; border-radius: 50%;
+	background: rgba(248, 81, 73, .22); color: #ff7b72; font-size: 12px; font-weight: 800; }
+/* IIS rules need a module on the server: said under the menu's head, and on each rule */
+.snippet-panel-note { display: flex; align-items: flex-start; gap: 9px; margin: 0 2px 8px; padding: 9px 11px; border: 1px solid rgba(210, 153, 34, .4); border-radius: 9px;
+	background: rgba(210, 153, 34, .1); color: #e3c77a; font-size: 12px; line-height: 1.45; }
+.snippet-panel-note strong { color: #f0d58c; }
+.snippet-panel-note .ico { flex: none; width: 15px; height: 15px; margin: 1px 0 0; color: #e3b341; }
+.snippet-needs { margin-left: 8px; padding: 1px 7px; border-radius: 999px; background: rgba(210, 153, 34, .14); color: #e3b341; font-size: 10.5px; font-weight: 600;
+	white-space: nowrap; vertical-align: 1px; }
+/* A Relay All domain in the user window: a small mark on its chip, and its row says it has no mailboxes */
+.grant-chip-relay { padding: 0 6px; border-radius: 6px; background: rgba(56, 139, 253, .18); color: #79c0ff; font-size: 10.5px; font-weight: 600; }
+.mail-limit-row.relay .mail-limit-icon { color: #79c0ff; }
+.mail-limit-row.relay .mail-relay-badge { flex: none; }
+/* A Relay All domain: a card in its own colour, and the way its mail goes as three steps with arrows between */
+.mail-head { margin-bottom: 14px; }
+.mail-relay-panel { margin-bottom: 14px; padding: 16px; border: 1px solid rgba(57, 197, 207, .32); border-radius: 14px;
+	background: linear-gradient(135deg, rgba(57, 197, 207, .09), rgba(88, 166, 255, .04) 60%, transparent), var(--panel); }
+.mail-relay-panel-head { display: flex; align-items: center; gap: 12px; margin-bottom: 14px; }
+.mail-relay-panel-icon { display: grid; flex: none; place-items: center; width: 38px; height: 38px; border-radius: 11px; color: #39c5cf; background: rgba(57, 197, 207, .15); }
+.mail-relay-panel-icon .ico { width: 18px; height: 18px; margin: 0; }
+.mail-relay-panel-text { display: grid; gap: 2px; min-width: 0; }
+.mail-relay-panel-text strong { font-size: 15px; }
+.mail-relay-panel-text small { color: var(--muted); font-size: 12.5px; }
+.mail-relay-flow { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto minmax(0, 1fr); align-items: stretch; gap: 8px; }
+.mail-relay-step { display: flex; align-items: flex-start; gap: 10px; min-width: 0; padding: 11px 12px; border: 1px solid var(--line); border-radius: 11px; background: rgba(0, 0, 0, .14); }
+.mail-relay-step-icon { display: grid; flex: none; place-items: center; width: 28px; height: 28px; border-radius: 8px; color: #9ecbff; background: rgba(88, 166, 255, .13); }
+.mail-relay-step:nth-child(3) .mail-relay-step-icon { color: #7ee787; background: rgba(63, 185, 80, .14); }
+.mail-relay-step:nth-child(5) .mail-relay-step-icon { color: #39c5cf; background: rgba(57, 197, 207, .15); }
+.mail-relay-step-icon .ico { width: 14px; height: 14px; margin: 0; }
+.mail-relay-step-text { display: grid; gap: 2px; min-width: 0; }
+.mail-relay-step-text strong { overflow: hidden; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.mail-relay-step-text small { color: var(--muted); font-size: 11.5px; line-height: 1.4; }
+.mail-relay-arrow { display: grid; place-items: center; color: var(--muted); }
+.mail-relay-arrow .ico { width: 14px; height: 14px; margin: 0; }
+@media (max-width: 900px) {
+	.mail-relay-flow { grid-template-columns: minmax(0, 1fr); }
+	.mail-relay-arrow .ico { transform: rotate(90deg); }
+}
+/* A user's chips: the part they are of first, set off, then how much of it */
+.user-chip.tone-blue { color: #79c0ff; background: rgba(88, 166, 255, .13); }
+.user-chip.tone-sky { color: #9ecbff; background: rgba(56, 139, 253, .16); }
+.user-chip-part { padding-right: 5px; margin-right: 1px; border-right: 1px solid currentColor; font-weight: 800; letter-spacing: .02em; opacity: .85; }
+/* A mailbox's setup, for its user: three ways in, each a box with its icon, and what to type in code */
+.mail-setup { display: grid; gap: 10px; }
+.mail-setup-section { display: grid; gap: 6px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255, 255, 255, .02); }
+.mail-setup-head { display: flex; align-items: center; gap: 11px; margin-bottom: 4px; }
+.mail-setup-icon { display: grid; flex: none; place-items: center; width: 30px; height: 30px; border-radius: 9px; color: #9ecbff; background: rgba(88, 166, 255, .13); }
+.mail-setup-section:nth-child(2) .mail-setup-icon { color: #7ee787; background: rgba(63, 185, 80, .14); }
+.mail-setup-section:nth-child(3) .mail-setup-icon { color: #d2a8ff; background: rgba(163, 113, 247, .14); }
+.mail-setup-icon .ico { width: 15px; height: 15px; margin: 0; }
+.mail-setup-title { display: grid; gap: 1px; min-width: 0; }
+.mail-setup-title strong { font-size: 14px; }
+.mail-setup-title small { color: var(--muted); font-size: 12px; }
+.mail-setup-row { display: grid; grid-template-columns: 150px minmax(0, 1fr); align-items: center; gap: 10px; font-size: 13px; }
+.mail-setup-row > span { color: var(--muted); }
+.mail-setup-row code { min-width: 0; overflow: hidden; padding: 4px 9px; border-radius: 7px; background: rgba(1, 4, 9, .35); font-size: 12.5px; text-overflow: ellipsis; white-space: nowrap; }
+.mail-setup-link { display: inline-flex; align-items: center; gap: 6px; min-width: 0; color: var(--blue); text-decoration: none; }
+.mail-setup-link .ico { width: 13px; height: 13px; margin: 0; }
+.mail-setup-section .hint { margin: 2px 0 0; font-size: 12px; }
+@media (max-width: 560px) { .mail-setup-row { grid-template-columns: minmax(0, 1fr); gap: 3px; } }
+/* The automatic way: green where the domain's DNS lets a program find the server, amber with why where it does not */
+.mail-setup-automatic > .mail-setup-section .mail-setup-icon { color: #7ee787; background: rgba(63, 185, 80, .14); }
+.mail-setup-automatic > .mail-setup-section.off { border-color: rgba(210, 153, 34, .4); background: rgba(210, 153, 34, .07); }
+.mail-setup-automatic > .mail-setup-section.off .mail-setup-icon { color: #e3b341; background: rgba(210, 153, 34, .15); }
+.mail-setup-automatic > .mail-setup-section.off .mail-setup-head { margin-bottom: 0; }
+.mail-setup-automatic .server-tools-loading, .mail-setup-automatic > div:not(.mail-setup-section) { padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; }
+/* A mailbox turned off: plain to see in its list, a red edge and tint, Off beside its address and a red chip, its use dimmed */
+.mail-row.off { box-shadow: inset 3px 0 0 var(--red); background: rgba(248, 81, 73, .05); }
+.mail-row.off .dns-record-name strong { color: var(--muted); }
+.mail-row.off .mail-usage { opacity: .45; }
+.mail-off-tag { margin-left: 8px; padding: 1px 7px; border-radius: 6px; background: rgba(248, 81, 73, .16); color: #ff7b72; font-size: 10.5px; font-weight: 700;
+	letter-spacing: .04em; text-transform: uppercase; vertical-align: 1px; }
+.dns-chip.mail-off { background: rgba(248, 81, 73, .14); color: #ffa198; }
+.dns-chip.mail-off .ico { color: #ff7b72; }
+.dns-record-name strong > span:first-child { overflow: hidden; text-overflow: ellipsis; }
+/* A mailbox whose login is turned off while its mail still comes in: amber, as off is red */
+.mail-row.nologin { box-shadow: inset 3px 0 0 #d29922; background: rgba(210, 153, 34, .05); }
+.mail-off-tag.nologin { background: rgba(210, 153, 34, .16); color: #e3b341; }
+.dns-chip.mail-nologin { background: rgba(210, 153, 34, .14); color: #e3c77a; }
+.dns-chip.mail-nologin .ico { color: #e3b341; }
+.mail-state-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 640px) { .mail-state-cards { grid-template-columns: minmax(0, 1fr); } }
+/* Three side by side: closer together, a smaller icon, and room for each line */
+.mail-state-cards { gap: 8px; }
+.mail-state-cards .mail-relay-card { gap: 10px; padding: 12px; }
+.mail-state-cards .mail-relay-icon { width: 30px; height: 30px; border-radius: 9px; }
+.mail-state-cards .mail-relay-icon .ico { width: 15px; height: 15px; }
+.mail-state-cards .mail-relay-text { padding-right: 14px; }
+.mail-state-cards .mail-relay-text small { font-size: 12px; }
+.mail-state-cards .mail-relay-check { top: 9px; right: 10px; }
+/* A mailbox that is on: green, as the other states have their colours */
+.mail-row.on { box-shadow: inset 3px 0 0 var(--green); }
+.mail-off-tag.on { background: rgba(63, 185, 80, .16); color: #7ee787; }
+.dns-chip.mail-on { background: rgba(63, 185, 80, .14); color: #aff5b4; }
+.dns-chip.mail-on .ico { color: #7ee787; }
+/* Whether a user may change a mail domain's settings: a small toggle on its row, purple while it is on */
+#dlg-user .mail-settings-toggle { display: inline-flex; flex: none; align-items: center; gap: 6px; margin: 0; padding: 6px 10px; border: 1px solid var(--line);
+	border-radius: 9px; background: transparent; color: var(--muted); font-size: 12px; font-weight: 600; cursor: pointer; transition: border-color .15s, background .15s, color .15s; }
+#dlg-user .mail-settings-toggle .ico { width: 13px; height: 13px; margin: 0; }
+#dlg-user .mail-settings-toggle:hover:not(:where(:disabled, .disabled, .off)) { border-color: rgba(163, 113, 247, .45); color: var(--text); }
+#dlg-user .mail-settings-toggle[aria-pressed="true"] { border-color: rgba(163, 113, 247, .6); background: rgba(163, 113, 247, .14); color: #d2a8ff; }
+/* A row each: its name, how many mailboxes, and Settings side by side with room for the name */
+.mail-limit-rows { grid-template-columns: minmax(0, 1fr); }

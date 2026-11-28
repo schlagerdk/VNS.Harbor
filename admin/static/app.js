@@ -549,6 +549,12 @@ function secretField(input) {
 // that holds only it, is not a login: each is put in one, which sends nothing
 // A field Safari would offer the admin's own saved login in (a user's username and email in their window): read only until
 // it has the focus, as Safari offers nothing for a field that is read only when it is clicked; typed in as any other
+// The form dialog's own error line, under its fields: shown with what went wrong, gone once something is changed
+function showFormError(message) {
+	$("#form-dialog-error").textContent = message;
+	$("#form-dialog-error").hidden = !message;
+}
+$("#form-dialog").addEventListener("input", () => { if (!$("#form-dialog-error").hidden) showFormError(""); });
 function noAutofill(input) {
 	input.readOnly = true;
 	input.addEventListener("focus", () => setTimeout(() => { input.readOnly = false; }));
@@ -1143,11 +1149,21 @@ async function route() {
 	// With neither, the sites view tells them who gives access
 	// Only Cloudflare: its page, with neither Web Server nor SQL Server to go to
 	const wantsDns = location.hash.startsWith("#dns");
-	if (!currentUser.admin && !wantsDns && !currentUser.web && !currentUser.sql && currentUser.dns) {
-		history.replaceState(null, "", "#dns");
-	} else if (!currentUser.admin && wantsSql && !currentUser.sql) {
+	const wantsMail = location.hash.startsWith("#mail");
+	// The first part a user has, where what they asked for is not theirs: Web Server, SQL Server, Cloudflare, Mail
+	const firstPart = currentUser.web ? "#sites" : currentUser.sql ? "#sql" : currentUser.dns ? "#dns" : currentUser.mail ? "#mail" : "#sites";
+	if (currentUser.admin) {
+		// An administrator goes anywhere
+	} else if ((wantsMail && !currentUser.mail) || (wantsDns && !currentUser.dns)) {
+		history.replaceState(null, "", firstPart);
+	} else if (wantsMail || wantsDns) {
+		// Their Mail or Cloudflare: where they asked to go
+	} else if (!currentUser.web && !currentUser.sql && (currentUser.dns || currentUser.mail)) {
+		// Only Cloudflare or Mail: its page, with neither Web Server nor SQL Server to go to
+		history.replaceState(null, "", firstPart);
+	} else if (wantsSql && !currentUser.sql) {
 		history.replaceState(null, "", "#sites");
-	} else if (!currentUser.admin && !wantsSql && !wantsDns && !currentUser.web && currentUser.sql) {
+	} else if (!wantsSql && !currentUser.web && currentUser.sql) {
 		history.replaceState(null, "", "#sql");
 	}
 	const hash = decodeURIComponent(location.hash.slice(1));
@@ -6760,11 +6776,29 @@ function insertIisRule(text, name, rule, snippet) {
 	return text.slice(0, start) + indentBlock(rule, indent) + "\n" + text.slice(start);
 }
 
+// A web.config without <system.webServer> (a classic ASP.NET site's often has only <system.web>) gets one: an empty
+// <system.webServer /> opened, or a new one at the end of <configuration>, indented as its other sections
+function withSystemWebServer(text) {
+	if (text.includes("</system.webServer>")) return text;
+	const empty = /<system\.webServer\s*\/>/.exec(text);
+	if (empty) {
+		const indent = lineIndent(text, empty.index);
+		return text.slice(0, empty.index) + `<system.webServer>\n${indent}</system.webServer>` + text.slice(empty.index + empty[0].length);
+	}
+	const close = text.lastIndexOf("</configuration>");
+	if (close < 0) throw new Error("This web.config has no <configuration> to put the rule in.");
+	// As the sections already there are indented (two spaces when there are none)
+	const section = /^([ \t]+)<(system\.web|appSettings|connectionStrings|runtime|location)\b/m.exec(text);
+	const indent = section ? section[1] : "  ";
+	const start = lineStart(text, close);
+	return text.slice(0, start) + `${indent}<system.webServer>\n${indent}</system.webServer>\n` + text.slice(start);
+}
+
 // A section of <system.webServer> of its own, like <httpCompression>, at its end; only one of each
 function insertIisSection(text, tag, block) {
 	if (new RegExp(`<${tag}\\b`).test(text)) throw new Error(`web.config already has <${tag}>.`);
+	text = withSystemWebServer(text);
 	const close = text.indexOf("</system.webServer>");
-	if (close < 0) throw new Error("This web.config has no <system.webServer> section to put it in.");
 	const start = lineStart(text, close);
 	return text.slice(0, start) + indentBlock(block, lineIndent(text, close) + "  ") + "\n" + text.slice(start);
 }
@@ -6777,8 +6811,8 @@ function insertRewriteBlock(text, block) {
 		const inner = block.replace(/^<rewrite>\n/, "").replace(/\n<\/rewrite>$/, "");
 		return text.slice(0, at) + "\n" + indentBlock(inner, lineIndent(text, rewrite.index)) + text.slice(at);
 	}
+	text = withSystemWebServer(text);
 	const close = text.indexOf("</system.webServer>");
-	if (close < 0) throw new Error("This web.config has no <system.webServer> section to put the rule in.");
 	const indent = lineIndent(text, close);
 	const start = lineStart(text, close);
 	return text.slice(0, start) + indentBlock(block, indent + "  ") + "\n" + text.slice(start);
@@ -6979,11 +7013,18 @@ function refreshSnippetMenu() {
 	$("#editor-snippets-panel").replaceChildren(
 		el("div", { className: "snippet-panel-head" }, el("span", { textContent: kind === "script" ? "BASH · CUSTOM SCRIPT" : kind === "iis" ? "IIS · WEB.CONFIG" : kind === "appsettings" ? (openFileSite?.kind === "umbraco" ? "UMBRACO" : ".NET") + " · APPSETTINGS.JSON" : "APACHE · SITE CONFIG" }),
 			el("strong", { textContent: kind === "appsettings" ? "Insert a setting" : kind === "script" ? "Insert a snippet" : "Insert a rule" })),
+		// IIS reads none of these rules without its URL Rewrite module (Compression: its Dynamic Content Compression):
+		// without it the whole site answers 500.19, so it is said before one is put in
+		...(kind === "iis" ? [el("div", { className: "snippet-panel-note" }, svgIcon("alert"),
+			el("span", {}, el("strong", { textContent: "Needs URL Rewrite on the IIS server. " }),
+				"Without the module the whole site answers 500.19 once a rule is in. Compression needs Dynamic Content Compression instead."))] : []),
 		...Object.entries(snippets).map(([key, snippet]) => {
 			const [icon, line] = kind === "appsettings" || kind === "script" ? [snippet.icon, snippet.line] : snippetLooks[key] || ["file", ""];
+			const needs = kind === "iis" ? (snippet.section ? "Dynamic compression" : "URL Rewrite") : "";
 			return el("button", { type: "button", className: "snippet-item", role: "menuitem", onclick: () => { closeSnippetMenu(); run(() => insertSnippet(key)); } },
 				el("span", { className: "snippet-item-icon" }, svgIcon(icon)),
-				el("span", { className: "snippet-item-text" }, el("strong", { textContent: snippet.label }), el("small", { textContent: line })));
+				el("span", { className: "snippet-item-text" }, el("strong", {}, snippet.label, ...(needs ? [el("span", { className: "snippet-needs", textContent: needs, title: `Needs ${needs} on the IIS server` })] : [])),
+					el("small", { textContent: line })));
 		}));
 }
 
@@ -10279,6 +10320,7 @@ function menuCard() {
 // Without ok it only shows (a log): its one button closes it.
 const formDialog = $("#dlg-form");
 function openFormDialog({ icon, title, text = "", fields, ok = "", submit = null, extra = [], wide = false, danger = false, closeOnly = false }) {
+	showFormError("");
 	formDialog.classList.toggle("wide", wide);
 	// A delete looks as every other confirmation that deletes (ask with danger): no banner or icon at the top, its title
 	// red, its button the plain one made red, without an icon; any other has the banner and a green button with a check
@@ -10311,9 +10353,13 @@ function openFormDialog({ icon, title, text = "", fields, ok = "", submit = null
 		if (!submit) return formDialog.close();
 		const button = $("#form-dialog-ok");
 		button.disabled = true;
+		showFormError("");
 		run(async () => {
 			try {
 				if (await submit(form) !== false) formDialog.close();
+			} catch (failure) {
+				// Said in the dialog, by what was typed, not in a toast away from it: it stays open to be put right
+				showFormError(failure.message || "It did not go through.");
 			} finally {
 				syncConfirm();
 			}
@@ -13313,21 +13359,27 @@ function drawMailDomain() {
 				...(relayAll ? [] : [chip("mail", `${mailboxes.length} of ${allowed} mailbox${allowed === 1 ? "" : "es"}`, limit != null ? "As many as you may have here" : "As many as the domain may have", full ? "full" : ""),
 					chip("archive", `${mailSize(domain.used_mb)} used of ${mailSize(domain.quota_mb)}`, `Each mailbox up to ${mailSize(domain.mailbox_quota_mb)}`),
 					chip("link", `${aliases.length} of ${domain.max_aliases} alias${domain.max_aliases === 1 ? "" : "es"}`)]))),
-		...(mailAdmin ? [el("div", { className: "mail-head-actions" }, tonedButton("Settings…", "sliders", "purple", () => editMailDomain(domain)),
-			tonedButton("Delete…", "trash", "red", () => run(() => deleteMailDomain(domain))))] : []));
+		// Settings… for an administrator and a user given them; Delete… an administrator's alone
+		...(mailAdmin || mailData.settings ? [el("div", { className: "mail-head-actions" }, tonedButton("Settings…", "sliders", "purple", () => editMailDomain(domain)),
+			...(mailAdmin ? [tonedButton("Delete…", "trash", "red", () => run(() => deleteMailDomain(domain)))] : []))] : []));
 	const group = (icon, title, text, count, action, rows) => el("section", { className: "dns-group mail-group" },
 		el("div", { className: "dns-group-head" }, el("span", { className: "mail-group-icon" }, svgIcon(icon)), el("strong", { textContent: title }), el("small", { textContent: text }),
 			el("span", { className: "dns-group-count", textContent: String(count) }), ...(action ? [action] : [])),
 		el("div", { className: "dns-group-rows" }, ...rows));
 	const newMailbox = full ? null : tonedButton("New mailbox…", "plus", "green", () => editMailbox(null));
-	const boxRows = mailboxes.length ? mailboxes.map((box) => el("div", { className: "mail-row" + (box.active ? "" : " off") },
-		el("div", { className: "dns-record-name" }, el("strong", { textContent: box.address, title: box.address }), el("small", { textContent: box.name || "No name" })),
+	const boxRows = mailboxes.length ? mailboxes.map((box) => el("div", { className: "mail-row" + (box.active === 0 ? " off" : box.active === 2 ? " nologin" : " on") },
+		el("div", { className: "dns-record-name" }, el("strong", {}, el("span", { textContent: box.address, title: box.address }),
+			// Its state beside its address, each in its colour: On green, No login amber, Off red
+			el("span", { className: "mail-off-tag " + (box.active === 0 ? "" : box.active === 2 ? "nologin" : "on"), textContent: box.active === 0 ? "Off" : box.active === 2 ? "No login" : "On" })),
+			el("small", { textContent: box.name || "No name" })),
 		el("div", { className: "mail-usage", title: `${box.messages} messages` },
 			el("span", { className: "mail-bar" }, el("span", { style: `width: ${Math.min(100, box.percent ?? 0)}%` })),
 			el("small", { textContent: `${mailSize(box.used_mb)} of ${mailSize(box.quota_mb)}` })),
-		el("div", { className: "dns-record-chips" }, ...(box.active ? [] : [el("span", { className: "dns-chip off", textContent: "Off" })]),
+		el("div", { className: "dns-record-chips" }, ...(box.active === 0 ? [el("span", { className: "dns-chip mail-off", title: "Turned off: it cannot log in, and no mail is delivered to it" },
+			svgIcon("stop"), "No login, no mail")] : box.active === 2 ? [el("span", { className: "dns-chip mail-nologin", title: "Its login is turned off: its mail still comes in" },
+			svgIcon("lock"), "Takes mail, no login")] : [el("span", { className: "dns-chip mail-on", title: "On: it logs in, sends and receives mail" }, svgIcon("mail"), "Sends and receives")]),
 			el("span", { className: "dns-chip", title: "Last login" }, svgIcon("clock"), box.last_login ? syncAgo(box.last_login * 1000) : "Never logged in")),
-		el("div", { className: "dns-record-actions" }, tonedButton("Edit…", "pencil", "amber", () => editMailbox(box)))))
+		el("div", { className: "dns-record-actions" }, tonedButton("Setup…", "info", "blue", () => mailboxSetup(box)), tonedButton("Edit…", "pencil", "amber", () => editMailbox(box)))))
 		: [el("p", { className: "muted mail-none", textContent: full ? "No mailboxes may be made here." : "No mailboxes yet." })];
 	const aliasRows = aliases.length ? aliases.map((alias) => el("div", { className: "mail-row alias" + (alias.active ? "" : " off") },
 		el("div", { className: "dns-record-name" }, el("strong", { textContent: alias.address.startsWith("@") ? `Everything to ${alias.address}` : alias.address, title: alias.address })),
@@ -13337,15 +13389,24 @@ function drawMailDomain() {
 		: [el("p", { className: "muted mail-none", textContent: "No aliases: mail to another address of the domain is not delivered." })];
 	const dns = el("div", { className: "mail-dns" });
 	// Relay All: what it is, in place of mailboxes and aliases it does not have
-	const relayNote = el("div", { className: "sync-option action-option prompt-option-note off tone-blue mail-relay-note" },
-		el("span", { className: "sync-option-icon", ariaHidden: "true" }, svgIcon("send")),
-		el("span", { className: "sync-option-text" }, el("span", { className: "sync-option-title", textContent: "All its mail is relayed" }),
-			el("span", { className: "sync-option-sub", textContent: `Mail to any address in ${domain.name} is passed on to its own mail server: it has no mailboxes or aliases here. Its DKIM key signs the mail sent through this server.` })));
+	// Its way, step by step: any address of it, through this server (which signs what it sends), to its own mail server
+	const step = (icon, title, text) => el("div", { className: "mail-relay-step" }, el("span", { className: "mail-relay-step-icon", ariaHidden: "true" }, svgIcon(icon)),
+		el("span", { className: "mail-relay-step-text" }, el("strong", { textContent: title, title }), el("small", { textContent: text })));
+	const arrow = () => el("span", { className: "mail-relay-arrow", ariaHidden: "true" }, svgIcon("chevron"));
+	const relayNote = el("section", { className: "mail-relay-panel" },
+		el("div", { className: "mail-relay-panel-head" }, el("span", { className: "mail-relay-panel-icon", ariaHidden: "true" }, svgIcon("send")),
+			el("span", { className: "mail-relay-panel-text" }, el("strong", { textContent: "All its mail is relayed" }),
+				el("small", { textContent: "It has no mailboxes or aliases on this server: every address is passed on as it comes." }))),
+		el("div", { className: "mail-relay-flow" },
+			step("mail", `anything@${domain.name}`, "Mail to any of its addresses"), arrow(),
+			step("shield", mailData.host || "This server", "Takes it in, and signs what it sends with its DKIM key"), arrow(),
+			step("globe", "Its own mail server", "Where its MX points: the mail ends up there")));
 	$("#mail-panel").replaceChildren(head,
 		...(relayAll ? [relayNote] : [group("mail", "Mailboxes", "Each its own login and mail", mailboxes.length, newMailbox, boxRows),
 			group("link", "Aliases", "Addresses that forward to others", aliases.length, tonedButton("New alias…", "plus", "green", newMailAlias), aliasRows)]),
-		...(mailAdmin ? [dns] : []));
-	if (mailAdmin) drawMailDns(dns);
+		...(mailData.dns ? [dns] : []));
+	// Its DNS for an administrator, and for a user who keeps its zone in Cloudflare: to put right what is missing
+	if (mailData.dns) drawMailDns(dns);
 }
 // The domain's DNS against what mailcow wants: each record's state, and the missing ones made with a click
 // quiet: drawn again in place when it has answered (the button clicked shows it is working), not first emptied
@@ -13498,36 +13559,65 @@ async function showRspamd() {
 // A domain's limits, side by side: mailboxes, aliases, the domain's quota and each mailbox's
 function mailLimitFields(domain = null) {
 	const number = (name, value, min = 0) => el("input", { name, type: "number", min, step: 1, required: true, value });
-	return el("div", { className: "mail-limits" },
-		el("div", { className: "ns-grid" }, el("label", {}, "Mailboxes", number("mailboxes", domain?.max_mailboxes ?? 10, 1)), el("label", {}, "Aliases", number("aliases", domain?.max_aliases ?? 100))),
-		el("div", { className: "ns-grid" }, el("label", {}, "Quota of the domain (MB)", number("quota_mb", domain?.quota_mb ?? 10240, 1)),
-			el("label", {}, "Quota of a mailbox (MB)", number("mailbox_quota_mb", domain?.mailbox_quota_mb ?? 3072, 1))));
+	// The quotas as sizes in MB or GB, as the usage limits are typed (10 GB, 500 MB): read in MB as mailcow takes them
+	const domainQuota = sizeField("Quota of the domain", domain?.quota_mb ?? 10240, "Required", "GB");
+	const mailboxQuota = sizeField("Quota of a mailbox", domain?.mailbox_quota_mb ?? 3072, "Required", "GB");
+	const element = el("div", { className: "mail-limits" },
+		// A new number of mailboxes starts at 10 for an administrator, at 5 (as a user's own) for a user
+		el("div", { className: "ns-grid" }, el("label", {}, "Mailboxes", number("mailboxes", domain?.max_mailboxes ?? (mailAdmin ? 10 : USER_MAIL_DEFAULT), 1)), el("label", {}, "Aliases", number("aliases", domain?.max_aliases ?? 100))),
+		el("div", { className: "ns-grid mail-quotas" }, domainQuota, mailboxQuota));
+	element.read = () => ({ mailboxes: Number(element.querySelector("input[name=mailboxes]").value), aliases: Number(element.querySelector("input[name=aliases]").value),
+		quota_mb: domainQuota.read(), mailbox_quota_mb: mailboxQuota.read() });
+	return element;
 }
 // Shown, and asked, unless the domain relays all its mail
 function showMailLimits(limits, relay) {
 	limits.hidden = relay === "all";
-	for (const input of limits.querySelectorAll("input")) input.required = relay !== "all";
+	for (const input of limits.querySelectorAll("input:not([type=radio])")) input.required = relay !== "all";
 }
-const mailLimitsOf = (form) => Object.fromEntries(["mailboxes", "aliases", "quota_mb", "mailbox_quota_mb"].map((name) => [name, Number(form.elements[name].value)]));
+const mailLimitsOf = (form) => form.querySelector(".mail-limits")?.read() || {};
 function newMailDomain() {
 	const name = el("input", { name: "domain", required: true, placeholder: "example.com", autocomplete: "off", spellcheck: false, autocapitalize: "off" });
-	// Its DNS made in Cloudflare only where an account is connected (Settings, DNS); without one, the records it
-	// needs are listed under the domain, to be made where its DNS is kept
+	// Its DNS made in Cloudflare only where the domain (or the one it is under) is in the account, read once and checked
+	// as it is typed; elsewhere, the records it needs are listed under the domain, to be made where its DNS is kept
 	const cloudflare = Boolean(currentUser.dns_account);
-	const dnsText = (relay) => `${relay ? "SPF, DKIM and DMARC (its MX stays with its own mail server)" : "MX, autodiscover, SPF, DKIM and DMARC"}, where the domain is in the account. Records there now are not changed`;
-	const dns = cloudflare ? checkOption("make_dns", "Make its DNS records in Cloudflare", dnsText(""), true, "cloud", "orange") : null;
+	let zones = [];
+	let relay = "";
+	const zoneOf = () => {
+		const typed = name.value.trim().toLowerCase().replace(/\.$/, "");
+		return zones.filter((zone) => typed === zone || typed.endsWith("." + zone)).sort((a, b) => b.length - a.length)[0] || "";
+	};
+	const dnsText = () => `${relay ? "SPF, DKIM and DMARC (its MX stays with its own mail server)" : "MX, autodiscover, SPF, DKIM and DMARC"} in ${zoneOf()}. Records there now are not changed`;
+	const dns = cloudflare ? checkOption("make_dns", "Make its DNS records in Cloudflare", "", true, "cloud", "orange") : null;
+	const elsewhere = el("p", { className: "hint", hidden: true });
+	const showDns = () => {
+		const zone = zoneOf();
+		if (dns) {
+			dns.hidden = !zone;
+			dns.querySelector("input").disabled = !zone;
+			dns.querySelector(".sync-option-sub").textContent = dnsText();
+		}
+		const typed = name.value.trim();
+		elsewhere.hidden = Boolean(zone) || !typed.includes(".");
+		elsewhere.textContent = cloudflare ? `${typed} is not in the Cloudflare account: the records it needs are listed under it, to be made where its DNS is kept.`
+			: "The records it needs are listed under it, to be made where its DNS is kept.";
+	};
+	name.addEventListener("input", showDns);
 	// Relay All has no mailboxes here: its limits are not asked, and are the least mailcow takes
 	const limits = mailLimitFields();
-	const relays = mailRelayCards("", (relay) => {
-		if (dns) dns.querySelector(".sync-option-sub").textContent = dnsText(relay);
-		showMailLimits(limits, relay);
+	const relays = mailRelayCards("", (value) => {
+		relay = value;
+		showDns();
+		showMailLimits(limits, value);
 	});
+	showDns();
+	if (cloudflare) api("/api/dns/zones").then((found) => { zones = (found.zones || []).map((zone) => zone.name.toLowerCase()); showDns(); }).catch(() => {});
 	openFormDialog({ icon: "mail", title: "New mail domain", ok: "Make domain",
-		text: cloudflare ? "Made in mailcow with its DKIM key; its DNS made in Cloudflare." : "Made in mailcow with its DKIM key. The DNS records it needs are listed under it.",
-		fields: [el("label", {}, "Domain", name), el("div", { className: "ns-section", textContent: "How it takes mail" }), relays, limits, ...(dns ? [dns] : [])],
+		text: cloudflare ? "Made in mailcow with its DKIM key; its DNS made in Cloudflare where the domain is in the account." : "Made in mailcow with its DKIM key. The DNS records it needs are listed under it.",
+		fields: [el("label", {}, "Domain", name), el("div", { className: "ns-section", textContent: "How it takes mail" }), relays, limits, ...(dns ? [dns] : []), elsewhere],
 		submit: async (form) => {
 			const made = await api("/api/mail/domains", { method: "POST", json: { domain: name.value.trim(), relay: mailRelayOf(form), ...mailLimitsOf(form),
-				dns: Boolean(form.elements.make_dns?.checked) } });
+				dns: Boolean(zoneOf() && form.elements.make_dns?.checked) } });
 			toast(made.steps.join(". ") + ".", "ok");
 			await openMail(made.domain);
 		} });
@@ -13563,15 +13653,27 @@ function editMailbox(box) {
 	const ignore = { autocomplete: "off", spellcheck: false, "data-1p-ignore": "", "data-lpignore": "true", "data-bwignore": "true", "data-form-type": "other" };
 	const local = el("input", { name: "local_part", required: true, placeholder: "name", ...ignore, autocapitalize: "off" });
 	const name = el("input", { name: "full_name", value: box?.name || "", placeholder: "Full name", ...ignore });
-	const quota = el("input", { name: "quota_mb", type: "number", min: 1, max: domain.mailbox_quota_mb, step: 1, required: true, value: box?.quota_mb || domain.default_quota_mb || domain.mailbox_quota_mb });
+	// Its quota as a size, as the domain's (3 GB, 500 MB): at most a mailbox's quota there
+	const quota = sizeField("Quota", box?.quota_mb || domain.default_quota_mb || domain.mailbox_quota_mb, "Required", "GB");
+	quota.querySelector("input[type=number]").required = true;
 	const secret = el("input", { name: "mailbox_secret", type: "password", minLength: 8, maxLength: 256, required: !box, ...ignore, autocomplete: "new-password",
 		placeholder: box ? "Leave empty to keep it" : "At least 8 characters" });
 	const again = el("input", { name: "mailbox_secret_again", type: "password", minLength: 8, maxLength: 256, required: !box, ...ignore, autocomplete: "new-password" });
-	let active = box ? Boolean(box.active) : true;
-	const states = box ? el("div", { className: "type-cards" }, ...[[true, "On", "It logs in, sends and receives"], [false, "Off", "No login, and no mail is delivered to it"]]
-		.map(([value, title, text]) => el("label", { className: "type-card" }, el("input", { type: "radio", name: "mailbox_active", checked: value === active, onchange: () => { active = value; } }),
-			el("span", { className: "tc-title", textContent: title }), el("span", { className: "tc-sub", textContent: text })))) : null;
+	// On, its login off while its mail still comes in, or off: three cards as the other choices of Mail
+	let active = box ? Number(box.active) : 1;
+	const states = box ? el("div", { className: "mail-relay-cards mail-state-cards", role: "radiogroup", ariaLabel: "Mailbox" }, ...[
+		[1, "On", "Logs in, sends and receives", "mail", "green"],
+		[2, "No login", "Mail comes in, no login", "lock", "amber"],
+		[0, "Off", "No login, no mail", "stop", "red"]]
+		.map(([value, title, text, icon, tone]) => el("label", { className: "mail-relay-card tone-" + tone },
+			el("input", { type: "radio", name: "mailbox_active", checked: value === active, onchange: () => { active = value; } }),
+			el("span", { className: "mail-relay-icon", ariaHidden: "true" }, svgIcon(icon)),
+			el("span", { className: "mail-relay-text" }, el("strong", { textContent: title }), el("small", { textContent: text })),
+			el("span", { className: "mail-relay-check", ariaHidden: "true" }, svgIcon("check"))))) : null;
 	const error = el("p", { className: "error", role: "alert" });
+	// A new one's setup, with the password just typed, mailed to another address of its user where one is given
+	const sendTo = !box && currentUser.can_mail ? el("input", { name: "setup_to", type: "text", inputMode: "email", placeholder: "their.other@example.com (optional)",
+		autocomplete: "off", spellcheck: false, autocapitalize: "off", "data-1p-ignore": "", "data-lpignore": "true", "data-form-type": "other" }) : null;
 	const extra = box ? [tonedButton("Delete…", "trash", "red", () => run(async () => {
 		if (!await ask({ title: `Delete ${box.address}?`, danger: true, ok: "Delete", match: box.address,
 			message: `The mailbox and all its mail are deleted in mailcow, and the aliases that only go to it. It cannot be undone. Type ${box.address} to confirm.` })) return;
@@ -13583,22 +13685,96 @@ function editMailbox(box) {
 	openFormDialog({ icon: "mail", title: box ? `Edit ${box.address}` : `New mailbox in ${domain.name}`, ok: box ? "Save" : "Make mailbox", extra,
 		text: box ? `${mailSize(box.used_mb)} used, ${box.messages} messages.` : `Up to ${mailSize(domain.mailbox_quota_mb)} each.`,
 		fields: [...(box ? [] : [el("label", {}, "Address", el("span", { className: "mail-address-field" }, local, el("span", { className: "mail-at", textContent: "@" + domain.domain })))]),
-			el("div", { className: "ns-grid" }, el("label", {}, "Name", name), el("label", {}, "Quota (MB)", quota)),
+			el("div", { className: "ns-grid" }, el("label", {}, "Name", name), quota),
 			el("div", { className: "ns-grid" }, el("label", {}, box ? "New password" : "Password", secret), el("label", {}, "Repeat password", again)),
-			...(states ? [states] : []), error],
+			...(states ? [el("div", { className: "ns-section", textContent: "Mailbox" }), states] : []),
+			...(sendTo ? [el("label", {}, "Send its setup to", sendTo),
+				el("p", { className: "hint", textContent: "Another address of its user: the setup and the password in one mail. Empty: send it later from Setup…" })] : []), error],
 		submit: async () => {
 			if (secret.value !== again.value) { error.textContent = "Passwords do not match."; return false; }
+			if (quota.read() > domain.mailbox_quota_mb) { error.textContent = `A mailbox here may have at most ${usageSize(domain.mailbox_quota_mb)}.`; return false; }
 			if (box) {
-				await api(`/api/mail/mailboxes/${mailPath(box.address)}`, { method: "PUT", json: { name: name.value.trim(), quota_mb: Number(quota.value), active,
+				await api(`/api/mail/mailboxes/${mailPath(box.address)}`, { method: "PUT", json: { name: name.value.trim(), quota_mb: quota.read(), active,
 					...(secret.value ? { password: secret.value } : {}) } });
 				toast(`${box.address} is saved.`, "ok");
 			} else {
 				const made = await api(`/api/mail/domains/${mailPath(domain.domain)}/mailboxes`, { method: "POST",
-					json: { local_part: local.value.trim(), name: name.value.trim(), quota_mb: Number(quota.value), password: secret.value } });
+					json: { local_part: local.value.trim(), name: name.value.trim(), quota_mb: quota.read(), password: secret.value } });
 				toast(`${made.address} is made.`, "ok");
+				// Made: its setup sent on, where an address was given (said on its own when it could not be sent)
+				if (sendTo?.value.trim()) {
+					try {
+						const sent = await api(`/api/mail/mailboxes/${mailPath(made.address)}/setup`, { method: "POST", json: { to: sendTo.value.trim(), password: secret.value } });
+						toast(`Its setup is sent to ${sent.sent}.`, "ok");
+					} catch (failure) {
+						toast(`${made.address} is made, but its setup was not sent: ${failure.message}`, "error");
+					}
+				}
 			}
 			await showMailDomain(mailDomain);
 		} });
+}
+// How a mailbox is set up in a mail program, for whoever it is given to: webmail, the automatic setup (Outlook, phones,
+// Thunderbird find the server by the domain's autodiscover and autoconfig records), and the servers to type by hand.
+// Copy gives it all as text to send on; the password is never in it
+const MAIL_PORTS = [["IMAP (incoming)", "993", "SSL/TLS"], ["SMTP (outgoing)", "465", "SSL/TLS"], ["SMTP (outgoing), or", "587", "STARTTLS"]];
+function mailboxSetup(box) {
+	const host = mailData.host;
+	const webmail = `https://${host}/`;
+	const row = (label, value) => el("div", { className: "mail-setup-row" }, el("span", { textContent: label }), el("code", { textContent: value, title: value }));
+	const section = (icon, title, text, ...rows) => el("section", { className: "mail-setup-section" },
+		el("div", { className: "mail-setup-head" }, el("span", { className: "mail-setup-icon", ariaHidden: "true" }, svgIcon(icon)),
+			el("span", { className: "mail-setup-title" }, el("strong", { textContent: title }), el("small", { textContent: text }))), ...rows);
+	// Whether a program finds the server by the address alone: only where the domain's DNS has its autodiscover and
+	// autoconfig records; read as the guide opens, the automatic way said only then
+	let automatic = false;
+	const text = () => [`Your mailbox: ${box.address}`, "",
+		`Webmail: ${webmail}`, `Log in with ${box.address} and your password.`, "",
+		...(automatic ? ["In Outlook, Apple Mail, Thunderbird or on a phone: add the account with your address and password; the program finds the server itself.", "",
+			"If it asks for the servers:"] : ["In Outlook, Apple Mail, Thunderbird or on a phone, set it up by hand (IMAP) with these:"]),
+		`Username: ${box.address}`, `Incoming (IMAP): ${host}, port 993, SSL/TLS`, `Outgoing (SMTP): ${host}, port 465, SSL/TLS (or 587, STARTTLS)`,
+		"The outgoing server needs the same username and password."].join("\n");
+	const automaticBox = el("div", { className: "mail-setup-automatic" }, loadingState("Checking its DNS…"));
+	api(`/api/mail/domains/${mailPath(box.address.split("@")[1])}/automatic`).then((found) => {
+		automatic = found.ready;
+		automaticBox.replaceChildren(found.ready
+			? section("sync", "Automatic", "Outlook, Apple Mail, Thunderbird and phones find the server by the address alone",
+				row("Address", box.address), row("Password", "The mailbox's own"))
+			: el("section", { className: "mail-setup-section off" },
+				el("div", { className: "mail-setup-head" }, el("span", { className: "mail-setup-icon", ariaHidden: "true" }, svgIcon("alert")),
+					el("span", { className: "mail-setup-title" }, el("strong", { textContent: "Not automatic yet" }),
+						el("small", { textContent: `${box.address.split("@")[1]} has no ${found.unknown ? "readable " : ""}autodiscover and autoconfig records: a mail program does not find the server by itself, so set it up by hand below.` }))),
+				...(mailAdmin ? [el("p", { className: "hint", textContent: "Make them under DNS on the domain's page; then this way works too." })] : [])));
+	}).catch(() => automaticBox.replaceChildren());
+	openFormDialog({ icon: "info", title: `Set up ${box.address}`, text: "What its user needs: send it on with Copy (the password is not in it).", closeOnly: true,
+		extra: [Object.assign(tonedButton("Copy", "copy", "purple", async () => {
+			await copyText(text() + "\n", $("#form-dialog"));
+			toast("The setup is copied: send it to the mailbox's user with their password.", "ok");
+		}), { title: "All of it as text, to send on" }),
+			...(currentUser.can_mail ? [Object.assign(tonedButton("Send…", "send", "green", () => sendMailboxSetup(box)), { title: "Mail it to another address of theirs" })] : [])],
+		fields: [el("div", { className: "mail-setup" },
+			section("globe", "Webmail", "In any browser, nothing to set up",
+				el("div", { className: "mail-setup-row" }, el("span", { textContent: "Address" }),
+					el("a", { className: "mail-setup-link", href: webmail, target: "_blank", rel: "noopener noreferrer" }, webmail, svgIcon("external")))),
+			automaticBox,
+			section("sliders", "By hand", "Where a program asks for the servers",
+				row("Username", box.address), ...MAIL_PORTS.map(([label, port, security]) => row(label, `${host} · port ${port} · ${security}`)),
+				el("p", { className: "hint", textContent: "The outgoing server logs in with the same username and password." })))] });
+}
+// The setup mailed to another address of the mailbox's user (the new one is not set up yet): where and how to log in,
+// never its password (New mailbox sends that one with it, as it is typed there)
+function sendMailboxSetup(box) {
+	const to = el("input", { name: "setup_to", type: "text", inputMode: "email", required: true, placeholder: "their.other@example.com",
+		autocomplete: "off", spellcheck: false, autocapitalize: "off", "data-1p-ignore": "", "data-lpignore": "true", "data-bwignore": "true", "data-form-type": "other" });
+	openFormDialog({ icon: "send", title: `Send the setup of ${box.address}`, ok: "Send",
+		text: "To another address of theirs: the new mailbox is not set up yet. Sent through Harbor's mail server.",
+		fields: [el("label", {}, "Send to", to),
+			el("p", { className: "hint", textContent: "Where and how they log in: webmail and their mail program's settings. The password is not in it." })],
+		submit: async () => {
+			const sent = await api(`/api/mail/mailboxes/${mailPath(box.address)}/setup`, { method: "POST", json: { to: to.value.trim() } });
+			toast(`The setup of ${box.address} is sent to ${sent.sent}.`, "ok");
+		} });
+	setTimeout(() => to.focus(), 0);
 }
 function newMailAlias() {
 	const domain = mailData.domain;
@@ -14871,18 +15047,30 @@ $("#people-filter-clear").onclick = () => { $("#people-filter").value = ""; rend
 // What a user is found by: who they are, their role, their Linux user, and what they were given
 function userText(user) {
 	return [user.name, user.username, user.email, user.linux, user.role === "admin" ? "administrator" : "user", user.disabled ? "locked" : "",
-		...Object.keys(user.sites || {}), ...Object.keys(user.connections || {}), ...(user.dns_domains || [])].filter(Boolean).join(" ").toLowerCase();
+		...Object.keys(user.sites || {}), ...Object.keys(user.connections || {}), ...(user.dns_domains || []), ...Object.keys(user.mail_domains || {})].filter(Boolean).join(" ").toLowerCase();
 }
 // What a user may, as chips: an icon and how many for each part, and the members they have access on
 function userChips(user) {
 	if (user.role === "admin") return [el("span", { className: "user-chip admin" }, svgIcon("shield"), "Everything")];
 	const count = (object) => Object.keys(object || {}).length;
-	const chip = (icon, tone, text, title = text) => el("span", { className: `user-chip tone-${tone}`, title }, svgIcon(icon), text);
+	const plural = (n, word, many = word + "s") => `${n} ${n === 1 ? word : many}`;
+	// Each says which part it is, then how much of it; on hover what it is in full
+	const chip = (icon, tone, part, text, title) => el("span", { className: `user-chip tone-${tone}`, title: title || `${part}: ${text}` }, svgIcon(icon),
+		el("b", { className: "user-chip-part", textContent: part }), text);
+	const mailDomains = Object.entries(user.mail_domains || {});
+	const cfParts = (user.cloudflare_parts || ["dns"]).map((part) => (CF_PARTS.find(([key]) => key === part) || [part, part])[1]);
+	// On a member: which parts they have there
+	const partsOn = (access) => [access?.web && "Web", access?.sql && "SQL"].filter(Boolean).join(", ") || "Nothing yet";
 	const chips = [
-		...(user.web ? [chip("globe", "blue", `${count(user.sites)} site${count(user.sites) === 1 ? "" : "s"}` + (user.create_sites ? " · makes" : ""))] : []),
-		...(user.sql ? [chip("database", "purple", `${count(user.connections)} SQL`, `${count(user.connections)} SQL connection${count(user.connections) === 1 ? "" : "s"}`)] : []),
-		...(user.dns ? [chip("cloud", "orange", `${(user.dns_domains || []).length} domain${(user.dns_domains || []).length === 1 ? "" : "s"}`, (user.dns_domains || []).join(", "))] : []),
-		...Object.keys(user.servers || {}).map((name) => chip("server", "teal", name, `Access on ${name}`)),
+		...(user.web ? [chip("globe", "blue", "Web", plural(count(user.sites), "site") + (user.create_sites ? " · makes" : ""),
+			`Web Server: ${Object.keys(user.sites || {}).join(", ") || "no site yet"}${user.create_sites ? "; may make sites" : ""}`)] : []),
+		...(user.sql ? [chip("database", "purple", "SQL", plural(count(user.connections), "connection"),
+			`SQL Server: ${plural(count(user.connections), "connection")}${user.manage_connections ? "; may add connections" : ""}`)] : []),
+		...(user.dns ? [chip("cloud", "orange", "DNS", plural((user.dns_domains || []).length, "domain"),
+			`Cloudflare (${cfParts.join(", ")}): ${(user.dns_domains || []).join(", ")}`)] : []),
+		...(user.mail ? [chip("mail", "sky", "Mail", plural(mailDomains.length, "domain"),
+			`Mail: ${mailDomains.map(([name, grant]) => `${name} (${grant?.mailboxes === undefined ? "any number of" : grant.mailboxes} mailbox${grant?.mailboxes === 1 ? "" : "es"}${grant?.settings ? ", its settings" : ""})`).join(", ")}`)] : []),
+		...Object.entries(user.servers || {}).map(([name, access]) => chip("server", "teal", name, partsOn(access), `On ${name}: ${partsOn(access)}`)),
 	];
 	return chips.length ? chips : [el("span", { className: "user-chip none" }, "No access yet")];
 }
@@ -15583,12 +15771,20 @@ userForm.onchange = (event) => { if (["role", "web", "sql", "sftp", "manage_conn
 // The mailcow server's domains as chips, those given ticked, as Cloudflare's; under them a short row for each one ticked,
 // with how many mailboxes they may have there (empty: as many as the domain allows)
 const userMailLimits = new Map();
+// The domains whose settings (how it takes mail, its limits) they may change too
+const userMailSettings = new Set();
 function fillUserMail(given) {
 	const domains = usersData?.mail_domains || [];
 	userMailLimits.clear();
-	for (const [name, grant] of Object.entries(given)) userMailLimits.set(name, grant?.mailboxes ?? "");
-	$("#user-mail-domains").replaceChildren(...(domains.length ? domains.map((name) => el("label", { className: "grant-chip", "data-search": name },
-		el("input", { type: "checkbox", name: "mail_domain", value: name, checked: name in given, onchange: drawUserMailLimits }), el("span", { textContent: name })))
+	userMailSettings.clear();
+	for (const [name, grant] of Object.entries(given)) {
+		userMailLimits.set(name, grant?.mailboxes ?? "");
+		if (grant?.settings) userMailSettings.add(name);
+	}
+	$("#user-mail-domains").replaceChildren(...(domains.length ? domains.map((name) => el("label", { className: "grant-chip", "data-search": name,
+		title: usersData?.mail_relays?.[name] === "all" ? "Relay All: no mailboxes" : "" },
+		el("input", { type: "checkbox", name: "mail_domain", value: name, checked: name in given, onchange: drawUserMailLimits }), el("span", { textContent: name }),
+		...(usersData?.mail_relays?.[name] === "all" ? [el("span", { className: "grant-chip-relay", textContent: "Relay" })] : [])))
 		: [el("p", { className: "muted", textContent: "The mailcow server has no domains." })]));
 	userMailSearch.reset(true);
 	drawUserMailLimits();
@@ -15599,7 +15795,32 @@ function drawUserMailLimits() {
 	const chosen = [...$("#user-mail-domains").querySelectorAll("input[name=mail_domain]:checked")].map((box) => box.value);
 	for (const name of chosen) if (!userMailLimits.has(name)) userMailLimits.set(name, String(USER_MAIL_DEFAULT));
 	$("#user-mail-limits-box").hidden = !chosen.length;
+	// Settings: whether they may change the domain's settings too, a toggle on its row
+	const settingsToggle = (name) => {
+		const button = el("button", { type: "button", className: "mail-settings-toggle", ariaPressed: String(userMailSettings.has(name)),
+			title: `Whether they may change how ${name} takes mail and its limits`, onclick: () => {
+				if (userMailSettings.has(name)) userMailSettings.delete(name); else userMailSettings.add(name);
+				// With its settings, the domain's own number holds: the row drawn again without a number of theirs
+				drawUserMailLimits();
+			} }, svgIcon("sliders"), "Settings");
+		return button;
+	};
 	$("#user-mail-limits").replaceChildren(...chosen.map((name) => {
+		// Relay All keeps no mailboxes on the server: nothing to count, said in place of the stepper
+		if (usersData?.mail_relays?.[name] === "all") {
+			return el("div", { className: "mail-limit-row relay" },
+				el("span", { className: "mail-limit-icon", ariaHidden: "true" }, svgIcon("send")),
+				el("span", { className: "mail-limit-text" }, el("strong", { textContent: name, title: name }), el("small", { textContent: "Relay All: its mail is passed on, it has no mailboxes" })),
+				settingsToggle(name));
+		}
+		// One who may change its settings sets the domain's own number: none of theirs, said in its place
+		if (userMailSettings.has(name)) {
+			return el("div", { className: "mail-limit-row" },
+				el("span", { className: "mail-limit-icon", ariaHidden: "true" }, svgIcon("mail")),
+				el("span", { className: "mail-limit-text" }, el("strong", { textContent: name, title: name }),
+					el("small", { textContent: "As many as the domain allows: they set it under its Settings" })),
+				settingsToggle(name));
+		}
 		// What it means, in words under the name, as the number is changed
 		const said = el("small");
 		const say = () => {
@@ -15623,14 +15844,19 @@ function drawUserMailLimits() {
 			el("span", { className: "mail-stepper" },
 				el("button", { type: "button", className: "mail-step", ariaLabel: `One fewer in ${name}`, onclick: () => step(-1) }, svgIcon("minus")),
 				count,
-				el("button", { type: "button", className: "mail-step", ariaLabel: `One more in ${name}`, onclick: () => step(1) }, svgIcon("plus"))));
+				el("button", { type: "button", className: "mail-step", ariaLabel: `One more in ${name}`, onclick: () => step(1) }, svgIcon("plus"))),
+			settingsToggle(name));
 	}));
 }
 // What is given, as it is saved: {domain: {mailboxes}} (none: as many as the domain allows)
 function userMailDomains() {
 	return Object.fromEntries([...$("#user-mail-domains").querySelectorAll("input[name=mail_domain]:checked")].map((box) => {
+		// A Relay All domain: no mailboxes to give
+		const settings = userMailSettings.has(box.value) ? { settings: true } : {};
+		// A Relay All domain has no mailboxes: 0 now, and the usual number again should it take mailboxes (the server does that)
+		if (usersData?.mail_relays?.[box.value] === "all") return [box.value, { mailboxes: 0, ...settings }];
 		const value = String(userMailLimits.get(box.value) ?? "");
-		return [box.value, value === "" ? {} : { mailboxes: Number(value) }];
+		return [box.value, { ...(value === "" ? {} : { mailboxes: Number(value) }), ...settings }];
 	}));
 }
 // The domains of the Cloudflare account as chips, those given ticked; a filter where there are many

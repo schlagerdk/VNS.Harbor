@@ -274,7 +274,10 @@ def apply_iis(path, snippets):
     before = normalized(tree.getroot())
     server = tree.getroot().find(".//system.webServer")
     if server is None:
-        raise ValueError("%s has no system.webServer element" % path)
+        # A classic ASP.NET site's web.config often has only <system.web>: it gets one, where there is a rule to carry
+        if not snippets:
+            return False
+        server = ET.SubElement(tree.getroot(), "system.webServer")
     rewrite = server.find("rewrite")
     rules = rewrite.find("rules") if rewrite is not None else None
     outbound = rewrite.find("outboundRules") if rewrite is not None else None

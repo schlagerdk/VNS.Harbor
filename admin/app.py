@@ -450,16 +450,30 @@ MAIL_DNS = os.path.join(DATA, "mail-dns.json")
 MAIL_LOCK = threading.Lock()
 
 
-def mail_domain_names():
-    """The mailcow server's domains, by name, for the user dialog; None without a server (no Mail part)"""
+def mail_domain_list():
+    """The mailcow server's domains for the user dialog, [{domain, relay}]; None without a server (no Mail part)"""
     settings = _mailcow.load()
     if not settings:
         return None
     try:
-        return [item["domain"] for item in _mailcow.domains(settings)]
+        return [{"domain": item["domain"], "relay": item["relay"]} for item in _mailcow.domains(settings)]
     except _mailcow.MailcowError:
         app.logger.exception("Could not read the mailcow domains")
         return []
+
+
+def mail_domains_for_users():
+    """The user dialog's Mail part: the domains by name, and how each takes mail (a Relay All one has no mailboxes)"""
+    found = mail_domain_list()
+    if found is None:
+        return {"mail_domains": None, "mail_relays": {}}
+    return {"mail_domains": [item["domain"] for item in found], "mail_relays": {item["domain"]: item["relay"] for item in found if item["relay"]}}
+
+
+def mail_domain_names():
+    """The mailcow server's domains, by name; None without a server"""
+    found = mail_domain_list()
+    return None if found is None else [item["domain"] for item in found]
 
 
 def mail_server():
@@ -649,6 +663,39 @@ def mail_dns_undo(cloudflare, zone, entries):
     return out, back, undone
 
 
+# How many mailboxes a user given a domain may have, unless chosen: as the user window starts them
+MAIL_USER_DEFAULT = 5
+
+
+def mail_grants_reopened(name):
+    """A domain that relayed all its mail takes mailboxes again: each user given it with none (as a Relay All domain is
+    given) may have the usual number. How many were changed"""
+    changed = 0
+    with CONFIG_LOCK:
+        for user in cfg.get("users", []):
+            grant = (user.get("mail_domains") or {}).get(name)
+            if isinstance(grant, dict) and grant.get("mailboxes") == 0:
+                grant["mailboxes"] = MAIL_USER_DEFAULT
+                changed += 1
+        if changed:
+            save_config()
+    if changed:
+        audit(f"Mail: {name} takes mailboxes again: {changed} user(s) given it may have {MAIL_USER_DEFAULT}")
+    return changed
+
+
+def mail_dns_access(name):
+    """Whether the user sees and keeps a mail domain's DNS: an administrator, or a user with Cloudflare's DNS part and the
+    domain's zone given them (as on Cloudflare's page)"""
+    user = me()
+    if access.is_admin(user):
+        return True
+    if not access.cloudflare_part(user, "dns"):
+        return False
+    _settings, zone = mail_zone(name)
+    return bool(zone) and access.dns_zone(user, zone["name"])
+
+
 def mail_fix(mailcow, name, kinds=None, replace=False):
     """The domain's records made in Cloudflare: the missing ones (those of kinds, or all), and with replace the ones
     that differ, changed to what mailcow wants (an SPF record keeps its other senders): [what was done]. What each
@@ -659,6 +706,8 @@ def mail_fix(mailcow, name, kinds=None, replace=False):
     settings, zone_id = checked["settings"], checked["zone"]["id"]
     done, kept = [], []
     full = None
+    admin = is_admin()
+    locks = _cloudflare.load_locks(CLOUDFLARE_LOCKS)
     for item in checked["records"]:
         if item["state"] == "ok" or (kinds and item["kind"] not in kinds) or (item["state"] == "differs" and not replace):
             continue
@@ -667,6 +716,10 @@ def mail_fix(mailcow, name, kinds=None, replace=False):
             # What it is now, whole, to put it back later
             if full is None:
                 full = {record["id"]: record for record in _cloudflare.records(settings, zone_id)}
+            # One an administrator locked is theirs to change, as on Cloudflare's page
+            if not admin and current["id"] in full and _cloudflare.is_locked(locks, zone_id, full[current["id"]]):
+                done.append(f"Left {item['type']} {item['name']}: it is locked, an administrator changes it")
+                continue
             before = mail_record_body(full[current["id"]]) if current["id"] in full else None
             # A CNAME takes the name alone: an address record there (A or AAAA) is changed into it, never put beside it
             if current["type"] != item["type"]:
@@ -686,6 +739,9 @@ def mail_fix(mailcow, name, kinds=None, replace=False):
         made_new = item["state"] == "missing" or not current
         if isinstance(result, dict) and result.get("id") and (made_new or entry["before"] is not None):
             kept.append({"id": result["id"], **entry})
+        # Made or changed by a user: open to them, as their own records on Cloudflare's page
+        if isinstance(result, dict) and result.get("id"):
+            _cloudflare.keep_open(CLOUDFLARE_LOCKS, zone_id, result["id"], admin)
     if kept:
         mail_dns_made(name, kept)
     if done:
@@ -733,20 +789,30 @@ def api_mail_domain(name):
     if request.method == "GET":
         def read():
             found = {"domain": _mailcow.domain(mailcow, name), "mailboxes": _mailcow.mailboxes(mailcow, name), "aliases": _mailcow.aliases(mailcow, name),
-                     "limit": access.mail_limit(me(), name), "admin": is_admin(), "host": mailcow["host"]}
+                     "limit": access.mail_limit(me(), name), "admin": is_admin(), "host": mailcow["host"], "dns": mail_dns_access(name),
+                     "settings": access.mail_settings(me(), name)}
             return jsonify(found)
         return mail_errors(read)
-    require_admin()
+    # Its settings: an administrator's, and a user's given them with the domain; deleting it is an administrator's alone
     if request.method == "PUT":
+        if not access.mail_settings(me(), name):
+            abort(403, "Its settings are not yours to change.")
+
         def change():
             data = request.get_json(silent=True) or {}
             was = _mailcow.domain(mailcow, name)["relay"]
             _mailcow.edit_domain(mailcow, name, data)
             audit(f"Mail: changed the settings of {name}")
             steps = []
+            # No longer relaying all its mail: the users given it with no mailbox (as a Relay All domain is given) get the
+            # usual number, so the mailboxes it may have now can be made
+            if was == "all" and "relay" in data and data.get("relay") != "all":
+                given = mail_grants_reopened(name)
+                if given:
+                    steps.append(f"{given} user{'s' if given != 1 else ''} given it may have {MAIL_USER_DEFAULT} mailboxes")
             # Now a relay domain: what only mailboxes here need goes from its DNS (made: out; changed: back as it was,
-            # so its MX is its own mail server's again)
-            if not was and data.get("relay"):
+            # so its MX is its own mail server's again); its DNS only by one who keeps it, else left for an administrator
+            if not was and data.get("relay") and mail_dns_access(name):
                 made = mail_dns_made(name)
                 cloudflare, zone = mail_zone(name)
                 mine = [entry for entry in made if mail_dns_kind(entry) in MAIL_DNS_MAILBOXES_ONLY]
@@ -760,6 +826,7 @@ def api_mail_domain(name):
                     audit(f"Mail: {name} is a relay domain: {out} DNS records taken out, {back} put back")
             return jsonify(domain=_mailcow.domain(mailcow, name), steps=steps)
         return mail_errors(change)
+    require_admin()
     if (request.get_json(silent=True) or {}).get("confirmation") != name:
         return error("Type the domain's name to delete it.")
 
@@ -783,10 +850,11 @@ def api_mail_domain(name):
 @app.route("/api/mail/domains/<name>/dns", methods=["GET", "POST"])
 def api_mail_domain_dns(name):
     """A domain's DNS against what mailcow wants; POST: the records made (kinds, or every missing one), and with replace
-    those that differ changed"""
-    require_admin()
+    those that differ changed. An administrator's, and a user's who keeps the domain's zone in Cloudflare"""
     mailcow = mail_server()
     name = mail_domain_of(name)
+    if not mail_dns_access(name):
+        abort(403, "Its DNS is not yours.")
     if request.method == "GET":
         def check():
             found = mail_dns(mailcow, name)
@@ -815,6 +883,9 @@ def api_mail_mailboxes(name):
     name = mail_domain_of(name)
 
     def make():
+        # A Relay All domain passes every address on to its own mail server: no mailbox here
+        if _mailcow.domain(mailcow, name)["relay"] == "all":
+            return error(f"{name} relays all its mail to its own mail server: it has no mailboxes here.", 400)
         limit = access.mail_limit(me(), name)
         if limit is not None and len(_mailcow.mailboxes(mailcow, name)) >= limit:
             return error(f"You have as many mailboxes in {name} as you may ({limit}).", 403)
@@ -844,6 +915,62 @@ def api_mail_mailbox(address):
         audit(f"Mail: changed the mailbox {address}")
         return jsonify(ok=True)
     return mail_errors(change)
+
+
+# What lets a mail program find the server by the address alone: Outlook's autodiscover (with its service record) and
+# Thunderbird's autoconfig
+MAIL_AUTOMATIC = ("autodiscover", "autoconfig", "srv")
+
+
+def mail_automatic(mailcow, name):
+    """Whether a domain's mailboxes are set up by their address alone: its autodiscover and autoconfig records point
+    to the server (in Cloudflare, or in public DNS where it is kept elsewhere). {ready, missing: [kinds]}"""
+    try:
+        records = mail_dns(mailcow, name)["records"]
+    except (_mailcow.MailcowError, _cloudflare.CloudflareError, ValueError):
+        return {"ready": False, "missing": list(MAIL_AUTOMATIC), "unknown": True}
+    wanted = [item for item in records if item["kind"] in MAIL_AUTOMATIC]
+    missing = [item["kind"] for item in wanted if item["state"] != "ok"]
+    return {"ready": bool(wanted) and not missing, "missing": missing}
+
+
+@app.route("/api/mail/domains/<name>/automatic")
+def api_mail_automatic(name):
+    """Whether its mailboxes are set up by their address alone (for the setup shown to whoever keeps them)"""
+    mailcow = mail_server()
+    name = mail_domain_of(name)
+    return jsonify(mail_automatic(mailcow, name))
+
+
+@app.route("/api/mail/mailboxes/<address>/setup", methods=["POST"])
+def api_mail_mailbox_setup(address):
+    """A mailbox's setup mailed to another address of its user (the new one is not set up yet), through Harbor's mail
+    server; its password in it only when given here, and never in the audit log"""
+    mailcow = mail_server()
+    address = mail_mailbox_of(address)
+    data = request.get_json(silent=True) or {}
+    to = str(data.get("to") or "").strip()
+    if not re.fullmatch(r"[^@\s<>,;]+@[^@\s<>,;]+\.[^@\s<>,;]+", to) or len(to) > 254:
+        return error("Give the address to send it to.")
+    if to.lower() == address.lower():
+        return error("Send it to another address of theirs: this one is not set up yet.")
+    secret = str(data.get("password") or "")
+    if len(secret) > 256 or any(char in secret for char in "\0\r\n"):
+        return error("That password cannot be sent.")
+    report = _keep_alive_module.report
+    settings = report.load_mail()
+    if not settings.get("host"):
+        return error("Harbor has no mail server to send it with (Settings, Notifications).", 400)
+    host = socket.getfqdn()
+    try:
+        # The automatic setup only where the domain's DNS lets a program find the server
+        automatic = mail_automatic(mailcow, address.rpartition("@")[2])["ready"]
+        report.send(settings, [to], f"Your mailbox {address}", report.mailbox_setup_text(address, mailcow["host"], secret, automatic),
+                    html=report.mailbox_setup_html(host, address, mailcow["host"], secret, automatic=automatic))
+    except Exception as exc:  # noqa: BLE001 - the mail server's own refusal, said as it is
+        return error(f"It was not sent: {exc}", 502)
+    audit(f"Mail: sent the setup of {address} to {to}" + (" with its password" if secret else ""))
+    return jsonify(sent=to)
 
 
 @app.route("/api/mail/domains/<name>/aliases", methods=["POST"])
@@ -6067,6 +6194,8 @@ def api_me():
                    dns=bool(_cloudflare.load()) and access.has_dns(user) and not (admin and cfg.get("dns_menu") == "hide"),
                    # Mail: where a mailcow server is set up, for an administrator and a user given domains
                    mail=bool(_mailcow.load()) and access.has_mail(user), mail_server=admin and bool(_mailcow.load()),
+                   # Harbor's own mail server (Settings, Notifications): a mailbox's setup can be mailed with it
+                   can_mail=can_mail(),
                    dns_account=admin and bool(_cloudflare.load()),
                    dns_domains=[] if admin else user.get("dns_domains", []),
                    cloudflare_parts=list(_cloudflare.PARTS) if admin else user.get("cloudflare_parts", ["dns"]))
@@ -6339,7 +6468,7 @@ def api_users():
         listed = [dict(user, linux=names.get(user.get("id"), ""), last_login=logins.get(user.get("id"))) for user in access.visible_users(cfg, me())]
         return jsonify(users=listed, sites=sites, connections=sql_connections_public(),
                        site_actions=access.SITE_ACTIONS, sql_actions=access.SQL_ACTIONS, templates=access.templates(cfg),
-                       dns_zones=dns_zone_names(), mail_domains=mail_domain_names(), can_mail=can_mail(),
+                       dns_zones=dns_zone_names(), **mail_domains_for_users(), can_mail=can_mail(),
                        # On a master: the members a user can be given access on, in the user window
                        members=member_names() if has_members() and not member_of() else [])
     users_from_master()

@@ -341,7 +341,12 @@ def edit_mailbox(settings, mailbox, data, opener=None):
 	if data.get("quota_mb") not in (None, ""):
 		attr["quota"] = whole(data.get("quota_mb"), 1, 100 * 1024 * 1024, "quota")
 	if "active" in data:
-		attr["active"] = 1 if data.get("active") else 0
+		# 1 on, 2 its login turned off while its mail is still delivered, 0 off (no login, no mail): mailcow's own
+		state = data.get("active")
+		state = 1 if state is True else 0 if state is False else state
+		if state not in (0, 1, 2):
+			raise ValueError("Choose whether the mailbox is on, takes mail without a login, or is off.")
+		attr["active"] = state
 	secret = password(data, required=False)
 	if secret:
 		attr.update(password=secret, password2=secret)

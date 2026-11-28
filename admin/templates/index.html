@@ -1030,6 +1030,8 @@
       <div><h2 id="form-dialog-title"></h2><p id="form-dialog-text"></p></div>
     </header>
     <div id="form-dialog-fields" class="server-action-fields"></div>
+    <!-- What went wrong with what was sent, here where it is put right: the dialog stays open -->
+    <p id="form-dialog-error" class="error form-dialog-error" role="alert" hidden></p>
     <menu><button type="button" id="form-dialog-cancel" class="cancel-link">Cancel</button><span id="form-dialog-extra" class="form-dialog-extra"></span><button type="submit" id="form-dialog-ok" class="primary"></button></menu>
   </form>
 </dialog>
@@ -1215,7 +1217,7 @@
         <div class="grant-label">Domains</div>
         <div id="user-mail-domains" class="grant-chips dns-domain-chips"></div>
         <div id="user-mail-limits-box" hidden>
-          <div class="grant-label">Mailboxes they may have</div>
+          <div class="grant-label">What they may in each</div>
           <div id="user-mail-limits" class="mail-limit-rows"></div>
         </div>
         <p class="hint">They see these domains only, and make, change and delete their mailboxes and aliases there. Any: as many as the domain itself allows.</p>
