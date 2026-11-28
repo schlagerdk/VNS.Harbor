@@ -2162,7 +2162,8 @@ def index():
         shown = menu_shown()
         start = "sql" if not shown["web"] else "sites" if not shown["sql"] else start
     return render_template("index.html", csrf=csrf_token(), admin_site=ADMIN_SITE, hostname=socket.gethostname(), user=user.get("name") or user["username"],
-                           start_view=start, role="admin" if access.is_admin(user) else "user", header=header_shown(user), site_tools=site_tools())
+                           start_view=start, role="admin" if access.is_admin(user) else "user", header=header_shown(user), site_tools=site_tools(),
+                           menu=top_menu(user))
 
 
 def site_tools():
@@ -2211,6 +2212,21 @@ def menu_shown():
     if not shown["web"] and not shown["sql"]:
         shown["web" if cfg.get("web_menu", "auto") != "hide" or cfg.get("sql_menu", "auto") == "hide" else "sql"] = True
     return shown
+
+
+def top_menu(user):
+    """What the top menu has for this user, as the page shows it once it knows them (applyAccess): in the page from the
+    start, so a reload never shows a part they do not have before it is taken away"""
+    admin = access.is_admin(user)
+    menu = menu_shown() if admin else {"web": access.has_web(user), "sql": access.has_sql(user)}
+    return {"sites": access.has_web(user) and menu.get("web") is not False,
+            "sql": access.has_sql(user) and menu.get("sql") is not False,
+            # DNS: where a Cloudflare account is set up, for a user given domains, and for an administrator unless it
+            # is taken out of the menu (Settings, Top menu)
+            "dns": bool(_cloudflare.load()) and access.has_dns(user) and not (admin and cfg.get("dns_menu") == "hide"),
+            # Mail: where a mailcow server is set up, for an administrator and a user given domains
+            "mail": bool(_mailcow.load()) and access.has_mail(user),
+            "server": admin}
 
 
 @app.route("/api/menu-shown")
@@ -6189,11 +6205,8 @@ def api_me():
                                                   for connection, grant in (user.get("connections") or {}).items()},
                    menu=menu_shown() if admin else {"web": access.has_web(user), "sql": access.has_sql(user)},
                    menu_setting={"web": cfg.get("web_menu", "auto"), "sql": cfg.get("sql_menu", "auto"), "dns": cfg.get("dns_menu", "auto")},
-                   # DNS in the menu: where a Cloudflare account is set up, for a user given domains, and for an
-                   # administrator unless it is taken out of the menu (Settings, Top menu)
-                   dns=bool(_cloudflare.load()) and access.has_dns(user) and not (admin and cfg.get("dns_menu") == "hide"),
-                   # Mail: where a mailcow server is set up, for an administrator and a user given domains
-                   mail=bool(_mailcow.load()) and access.has_mail(user), mail_server=admin and bool(_mailcow.load()),
+                   # DNS and Mail in the menu, as the page has them from the start (top_menu)
+                   dns=top_menu(user)["dns"], mail=top_menu(user)["mail"], mail_server=admin and bool(_mailcow.load()),
                    # Harbor's own mail server (Settings, Notifications): a mailbox's setup can be mailed with it
                    can_mail=can_mail(),
                    dns_account=admin and bool(_cloudflare.load()),

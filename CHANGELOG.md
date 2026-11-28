@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.115] - Unreleased
+
+### Fixes
+
+- A reload showed Web Server and SQL Server in the top menu for a moment to a user who has neither (Mail or Cloudflare only), before the page knew them: the menu is in the page as they have it from the start.
+
 ## [1.0.114] - 2026-11-28
 
 ### Features

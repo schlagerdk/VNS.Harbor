@@ -69,3 +69,35 @@ class SiteToolsTests(unittest.TestCase):
         self.assertEqual(shown({"convert": False, "export": False}), (False, False, False))
         # An address to a tab that is not shown leads to General
         self.assertIn('SERVER_TABS.includes(arg) && !$("#server-tab-" + arg)?.hidden ? arg', SOURCE)
+
+
+class TopMenuTests(unittest.TestCase):
+    """The top menu is in the page as the user has it from the start: a reload never shows Web Server and SQL Server to
+    one who has neither, before the page knows them and takes them away (1.0.114)"""
+
+    def render(self, menu):
+        from jinja2 import Environment, FileSystemLoader
+        template = Environment(loader=FileSystemLoader(str(ROOT_DIR / "admin/templates"))).get_template("index.html")
+        page = template.render(csrf="x", admin_site="admin.example.com", hostname="web-01", user="Anna", start_view="sites", role="user",
+                               header={"search": True}, asset_version="1", site_tools={"convert": False, "export": False}, menu=menu)
+        hidden = lambda ident: re.search(rf'id="{ident}"[^>]*\shidden[\s>]', page) is not None
+        nav = re.search(r'<nav class="view-switch"[^>]*>', page)[0]
+        return " hidden" in nav, {part: not hidden(f"switch-{part}") for part in ("sites", "sql", "dns", "mail", "server")}
+
+    def test_a_mail_users_page_has_no_web_or_sql_server(self):
+        nav_hidden, shown = self.render({"sites": False, "sql": False, "dns": False, "mail": True, "server": False})
+        self.assertTrue(nav_hidden)
+        self.assertEqual(shown, {"sites": False, "sql": False, "dns": False, "mail": True, "server": False})
+
+    def test_an_administrators_menu_is_there_at_once(self):
+        nav_hidden, shown = self.render({"sites": True, "sql": True, "dns": True, "mail": True, "server": True})
+        self.assertFalse(nav_hidden)
+        self.assertTrue(all(shown.values()))
+        _, shown = self.render({"sites": True, "sql": False, "dns": False, "mail": True, "server": False})
+        self.assertEqual(shown, {"sites": True, "sql": False, "dns": False, "mail": True, "server": False})
+
+    def test_the_page_is_given_what_the_user_has(self):
+        app = (ROOT_DIR / "admin/app.py").read_text()
+        self.assertIn("menu=top_menu(user))", app)
+        # /api/me says the same of DNS and Mail as the page had from the start
+        self.assertIn('dns=top_menu(user)["dns"], mail=top_menu(user)["mail"]', app)
