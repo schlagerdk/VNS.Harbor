@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.120] - 2026-11-28
+
+### Fixes
+
+- The filters above the sites (All, Umbraco, its versions, C# / .NET) left out the Windows servers' sites: they now count them, and the Windows cards follow the filter chosen (a version only on Windows, such as v7, gets its own chip). Filters of what is not read on Windows (Running, With environments, …) leave them out.
+
 ## [1.0.119] - 2026-11-28
 
 ### Features

@@ -45,6 +45,34 @@ console.log(JSON.stringify([run([1, 2, 3], { search: false }), run([1], { search
 		user_header = eval(compile(ast.Expression(header.orelse), "app.py", "eval"), {"HEADER_PARTS": ("search", "addresses", "files", "terminal")})
 		self.assertEqual(user_header, {"search": True, "addresses": False, "files": False, "terminal": False})
 
+	def test_the_filters_take_in_the_windows_sites(self):
+		"""Umbraco, its versions and C# / .NET counted and filtered this server's sites, never the Windows servers' (1.0.120)"""
+		text = (ADMIN / "static/app.js").read_text()
+		start = text.index("const umbracoMajorOf = ")
+		parts = [text[start:text.index("\n", start)], function_source(text, "umbracoMajors"), function_source(text, "windowsSearched")]
+		start = text.index("const windowsMatches = ")
+		parts.append(text[start:text.index(";\n", start) + 2])
+		harness = """
+let filter = "all", umbracoMajor = null;
+const kindLabel = { umbraco: "Umbraco", csharp: "C# / .NET" };
+const currentUser = { admin: true };
+const $ = () => ({ value: "" });
+const windowsSites = [{ name: "win", sites: [{ folder: "a", kind: "umbraco", umbraco_version: "7.15.11" },
+	{ folder: "b", kind: "umbraco", umbraco_version: "18.3.0" }, { folder: "c", kind: "csharp" }] }];
+%s
+const shown = () => windowsSearched()[0].sites.filter(windowsMatches).map((site) => site.folder).join("");
+const out = { all: shown() };
+filter = "umbraco"; out.umbraco = shown();
+umbracoMajor = 7; out.v7 = shown();
+filter = "csharp"; umbracoMajor = null; out.csharp = shown();
+filter = "running"; out.running = shown();
+out.majors = umbracoMajors([{ kind: "umbraco", umbraco_version: "13.1.0" }, ...windowsSites[0].sites]).map(([major]) => major);
+console.log(JSON.stringify(out));
+""" % "\n".join(parts)
+		result = subprocess.run(["node", "-e", harness], capture_output=True, text=True)
+		self.assertEqual(result.returncode, 0, result.stderr)
+		self.assertEqual(json.loads(result.stdout), {"all": "abc", "umbraco": "ab", "v7": "a", "csharp": "c", "running": "", "majors": [18, 13, 7]})
+
 
 if __name__ == "__main__":
 	unittest.main()

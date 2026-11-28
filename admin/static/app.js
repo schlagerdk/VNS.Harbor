@@ -1474,9 +1474,12 @@ const sortedEnvironments = (environments) => [...environments].sort((a, b) =>
 
 function renderStats() {
 	const searched = overviewSites().filter(matchesQuery);
-	const count = (test) => searched.filter(test).length;
+	// The Windows servers' sites the search finds: in All, their kind and their Umbraco version (nothing else is read of them)
+	const windows = windowsSearched().flatMap((server) => server.sites);
+	const count = (test, withWindows = false) => searched.filter(test).length + (withWindows ? windows.filter(test).length : 0);
+	const total = searched.length + windows.length;
 	const chips = [
-		["all", "All", searched.length],
+		["all", "All", total],
 		["running", "Running", count((s) => siteState(s) === "active")],
 		["stopped", "Stopped", count((s) => siteState(s) === "inactive")],
 		["problem", "Needs attention", count((s) => siteProblems(s).length > 0)],
@@ -1486,20 +1489,20 @@ function renderStats() {
 		["own", "Managed here", count((s) => !s.managed_by)],
 	];
 	for (const kind of Object.keys(kindLabel)) {
-		const n = count((s) => s.kind === kind);
+		const n = count((s) => s.kind === kind, true);
 		if (n) chips.push([kind, kindLabel[kind], n]);
 	}
-	const usefulChips = chips.filter(([key, , n]) => key === "all" || (n > 0 && n < searched.length));
+	const usefulChips = chips.filter(([key, , n]) => key === "all" || (n > 0 && n < total));
 	// What is waiting to be done, shown whenever a site has it, even when every site has it
 	const pending = Object.entries(attentionFilters)
 		.map(([key, [label, test, title]]) => [key, label, count(test), title])
 		.filter(([, , n]) => n > 0);
 	if (![...usefulChips, ...pending].some(([key]) => key === filter)) filter = "all";
 	// The Umbraco filter splits into its major versions when the sites are on more than one
-	const majors = filter === "umbraco" ? umbracoMajors(searched) : [];
+	const majors = filter === "umbraco" ? umbracoMajors([...searched, ...windows]) : [];
 	if (!majors.some(([major]) => major === umbracoMajor)) umbracoMajor = null;
 	const box = $("#stats");
-	box.hidden = listedSites().length <= 1 || (usefulChips.length <= 1 && !pending.length);
+	box.hidden = listedSites().length + windows.length <= 1 || (usefulChips.length <= 1 && !pending.length);
 	box.replaceChildren();
 	const chip = ([key, label, n, title], className = "") => el("div", { className: "chip" + className + (filter === key ? " active" : ""), title: title || "", onclick: () => { filter = key; umbracoMajor = null; renderSites(); } },
 		el("b", { textContent: n }), el("span", { textContent: label }));
@@ -1839,14 +1842,23 @@ async function refreshWindowsSites(fresh = false, again = false) {
 	windowsSitesAsked = asked;
 	return asked;
 }
-// A group a Windows server: its name with the Windows logo, then a card a site (its folder), found by the search too
-function windowsSiteGroups() {
-	if (!currentUser.admin || !windowsSites.length) return [];
+// Each Windows server with its sites the search finds (none for a user, who is not shown them)
+function windowsSearched() {
+	if (!currentUser?.admin || !windowsSites.length) return [];
 	const words = $("#search").value.toLowerCase().split(/\s+/).filter(Boolean);
 	const found = (server, site) => words.every((word) => [site.folder, site.binding, site.backend, server.name].join(" ").toLowerCase().includes(word));
-	return windowsSites.map((server) => {
-		const sites = server.sites.filter((site) => found(server, site));
-		if (!sites.length && !server.error) return null;
+	return windowsSites.map((server) => ({ ...server, sites: server.sites.filter((site) => found(server, site)) }));
+}
+// A Windows site under the filter chosen: All, its kind, and its Umbraco version; the others are read of this server's
+// own sites only (running, environments, updates…), so they leave it out
+const windowsMatches = (site) => filter === "all" || (!!kindLabel[filter] && site.kind === filter
+	&& (filter !== "umbraco" || umbracoMajor === null || umbracoMajorOf(site) === umbracoMajor));
+// A group a Windows server: its name with the Windows logo, then a card a site (its folder), found by the search too
+function windowsSiteGroups() {
+	return windowsSearched().map((server) => {
+		const sites = server.sites.filter(windowsMatches);
+		// A server that could not be read is told under All, not under a filter it may have nothing of
+		if (!sites.length && !(server.error && filter === "all")) return null;
 		const icon = el("span", { className: "site-server-icon os-icon" });
 		icon.innerHTML = osLogos.windows;
 		return el("section", { className: "site-server-group winlist-group" },
