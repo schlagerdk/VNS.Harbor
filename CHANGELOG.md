@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.108] - Unreleased
+
+### Fixes
+
+- Profile is the one dialog the browser may help with passwords in: its fields are its username, current and new password again, so a saved one is filled in and a new one offered to be kept (Harbor's other dialogs keep it out).
+
 ## [1.0.107] - 2026-11-28
 
 ### Fixes

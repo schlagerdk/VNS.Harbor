@@ -566,7 +566,8 @@ function formValues(form) {
 }
 function maskPasswords(root) {
 	for (const input of root.querySelectorAll("input[type=password], input.masked-password")) {
-		if (!input.closest("dialog")) continue;
+		// One's own login (Profile): the one place the browser's saved passwords and new ones are welcome
+		if (!input.closest("dialog") || input.closest("[data-browser-passwords]")) continue;
 		input.type = "text";
 		input.classList.add("masked-password");
 		input.setAttribute("autocomplete", "off");
@@ -584,7 +585,7 @@ new MutationObserver((changes) => {
 // form with a password is never sent the browser's way: its submit button and Enter are caught, the browser's own
 // checks of the fields run (reportValidity), and the form's submit handlers are run with a submit event of our own,
 // which sends nothing. A form of method dialog that its handler leaves be is closed as the browser would.
-const holdsPassword = (form) => form?.closest("dialog") && form.querySelector("input[type=password], input.masked-password");
+const holdsPassword = (form) => form?.closest("dialog") && !form.hasAttribute("data-browser-passwords") && form.querySelector("input[type=password], input.masked-password");
 function submitInPlace(form, submitter) {
 	if (!form.noValidate && !form.reportValidity()) return;
 	const event = typeof SubmitEvent === "function"
