@@ -292,6 +292,9 @@ def introduce(system, only=None):
                                           f"--port {shlex.quote(str(item.get('port', 22)))}", check=False)
             if not added.ok:
                 said.append(f"{other} could not be added on {name}: {((added.stderr or added.stdout).strip().splitlines() or ['no answer'])[-1]}")
+            elif item.get("no_web"):
+                # One that hosts no sites is no place for one there either
+                remote(system, entry, f"{REMOTE_HARBOR} servers web {shlex.quote(other)} off --here", check=False)
     for line in said:
         system.warn(line)
     return said
@@ -330,8 +333,45 @@ def adds_environments(user):
     return any("create_env" in (grant.get("actions") or []) for sites in grants for grant in sites.values() if isinstance(grant, dict))
 
 
-def users_for(users, name):
-    """The master's users that have something on the member, as it is sent them"""
+def web(system, name, hosts):
+    """A member set to host sites, or not (a SQL Server's): marked here, told to the member itself (its admin makes no
+    site then), and to every other member, whose dialogs then leave it out as a place for a site or an environment. The
+    users are sent again: they have no Web Server there"""
+    from harbor.server.servers import set_entry_web
+    found = members(system)
+    if name not in found:
+        raise Stop(f"{name} is not a member.")
+    set_entry_web(system, name, hosts)
+    state = "on" if hosts else "off"
+    said = []
+
+    def why(result):
+        """What a member that could not be told said: one on an older Harbor does not know the command"""
+        lines = (result.stderr or result.stdout or "").strip().splitlines()
+        if any("invalid choice" in line or "argument" in line for line in lines):
+            return "its Harbor is older: update it (Servers, Update all), then set this again"
+        return lines[-1] if lines else "no answer"
+    told = system.run(*ssh(system, found[name]), *on(found[name], f"{REMOTE_HARBOR} server web {state}"), check=False, capture=True)
+    if not told.ok:
+        said.append(f"{name} itself could not be told: {why(told)}")
+    for other, entry in found.items():
+        if other == name:
+            continue
+        sent = system.run(*ssh(system, entry), *on(entry, f"{REMOTE_HARBOR} servers web {shlex.quote(name)} {state} --here"), check=False, capture=True)
+        if not sent.ok:
+            said.append(f"{other} could not be told: {why(sent)}")
+    try:
+        call(system, "POST", "/api/master/push-users", body={})
+    except (Stop, OSError):
+        said.append("the users could not be sent again")
+    for line in said:
+        system.warn(line)
+    system.say(f"{name} hosts sites." if hosts else f"{name} hosts no sites: no site or environment is made there, and no user has a Web Server there.")
+
+
+def users_for(users, name, no_web=()):
+    """The master's users that have something on the member, as it is sent them. On a member that hosts no sites
+    (no_web: the members that do not), no Web Server, and it is no place for their sites or environments"""
     found = []
     for user in users:
         admin = user.get("role") == "admin"
@@ -340,12 +380,14 @@ def users_for(users, name):
             continue
         item = {key: user[key] for key in USER_SENT if key in user}
         item.update(access or {})
+        if name in no_web:
+            item.update(web=False, create_sites=False, create_envs=False, sftp=False, sites={})
         # The other members they may make sites on: an environment of a site here may go there, and nowhere else
         item["create_on"] = sorted(other for other, given in (user.get("servers") or {}).items()
-                                   if other != name and isinstance(given, dict) and given.get("create_sites"))
+                                   if other != name and other not in no_web and isinstance(given, dict) and given.get("create_sites"))
         # Where their environments may be made: the other members that host them for this user
         item["envs_on"] = sorted(other for other, given in (user.get("servers") or {}).items()
-                                 if other != name and isinstance(given, dict) and given.get("create_envs"))
+                                 if other != name and other not in no_web and isinstance(given, dict) and given.get("create_envs"))
         if not adds_environments(user):
             item["envs_on"] = []
             item["create_envs"] = False
@@ -358,10 +400,11 @@ def users_for(users, name):
 def push_users(system, users):
     """The master's users sent to each member, each with what it may there: {member: {users, skipped} or {error}}"""
     found = members(system)
+    no_web = {name for name, entry in found.items() if entry.get("no_web")}
 
     def send(item):
         name, entry = item
-        listed = users_for(users, name)
+        listed = users_for(users, name, no_web)
         raw = {"type": "application/json", "data": base64.b64encode(json.dumps({"users": listed}).encode()).decode()}
         try:
             answer = ask(system, name, entry, "PUT", "/api/membership/users", raw=raw)

@@ -185,6 +185,38 @@ class MasterTests(unittest.TestCase):
         self.assertIn("is a master itself", " ".join(system.said))
         self.assertNotIn("member", json.loads((self.root / "var/lib/harbor/servers.json").read_text())["two"])
 
+    def test_a_member_that_hosts_no_sites(self):
+        """A SQL Server's member hosts no sites: it is told so itself, the other members mark it so (no environment
+        there), and no user has a Web Server there or makes sites or environments there"""
+        self.servers({"sql": {"host": "10.0.0.5", "user": "root", "port": "22", "member": True},
+                      "web": {"host": "10.0.0.6", "user": "root", "port": "22", "member": True}})
+        system = self.system()
+        with mock.patch.object(master, "call", return_value={"status": 200, "body": {}}) as told:
+            self.assertEqual(main(["servers", "web", "sql", "off"], system), 0, system.said)
+        commands = " ".join(system.commands)
+        self.assertIn("root@10.0.0.5 python3 /opt/harbor/current/bin/harbor server web off", commands)
+        self.assertIn("root@10.0.0.6 python3 /opt/harbor/current/bin/harbor servers web sql off --here", commands)
+        told.assert_called_with(system, "POST", "/api/master/push-users", body={})
+        self.assertTrue(json.loads((self.root / "var/lib/harbor/servers.json").read_text())["sql"]["no_web"])
+        users = [{"id": "u_aaaaaa", "username": "anna", "role": "user",
+                  "servers": {"sql": {"web": True, "create_sites": True, "sites": {"x.dk": {}}, "sql": True}, "web": {"web": True, "create_envs": True}}}]
+        to_sql = master.users_for(users, "sql", {"sql"})[0]
+        self.assertEqual((to_sql["web"], to_sql["create_sites"], to_sql["sites"], to_sql["sql"]), (False, False, {}, True))
+        self.assertEqual(master.users_for(users, "web", {"sql"})[0]["create_on"], [])
+        # Again on: the flag goes
+        with mock.patch.object(master, "call", return_value={"status": 200, "body": {}}):
+            main(["servers", "web", "sql", "on"], self.system())
+        self.assertNotIn("no_web", json.loads((self.root / "var/lib/harbor/servers.json").read_text())["sql"])
+
+    def test_a_server_marked_so_makes_no_sites(self):
+        from harbor.server import servers
+        system = self.system()
+        self.assertTrue(servers.hosts_sites(system))
+        self.assertEqual(main(["server", "web", "off"], system), 0)
+        self.assertFalse(servers.hosts_sites(system))
+        main(["server", "web", "on"], system)
+        self.assertTrue(servers.hosts_sites(system))
+
     def test_a_member_removed_leaves_first(self):
         """Removing a member told it nothing: the master's users stayed on it. It leaves first, while it can be asked"""
         self.servers({"two": {"host": "10.0.0.2", "user": "root", "port": "22", "member": True}})

@@ -4113,6 +4113,8 @@ body.not-admin .server-card.add { display: none; }
 /* A user's access on a master itself: Cloudflare's alone (it hosts no sites or databases) */
 #dlg-user.on-master-access #user-scope .user-part.tone-web, #dlg-user.on-master-access #user-scope .user-part.tone-sql,
 #dlg-user.on-master-access #user-sftp-part { display: none; }
+/* A member that hosts no sites: no Web Server, nor SFTP to a site's folder there */
+#dlg-user.no-web-access #user-scope .user-part.tone-web, #dlg-user.no-web-access #user-sftp-part { display: none; }
 /* Add environment for a user: the folder on the server is Harbor's choice, not theirs to type */
 #dlg-prod.for-user #prod-local-options { display: none !important; }
 /* Folders on the server are Harbor's for a user (they follow the environment): an administrator's to change */

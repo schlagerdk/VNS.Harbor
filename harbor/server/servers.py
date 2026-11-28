@@ -572,7 +572,7 @@ def status(system, name):
     entry = server(system, name)
     result = remote(system, entry, "python3 -", input=STATUS, check=False)
     if not result.ok:
-        return {"name": name, **{key: entry[key] for key in ("host", "user", "port")}, "member": bool(entry.get("member")), "reachable": False,
+        return {"name": name, **{key: entry[key] for key in ("host", "user", "port")}, "member": bool(entry.get("member")), "no_web": bool(entry.get("no_web")), "reachable": False,
                 "error": (result.stderr or result.stdout).strip().splitlines()[-1:] or ["no answer"]}
     try:
         found = json.loads(result.stdout.strip().splitlines()[-1])
@@ -580,7 +580,7 @@ def status(system, name):
         found = {}
     remember_public(system, name, found.get("public", ""), found.get("fqdn"), found.get("admin_names"))
     # Why Harbor must stay there, for Remove: sites of its own, or SQL connections here that reach it
-    return {"name": name, **{key: entry[key] for key in ("host", "user", "port")}, "member": bool(entry.get("member")), "reachable": True, **judged(found),
+    return {"name": name, **{key: entry[key] for key in ("host", "user", "port")}, "member": bool(entry.get("member")), "no_web": bool(entry.get("no_web")), "reachable": True, **judged(found),
             "keep_harbor": uninstall_blockers(system, name, entry, found)}
 
 
@@ -651,3 +651,36 @@ def install(system, name):
     system.step(f"Bring {name} up to Harbor {release}")
     remote(system, entry, f"python3 {CURRENT}/bin/harbor self after-update", capture=False)
     system.say(f"{name} runs Harbor {release}.")
+
+
+# A server that hosts no sites (a SQL Server's, say): no site is made there, nor an environment of one elsewhere, and
+# its users have no Web Server there. On the server itself a marker its admin reads; in each Servers that knows it, a
+# flag on its entry, so the dialogs that choose a server leave it out
+NO_WEB = "/var/lib/harbor/no-web"
+
+
+def hosts_sites(system):
+    """Whether this server hosts sites (it does unless it was set not to)"""
+    return not system.path(NO_WEB).exists()
+
+
+def set_hosts_sites(system, on):
+    """This server set to host sites, or not: its admin makes none then, and its Web Server is off in its menu"""
+    marker = system.path(NO_WEB)
+    if on:
+        marker.unlink(missing_ok=True)
+        system.say("This server hosts sites.")
+    else:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text("This server hosts no sites (Harbor: harbor server web on to change it).\n")
+        system.say("This server hosts no sites: none is made here.")
+
+
+def set_entry_web(system, name, on):
+    """A server in Servers marked as hosting sites, or not, here"""
+    found = read_json(system.path(SERVERS)) or {}
+    if name not in found:
+        raise Stop(f"No server {name}.")
+    entry = {key: value for key, value in found[name].items() if key != "no_web"}
+    found[name] = entry if on else {**entry, "no_web": True}
+    write_json(system.path(SERVERS), found)

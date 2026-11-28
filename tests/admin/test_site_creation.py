@@ -65,7 +65,7 @@ class UnicodeScriptTests(unittest.TestCase):
                         for target in node.targets))
             or (isinstance(node, ast.FunctionDef) and node.name == "build_command")
         ]
-        self.ns = dict(re=re, os=os, glob=glob, sys=sys, abort=abort,
+        self.ns = dict(re=re, os=os, NO_WEB="/nonexistent/no-web", glob=glob, sys=sys, abort=abort,
                        site_arg=lambda data: data["site"], service_name=service_name, HARBOR_DIR=str(ROOT_DIR), LIB_DIR=str(ROOT_DIR / "lib"),
                        # Run as root, a script must be root's: here the tests' own user makes them
                        own_scripts_dir=lambda site: "/nonexistent/" + site, runnable=lambda path: path)
@@ -115,7 +115,7 @@ class DotnetTemplateTests(unittest.TestCase):
     def setUp(self):
         self.app = Flask(__name__)
         self.runner = Mock()
-        self.ns = dict(app=self.app, re=re, os=os, jsonify=jsonify,
+        self.ns = dict(app=self.app, re=re, os=os, NO_WEB="/nonexistent/no-web", jsonify=jsonify,
                        subprocess=Mock(run=self.runner, SubprocessError=subprocess.SubprocessError),
                        dotnet_root_dir=lambda: "/usr/share/dotnet",
                        error=lambda message, status: (jsonify(error=message), status))
@@ -230,7 +230,7 @@ class CreateCommandTests(unittest.TestCase):
                      isinstance(target, ast.Name) and target.id in
                      ("NAME_RE", "BINDING_RE", "PROJECT_RE", "FOLDER_RE", "VERSION_RE", "PACKAGE_RE")
                      for target in node.targets)]
-        self.ns = {"re": re, "os": os, "abort": abort, "HARBOR_DIR": str(ROOT_DIR), "LIB_DIR": str(ROOT_DIR / "lib"),
+        self.ns = {"re": re, "os": os, "NO_WEB": "/nonexistent/no-web", "abort": abort, "HARBOR_DIR": str(ROOT_DIR), "LIB_DIR": str(ROOT_DIR / "lib"),
                    "site_dirs": lambda: [], "_normalize_dns_name": normalize_dns_name,
                    "_normalize_site_name": normalize_site_name, "service_name": service_name,
                    "installed_template_packages": lambda: {"custom": {"package": "Custom.Templates"}},

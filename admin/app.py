@@ -1552,7 +1552,7 @@ def menu_shown():
     One of them is always shown: the admin has a start page."""
     # A master (phase 13) shows its members' sites and SQL connections on them: on auto, both are there
     master = has_members()
-    shown = {"web": menu_part_shown("web_menu", lambda: master or has_sites()), "sql": menu_part_shown("sql_menu", lambda: master or sql_in_use())}
+    shown = {"web": menu_part_shown("web_menu", lambda: master or (has_sites() and not os.path.exists(NO_WEB))), "sql": menu_part_shown("sql_menu", lambda: master or sql_in_use())}
     if not shown["web"] and not shown["sql"]:
         shown["web" if cfg.get("web_menu", "auto") != "hide" or cfg.get("sql_menu", "auto") == "hide" else "sql"] = True
     return shown
@@ -4047,6 +4047,9 @@ def servers_command(data):
         return f"Make {name} a member", harbor + ["join", name], {}
     if action == "leave":
         return f"{name} no longer a member", harbor + ["leave", name], {}
+    if action == "web":
+        state = "on" if data.get("hosts") is True else "off"
+        return (f"{name} hosts sites" if state == "on" else f"{name} hosts no sites"), harbor + ["web", name, state], {}
     if action == "edit":
         # Its name, and for a Linux server its address (harbor servers edit): what is left empty stays
         new_name, host = data.get("new_name", "") or "", data.get("host", "") or ""
@@ -5421,6 +5424,19 @@ def api_master_server_order():
     return jsonify(members=member_names())
 
 
+NO_WEB = "/var/lib/harbor/no-web"
+
+
+def members_no_web():
+    """This master's members that host no sites"""
+    try:
+        with open("/var/lib/harbor/servers.json", encoding="utf-8") as stream:
+            found = json.load(stream)
+    except (OSError, ValueError):
+        return []
+    return [name for name in member_names() if isinstance(found.get(name), dict) and found[name].get("no_web")]
+
+
 def member_hosts():
     """Each member's own admin host (admin.<its name>, as Servers learnt it), for the page working on it"""
     try:
@@ -5450,6 +5466,10 @@ def api_me():
                    members=member_names() if admin else [name for name in member_names() if (user.get("servers") or {}).get(name)],
                    # Where each member's own admin is (admin.<its name>): the page names things on it by it, not the master's
                    member_hosts=member_hosts(),
+                   # The members that host no sites (a SQL Server's): no New site there, no Web Server there for a user
+                   members_no_web=members_no_web(),
+                   # This server itself: whether it hosts sites (harbor server web)
+                   hosts_sites=not os.path.exists(NO_WEB),
                    # A master's user on a member: whether their environments may be made here, and on which others
                    create_envs=bool(user.get("create_envs")), envs_on=user.get("envs_on") or [],
                    # A member: its users are made on its master
@@ -6251,7 +6271,8 @@ def api_servers_kept():
     user = me()
     from harbor.core.system import System
     from harbor.server import servers
-    kept = learnt_servers()
+    # One that hosts no sites (a SQL Server's) is no place for a site or an environment
+    kept = {name: entry for name, entry in learnt_servers().items() if not entry.get("no_web")}
     if not access.is_admin(user):
         allowed = set(user.get("envs_on") or [])
         kept = {name: entry for name, entry in kept.items() if name in allowed and entry.get("kind") != "windows"}
@@ -6880,6 +6901,8 @@ def build_command(data):
             argv = ["/usr/bin/env", "VNS_COPY_HTTPS=" + data["https"], *argv]
         return "Copy site: " + source, argv, HARBOR_DIR
     if kind == "create_site":
+        if os.path.exists(NO_WEB):
+            abort(400, "This server hosts no sites: make the site on another (Settings, Servers on the master).")
         site = dns_name(data.get("site", ""), "site name")
         site_type = data.get("type", "")
         if site_type not in ("html", "python", "csharp"):

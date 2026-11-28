@@ -4485,7 +4485,8 @@ function showSiteServerChoice() {
 		return;
 	}
 	// An administrator's every member; a user's those they may make sites on
-	const members = currentUser.admin && currentUser.master ? joinedMembers() : !currentUser.admin ? currentUser.create_on || [] : [];
+	const members = (currentUser.admin && currentUser.master ? joinedMembers() : !currentUser.admin ? currentUser.create_on || [] : [])
+		.filter((name) => !(currentUser.members_no_web || []).includes(name));
 	siteServerChosen = members.length > 0;
 	box.hidden = !members.length;
 	if (!members.length) return box.replaceChildren();
@@ -14677,6 +14678,8 @@ function fillUserAccess(access, owner, asTemplate = false) {
 	$("#dlg-user").classList.toggle("on-member-access", Boolean(userServer));
 	// A master hosts nothing: its own access is Cloudflare's alone (Web Server and SQL Server are its members')
 	$("#dlg-user").classList.toggle("on-master-access", !userServer && Boolean((usersData?.members || []).length));
+	// A member that hosts no sites (a SQL Server's): its SQL Server alone
+	$("#dlg-user").classList.toggle("no-web-access", Boolean(userServer) && (currentUser.members_no_web || []).includes(userServer));
 	// Once this server's sites are drawn: whether it may make environments for them
 	syncCreateEnvs();
 	// The servers above, their dots from what is filled in now (Cloudflare is set before this, the rest here)
@@ -14894,7 +14897,9 @@ function saveUserForm(close) {
 		const shown = userAccess();
 		userDrafts[userServer] = { ...(userDrafts[userServer] || {}), ...serverAccess(shown) };
 		const own = userServer ? { ...shown, ...serverAccess(userDrafts[""] || {}) } : shown;
-		const servers = Object.fromEntries(Object.entries(userDrafts).filter(([name]) => name).map(([name, access]) => [name, serverAccess(access)]));
+		// On a member that hosts no sites, no Web Server is kept (its part is not shown there)
+		const noWeb = (name, access) => (currentUser.members_no_web || []).includes(name) ? { ...access, web: false, create_sites: false, create_envs: false, sftp: false, sites: {} } : access;
+		const servers = Object.fromEntries(Object.entries(userDrafts).filter(([name]) => name).map(([name, access]) => [name, serverAccess(noWeb(name, access))]));
 		const body = { username: userForm.elements.handle.value.trim(), name: userForm.elements.name.value.trim(), email: userForm.email.value.trim(), disabled: userForm.disabled.checked, ...own,
 			...((usersData.members || []).length ? { servers } : {}) };
 		if (userForm.elements.secret_new.value) body.password = userForm.elements.secret_new.value;
@@ -16486,6 +16491,7 @@ function serverCard(item, release) {
 	const rows = item.reachable ? [
 		...(item.member ? [toolRow("Member", "Its sites are shown and administered here", { on: true })] : []),
 		...(fellow ? [toolRow("Member", "Of Harbor Master too, which made it known here and updates it", { on: true })] : []),
+		...(item.member ? [toolRow("Web Server", item.no_web ? "Hosts no sites: its SQL Server only" : "Hosts sites", { on: !item.no_web })] : []),
 		// The system's own state too: lit where it can run Harbor (its Ubuntu and Python), as Member and Harbor are lit
 		toolRow("System", `${item.os || "—"} · Python ${item.python || "—"}`, { on: Boolean(item.compatible) }),
 		toolRow("Harbor", harbor || "Not installed", { on: Boolean(harbor) }),
@@ -16519,6 +16525,14 @@ function serverCard(item, release) {
 		title: `The admin of ${item.name}, in a new tab` }, svgIcon("external"), "Open admin"));
 	// A member of this master (phase 13): its sites shown here. Joined once it runs this server's Harbor, which answers
 	if (item.member) {
+		// Whether it hosts sites: a SQL Server's does not, and is then no place for a site, an environment or a user's
+		// Web Server
+		actions.push(item.no_web
+			? tonedButton("Host sites…", "globe", "green", () => run(() => confirmServers(`${item.name} hosts sites?`,
+				`New sites and environments can be made on ${item.name} again, and users given its Web Server.`, "Host sites", { action: "web", name: item.name, hosts: true })))
+			: tonedButton("Host no sites…", "database", "blue", () => run(() => confirmServers(`${item.name} hosts no sites?`,
+				`As a SQL Server's: no site or environment is made on ${item.name}, from here or from the other members, and no user has a Web Server there (it is taken off them). Sites there now keep running.`,
+				"Host no sites", { action: "web", name: item.name, hosts: false }))));
 		actions.push(tonedButton("Leave…", "x", "amber", () => run(async () => {
 			if (!(await ask({ title: `${item.name} no longer a member?`, message: `Its sites are no longer shown here. Nothing changes on ${item.name}: its sites keep running.`,
 				input: false, ok: "Leave" }))) return;

@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.109] - Unreleased
+
+### Features
+
+- A member can host no sites (a SQL Server's): Host no sites… on its card in the master's Servers. It makes no site then, no other member makes an environment there (it is left out where a server is chosen), New site does not offer it, and no user has a Web Server there: the user window shows its SQL Server alone, and what was given on its Web Server is taken off. Its own menu has no Web Server on auto. Host sites… turns it back (harbor servers web NAME on|off; harbor server web on|off on the server itself).
+
 ## [1.0.108] - 2026-11-28
 
 ### Fixes
