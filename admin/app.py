@@ -5396,6 +5396,15 @@ def in_server_order(items):
     return sorted(items, key=lambda item: order.get(item.get("server"), len(order))) if isinstance(items, list) else items
 
 
+@app.route("/api/master/push-users", methods=["POST"])
+def api_master_push_users():
+    """(On a master) its users sent to its members again: after a member is updated, so it keeps them by its own new
+    rules (one before 1.0.107 gave Delete with Files, and kept it)"""
+    require_admin()
+    said = pushed_said(push_master_users())
+    return jsonify(ok=not said, said=said)
+
+
 @app.route("/api/master/server-order", methods=["PUT"])
 def api_master_server_order():
     """(On a master) the order its members are shown in everywhere: the server picker, Web Server, SQL Server, Health,

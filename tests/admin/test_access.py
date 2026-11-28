@@ -42,14 +42,16 @@ class AccessTests(unittest.TestCase):
     def test_terminal_gives_files(self):
         user = access.clean({"username": "anna", "web": True, "sites": {"shop.dk": {"envs": ["main"], "actions": ["terminal", "logs"]}}},
                             sites={"shop.dk": ["main"]})
-        self.assertEqual(user["sites"]["shop.dk"]["actions"], ["appsettings", "delete", "files", "logs", "packages", "packages_view", "terminal"])
+        self.assertEqual(user["sites"]["shop.dk"]["actions"], ["appsettings", "files", "logs", "packages", "packages_view", "terminal"])
         self.assertTrue(access.can(user, "shop.dk", "main", "terminal"))
 
     def test_files_gives_the_nuget_packages(self):
         """Files can edit the .csproj, and with it the packages: Change and See NuGet packages, also on a grant saved before"""
-        self.assertEqual(access.site_actions(["files"]), ["appsettings", "delete", "files", "packages", "packages_view"])
+        self.assertEqual(access.site_actions(["files"]), ["appsettings", "files", "packages", "packages_view"])
         saved = {"id": "u1", "role": "user", "web": True, "sites": {"shop.dk": {"envs": ["main"], "actions": ["files"]}}}
         self.assertTrue(access.can(saved, "shop.dk", "main", "packages"))
+        # Files is not deleting the site: that takes its service, Apache site and environments away, more than its files
+        self.assertFalse(access.can(saved, "shop.dk", "main", "delete"))
         self.assertTrue(access.can(saved, "shop.dk", "main", "packages_view"))
 
     def test_bindings_certificate_and_environment_are_three_actions(self):
@@ -248,7 +250,7 @@ class AccessTests(unittest.TestCase):
         self.assertTrue(template["id"].startswith("t_"))
         kept = template["access"]
         self.assertEqual(set(kept), set(access.TEMPLATE_KEYS) - {"servers"}, "no sites, connections or anything of the person (servers only on a master)")
-        self.assertEqual(kept["site_rules"], {"actions": ["appsettings", "delete", "files", "logs", "packages", "packages_view", "terminal"], "new_envs": False},
+        self.assertEqual(kept["site_rules"], {"actions": ["appsettings", "files", "logs", "packages", "packages_view", "terminal"], "new_envs": False},
                          "a terminal gives Files, and Files the NuGet packages")
         self.assertEqual(kept["sql_rules"], {"own": True, "actions": ["create", "query"], "limits": {"databases": 2}})
         self.assertEqual(kept["limits"], {"sites": 3, "site_mb": 2048})

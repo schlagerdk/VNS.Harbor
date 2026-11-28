@@ -14247,19 +14247,31 @@ function grantSearch(list, placeholder, itemSelector = ".grant-site, .grant-chip
 	return box;
 }
 
-// What a user may do on a site, a chip each; read() gives those ticked. As a user's site and a template show them.
-function siteActionChips(chosen) {
-	const chips = usersData.site_actions.map(([value, text]) => {
+// What does not apply to a site of a kind: uSync (Sync data, settings and setup) is Umbraco's; appsettings.json, the
+// NuGet packages and Add environments are .NET's (an environment is added to a .NET or Umbraco site only); a static
+// site has no service of its own to start, stop or change the environment of
+const ACTIONS_NOT_FOR = {
+	csharp: ["sync_data", "sync_settings", "sync_setup"],
+	python: ["sync_data", "sync_settings", "sync_setup", "appsettings", "packages_view", "packages", "create_env"],
+	html: ["service", "environment", "sync_data", "sync_settings", "sync_setup", "appsettings", "packages_view", "packages", "create_env"],
+	static: ["service", "environment", "sync_data", "sync_settings", "sync_setup", "appsettings", "packages_view", "packages", "create_env"],
+};
+// What a user may do on a site, a chip each; read() gives those ticked. As a user's site and a template show them; a
+// user's site only those that apply to its kind (a template's rules are for every kind)
+function siteActionChips(chosen, kind = "") {
+	const left = new Set(ACTIONS_NOT_FOR[kind] || []);
+	const chips = usersData.site_actions.filter(([value]) => !left.has(value)).map(([value, text]) => {
 		const box = el("input", { type: "checkbox", value, checked: chosen.includes(value) });
 		const chip = el("label", { className: "grant-chip action" }, box, el("span", { textContent: text }));
-		if (value === "terminal") chip.title = "A shell in the site's folder as their own Linux user: everything that user may do there, Files and deleting too";
+		if (value === "terminal") chip.title = "A shell in the site's folder as their own Linux user: everything that user may do there, Files too";
+		if (value === "delete") chip.title = "Deletes the site itself: its service, its Apache site and its environments, not only its files";
 		return chip;
 	});
 	// What one choice gives as well, ticked and locked while it is: Terminal gives Files (the folder as the user's Linux
-	// user), Files gives what it can do in the folder anyway (the .csproj and with it the packages, appsettings.json,
-	// deleting), and changing the packages is seeing them
+	// user), Files gives what it can do in the folder anyway (the .csproj and with it the packages, appsettings.json),
+	// and changing the packages is seeing them. Deleting the site is never given by another
 	const actionBox = (value) => chips.map((chip) => chip.querySelector("input")).find((box) => box.value === value);
-	const gives = [["terminal", "files", "Terminal"], ["files", "packages", "Files"], ["files", "appsettings", "Files"], ["files", "delete", "Files"],
+	const gives = [["terminal", "files", "Terminal"], ["files", "packages", "Files"], ["files", "appsettings", "Files"],
 		["packages", "packages_view", "Change NuGet packages"]];
 	const applyGives = () => {
 		// A box given by one choice stays locked while any choice that gives it is ticked
@@ -14310,7 +14322,7 @@ function siteGrantRow(name, envKeys, grant, user = null) {
 	});
 	// Not given yet: as the template the user started from says, or the defaults
 	const newEnvs = el("input", { type: "checkbox", checked: grant ? Boolean(grant.new_envs) : grantRules?.site_rules?.new_envs ?? true });
-	const actionBoxes = siteActionChips(grant?.actions || grantRules?.site_rules?.actions || defaultSiteActions);
+	const actionBoxes = siteActionChips(grant?.actions || grantRules?.site_rules?.actions || defaultSiteActions, site?.kind || "");
 	const sync = () => {
 		const count = envBoxes.filter(([, box]) => box.checked).length;
 		whole.checked = count === envBoxes.length;
@@ -14652,11 +14664,13 @@ function fillUserAccess(access, owner, asTemplate = false) {
 	const engines = Array.isArray(access?.connection_engines) ? access.connection_engines : ["mssql", "postgres"];
 	for (const box of userForm.querySelectorAll("input[name=connection_engine]")) box.checked = engines.includes(box.value);
 	// A user: the sites and connections, each ticked or not; a template: what each one given to a user gives
-	$("#user-sites").replaceChildren(...(asTemplate ? [] : Object.entries(data.sites).sort(([a], [b]) => a.localeCompare(b))
+	// Those given first, then the rest, each by name (as the window opens: ticking one does not move it while it is open)
+	const given = (name) => access?.sites?.[name] ? 0 : 1;
+	$("#user-sites").replaceChildren(...(asTemplate ? [] : Object.entries(data.sites).sort(([a], [b]) => given(a) - given(b) || a.localeCompare(b))
 		.map(([name, envs]) => siteGrantRow(name, envs, access?.sites?.[name], owner))));
 	userSitesSearch.reset(!asTemplate, keepUserFilter);
 	$("#user-sites-hint").hidden = asTemplate;
-	$("#user-connections").replaceChildren(...(asTemplate ? [] : data.connections.length ? data.connections.map((connection) => connectionGrantRow(connection, access?.connections?.[connection.id], owner))
+	$("#user-connections").replaceChildren(...(asTemplate ? [] : data.connections.length ? [...data.connections].sort((a, b) => (access?.connections?.[a.id] ? 0 : 1) - (access?.connections?.[b.id] ? 0 : 1)).map((connection) => connectionGrantRow(connection, access?.connections?.[connection.id], owner))
 		: [el("p", { className: "muted", textContent: "There are no SQL connections yet." })]));
 	// Cloudflare is the master's own: not a member's
 	$("#dlg-user").classList.toggle("on-member-access", Boolean(userServer));
@@ -16567,6 +16581,11 @@ async function runServers(payload) {
 	const t = await openTask({ kind: "servers", ...payload });
 	if (t) t.afterTask = async () => {
 		await membersChanged();
+		// A member updated keeps the master's users by its own new rules: they are sent to it again
+		if (["install", "install_all"].includes(payload.action) && currentUser.master && !serverContext && t.taskState !== "failed") {
+			const pushed = await api("/api/master/push-users", { method: "POST" }).catch((error) => ({ said: error.message }));
+			if (pushed.said) toast(`Updated; the users were not all sent again: ${pushed.said}`, "error");
+		}
 		if (serverTabOpen("servers")) return openServers();
 	};
 }

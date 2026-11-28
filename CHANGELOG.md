@@ -2,6 +2,14 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.107] - Unreleased
+
+### Fixes
+
+- In the user window the sites and SQL connections given come first, then the rest.
+- A member updated from the master's Servers (Update, Update all) is sent the master's users again, so it keeps them by its own new rules: one before 1.0.107 gave Delete with Files and kept it, though the master's user did not have it.
+- Files no longer gives Delete on a site: deleting takes the site itself away (its service, Apache site and environments), more than its files. A grant saved with it keeps it until it is taken off. And a user's site offers only what applies to its kind: uSync (Sync data, settings and setup) on Umbraco, appsettings.json and the NuGet packages on .NET, Add environments on .NET and Umbraco, Start, stop and restart and Change environment where there is a service (not a static HTML site).
+
 ## [1.0.106] - 2026-11-28
 
 ### Fixes

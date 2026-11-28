@@ -74,7 +74,7 @@ SITE_ACTIONS = [
     # Its files and what runs in them
     ("scripts", "Run custom scripts"),
     # Each gives the ones before it: Terminal gives Files, Files Edit appsettings.json and the packages (it can edit
-    # the .csproj), and changing them is seeing them. Files gives Delete too
+    # the .csproj), and changing them is seeing them
     ("appsettings", "Edit appsettings.json"),
     ("packages_view", "See NuGet packages"),
     ("packages", "Change NuGet packages"),
@@ -378,10 +378,11 @@ def site_actions(given):
     # A terminal reaches the site's folder as the user's Linux user: it is Files as well
     if "terminal" in actions:
         actions.add("files")
-    # Files can change and delete anything in the folder: the .csproj (and with it the NuGet packages), appsettings.json,
-    # the site itself. It is Change NuGet packages, Edit appsettings.json and Delete as well
+    # Files can change anything in the folder: the .csproj (and with it the NuGet packages) and appsettings.json. It is
+    # Change NuGet packages and Edit appsettings.json as well; not Delete, which takes the site itself away (its service,
+    # its Apache site, its environments), more than its files
     if "files" in actions:
-        actions.update(("packages", "appsettings", "delete"))
+        actions.update(("packages", "appsettings"))
     # Changing the NuGet packages is seeing them as well
     if "packages" in actions:
         actions.add("packages_view")
