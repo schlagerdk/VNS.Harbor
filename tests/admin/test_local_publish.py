@@ -12,7 +12,10 @@ class LocalPublishScriptTests(unittest.TestCase):
         source = (APP / "static/app.js").read_text()
         start = source.index("function localPublishScript(")
         code = source[start:source.index("\nfunction showLocalPublish(", start)]
-        run = 'const location = { hostname: "admin.web-02.example.com", origin: "https://admin.web-02.example.com" };\n' + code + f"\nprocess.stdout.write(localPublishScript({json.dumps(options)}));"
+        # The page's host as the page has it (pageHost: a member's own, on the master's page), taken from it as it is
+        host = next(line for line in source.splitlines() if line.startswith("const pageHost = "))
+        run = ('const location = { hostname: "admin.web-02.example.com", origin: "https://admin.web-02.example.com" };\n'
+               'let serverContext = "", currentUser = null;\n' + host + "\n" + code) + f"\nprocess.stdout.write(localPublishScript({json.dumps(options)}));"
         # As bytes: Windows' line ends as they are
         return subprocess.run(["node", "-e", run], capture_output=True, check=True).stdout.decode()
 
