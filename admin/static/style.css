@@ -3938,9 +3938,23 @@ dialog .cf-page-on .switch:checked { border-color: var(--green); background: var
 	/* Settings in words as the others are, where the phone has room for it; the gear alone on the narrowest */
 	#switch-server .ico { display: none; }
 }
-@media (max-width: 359px) {
+@media (max-width: 440px) {
 	#switch-server .ico { display: inline-block; }
 	.settings-word { display: none; }
+}
+/* A phone: the menu takes the room between the logo and the avatar and its buttons share it, so the avatar stays on
+   the first line however many parts the user has */
+@media (max-width: 640px) {
+	.page-header > .spacer, .page-header:has(#search:not([hidden])) > .spacer { display: none; }
+	.page-header .view-switch { flex: 1 1 0; min-width: 0; margin-right: auto; }
+	.page-header .view-switch button { flex: 1 1 auto; justify-content: center; min-width: 0; padding-left: 6px; padding-right: 6px; }
+	.page-header .view-switch button > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
+/* Too narrow for the words (they would be cut short): each part by its icon, its name in the title */
+@media (max-width: 389px) {
+	.page-header .view-switch button:not(#switch-server) .ico { display: inline-block; width: 16px; height: 16px; }
+	.page-header .view-switch button > span { display: none; }
+	.page-header .view-switch button { padding-top: 7px; padding-bottom: 7px; }
 }
 /* Cloudflare's welcome, with no domain chosen: as Harbor's other empty pages, the account's counts, and the domains
    opened last as cards */
@@ -4099,7 +4113,7 @@ input[type="search"]::-webkit-credentials-auto-fill-button, input[type="search"]
 /* An administrator's sites on every server: a head a server over its sites, the whole row */
 /* Sites grouped by server: the list a column of sections, each its head and a grid of its own */
 #sites.grouped { display: grid; grid-template-columns: minmax(0, 1fr); grid-auto-rows: auto; gap: 26px; }
-.site-server-group { display: grid; gap: 12px; min-width: 0; }
+.site-server-group { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; min-width: 0; }
 .site-server-head { display: flex; align-items: center; gap: 10px; color: var(--text); }
 .site-server-icon { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; color: #d2a8ff; background: rgba(163, 113, 247, .14); }
 .site-server-icon .ico { width: 14px; height: 14px; margin: 0; }
@@ -4110,13 +4124,17 @@ input[type="search"]::-webkit-credentials-auto-fill-button, input[type="search"]
 /* A Windows server's sites, listed where they are: its logo, its share, and Read again at the right */
 .winlist-group .site-server-icon { background: rgba(76, 194, 255, .12); }
 .site-server-icon.os-icon svg { width: 15px; height: 15px; }
-.winlist-share { min-width: 0; overflow: hidden; color: var(--muted); font-size: 12.5px; text-overflow: ellipsis; white-space: nowrap; }
+/* The server's name on one line, shortened only when the share has given up all its room */
+.winlist-group .site-server-head strong { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.winlist-share { flex: 1 1 0; min-width: 0; overflow: hidden; color: var(--muted); font-size: 12.5px; text-overflow: ellipsis; white-space: nowrap; }
 .winlist-reread { flex: none; margin-left: auto; }
 .winlist-error { margin: 10px 0 0; }
 .site-emblem.os-icon { border-color: rgba(76, 194, 255, .3); background: linear-gradient(135deg, rgba(76, 194, 255, .14), rgba(88, 166, 255, .1)); }
 .site-emblem.os-icon svg { width: 22px; height: 22px; }
 .badge.windows { background: #0078d4; color: #fff; }
 .winlist-binding { min-width: 0; overflow: hidden; color: var(--text); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+/* A long binding shortened, not the card made wider than the screen */
+.winlist-site .site-environment-head { flex: 1 1 auto; min-width: 0; flex-wrap: nowrap; }
 .winlist-actions { flex-wrap: wrap; justify-content: flex-end; }
 .winlist-actions > button { padding: 5px 12px; font-size: 12.5px; }
 .winlist-site { cursor: pointer; }

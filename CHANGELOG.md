@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.117] - Unreleased
+
+### Fixes
+
+- On a phone the avatar fell to a line of its own under the top menu, and a Windows server's sites ran off the right edge of the screen (Read again, Backend and Edit… cut off). The menu now shares the line with the logo and avatar (its icons alone on the narrowest phones), and the Windows cards stay within the screen, a long binding shortened.
+
 ## [1.0.116] - 2026-11-28
 
 ### Fixes
