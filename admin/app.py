@@ -2156,7 +2156,8 @@ def index():
     start = cfg.get("start_view", "sites") if user.get("id") == access.ROOT else user.get("start_view", cfg.get("start_view", "sites"))
     # A user without the Web Server starts on SQL Server, and the other way round
     if not access.is_admin(user):
-        start = "sql" if (start == "sql" and access.has_sql(user)) or not access.has_web(user) else "sites"
+        shown = top_menu(user)
+        start = "sql" if (start == "sql" and shown["sql"]) or not shown["sites"] else "sites"
     else:
         # An administrator starts where the top menu leads: on SQL Server when Web Server is not in it, and the other way
         shown = menu_shown()
@@ -2218,9 +2219,14 @@ def top_menu(user):
     """What the top menu has for this user, as the page shows it once it knows them (applyAccess): in the page from the
     start, so a reload never shows a part they do not have before it is taken away"""
     admin = access.is_admin(user)
-    menu = menu_shown() if admin else {"web": access.has_web(user), "sql": access.has_sql(user)}
-    return {"sites": access.has_web(user) and menu.get("web") is not False,
-            "sql": access.has_sql(user) and menu.get("sql") is not False,
+    if admin:
+        menu = menu_shown()
+    else:
+        # A master's user: also what they have on each member, as that member tells the page (its /api/me) once it asks
+        there = [{**part, "role": "user"} for name, part in (user.get("servers") or {}).items() if name in member_names() and isinstance(part, dict)]
+        menu = {"web": access.has_web(user) or any(access.has_web(part) for part in there),
+                "sql": access.has_sql(user) or any(access.has_sql(part) for part in there)}
+    return {"sites": bool(menu["web"]), "sql": bool(menu["sql"]),
             # DNS: where a Cloudflare account is set up, for a user given domains, and for an administrator unless it
             # is taken out of the menu (Settings, Top menu)
             "dns": bool(_cloudflare.load()) and access.has_dns(user) and not (admin and cfg.get("dns_menu") == "hide"),

@@ -101,3 +101,36 @@ class TopMenuTests(unittest.TestCase):
         self.assertIn("menu=top_menu(user))", app)
         # /api/me says the same of DNS and Mail as the page had from the start
         self.assertIn('dns=top_menu(user)["dns"], mail=top_menu(user)["mail"]', app)
+
+
+class TopMenuOfAUserTests(unittest.TestCase):
+    """What the page is given: a master's user with Web Server on a member has it in the menu from the start, not
+    after the member has answered (1.0.116)"""
+
+    def top_menu(self, user, members=("web-02",)):
+        import ast
+        import sys
+        sys.path.insert(0, str(ROOT_DIR / "lib"))
+        import access
+        tree = ast.parse((ROOT_DIR / "admin/app.py").read_text())
+        node = next(item for item in tree.body if isinstance(item, ast.FunctionDef) and item.name == "top_menu")
+        ns = {"access": access, "member_names": lambda: list(members), "menu_shown": lambda: {"web": True, "sql": False}, "cfg": {},
+              "_cloudflare": type("C", (), {"load": staticmethod(lambda: {"token": "x"})}),
+              "_mailcow": type("M", (), {"load": staticmethod(lambda: {"key": "x"})})}
+        exec(compile(ast.Module(body=[node], type_ignores=[]), "top_menu", "exec"), ns)
+        return ns["top_menu"](user)
+
+    def test_web_server_on_a_member(self):
+        user = {"id": "u_1", "role": "user", "web": False, "sql": False, "dns": True, "dns_domains": ["example.com"],
+                "mail": True, "mail_domains": {"example.com": {}},
+                "servers": {"web-02": {"web": True, "sites": {"shop.example.com": {}}}}}
+        self.assertEqual(self.top_menu(user), {"sites": True, "sql": False, "dns": True, "mail": True, "server": False})
+        # A server that is no longer a member gives nothing
+        self.assertFalse(self.top_menu(user, members=())["sites"])
+        # Nothing in it there is no Web Server
+        user["servers"]["web-02"]["sites"] = {}
+        self.assertFalse(self.top_menu(user)["sites"])
+
+    def test_an_administrator_as_set(self):
+        self.assertEqual(self.top_menu({"id": "root", "role": "admin"}),
+                         {"sites": True, "sql": False, "dns": True, "mail": True, "server": True})

@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.116] - Unreleased
+
+### Fixes
+
+- A master's user with the Web Server on a member saw it come into the top menu last on a reload, after Cloudflare and Mail: the page has from the start what they have on the members too.
+
 ## [1.0.115] - 2026-11-28
 
 ### Fixes
