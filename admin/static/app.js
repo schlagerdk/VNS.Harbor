@@ -1638,9 +1638,9 @@ function renderMultiSelection() {
 	$("#btn-multi-action").hidden = !multiSelecting || multiSites.size === 0;
 	const shownSites = overviewSites().filter(matches);
 	$("#btn-multi-all").hidden = !multiSelecting || !shownSites.length;
-	$("#btn-multi-all").textContent = shownSites.length && shownSites.every((site) => multiSites.has(site.name)) ? "Select none" : "Select all";
+	$("#btn-multi-all > span").textContent = shownSites.length && shownSites.every((site) => multiSites.has(site.name)) ? "Select none" : "Select all";
 	$("#btn-multi-action").disabled = multiSites.size === 0;
-	$("#btn-multi-action").textContent = `Choose action (${multiSites.size})`;
+	$("#btn-multi-action > span").textContent = `Choose action (${multiSites.size})`;
 	$("#btn-multi-cancel").hidden = !multiSelecting;
 }
 
@@ -5601,6 +5601,14 @@ const multiDialog = $("#dlg-multi");
 const multiForm = $("#form-multi");
 $("#btn-multi").onclick = () => { multiSelecting = true; renderSites(); };
 $("#btn-multi-cancel").onclick = () => { multiSelecting = false; multiSites.clear(); renderSites(); };
+// The overview's buttons beside New site: an icon and a colour each, as their neighbours have, and New site's plus an
+// icon too (it was a character, a size of its own)
+for (const [id, icon, tone] of [["btn-multi", "check", "blue"], ["btn-multi-all", "check", "blue"], ["btn-multi-cancel", "x", "amber"], ["btn-multi-action", "sliders", ""], ["btn-new-site", "plus", ""]]) {
+	const button = $("#" + id);
+	if (tone) button.dataset.tone = tone;
+	button.classList.add("toned-action");
+	button.replaceChildren(svgIcon(icon), el("span", { textContent: button.textContent.trim() }));
+}
 function syncMultiAction() {
 	const action = multiForm.elements.namedItem("action").value;
 	$("#multi-action-description").textContent = {

@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.110] - Unreleased
+
+### Fixes
+
+- The overview's buttons beside New site are one size, each with an icon and a colour of its own: Select all blue, Cancel selection amber, New site's plus an icon as theirs are.
+
 ## [1.0.109] - 2026-11-28
 
 ### Features

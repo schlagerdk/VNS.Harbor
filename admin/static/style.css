@@ -931,7 +931,9 @@ a.btn-link .ico { width: 13px; height: 13px; flex: none; }
 .env-row { justify-content: space-between; }
 .env-row > a.btn-link { justify-self: start; }
 .env-tags { justify-self: end; }
-#btn-new-site { margin-right: 14px; padding: 7px 18px; font-weight: 600; box-shadow: 0 2px 10px rgba(63, 185, 80, .25); }
+#btn-new-site { margin-right: 14px; font-weight: 600; box-shadow: 0 2px 10px rgba(63, 185, 80, .25); }
+/* The overview's buttons in a row, one height and the same inner room: New site, Select all, Choose action, Cancel */
+#btn-multi, #btn-multi-all, #btn-multi-action, #btn-multi-cancel, #btn-new-site { height: 38px; padding: 0 16px; }
 
 /* A database unfolds into its tables */
 .sql-database-name { display: flex; align-items: center; gap: 6px; }
