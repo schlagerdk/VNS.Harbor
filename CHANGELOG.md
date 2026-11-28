@@ -2,6 +2,16 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.119] - 2026-11-28
+
+### Features
+
+- Settings' menu shows a badge on a part with something waiting: Updates when a new Harbor is out or the automatic update failed, Health for its open alerts, OS security updates and a restart needed, Jobs for failing jobs, Usage for what is over its limit, and Notifications when an alert could not be mailed. Red for what is wrong, amber for what should be done; its tooltip says what. A member's Settings show the member's.
+
+### Fixes
+
+- A relayed mail domain's first step (`*@example.com`) took two lines in a box of its own: its text is shorter, on one line as the others.
+
 ## [1.0.118] - 2026-11-28
 
 ### Fixes

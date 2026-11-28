@@ -13089,7 +13089,7 @@ run(async () => {
 	const state = await api("/api/system-update/run");
 	if (state.status === "running") await runSystemUpdate(state);
 });
-setInterval(() => { if (!document.hidden && !systemUpdating) run(checkSystemUpdate); }, 60000);
+setInterval(() => { if (!document.hidden && !systemUpdating) run(checkSystemUpdate); if (!document.hidden && !$("#view-server")?.hidden) refreshAttention(); }, 60000);
 document.addEventListener("visibilitychange", () => {
 	if (!document.hidden && !systemUpdating) run(() => checkSystemUpdate(true));
 });
@@ -13398,7 +13398,7 @@ function drawMailDomain() {
 			el("span", { className: "mail-relay-panel-text" }, el("strong", { textContent: "All its mail is relayed" }),
 				el("small", { textContent: "It has no mailboxes or aliases on this server: every address is passed on as it comes." }))),
 		el("div", { className: "mail-relay-flow" },
-			step("mail", `*@${domain.name}`, "Mail to any of its addresses, whatever comes before the @"), arrow(),
+			step("mail", `*@${domain.name}`, "Mail to every one of its addresses"), arrow(),
 			step("shield", mailData.host || "This server", "Takes it in, and signs what it sends with its DKIM key"), arrow(),
 			step("globe", "Its own mail server", "Where its MX points: the mail ends up there")));
 	$("#mail-panel").replaceChildren(head,
@@ -16140,11 +16140,33 @@ async function showServerTab(tab) {
 	await run({ tools: openServerTools, jobs: openCrontab, convert: openConvertSettings, export: openExportSettings, servers: openServers, dns: openDnsSettings, mail: openMailSettings, users: openUsers, templates: openUsers, usage: openUsageSettings, settings: openServerSettings, notifications: openNotifications, health: openHealth, menu: openMenuSettings, apache: openApacheSettings, windows: openWindowsSettings, updates: openUpdatesSettings }[paneOf(tab)]);
 	// Users: the filter has the focus, where there are users enough for one
 	if (tab === "users" && !$("#people-filter-box").hidden && !document.querySelector("dialog[open]")) $("#people-filter").focus({ preventScroll: true });
+	refreshAttention();
 }
 function showToolCards() {
 	// Access is two columns (SSH and Samba, then its shares and users); the other tools three
 	$("#server-tools-list").classList.toggle("access-layout", serverTab === "access");
 	for (const card of $("#server-tools-list").children) card.hidden = card.dataset.tool !== serverTab;
+}
+// What waits on an administrator, as a badge on its part in the menu: red for what is wrong, amber for what should be
+// done. Of the server whose Settings are shown (a member's through the master); one that cannot tell shows none.
+let attentionAsked = 0;
+async function refreshAttention() {
+	if (!currentUser?.admin) return;
+	const asked = ++attentionAsked;
+	const server = pickedServer;
+	let found = {};
+	try { found = await api(viaPath(server, "/api/attention")); } catch (error) { found = {}; }
+	if (asked !== attentionAsked) return;
+	for (const tab of SERVER_TABS) {
+		const button = $("#server-tab-" + tab), item = found[tab];
+		let badge = button.querySelector(".server-nav-badge");
+		if (!item) { badge?.remove(); continue; }
+		if (!badge) button.append(badge = el("span", { className: "server-nav-badge" }));
+		badge.className = "server-nav-badge " + item.tone;
+		badge.textContent = item.count > 99 ? "99+" : String(item.count);
+		badge.title = item.title;
+		badge.setAttribute("aria-label", item.title);
+	}
 }
 // A part opens from the menu; the one open, clicked again, is read again (as the logo reloads the other pages)
 // Each opens at the top: never where the part before was scrolled to

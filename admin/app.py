@@ -4173,9 +4173,14 @@ def update_target():
 @app.route("/api/system-update")
 def api_system_update():
     require_admin()
+    return jsonify(**system_update_status(request.args.get("refresh") == "1"))
+
+
+def system_update_status(refresh=False):
+    """Whether a newer Harbor is out: read again from GitHub at most once a minute, unless refresh"""
     with SYSTEM_UPDATE_LOCK:
-        if request.args.get("refresh") != "1" and SYSTEM_UPDATE_CACHE and time.monotonic() - SYSTEM_UPDATE_CACHE["checked_at"] < 60:
-            return jsonify(**SYSTEM_UPDATE_CACHE["result"])
+        if not refresh and SYSTEM_UPDATE_CACHE and time.monotonic() - SYSTEM_UPDATE_CACHE["checked_at"] < 60:
+            return SYSTEM_UPDATE_CACHE["result"]
         try:
             installed = installed_revision()
             if installed and not re.fullmatch(r"[0-9a-f]{40}", installed):
@@ -4218,7 +4223,7 @@ def api_system_update():
             response = {"status": "error", "error": "Could not check GitHub for updates. Try again in one minute."}
         response["rollback"] = rollback_release()
         SYSTEM_UPDATE_CACHE.update(checked_at=time.monotonic(), result=response)
-        return jsonify(**response)
+        return response
 
 
 @app.route("/api/system-update/auto")
@@ -4886,6 +4891,66 @@ def api_cron_alerts():
     saved = _cron_watch.read_json(_cron_watch.STATE / "alerts.json", {})
     return jsonify(**settings, installed=_cron_watch.CHECK.is_file(), mail=bool(_keep_alive_module.report.load_mail().get("host")),
                    failing=len(saved.get("open") or {}), mail_error=saved.get("mail_error"), **(pushed_notification("jobs") if request.method == "PUT" else {}))
+
+
+@app.route("/api/attention")
+def api_attention():
+    """What in Settings waits on an administrator, by its tab: {tab: {count, tone, title}}. Read from what Harbor keeps
+    (the health and job alerts, the usage check, apt's updates as last read), never checked anew, so it is quick."""
+    require_admin()
+    found = {}
+
+    def note(tab, tone, title, count=None):
+        item = found.setdefault(tab, {"count": 0, "tone": "amber", "titles": []})
+        item["count"] += count or 1
+        item["titles"].append(title)
+        if tone == "red":
+            item["tone"] = "red"
+
+    def saved(read, path):
+        try:
+            data = read(path, {})
+        except (OSError, ValueError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    plural = lambda count, word: f"{count} {word}{'' if count == 1 else 's'}"
+    try:
+        update = system_update_status()
+        if update.get("status") in ("available", "unknown"):
+            note("updates", "amber", "Harbor's version is not known" if update["status"] == "unknown"
+                 else f"Harbor v{update.get('latest_version')} is out" if update.get("mode") == "release" else "A newer Harbor is out")
+    except Exception:  # noqa: BLE001  (the badge is a hint: GitHub out of reach leaves it out)
+        app.logger.exception("attention: system update")
+    try:
+        from harbor.core.system import System
+        from harbor.install import autoupdate
+        if ((autoupdate.status(System()).get("last") or {}).get("result")) == "failed":
+            note("updates", "red", "The last automatic update failed")
+    except (ImportError, OSError, ValueError, AttributeError):
+        pass
+    health = saved(_health.read_json, _health.STATE / "alerts.json")
+    opened = health.get("open") if isinstance(health.get("open"), dict) else {}
+    if opened:
+        note("health", "red", "; ".join(str(why) for why in opened.values()), len(opened))
+    os_updates = saved(_health.read_json, _health.STATE / "updates.json")
+    if os_updates.get("security"):
+        note("health", "amber", plural(os_updates["security"], "security update") + " for the OS")
+    if os_updates.get("reboot"):
+        note("health", "amber", "The server needs a restart")
+    jobs = saved(_cron_watch.read_json, _cron_watch.STATE / "alerts.json")
+    failing = jobs.get("open") if isinstance(jobs.get("open"), dict) else {}
+    if failing:
+        note("jobs", "red", plural(len(failing), "job") + " failing: " + ", ".join(str(item.get("name", "")) for item in failing.values()), len(failing))
+    usage = saved(_keep_alive_module.report.read_json, Path(DATA) / "usage-state.json")
+    over = usage.get("open") if isinstance(usage.get("open"), dict) else {}
+    if over:
+        note("usage", "amber", plural(len(over), "site or database") + " over its limit", len(over))
+    report = saved(_keep_alive_module.report.read_json, _keep_alive_module.STATE / "report.json")
+    unsent = [name for name, state in (("Site problems", report), ("Usage alerts", usage), ("Health alerts", health), ("Job alerts", jobs)) if state.get("mail_error")]
+    if unsent:
+        note("notifications", "red", "Could not be mailed: " + ", ".join(unsent), len(unsent))
+    return jsonify({tab: {"count": item["count"], "tone": item["tone"], "title": "\n".join(item["titles"])} for tab, item in found.items()})
 
 
 def save_job_alerts(data):

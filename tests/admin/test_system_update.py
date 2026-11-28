@@ -47,7 +47,7 @@ class SystemUpdateTests(unittest.TestCase):
         self.releases = None
         self.tags = None
         nodes = [node for node in ast.parse((APP / "app.py").read_text()).body
-                 if isinstance(node, ast.FunctionDef) and node.name in ("api_system_update", "installed_revision")]
+                 if isinstance(node, ast.FunctionDef) and node.name in ("api_system_update", "system_update_status", "installed_revision")]
         exec(compile(ast.Module(body=nodes, type_ignores=[]), "system updates", "exec"), self.ns)
         add_target_helpers(self.ns)
         self.client = self.app.test_client()

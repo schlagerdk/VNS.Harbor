@@ -2499,6 +2499,10 @@ dialog label.env-choice:has(input:checked) { border-color: var(--env-tone); back
 .server-nav button:hover:not(:where(:disabled, .disabled, .off, .active)) { background: var(--hover); color: var(--text); }
 .server-nav button.active { background: rgba(163, 113, 247, .14); color: var(--text); box-shadow: 0 0 0 1px rgba(163, 113, 247, .3) inset; }
 .server-nav button.active .ico { color: var(--purple); }
+/* What waits on an administrator: red for what is wrong, amber for what should be done */
+.server-nav-badge { flex: none; min-width: 20px; margin-left: auto; padding: 0 6px; border-radius: 999px; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; font-variant-numeric: tabular-nums; }
+.server-nav-badge.red { background: rgba(248, 81, 73, .16); color: var(--red); box-shadow: 0 0 0 1px rgba(248, 81, 73, .35) inset; }
+.server-nav-badge.amber { background: rgba(210, 153, 34, .16); color: #e3b341; box-shadow: 0 0 0 1px rgba(210, 153, 34, .35) inset; }
 .server-nav button:focus-visible { outline: none; box-shadow: 0 0 0 1px rgba(88, 166, 255, .6) inset; }
 .server-content { min-width: 0; }
 .server-pane-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 16px; }
