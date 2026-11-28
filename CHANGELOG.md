@@ -2,6 +2,12 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.103] - Unreleased
+
+### Fixes
+
+- A server added, removed, made a member or leaving changes the server picker, the menu and the lists of sites and SQL Server at once: the page kept the members it was loaded with until it was reloaded.
+
 ## [1.0.102] - 2026-11-28
 
 ### Features

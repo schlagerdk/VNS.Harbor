@@ -16421,7 +16421,26 @@ function serverCard(item, release) {
 
 async function runServers(payload) {
 	const t = await openTask({ kind: "servers", ...payload });
-	if (t) t.afterTask = () => { if (serverTabOpen("servers")) return openServers(); };
+	if (t) t.afterTask = async () => {
+		await membersChanged();
+		if (serverTabOpen("servers")) return openServers();
+	};
+}
+// After a server is added, removed, made a member or leaves: the master's members as they are now, in the server
+// picker, the menu and the lists of sites and SQL Server (they were the page's as it was loaded)
+async function membersChanged() {
+	if (!currentUser?.admin) return;
+	const me = await api("/api/me").catch(() => null);
+	if (!me) return;
+	const before = JSON.stringify([currentUser.members, currentUser.master]);
+	Object.assign(currentUser, { members: me.members || [], member_hosts: me.member_hosts || {}, master: me.master });
+	if (JSON.stringify([currentUser.members, currentUser.master]) === before) return;
+	// One chosen that is gone: this server's Settings again
+	if (pickedServer && !currentUser.members.includes(pickedServer)) return chooseServer("", "#server/servers");
+	$("#server-picker")?.remove();
+	showServerPicker();
+	markServer();
+	await loadSites();
 }
 
 async function confirmServers(title, message, ok, payload) {
@@ -16594,7 +16613,7 @@ function askAddServer({ kind: given = null, after = null, prefill = null } = {})
 		if (after) {
 			run(async () => {
 				const t = await openTask({ kind: "servers", ...payload });
-				if (t) t.afterTask = () => { if (t.taskState !== "failed") run(() => after(payload.name)); };
+				if (t) t.afterTask = () => { if (t.taskState !== "failed") run(async () => { await membersChanged(); await after(payload.name); }); };
 			});
 		} else run(() => runServers(payload));
 	};
