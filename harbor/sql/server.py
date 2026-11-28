@@ -190,6 +190,30 @@ def admin_connections(system):
             yield site, path, items
 
 
+def own_connections(system):
+    """The admin's connections here to this server's own database servers (Microsoft SQL Server's and PostgreSQL's,
+    by localhost or this server's names and addresses), one an engine and port, with their passwords, as JSON. Another
+    server's admin that has no connection of its own to them reads them over root's SSH (harbor sql own-connections):
+    a site there whose database is here is converted with them, and not with a second connection made to this server"""
+    import json
+    names = set(LOCAL_HOSTS)
+    for argv in (("hostname",), ("hostname", "-f"), ("hostname", "-I")):
+        names.update(name.lower() for name in system.output(*argv, check=False).split())
+    found, seen = [], set()
+    for _site, _path, items in admin_connections(system):
+        for item in items:
+            if not isinstance(item, dict) or str(item.get("host", "")).strip("[]").rstrip(".").lower() not in names:
+                continue
+            engine = item.get("engine") or "mssql"
+            key = (engine, str(item.get("port") or ""))
+            if key in seen or not item.get("password"):
+                continue
+            seen.add(key)
+            # Its own SSH for backup files is this server's: another reaches it otherwise
+            found.append({key: value for key, value in item.items() if not key.startswith("ssh")})
+    print(json.dumps(found))
+
+
 def write_admin_connections(path, items):
     """As the admin writes them: whole or not at all, with the file's owner and mode"""
     import json

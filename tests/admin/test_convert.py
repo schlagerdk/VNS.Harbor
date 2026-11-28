@@ -15,9 +15,12 @@ APP = ROOT / "admin/app.py"
 
 
 FUNCTIONS = ("convert_command", "convert_move_command", "convert_remote_unit", "convert_kept_item", "convert_connection", "convert_host",
-             "same_host", "host_addresses")
-# What a name resolves to in these tests: sql-01 is 10.0.0.21
-RESOLVED = {"sql-01": "10.0.0.21"}
+             "same_host", "host_addresses", "borrowed_connection", "convert_settings")
+# What a name resolves to in these tests: sql-01 is 10.0.0.21, sql-03 (a server in Servers) 10.0.0.23
+RESOLVED = {"sql-01": "10.0.0.21", "sql-03": "10.0.0.23"}
+# sql-03's own connection, lent by its admin: this admin has none to it
+LENT = {"id": "lent:sql-03:mssql:1433", "name": "SQL-03", "host": "10.0.0.23", "port": 1433, "username": "sa", "password": "lent secret",
+        "engine": "mssql", "lent_by": "sql-03"}
 def fake_resolve(host, *args, **kwargs):
 	if host not in RESOLVED:
 		raise OSError("not found")
@@ -45,7 +48,7 @@ def lifted(remote_kept=None):
 	      "convert_remote_info": lambda site, target, units: ({"sites": [], "kept": remote_kept or []}, ""),
 	      "convert_address_for": lambda host: "10.0.0.1", "convert_own_addresses": lambda: {"10.0.0.1"},
 	      "convert_source": lambda data, remote: ({"engine": "mssql", "database": "site"}, {"id": "c1", "host": "."}, ".", ""),
-	      "me": lambda: {"name": "Admin"}}
+	      "me": lambda: {"name": "Admin"}, "borrowed_connections": lambda: [LENT]}
 	exec(compile(ast.Module(body=nodes, type_ignores=[]), str(APP), "exec"), ns)
 	lifted.ns = ns
 	return ns["convert_command"]
@@ -145,6 +148,19 @@ class ConnectionTests(unittest.TestCase):
 		self.assertEqual(connection({"engine": "mssql", "host": "sql-01", "port": ""}, True)["id"], "c3")
 		# A name that does not resolve is only itself
 		self.assertIsNone(connection({"engine": "mssql", "host": "sql-02", "port": 1433}, False))
+
+	def test_a_database_servers_own_connection_is_lent(self):
+		"""A site's database on a server in Servers this admin has no connection to: that server's own connection is
+		used, at its address, and no second connection is made to it here"""
+		command = lifted()
+		connection = lifted.ns["convert_connection"]
+		self.assertEqual(connection({"engine": "mssql", "host": "sql-03", "port": 1433}, True)["id"], LENT["id"])
+		self.assertIsNone(connection({"engine": "postgres", "host": "sql-03", "port": 5432}, True))
+		_title, _argv, env = command({"kind": "convert_site", "where": "prod-host", "unit": "example.com", "to": "sqlite", "connection": LENT["id"]})
+		sent = json.loads(env["VNS_CONVERT_CONNECTION"])
+		self.assertEqual((sent["host"], sent["password"]), ("10.0.0.23", "lent secret"))
+		with self.assertRaises(BadRequest):
+			command({"kind": "convert_site", "where": "prod-host", "unit": "example.com", "to": "sqlite", "connection": "lent:sql-09:mssql:1433"})
 
 
 class SqlUsageTests(unittest.TestCase):

@@ -51,6 +51,8 @@ def add_target_helpers(ns):
                         ("audit", lambda message: None), ("authorize_task", lambda data: None), ("sees_session", lambda s: True),
                         ("file_access", lambda *args: None), ("unit_env", lambda site, unit: "main"),
                         ("owns_connection", lambda identifier: True),
+                        # This server takes new sites: a test of one that does not says so
+                        ("takes_no_sites", lambda why: None),
                         # A script the admin runs is root's: here the tests' own user makes them, so it is not checked
                         ("own_scripts_dir", lambda site: "/nonexistent/harbor/sites/" + site + "/scripts"),
                         ("runnable", lambda path: path)):

@@ -4032,12 +4032,19 @@ def servers_command(data):
         return f"Add server {name}", harbor + ["add", name, host, "--user", user, "--port", port, *(["--member"] if has_members() else [])], {"HARBOR_SSH_PASSWORD": password}
     if action == "install":
         return f"Install Harbor on {name}", harbor + ["install", name], {}
-    if action == "add_windows" and has_members():
-        abort(400, "This server is a master: Windows servers are a member's, which imports the sites it hosts.")
     if action == "add_windows":
         # A Windows server's share and login, kept for Import from Windows; the password in the task's environment
         share, user, domain = windows_login(data)
         return f"Add Windows server {name}", harbor + ["add-windows", name, share, "--user", user, *(["--domain", domain] if domain else [])], {"VNS_SMB_PASSWORD": data["password"]}
+    if action == "windows_sites":
+        # Its sites listed on Web Server, where they are (the folders in its share), with the folders left out
+        exclude = data.get("exclude") or []
+        if not isinstance(exclude, list) or len(exclude) > 500 or any(not windows_folder_ok(folder) for folder in exclude):
+            abort(400, "Choose the folders to leave out")
+        on = data.get("on") is True
+        WINDOWS_SITES_SEEN.pop(name, None)
+        return (f"List the sites of {name}" if on else f"No longer list the sites of {name}"), \
+            harbor + ["windows-sites", name, "on" if on else "off", *[part for folder in exclude for part in ("--exclude", folder)]], {}
     if action == "rollback":
         return f"Roll back Harbor on {name}", harbor + ["rollback", name], {}
     if action == "join":
@@ -4048,8 +4055,11 @@ def servers_command(data):
     if action == "leave":
         return f"{name} no longer a member", harbor + ["leave", name], {}
     if action == "web":
-        state = "on" if data.get("hosts") is True else "off"
-        return (f"{name} hosts sites" if state == "on" else f"{name} hosts no sites"), harbor + ["web", name, state], {}
+        state = data.get("state")
+        if state not in ("on", "closed", "off"):
+            abort(400, "Choose whether it hosts sites")
+        titles = {"on": f"{name} hosts sites", "closed": f"{name} keeps its sites", "off": f"{name} hosts no sites"}
+        return titles[state], harbor + ["web", name, state], {}
     if action == "edit":
         # Its name, and for a Linux server its address (harbor servers edit): what is left empty stays
         new_name, host = data.get("new_name", "") or "", data.get("host", "") or ""
@@ -5425,16 +5435,37 @@ def api_master_server_order():
 
 
 NO_WEB = "/var/lib/harbor/no-web"
+# This server keeps the sites it has and takes no new one (harbor server web closed)
+CLOSED = "/var/lib/harbor/no-new-sites"
 
 
-def members_no_web():
-    """This master's members that host no sites"""
+def web_state():
+    """Whether this server hosts sites: on, closed (keeps its sites, takes no new one) or off"""
+    return "off" if os.path.exists(NO_WEB) else "closed" if os.path.exists(CLOSED) else "on"
+
+
+def takes_no_sites(why):
+    """Refused where a site, an environment, a copy or an import would land on this server and it takes none"""
+    state = web_state()
+    if state == "off":
+        abort(400, f"This server hosts no sites: {why} on another (Settings, Servers on the master).")
+    if state == "closed":
+        abort(400, f"This server keeps its sites and takes no new one: {why} on another (Settings, Servers on the master).")
+
+
+def members_marked(flag):
+    """This master's members whose entry in Servers has the flag: no_web (they host no sites), closed (they keep theirs)"""
     try:
         with open("/var/lib/harbor/servers.json", encoding="utf-8") as stream:
             found = json.load(stream)
     except (OSError, ValueError):
         return []
-    return [name for name in member_names() if isinstance(found.get(name), dict) and found[name].get("no_web")]
+    return [name for name in member_names() if isinstance(found.get(name), dict) and found[name].get(flag)]
+
+
+def members_no_web():
+    """This master's members that host no sites"""
+    return members_marked("no_web")
 
 
 def member_hosts():
@@ -5468,8 +5499,10 @@ def api_me():
                    member_hosts=member_hosts(),
                    # The members that host no sites (a SQL Server's): no New site there, no Web Server there for a user
                    members_no_web=members_no_web(),
-                   # This server itself: whether it hosts sites (harbor server web)
-                   hosts_sites=not os.path.exists(NO_WEB),
+                   # The members that keep their sites and take no new one: no New site or environment there
+                   members_closed=members_marked("closed"),
+                   # This server itself: whether it hosts sites (harbor server web), and takes new ones
+                   hosts_sites=web_state() != "off", takes_sites=web_state() == "on",
                    # A master's user on a member: whether their environments may be made here, and on which others
                    create_envs=bool(user.get("create_envs")), envs_on=user.get("envs_on") or [],
                    # A member: its users are made on its master
@@ -5477,7 +5510,9 @@ def api_me():
                    # On with nothing in it (no site, no connection, nothing they may make) is no access: not shown
                    web=access.has_web(user), sql=access.has_sql(user),
                    # Made as many as they may: the buttons that make one more are not shown (the server refuses it too)
-                   create_sites=admin or bool(user.get("create_sites")) and not access.may_make(user, "sites", lambda made: os.path.isdir(os.path.join(WEB_ROOT, made))),
+                   # None on a server that takes no new site; on a master, none when no member takes one
+                   create_sites=(admin or bool(user.get("create_sites")) and not access.may_make(user, "sites", lambda made: os.path.isdir(os.path.join(WEB_ROOT, made))))
+                   and (bool(set(member_names()) - set(members_no_web()) - set(members_marked("closed"))) if admin and has_members() else web_state() == "on"),
                    manage_connections=admin or bool(user.get("manage_connections")),
                    connection_engines=access.connection_engines(user),
                    # Where a new site can have a temporary address, for those who may create sites
@@ -6177,6 +6212,7 @@ def production_setup_env(data, site, moving=False):
     }
     test_binding = conf_binding(site).lower()
     if target == "local":
+        takes_no_sites("put it")
         local_path = data.get("local_path", "")
         if not isinstance(local_path, str):
             abort(400, "Invalid local production folder")
@@ -6271,8 +6307,9 @@ def api_servers_kept():
     user = me()
     from harbor.core.system import System
     from harbor.server import servers
-    # One that hosts no sites (a SQL Server's) is no place for a site or an environment
-    kept = {name: entry for name, entry in learnt_servers().items() if not entry.get("no_web")}
+    # One that hosts no sites (a SQL Server's), or keeps its own and takes no new one, is no place for a site or an
+    # environment
+    kept = {name: entry for name, entry in learnt_servers().items() if not entry.get("no_web") and not entry.get("closed")}
     if not access.is_admin(user):
         allowed = set(user.get("envs_on") or [])
         kept = {name: entry for name, entry in kept.items() if name in allowed and entry.get("kind") != "windows"}
@@ -6403,6 +6440,8 @@ def build_command(data):
             server = data.get("server")
             if not isinstance(server, str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", server):
                 abort(400, "Choose the Linux server")
+            if any(learnt_servers().get(server, {}).get(flag) for flag in ("no_web", "closed")):
+                abort(400, f"{server} takes no new sites: choose another server")
             windows_moves(data)
             return "Copy from Windows", [*harbor, "move", "--server", server], "/"
         pause = ["--pause"] if data.get("pause") is True else []
@@ -6417,6 +6456,9 @@ def build_command(data):
         # Sites moved from a live Windows server (harbor/sites/windows_import.py): an administrator's alone
         harbor = ["/usr/bin/python3", HARBOR_COMMAND, "windows"]
         if kind == "windows_import":
+            if has_members():
+                abort(400, "This server is a master: it hosts nothing. Import the sites on a member.")
+            takes_no_sites("import the sites")
             server = windows_server(data)
             if server:
                 return "Import from Windows", [*harbor, "import-all", "--server", server], "/"
@@ -6856,6 +6898,7 @@ def build_command(data):
     if kind == "register_env":
         return "Add existing site: " + site_arg(data), [*harbor_argv("register_env.sh"), site_arg(data)], HARBOR_DIR
     if kind == "copy_site":
+        takes_no_sites("make the copy")
         source = site_arg(data)
         if managed_by(source):
             abort(400, "This site is an environment of a main site on another server. Make the copy from there.")
@@ -6901,8 +6944,7 @@ def build_command(data):
             argv = ["/usr/bin/env", "VNS_COPY_HTTPS=" + data["https"], *argv]
         return "Copy site: " + source, argv, HARBOR_DIR
     if kind == "create_site":
-        if os.path.exists(NO_WEB):
-            abort(400, "This server hosts no sites: make the site on another (Settings, Servers on the master).")
+        takes_no_sites("make the site")
         site = dns_name(data.get("site", ""), "site name")
         site_type = data.get("type", "")
         if site_type not in ("html", "python", "csharp"):
@@ -8026,7 +8068,85 @@ def convert_connection(server, remote):
         if remote and convert_host(item.get("host")) in CONVERT_LOCAL_HOSTS:
             continue
         return item
+    # None here: the database server's own, when it is a server in Servers (a member, say), lent by its admin
+    return borrowed_connection(engine, host, port)
+
+
+# Each server in Servers' own connections to its database servers, as its admin has them: {server: (until, [connection])},
+# read again after a minute
+_BORROWED = {}
+_BORROWED_LOCK = threading.Lock()
+
+
+def borrowed_connections():
+    """The connections the Linux servers in Servers have to their own SQL Server and PostgreSQL (harbor sql
+    own-connections over SSH, side by side, kept a minute): a site's database on one of them is converted with its
+    connection, and needs no second one made here. Each by an id of its own (lent:<server>:<engine>:<port>), named
+    as it is there, at the address this server reaches that server by"""
+    from harbor.core.system import System
+    from harbor.server import servers
+    system = System()
+    try:
+        known = servers.servers(system, "linux")
+    except (OSError, ValueError):
+        return []
+
+    def read(item):
+        name, entry = item
+        with _BORROWED_LOCK:
+            kept = _BORROWED.get(name)
+        if kept and kept[0] > time.time():
+            return kept[1]
+        found = []
+        try:
+            result = servers.remote(system, entry, REMOTE_HARBOR + "sql own-connections", check=False)
+            lines = (result.stdout or "").strip().splitlines() if result.ok else []
+            items = json.loads(lines[-1]) if lines else []
+        except (OSError, ValueError, KeyError):
+            items = []
+        for connection in items if isinstance(items, list) else []:
+            if not isinstance(connection, dict) or not connection.get("password"):
+                continue
+            engine = connection.get("engine") or "mssql"
+            port = str(connection.get("port") or SQL_DEFAULT_PORTS.get(engine, ""))
+            found.append({**connection, "id": f"lent:{name}:{engine}:{port}", "host": entry["host"], "lent_by": name})
+        with _BORROWED_LOCK:
+            _BORROWED[name] = (time.time() + 60, found)
+        return found
+    if not known:
+        return []
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        return [connection for found in executor.map(read, sorted(known.items())) for connection in found]
+
+
+def borrowed_connection(engine, host, port, identifier=""):
+    """The database server's own connection, lent by that server (by its id, or by the server's engine, host and port)"""
+    if not identifier and (not host or host in CONVERT_LOCAL_HOSTS):
+        return None
+    for item in borrowed_connections():
+        if identifier:
+            if item["id"] == identifier:
+                return item
+            continue
+        if (item.get("engine") or "mssql") != engine or not same_host(item.get("host"), host):
+            continue
+        if port and str(item.get("port") or "") != str(port):
+            continue
+        return item
     return None
+
+
+def convert_settings(identifier):
+    """A connection Convert uses, chosen by its id: one here, or one another server lends"""
+    if not isinstance(identifier, str):
+        return None
+    if identifier.startswith("lent:"):
+        return borrowed_connection("", "", "", identifier)
+    try:
+        with SQL_LOCK:
+            return _sql_module.connection(SQL_CONNECTIONS, identifier)
+    except (OSError, ValueError):
+        return None
 
 
 def convert_kept_ready(item, remote):
@@ -8309,6 +8429,13 @@ def convert_connections_public():
         except (KeyError, ValueError):
             public["files"] = False
         found.append(public)
+    # The database servers' own, lent by the servers in Servers (one this admin has a connection to is not twice): Move
+    # does not carry backups with them
+    for item in borrowed_connections():
+        if any((entry.get("engine") or "mssql") == item.get("engine", "mssql") and same_host(entry.get("host"), item["host"])
+               and str(entry.get("port") or "") == str(item.get("port") or "") for entry in found):
+            continue
+        found.append({**{key: item[key] for key in ("id", "name", "host", "port", "engine") if key in item}, "files": False, "lent_by": item["lent_by"]})
     return found
 
 
@@ -8844,12 +8971,7 @@ def convert_command(data):
     to = data.get("to")
     if to not in ("mssql", "postgres", "sqlite"):
         abort(400, "Choose what to convert to")
-    identifier = data.get("connection")
-    try:
-        with SQL_LOCK:
-            settings = _sql_module.connection(SQL_CONNECTIONS, identifier) if isinstance(identifier, str) else None
-    except (OSError, ValueError):
-        settings = None
+    settings = convert_settings(data.get("connection"))
     if not settings:
         abort(400, "Choose a connection")
     if to != "sqlite" and _sql_module.engine(settings) != to:
@@ -8882,6 +9004,157 @@ def convert_command(data):
         env["VNS_CONVERT_LOGIN_PASSWORD"] = password
         title = f"Convert {unit}{where} to {'Microsoft SQL Server' if to == 'mssql' else 'PostgreSQL'}"
     return title, run(*argv), env
+
+
+# ---- A Windows server's sites listed on Web Server where they are (harbor/server/windows_sites.py): an administrator's.
+# Where each is reached (its binding and backend) is a note kept here: nothing on Windows is changed but the files
+WINDOWS_SITES_NOTES = os.path.join(DATA, "windows-sites.json")
+# What each server listed last: {server: (until, answer)}, read again after two minutes or when asked
+WINDOWS_SITES_SEEN = {}
+WINDOWS_SITES_LOCK = threading.Lock()
+
+
+def windows_folder_ok(folder):
+    """A site's folder in a share by its name: never a path"""
+    return isinstance(folder, str) and 0 < len(folder) <= 255 and bool(folder.strip()) and folder not in (".", "..") \
+        and not any(char in '/\\:*?"<>|' or ord(char) < 32 for char in folder)
+
+
+def windows_sites_notes():
+    try:
+        with open(WINDOWS_SITES_NOTES, encoding="utf-8") as stream:
+            found = json.load(stream)
+    except (OSError, ValueError):
+        return {}
+    return found if isinstance(found, dict) else {}
+
+
+def windows_listing(name, everything=False, fresh=False):
+    """A Windows server's sites (harbor windows sites): ([{folder, excluded}], why not)"""
+    kept = WINDOWS_SITES_SEEN.get(name)
+    if not everything and not fresh and kept and kept[0] > time.time():
+        return kept[1]
+    try:
+        result = subprocess.run(["/usr/bin/python3", HARBOR_COMMAND, "windows", "sites", "--server", name, *(["--all"] if everything else [])],
+                                capture_output=True, text=True, timeout=90)
+    except subprocess.TimeoutExpired:
+        return [], "The Windows server did not answer in time."
+    if result.returncode:
+        lines = [line for line in (result.stdout + result.stderr).splitlines() if line.strip()]
+        answer = ([], lines[-1] if lines else "The share could not be read.")
+    else:
+        try:
+            answer = (json.loads(result.stdout[result.stdout.index("{"):]).get("sites", []), "")
+        except ValueError:
+            answer = ([], "The share could not be read.")
+    if not everything:
+        WINDOWS_SITES_SEEN[name] = (time.time() + 120, answer)
+    return answer
+
+
+@app.route("/api/windows-sites")
+def api_windows_sites():
+    """The Windows servers whose sites are listed, each with its sites and where each is reached (as noted here)"""
+    require_admin()
+    from harbor.core.system import System
+    from harbor.server import servers
+    listed = {name: entry for name, entry in servers.servers(System(), "windows").items() if entry.get("list_sites")}
+    fresh = request.args.get("fresh") == "1"
+    notes = windows_sites_notes()
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        answers = dict(zip(listed, executor.map(lambda name: windows_listing(name, fresh=fresh), listed)))
+    found = []
+    for name, entry in sorted(listed.items()):
+        sites, why = answers[name]
+        mine = notes.get(name) if isinstance(notes.get(name), dict) else {}
+        found.append({"name": name, "share": entry.get("share", ""), "error": why,
+                      "sites": [{"folder": item["folder"], "binding": (mine.get(item["folder"]) or {}).get("binding", ""),
+                                 "backend": (mine.get(item["folder"]) or {}).get("backend", "")} for item in sites]})
+    return jsonify(servers=found)
+
+
+@app.route("/api/windows-sites/<name>/folders")
+def api_windows_site_folders(name):
+    """Every folder in its share, the ones left out marked: for choosing what is listed"""
+    require_admin()
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", name):
+        abort(404)
+    sites, why = windows_listing(name, everything=True)
+    if why:
+        return error(why, 400)
+    return jsonify(folders=sites)
+
+
+@app.route("/api/windows-sites/<name>/<path:folder>", methods=["PUT"])
+def api_windows_site_note(name, folder):
+    """Where a listed site is reached: its binding (a name) and its backend (an address), as noted here only"""
+    require_admin()
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", name) or not windows_folder_ok(folder):
+        abort(404)
+    data = request.get_json(silent=True) or {}
+    binding = str(data.get("binding") or "").strip().lower()
+    backend = str(data.get("backend") or "").strip()
+    if binding and not re.fullmatch(r"(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z][a-z0-9-]{0,62}", binding):
+        return error("Give the binding as a name, such as www.example.com", 400)
+    if backend and (len(backend) > 500 or not re.fullmatch(r"https?://[^\s\"<>]+", backend)):
+        return error("Give the backend as an address starting with https://", 400)
+    with WINDOWS_SITES_LOCK:
+        notes = windows_sites_notes()
+        if not isinstance(notes.get(name), dict):
+            notes[name] = {}
+        mine = notes[name]
+        if binding or backend:
+            mine[folder] = {"binding": binding, "backend": backend}
+        else:
+            mine.pop(folder, None)
+        temporary = WINDOWS_SITES_NOTES + ".tmp"
+        with open(temporary, "w", encoding="utf-8") as stream:
+            json.dump(notes, stream, indent=2)
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, WINDOWS_SITES_NOTES)
+    audit(f"Windows site {folder} on {name}: binding {binding or 'none'}, backend {backend or 'none'}")
+    return jsonify(binding=binding, backend=backend)
+
+
+@app.route("/api/windows-fs/<name>/<path:folder>/<action>", methods=["GET", "POST"])
+def windows_site_fs(name, folder, action):
+    """Files of a listed Windows site, over SMB (lib/windows_files.py), answered as a Windows environment's are"""
+    require_admin()
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", name) or not windows_folder_ok(folder):
+        abort(404)
+    if action not in ("list", "read", "download", "save", "mkdir", "newfile", "rename", "delete", "upload"):
+        abort(400, "Unknown file action")
+    if request.method == "GET":
+        if action not in ("list", "read", "download"):
+            abort(405)
+        data = {"path": request.args.get("path", "")}
+    elif action == "upload":
+        data = {"path": request.form.get("path", ""), "files": [
+            {"name": upload.filename or "", "content": base64.b64encode(upload.read()).decode("ascii")}
+            for upload in request.files.getlist("files")]}
+    else:
+        data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        abort(400, "Expected a file operation object")
+    data["action"] = action
+    try:
+        result = subprocess.run(["/usr/bin/python3", HARBOR_COMMAND, "windows", "site-files", "--server", name, folder],
+                                input=json.dumps(data).encode("utf-8"), capture_output=True, timeout=150)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        app.logger.error("Windows file %s failed for %s on %s: %s", action, folder, name, exc)
+        abort(502, "Could not reach the Windows server")
+    try:
+        response = json.loads(result.stdout)
+    except ValueError:
+        response = {"error": result.stderr.decode("utf-8", errors="replace").strip() or "Invalid response from the Windows server"}
+    if result.returncode or not isinstance(response, dict) or "error" in response:
+        message = response.get("error") if isinstance(response, dict) else None
+        abort(502, message or "The Windows server refused the request")
+    if action in ("save", "mkdir", "newfile", "rename", "delete", "upload"):
+        audit(f"Windows site {folder} on {name}: {action} {data.get('path', '')}")
+    if action == "download":
+        return file_response(io.BytesIO(base64.b64decode(response["content"])), os.path.basename(data["path"]))
+    return jsonify(response)
 
 
 @app.route("/api/windows/imported")

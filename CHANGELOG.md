@@ -2,6 +2,18 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.111] - Unreleased
+
+### Features
+
+- A Windows server's sites listed on Web Server, where they are: a Windows server in Servers (on a master too) gets List sites…, which lists the folders in its share as sites, with the folders chosen to be left out. Each is a card in a group of its own on Web Server: a click opens its files (Files over SMB, as a Windows environment's: edit, upload, download, rename, delete), and Edit… notes its binding and backend address, shown as Frontend and Backend. The note is Harbor's only: IIS and the site are not changed. An administrator's alone. harbor servers windows-sites NAME on|off --exclude FOLDER; harbor windows sites --server NAME; harbor windows site-files --server NAME FOLDER.
+- A member can keep its sites and take no new one: Web Server… on its card in the master's Servers chooses between Hosts sites, Keeps its sites and Hosts no sites. Kept, its sites stay listed and run as now, its users keep them, and no new site, environment, copy or import lands there (New site and Add environment leave it out, and the server refuses one). harbor servers web NAME on|closed|off; harbor server web on|closed|off on the server itself.
+- Convert uses the database server's own connection: a site whose database is on a server in Servers (a SQL Server's member, say) is converted with the connection that server's admin has to its own SQL Server or PostgreSQL, so no second connection to it is made on the SQL Server page. Those servers' own connections are offered as servers to convert to as well (harbor sql own-connections, read over SSH).
+
+### Fixes
+
+- On the master, Export Site said No database for every site when it was drawn while the list of sites was read again (every few seconds): the members' sites were missing from the list until they had all answered. The list is now replaced only once it is read in full.
+
 ## [1.0.110] - 2026-11-28
 
 ### Fixes

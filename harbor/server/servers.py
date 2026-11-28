@@ -563,7 +563,9 @@ def status(system, name):
     if found and found.get("kind") == "windows":
         from harbor.sites.windows_import import share as open_share
         share, user, password, domain = windows_login(system, name)
-        base = {"name": name, "kind": "windows", "share": share, "user": user, "domain": domain}
+        base = {"name": name, "kind": "windows", "share": share, "user": user, "domain": domain,
+                # Its sites listed on Web Server, and the folders left out (harbor servers windows-sites)
+                "list_sites": bool(found.get("list_sites")), "exclude": found.get("exclude") or []}
         try:
             open_share(system, share, user, password, domain)
         except Stop as error:
@@ -572,7 +574,7 @@ def status(system, name):
     entry = server(system, name)
     result = remote(system, entry, "python3 -", input=STATUS, check=False)
     if not result.ok:
-        return {"name": name, **{key: entry[key] for key in ("host", "user", "port")}, "member": bool(entry.get("member")), "no_web": bool(entry.get("no_web")), "reachable": False,
+        return {"name": name, **{key: entry[key] for key in ("host", "user", "port")}, "member": bool(entry.get("member")), "no_web": bool(entry.get("no_web")), "closed": bool(entry.get("closed")), "reachable": False,
                 "error": (result.stderr or result.stdout).strip().splitlines()[-1:] or ["no answer"]}
     try:
         found = json.loads(result.stdout.strip().splitlines()[-1])
@@ -580,7 +582,7 @@ def status(system, name):
         found = {}
     remember_public(system, name, found.get("public", ""), found.get("fqdn"), found.get("admin_names"))
     # Why Harbor must stay there, for Remove: sites of its own, or SQL connections here that reach it
-    return {"name": name, **{key: entry[key] for key in ("host", "user", "port")}, "member": bool(entry.get("member")), "no_web": bool(entry.get("no_web")), "reachable": True, **judged(found),
+    return {"name": name, **{key: entry[key] for key in ("host", "user", "port")}, "member": bool(entry.get("member")), "no_web": bool(entry.get("no_web")), "closed": bool(entry.get("closed")), "reachable": True, **judged(found),
             "keep_harbor": uninstall_blockers(system, name, entry, found)}
 
 
@@ -654,33 +656,52 @@ def install(system, name):
 
 
 # A server that hosts no sites (a SQL Server's, say): no site is made there, nor an environment of one elsewhere, and
-# its users have no Web Server there. On the server itself a marker its admin reads; in each Servers that knows it, a
-# flag on its entry, so the dialogs that choose a server leave it out
+# its users have no Web Server there. One that keeps its sites (closed) runs and shows the sites it has, and takes no
+# new one: no new site, environment, copy or import lands there. On the server itself a marker its admin reads; in each
+# Servers that knows it, a flag on its entry, so the dialogs that choose a server leave it out
 NO_WEB = "/var/lib/harbor/no-web"
+CLOSED = "/var/lib/harbor/no-new-sites"
+WEB_STATES = ("on", "closed", "off")
+
+
+def web_state(system):
+    """Whether this server hosts sites: on, closed (keeps its sites, takes no new one) or off"""
+    return "off" if system.path(NO_WEB).exists() else "closed" if system.path(CLOSED).exists() else "on"
 
 
 def hosts_sites(system):
     """Whether this server hosts sites (it does unless it was set not to)"""
-    return not system.path(NO_WEB).exists()
+    return web_state(system) != "off"
 
 
-def set_hosts_sites(system, on):
-    """This server set to host sites, or not: its admin makes none then, and its Web Server is off in its menu"""
-    marker = system.path(NO_WEB)
-    if on:
-        marker.unlink(missing_ok=True)
-        system.say("This server hosts sites.")
-    else:
-        marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.write_text("This server hosts no sites (Harbor: harbor server web on to change it).\n")
-        system.say("This server hosts no sites: none is made here.")
+def set_hosts_sites(system, state):
+    """This server set to host sites (on), keep those it has and take no new one (closed), or host none (off): its
+    admin makes none then, and with none its Web Server is off in its menu"""
+    if state not in WEB_STATES:
+        raise Stop(f"Choose {', '.join(WEB_STATES)}.")
+    for path, wanted in ((NO_WEB, state == "off"), (CLOSED, state == "closed")):
+        marker = system.path(path)
+        if wanted:
+            marker.parent.mkdir(parents=True, exist_ok=True)
+            marker.write_text(f"This server {'hosts no sites' if state == 'off' else 'takes no new sites'} (Harbor: harbor server web on to change it).\n")
+        else:
+            marker.unlink(missing_ok=True)
+    system.say({"on": "This server hosts sites.", "closed": "This server keeps its sites and takes no new one.",
+                "off": "This server hosts no sites: none is made here."}[state])
 
 
-def set_entry_web(system, name, on):
-    """A server in Servers marked as hosting sites, or not, here"""
+def entry_web_state(entry):
+    """A server in Servers: on, closed or off, as its entry is marked"""
+    return "off" if entry.get("no_web") else "closed" if entry.get("closed") else "on"
+
+
+def set_entry_web(system, name, state):
+    """A server in Servers marked as hosting sites (on), keeping its own (closed), or hosting none (off), here"""
+    if state not in WEB_STATES:
+        raise Stop(f"Choose {', '.join(WEB_STATES)}.")
     found = read_json(system.path(SERVERS)) or {}
     if name not in found:
         raise Stop(f"No server {name}.")
-    entry = {key: value for key, value in found[name].items() if key != "no_web"}
-    found[name] = entry if on else {**entry, "no_web": True}
+    entry = {key: value for key, value in found[name].items() if key not in ("no_web", "closed")}
+    found[name] = {**entry, **({"no_web": True} if state == "off" else {"closed": True} if state == "closed" else {})}
     write_json(system.path(SERVERS), found)

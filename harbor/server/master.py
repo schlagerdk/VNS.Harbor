@@ -292,9 +292,9 @@ def introduce(system, only=None):
                                           f"--port {shlex.quote(str(item.get('port', 22)))}", check=False)
             if not added.ok:
                 said.append(f"{other} could not be added on {name}: {((added.stderr or added.stdout).strip().splitlines() or ['no answer'])[-1]}")
-            elif item.get("no_web"):
-                # One that hosts no sites is no place for one there either
-                remote(system, entry, f"{REMOTE_HARBOR} servers web {shlex.quote(other)} off --here", check=False)
+            elif item.get("no_web") or item.get("closed"):
+                # One that hosts no sites, or takes no new one, is no place for one there either
+                remote(system, entry, f"{REMOTE_HARBOR} servers web {shlex.quote(other)} {'off' if item.get('no_web') else 'closed'} --here", check=False)
     for line in said:
         system.warn(line)
     return said
@@ -333,16 +333,16 @@ def adds_environments(user):
     return any("create_env" in (grant.get("actions") or []) for sites in grants for grant in sites.values() if isinstance(grant, dict))
 
 
-def web(system, name, hosts):
-    """A member set to host sites, or not (a SQL Server's): marked here, told to the member itself (its admin makes no
-    site then), and to every other member, whose dialogs then leave it out as a place for a site or an environment. The
-    users are sent again: they have no Web Server there"""
+def web(system, name, state):
+    """A member set to host sites (on), to keep its own and take no new one (closed), or to host none (off, a SQL
+    Server's): marked here, told to the member itself (its admin makes no site then), and to every other member, whose
+    dialogs then leave it out as a place for a site or an environment. The users are sent again: on one that is not
+    on they make no site or environment there, and on one that is off they have no Web Server there"""
     from harbor.server.servers import set_entry_web
     found = members(system)
     if name not in found:
         raise Stop(f"{name} is not a member.")
-    set_entry_web(system, name, hosts)
-    state = "on" if hosts else "off"
+    set_entry_web(system, name, state)
     said = []
 
     def why(result):
@@ -366,12 +366,16 @@ def web(system, name, hosts):
         said.append("the users could not be sent again")
     for line in said:
         system.warn(line)
-    system.say(f"{name} hosts sites." if hosts else f"{name} hosts no sites: no site or environment is made there, and no user has a Web Server there.")
+    system.say({"on": f"{name} hosts sites.",
+                "closed": f"{name} keeps its sites: no new site or environment is made there.",
+                "off": f"{name} hosts no sites: no site or environment is made there, and no user has a Web Server there."}[state])
 
 
-def users_for(users, name, no_web=()):
+def users_for(users, name, no_web=(), closed=()):
     """The master's users that have something on the member, as it is sent them. On a member that hosts no sites
-    (no_web: the members that do not), no Web Server, and it is no place for their sites or environments"""
+    (no_web: the members that do not), no Web Server, and it is no place for their sites or environments; on one that
+    keeps its sites (closed), their sites there stay theirs, and they make no new one or environment there"""
+    shut = set(no_web) | set(closed)
     found = []
     for user in users:
         admin = user.get("role") == "admin"
@@ -382,12 +386,14 @@ def users_for(users, name, no_web=()):
         item.update(access or {})
         if name in no_web:
             item.update(web=False, create_sites=False, create_envs=False, sftp=False, sites={})
+        elif name in closed:
+            item.update(create_sites=False, create_envs=False)
         # The other members they may make sites on: an environment of a site here may go there, and nowhere else
         item["create_on"] = sorted(other for other, given in (user.get("servers") or {}).items()
-                                   if other != name and other not in no_web and isinstance(given, dict) and given.get("create_sites"))
+                                   if other != name and other not in shut and isinstance(given, dict) and given.get("create_sites"))
         # Where their environments may be made: the other members that host them for this user
         item["envs_on"] = sorted(other for other, given in (user.get("servers") or {}).items()
-                                 if other != name and other not in no_web and isinstance(given, dict) and given.get("create_envs"))
+                                 if other != name and other not in shut and isinstance(given, dict) and given.get("create_envs"))
         if not adds_environments(user):
             item["envs_on"] = []
             item["create_envs"] = False
@@ -401,10 +407,11 @@ def push_users(system, users):
     """The master's users sent to each member, each with what it may there: {member: {users, skipped} or {error}}"""
     found = members(system)
     no_web = {name for name, entry in found.items() if entry.get("no_web")}
+    closed = {name for name, entry in found.items() if entry.get("closed")}
 
     def send(item):
         name, entry = item
-        listed = users_for(users, name, no_web)
+        listed = users_for(users, name, no_web, closed)
         raw = {"type": "application/json", "data": base64.b64encode(json.dumps({"users": listed}).encode()).decode()}
         try:
             answer = ask(system, name, entry, "PUT", "/api/membership/users", raw=raw)

@@ -58,6 +58,11 @@ Where the work stands, so it can go on from here after any interruption.
    test.account.vns.dk) moved into Harbor, so a customer has DNS, sites and SQL in one place. Works on one Harbor; on
    the master later. See Phase 14 below.
 
+15. **Mail in Harbor, from mailcow** (asked 2026-11-28): the mailcow server at mailserver.vns.dk administered from
+   Harbor: its state, domains and mailboxes. An administrator makes a domain with everything it needs, and Harbor makes
+   its DNS records itself (phase 14). A user is given their domain and how many mailboxes they may make, and makes
+   their own mailboxes. See Phase 15 below.
+
 ## Phase 10: PostgreSQL beside Microsoft SQL Server (asked 2026-11-25)
 Everything the admin does with Microsoft SQL Server, also with PostgreSQL, for C# and Python sites (Umbraco does not
 support PostgreSQL). A server may have either, both or none; connections to either here or on another server.
@@ -215,6 +220,48 @@ Steps, roughly in order (each its own release, tried on linux-01 and linux-02 fi
 4. SQL Server and PostgreSQL connections of every member on the master's SQL page, with the users' grants per
    connection as today.
 5. Load balancing: a site on two members, the master (or a balancer it manages) in front, with the steps above.
+
+## Phase 15: Mail in Harbor, from mailcow (asked 2026-11-28)
+A mailcow server (mailserver.vns.dk) runs VNS's mail. Harbor administers it through mailcow's REST API
+(`/api/v1/…`, an API key with read and write access), so mail sits beside sites, SQL and DNS in one place.
+
+For an administrator:
+- Settings: the mailcow server, its address and API key, tried before it is kept; kept as Harbor's other secrets (root
+  only, never in a page or a script). mailcow lets the key be used only from the addresses it is given: Harbor's (the
+  master's) is added there.
+- Mail in the top menu, as DNS is: the server's state (mailcow's containers, its version, disk, the mail queue) on a
+  card, as Health shows a server's.
+- A new domain with everything it needs, in one dialog: the domain in mailcow (its limits: mailboxes, aliases, total
+  and per-mailbox quota), its DKIM key made there, and its DNS records made in Cloudflare where the domain is in the
+  account (phase 14): MX, SPF, the DKIM TXT (dkim._domainkey), DMARC, and autodiscover and autoconfig, with the SRV
+  records mailcow's own DNS check asks for. Each step is shown as it runs. A domain not in the account: the records are
+  listed to be made by hand, and mailcow's DNS check says when they are right.
+- Domains listed with their mailboxes, aliases and quota used; the DNS of each checked against what mailcow wants (as
+  mailcow's own DNS check), with Fix where Harbor can make the record.
+- Mailboxes, aliases and forwards: new, edit (name, quota, password), on or off, delete, as the domain's limits allow.
+- Deleting a domain asks for its name to be typed, as other deletes do, and says what goes: its mailboxes and their
+  mail. Its DNS records are taken out too, when Harbor made them.
+
+For a user:
+- The user dialog (no new one) gets Mail beside Web Server, SQL Server and DNS: on or off, the domains given, and for
+  each how many mailboxes they may make (and their total quota). mailcow's own limits on the domain are set to the
+  same, so mailcow enforces them too.
+- A user sees only their domains, and makes, changes and deletes their own mailboxes and aliases there, up to the
+  limit; a full domain shows no New mailbox (the server refuses one too). They never see the API key, DNS they were
+  not given, or other domains.
+
+Notes:
+- Harbor's users are the ones who log in: mailcow's own domain administrators are not used (one login, one place).
+  A mailbox's own login (webmail, SOGo) stays mailcow's.
+- Each change is in the audit log: who made, changed or deleted which domain, mailbox or alias.
+- On the master (phase 13), Mail is the master's: one mailcow for every member's customers.
+- Later: a new site's domain offered mail at once; more than one mailcow server.
+
+Steps:
+1. Settings: the mailcow server and its API key, tried before it is kept; its state on a card.
+2. Mail in the top menu: domains, mailboxes and aliases for an administrator.
+3. New domain with its DKIM and DNS records made (phase 14), and the DNS check with Fix.
+4. Users: Mail, the domains given and their limits, in the user dialog; a user keeps their own mailboxes.
 
 ## Phase 14: DNS in Harbor, from Cloudflare (asked 2026-11-27, next)
 account.vns.dk (an Umbraco site, Views/DNS.cshtml, Users.cshtml) lets customers keep the DNS of their domains that are

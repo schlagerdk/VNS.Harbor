@@ -110,6 +110,32 @@ class ConnectionTests(unittest.TestCase):
             self.assertEqual([item["name"] for item in items], ["web-01", "web-01"])
             self.assertEqual(items[1]["backup_directory"], "/var/opt/postgresql/backup")
 
+    def test_own_connections_are_lent_without_their_ssh(self):
+        """Another server's admin reads this server's own connections (harbor sql own-connections): those to its own
+        database servers, with their passwords, not its SSH and not those to other servers"""
+        import contextlib
+        import io
+        import json
+        from unittest import mock
+        from harbor.sql import server
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            app = root / "var/www/admin.example.com/app"
+            app.mkdir(parents=True)
+            system = RecordingSystem(root=root, answers={"hostname -I": "10.0.0.21"})
+            (app / "sql-connections.json").write_text(json.dumps([
+                {"id": "a", "name": "SQL-01", "host": "localhost", "port": 1433, "username": "sa", "password": "own", "ssh_enabled": True, "ssh_key": "k"},
+                {"id": "b", "name": "Other", "host": "10.0.0.99", "port": 1433, "username": "sa", "password": "theirs"},
+                {"id": "c", "name": "PG", "host": "10.0.0.21", "port": 5432, "username": "postgres", "password": "pg", "engine": "postgres"}]))
+            printed = io.StringIO()
+            with mock.patch("harbor.install.admin.admin_sites", return_value=["admin.example.com"]), \
+                    mock.patch("harbor.install.admin.web_root", return_value="/var/www"), contextlib.redirect_stdout(printed):
+                server.own_connections(system)
+            lent = json.loads(printed.getvalue())
+            self.assertEqual([item["id"] for item in lent], ["a", "c"])
+            self.assertEqual(lent[0]["password"], "own")
+            self.assertFalse([key for item in lent for key in item if key.startswith("ssh")])
+
 
 if __name__ == "__main__":
     unittest.main()

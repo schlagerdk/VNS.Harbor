@@ -208,6 +208,45 @@ class MasterTests(unittest.TestCase):
             main(["servers", "web", "sql", "on"], self.system())
         self.assertNotIn("no_web", json.loads((self.root / "var/lib/harbor/servers.json").read_text())["sql"])
 
+    def test_a_member_that_keeps_its_sites(self):
+        """A member set to keep its sites takes no new one: it is told so, the others mark it so, and its users keep their
+        sites and Web Server there but make no site or environment there"""
+        self.servers({"old": {"host": "10.0.0.5", "user": "root", "port": "22", "member": True},
+                      "web": {"host": "10.0.0.6", "user": "root", "port": "22", "member": True}})
+        system = self.system()
+        with mock.patch.object(master, "call", return_value={"status": 200, "body": {}}):
+            self.assertEqual(main(["servers", "web", "old", "closed"], system), 0, system.said)
+        commands = " ".join(system.commands)
+        self.assertIn("root@10.0.0.5 python3 /opt/harbor/current/bin/harbor server web closed", commands)
+        self.assertIn("root@10.0.0.6 python3 /opt/harbor/current/bin/harbor servers web old closed --here", commands)
+        entry = json.loads((self.root / "var/lib/harbor/servers.json").read_text())["old"]
+        self.assertTrue(entry["closed"])
+        self.assertNotIn("no_web", entry)
+        users = [{"id": "u_aaaaaa", "username": "anna", "role": "user",
+                  "servers": {"old": {"web": True, "create_sites": True, "create_envs": True, "sftp": True, "sites": {"x.dk": {}}},
+                              "web": {"web": True, "create_sites": True, "create_envs": True}}}]
+        to_old = master.users_for(users, "old", (), {"old"})[0]
+        self.assertEqual((to_old["web"], to_old["sftp"], to_old["sites"], to_old["create_sites"], to_old["create_envs"]),
+                         (True, True, {"x.dk": {}}, False, False))
+        to_web = master.users_for(users, "web", (), {"old"})[0]
+        self.assertEqual(to_web["create_on"], [])
+        # Off from closed: one flag in place of the other
+        with mock.patch.object(master, "call", return_value={"status": 200, "body": {}}):
+            main(["servers", "web", "old", "off"], self.system())
+        entry = json.loads((self.root / "var/lib/harbor/servers.json").read_text())["old"]
+        self.assertEqual((entry.get("no_web"), entry.get("closed")), (True, None))
+
+    def test_a_server_keeps_its_sites_on_its_own(self):
+        from harbor.server import servers
+        system = self.system()
+        self.assertEqual(main(["server", "web", "closed"], system), 0)
+        self.assertEqual(servers.web_state(system), "closed")
+        self.assertTrue(servers.hosts_sites(system))
+        main(["server", "web", "off"], system)
+        self.assertEqual(servers.web_state(system), "off")
+        main(["server", "web", "on"], system)
+        self.assertEqual(servers.web_state(system), "on")
+
     def test_a_server_marked_so_makes_no_sites(self):
         from harbor.server import servers
         system = self.system()

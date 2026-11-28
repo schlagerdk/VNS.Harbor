@@ -3774,6 +3774,8 @@ dialog .dns-proxy-row .switch:checked { border-color: #f0883e; background: #f088
 /* A rule's match as cards (wildcard, every request, own expression): three side by side, one under another on a phone */
 .type-cards.cf-match { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 @media (max-width: 640px) { .type-cards.cf-match { grid-template-columns: minmax(0, 1fr); } }
+.type-cards.web-state-cards { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+@media (max-width: 640px) { .type-cards.web-state-cards { grid-template-columns: minmax(0, 1fr); } }
 #form-dialog .dns-field textarea { resize: none; min-height: 76px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
 /* How * and $1 / ${1} work: a line of what they do, and an address it matches with each * a part of its own colour,
    and where it goes with the same parts */
@@ -4095,6 +4097,18 @@ input[type="search"]::-webkit-credentials-auto-fill-button, input[type="search"]
 .site-server-count { padding: 1px 8px; border-radius: 999px; background: rgba(255, 255, 255, .07); color: var(--muted); font-size: 11.5px; font-weight: 600; }
 /* Each server's own grid or list, at the end of its head */
 .site-server-head .site-server-layout { margin-left: auto; }
+/* A Windows server's sites, listed where they are: its logo, its share, and Read again at the right */
+.windows-site-group .site-server-icon { background: rgba(76, 194, 255, .12); }
+.site-server-icon.os-icon svg { width: 15px; height: 15px; }
+.windows-site-share { min-width: 0; overflow: hidden; color: var(--muted); font-size: 12.5px; text-overflow: ellipsis; white-space: nowrap; }
+.windows-site-reread { flex: none; margin-left: auto; }
+.windows-site-error { margin: 10px 0 0; }
+.site-emblem.os-icon { border-color: rgba(76, 194, 255, .3); background: linear-gradient(135deg, rgba(76, 194, 255, .14), rgba(88, 166, 255, .1)); }
+.site-emblem.os-icon svg { width: 22px; height: 22px; }
+.badge.windows { background: #0078d4; color: #fff; }
+.windows-site-binding { min-width: 0; overflow: hidden; color: var(--text); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.windows-site-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.windows-site { cursor: pointer; }
 /* A master's own Usage, Convert DB and Export Site: a section a member, its head over that member's part, the whole row */
 .member-pane { grid-column: 1 / -1; display: grid; gap: 12px; min-width: 0; }
 .member-pane + .member-pane { margin-top: 14px; }
@@ -4117,6 +4131,9 @@ body.not-admin .server-card.add { display: none; }
 #dlg-user.on-master-access #user-sftp-part { display: none; }
 /* A member that hosts no sites: no Web Server, nor SFTP to a site's folder there */
 #dlg-user.no-web-access #user-scope .user-part.tone-web, #dlg-user.no-web-access #user-sftp-part { display: none; }
+/* A member that keeps its sites and takes no new one: no site or environment is made there */
+#dlg-user.closed-access #user-web .option-row:has(input[name="create_sites"]), #dlg-user.closed-access #user-create-envs,
+#dlg-user.closed-access #user-site-limits { display: none; }
 /* Add environment for a user: the folder on the server is Harbor's choice, not theirs to type */
 #dlg-prod.for-user #prod-local-options { display: none !important; }
 /* Folders on the server are Harbor's for a user (they follow the environment): an administrator's to change */

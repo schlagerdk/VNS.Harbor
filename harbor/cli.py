@@ -231,7 +231,7 @@ def _sql(args, system):
     from harbor.sql import databases, server
     name = args.command.replace("-", "_")
     module = server if name in ("install_server", "update_server", "uninstall_server", "install_sql_tools", "uninstall_sql_tools",
-                                "set_sa_password", "import_sa_password") else databases
+                                "set_sa_password", "import_sa_password", "own_connections") else databases
     words = {"copy": 2, "drop": 2, "create": 1, "restore": 1}.get(name, 0)
     # The answers the admin gives as options (each is asked in the terminal when it is not given)
     options = {key: getattr(args, key) for key in ("edition", "with_tools", "assume_yes", "delete_data")
@@ -317,6 +317,18 @@ def _windows_move(args, system):
         windows_move.take_over(system, args.site, args.target)
 
 
+def _windows_sites(args, system):
+    """A Windows server's sites listed where they are (harbor/server/windows_sites.py)"""
+    import json
+    from harbor.server import windows_sites
+    if args.command == "sites":
+        print(json.dumps({"sites": windows_sites.folders(system, args.server, everything=args.all)}))
+    elif args.command == "site-files":
+        windows_sites.site_files(system, args.server, args.folder)
+    elif args.command == "windows-sites":
+        windows_sites.configure(system, args.name, args.state == "on", args.exclude)
+
+
 def _windows(args, system):
     """Sites moved from a Windows server (harbor/sites/windows_import.py); the SMB password in VNS_SMB_PASSWORD"""
     import json
@@ -393,10 +405,10 @@ def _servers(args, system):
         entry = servers.servers(system).get(args.name) or {}
         if entry.get("member") and not args.here:
             from harbor.server import master
-            master.web(system, args.name, args.state == "on")
+            master.web(system, args.name, args.state)
         else:
-            servers.set_entry_web(system, args.name, args.state == "on")
-            system.say(f"{args.name} {'hosts sites' if args.state == 'on' else 'hosts no sites'} here.")
+            servers.set_entry_web(system, args.name, args.state)
+            system.say(f"{args.name} {({'on': 'hosts sites', 'closed': 'keeps its sites and takes no new one', 'off': 'hosts no sites'})[args.state]} here.")
     elif args.command == "set-host":
         servers.set_host(system, args.name, args.host)
     elif args.command == "rename":
@@ -576,7 +588,7 @@ def _server_crontab(args, system):
 
 def _server_web(args, system):
     from harbor.server.servers import set_hosts_sites
-    set_hosts_sites(system, args.state == "on")
+    set_hosts_sites(system, args.state)
 
 
 def _server_ssh_root(args, system):
@@ -824,8 +836,8 @@ def parser():
     command = server.add_parser("unattended-upgrades", help="the automatic security updates (unattended-upgrades): on (installed if it is not here) or off")
     command.add_argument("state", nargs="?", choices=("on", "off"), default="on")
     command.set_defaults(handler=_server_unattended)
-    command = server.add_parser("web", help="whether this server hosts sites (off: a SQL Server's, say; none is made here)")
-    command.add_argument("state", choices=("on", "off"))
+    command = server.add_parser("web", help="whether this server hosts sites (on), keeps its own and takes no new one (closed), or hosts none (off: a SQL Server's, say)")
+    command.add_argument("state", choices=("on", "closed", "off"))
     command.set_defaults(handler=_server_web)
     command = server.add_parser("ssh-root", help="how root may log in over SSH: yes (a password or a key), prohibit-password (a key only) or no")
     command.add_argument("mode", choices=("yes", "prohibit-password", "no"))
@@ -1070,7 +1082,8 @@ def parser():
             ("install-sql-tools", 0, "sqlcmd without SQL Server (was install_tools.sh)"),
             ("uninstall-sql-tools", 0, "sqlcmd removed (was uninstall_tools.sh)"),
             ("set-sa-password", 0, "the sa password in the scripts in sql/ (was set_sa_password.sh)"),
-            ("import-sa-password", 0, "the sa password from the scripts in sql/ into Harbor's secrets, once")):
+            ("import-sa-password", 0, "the sa password from the scripts in sql/ into Harbor's secrets, once"),
+            ("own-connections", 0, "the admin's connections to this server's own SQL Server and PostgreSQL, as JSON with their passwords (read by another server's admin over SSH)")):
         command = sql.add_parser(name, help=text)
         if name in ("install-server", "update-server", "uninstall-server", "uninstall-sql-tools", "set-sa-password"):
             command.add_argument("--yes", dest="assume_yes", action="store_const", const=True, default=None,
@@ -1136,6 +1149,14 @@ def parser():
     command.add_argument("--server", default="", help="a Windows server kept in harbor servers, instead of the share and login")
     command.add_argument("--domain", default="")
     command.set_defaults(handler=_windows)
+    command = windows.add_parser("sites", help="the sites listed of a Windows server kept in harbor servers (the folders in its share), as JSON")
+    command.add_argument("--server", required=True)
+    command.add_argument("--all", action="store_true", help="the folders left out too, each marked so")
+    command.set_defaults(handler=_windows_sites)
+    command = windows.add_parser("site-files", help="one file operation on a listed site's folder: JSON on stdin, the answer on stdout")
+    command.add_argument("--server", required=True)
+    command.add_argument("folder")
+    command.set_defaults(handler=_windows_sites)
     command = windows.add_parser("refresh-all", help="every site imported from Windows, refreshed one at a time")
     command.add_argument("--pause", action="store_true")
     command.set_defaults(handler=_windows)
@@ -1170,6 +1191,11 @@ def parser():
     command.add_argument("--user", required=True)
     command.add_argument("--domain", default="")
     command.set_defaults(handler=_servers)
+    command = other.add_parser("windows-sites", help="a Windows server's sites listed here (on), with folders left out, or not (off)")
+    command.add_argument("name")
+    command.add_argument("state", choices=("on", "off"))
+    command.add_argument("--exclude", action="append", default=[], help="a folder not shown: once for each")
+    command.set_defaults(handler=_windows_sites)
     command = other.add_parser("set-host", help="the server has a new address: kept here, and in every environment that was on the old one")
     command.add_argument("name")
     command.add_argument("host", help="its new address")
@@ -1183,9 +1209,9 @@ def parser():
     command.add_argument("--name", dest="new_name", default="")
     command.add_argument("--host", default="")
     command.set_defaults(handler=_servers)
-    command = other.add_parser("web", help="whether a server hosts sites: on a master, told to it and the other members too")
+    command = other.add_parser("web", help="whether a server hosts sites (on), keeps its own and takes no new one (closed), or hosts none (off): on a master, told to it and the other members too")
     command.add_argument("name")
-    command.add_argument("state", choices=("on", "off"))
+    command.add_argument("state", choices=("on", "closed", "off"))
     command.add_argument("--here", action="store_true", help="only in this server's own Servers (as the master tells a member)")
     command.set_defaults(handler=_servers)
     command = other.add_parser("rollback", help="the release installed there before the one in use, used again there")

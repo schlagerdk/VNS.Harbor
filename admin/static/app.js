@@ -69,7 +69,7 @@ function allowedButton(label, site, envKey) {
 	const need = buttonPermission[label];
 	if (!need || currentUser.admin) return true;
 	if (need === "admin") return false;
-	if (need === "copy_site") return currentUser.create_sites && can(site.name, envKey, "files");
+	if (need === "copy_site") return currentUser.create_sites && !takesNoSites(site.harbor_server || "") && can(site.name, envKey, "files");
 	if (need === "delete_all") return (site.environments || []).every((env) => can(site.name, envKeyOf(env), "delete"));
 	if (envKey) return can(site.name, envKey, need);
 	return canAnywhere(site, need);
@@ -636,12 +636,16 @@ try { serverContext = sessionStorage.getItem("vns-server") || ""; } catch (error
 let pickedServer = serverContext;
 // Every server's sites and connections in one list: a master's, an administrator all its members, a user those given
 const joinedMembers = () => currentUser?.members || [];
+// A server that takes no new site, environment, copy or import: a member that keeps its sites or hosts none, or this
+// server itself so set ("" is this server)
+const takesNoSites = (server) => server ? [...(currentUser?.members_no_web || []), ...(currentUser?.members_closed || [])].includes(server)
+	: currentUser?.takes_sites === false;
 // Where the servers are named: an administrator always; a user who may make sites on two or more, so they choose and
 // see what is where (one with less sees one Harbor, no server named)
 const namesServers = () => Boolean(currentUser?.admin) || (currentUser?.create_on || []).length > 1;
 // Cloudflare's own (/api/dns/…) is the master's; a name's DNS checked for a site (/api/dns?name=) is the server's own
 const MASTER_PATHS = ["/api/me", "/api/master/", "/api/via/", "/api/users", "/api/user-templates", "/api/dns/", "/api/profile", "/api/preferences",
-	"/api/sign-in", "/api/your-address"];
+	"/api/sign-in", "/api/your-address", "/api/windows-sites", "/api/windows-fs/"];
 // The SQL connection and engine chosen, kept a server each: one of a member's is not this server's
 // A user's are one list, kept as one: their connections on every server are theirs alike
 const sqlKey = (part, server = "") => `vns-sql-${part}` + (server ? `@${server}` : "");
@@ -1220,7 +1224,15 @@ window.addEventListener("hashchange", route);
 const go = (hash) => { location.hash = hash; };
 const siteLink = (name) => "#site/" + encodeURIComponent(name);
 const fsUrl = (action) => apiPath(fsUrlHere(action));
-const fsUrlHere = (action) => remoteFilesSite ? "/api/remote-fs/" + encodeURIComponent(remoteFilesSite) + "/" + action : (serverFiles ? "/api/server-fs/" : "/api/site-fs/" + localFilesRoot.split("/").map(encodeURIComponent).join("/") + "/") + action;
+const fsUrlHere = (action) => remoteFilesSite ? remoteFsBase(remoteFilesSite) + action : (serverFiles ? "/api/server-fs/" : "/api/site-fs/" + localFilesRoot.split("/").map(encodeURIComponent).join("/") + "/") + action;
+// Where a remote folder's files are: an environment's (site@target), or a Windows server's listed site (windows:server/folder)
+function remoteFsBase(ref) {
+	if (ref.startsWith("windows:")) {
+		const [server, ...folder] = ref.slice(8).split("/");
+		return `/api/windows-fs/${encodeURIComponent(server)}/${encodeURIComponent(folder.join("/"))}/`;
+	}
+	return "/api/remote-fs/" + encodeURIComponent(ref) + "/";
+}
 
 // ------------------------------------------------------------------ sites
 
@@ -1291,19 +1303,22 @@ async function loadSites() {
 	const userMembers = joinedMembers();
 	if (userMembers.length) serverContext = "";
 	const data = await api("/api/sites");
-	allSites = data.sites || [];
+	// Built aside and put in place whole: the members answer slowly, and what reads the list meanwhile (Export Site's
+	// databases, Usage) must find the members' sites as they were, not this server's alone
+	let loaded = data.sites || [];
 	if (userMembers.length) {
 		const found = await Promise.all(userMembers.map((name) => api(`/api/via/${encodeURIComponent(name)}/sites`).then((there) => ({ name, sites: there.sites || [] })).catch(() => ({ name, sites: [] }))));
 		// A member's own admin site too (never listed with the sites): Settings' Admin site shows it on that member
-		for (const { name, sites } of found) allSites.push(...sites.filter((site) => !site.admin || currentUser.admin).map((site) => ({ ...site, harbor_server: name })));
+		for (const { name, sites } of found) loaded.push(...sites.filter((site) => !site.admin || currentUser.admin).map((site) => ({ ...site, harbor_server: name })));
 		// An environment managed from a main site in the list is that site's (shown under it there): not a site of its own
-		const named = new Set(allSites.map((site) => site.name));
-		const managed = allSites.filter((site) => site.harbor_server && site.managed_by?.site && named.has(site.managed_by.site));
+		const named = new Set(loaded.map((site) => site.name));
+		const managed = loaded.filter((site) => site.harbor_server && site.managed_by?.site && named.has(site.managed_by.site));
 		// By its server and name: the environment may have the name of its main site
 		managedElsewhere = new Set(managed.map((site) => `${site.harbor_server}|${site.name}`));
-		allSites = allSites.filter((site) => !managedElsewhere.has(`${site.harbor_server || ""}|${site.name}`));
-		userContext();
+		loaded = loaded.filter((site) => !managedElsewhere.has(`${site.harbor_server || ""}|${site.name}`));
 	}
+	allSites = loaded;
+	if (userMembers.length) userContext();
 	sitesLoaded = true;
 	if (data.update_check) monitorUpdateCheck(data.update_check);
 	// The admin site, from Settings: its own page (who can reach it, its certificate and service)
@@ -1327,6 +1342,8 @@ async function loadSites() {
 		}
 	}
 	renderSites();
+	// The Windows servers' sites come when their shares have answered: the list is drawn again then
+	if (currentUser.admin) refreshWindowsSites();
 	if (currentView === "site") renderSite(decodeURIComponent(location.hash.slice(6)));
 	if (currentView === "sql") await refreshSql();
 	// A master's members' sites are in the list itself, each under its server
@@ -1402,6 +1419,11 @@ const targetFields = (env) => (env && env.target && env.target !== "prod" ? { ta
 const remoteRef = (site, env) => (env.target && env.target !== "prod" ? `${site.name}@${env.target}` : site.name);
 // What people recognise an environment by: its binding and the server it is on, not the internal site@id
 function remoteLabel(ref) {
+	// A Windows server's listed site: its folder, and the server it is on
+	if (ref.startsWith("windows:")) {
+		const [server, ...folder] = ref.slice(8).split("/");
+		return `${folder.join("/")} @ ${server}`;
+	}
 	const [name, target = "prod"] = ref.split("@");
 	const site = allSites.find((item) => item.name === name);
 	const env = site?.environments.find((item) => item.target === target);
@@ -1749,6 +1771,14 @@ function renderSites() {
 			siteLayout = overall;
 		}
 	} else for (const site of visible) box.append(siteCard(site));
+	// The Windows servers' sites, listed where they are: a group each, after this server's and the members'
+	const windowsGroups = windowsSiteGroups();
+	if (windowsGroups.length) {
+		box.classList.add("grouped");
+		box.classList.remove("list");
+		$("#no-sites").hidden = true;
+		box.append(...windowsGroups);
+	}
 	updateSiteActivity();
 	renderCardUpdateChecks();
 	decorate(box);
@@ -1756,6 +1786,84 @@ function renderSites() {
 	// The search has the focus on Web Server, once it is shown: not taken from a field or button that has it
 	if (currentView === "sites" && !$("#search").hidden && $("#dock").hidden && (document.activeElement === document.body || !document.activeElement)
 		&& !document.querySelector("dialog[open]")) $("#search").focus({ preventScroll: true });
+}
+
+// A Windows server's sites, listed where they are (Servers, a Windows server's List sites…): [{name, share, error, sites}]
+let windowsSites = [];
+let windowsSitesAsked = null;
+async function refreshWindowsSites(fresh = false) {
+	if (windowsSitesAsked && !fresh) return windowsSitesAsked;
+	windowsSitesAsked = api("/api/windows-sites" + (fresh ? "?fresh=1" : "")).then((data) => {
+		const before = JSON.stringify(windowsSites);
+		windowsSites = data.servers || [];
+		if (JSON.stringify(windowsSites) !== before && currentView === "sites") renderSites();
+	}).catch(() => {}).finally(() => { windowsSitesAsked = null; });
+	return windowsSitesAsked;
+}
+// A group a Windows server: its name with the Windows logo, then a card a site (its folder), found by the search too
+function windowsSiteGroups() {
+	if (!currentUser.admin || !windowsSites.length) return [];
+	const words = $("#search").value.toLowerCase().split(/\s+/).filter(Boolean);
+	const found = (server, site) => words.every((word) => [site.folder, site.binding, site.backend, server.name].join(" ").toLowerCase().includes(word));
+	return windowsSites.map((server) => {
+		const sites = server.sites.filter((site) => found(server, site));
+		if (!sites.length && !server.error) return null;
+		const icon = el("span", { className: "site-server-icon os-icon" });
+		icon.innerHTML = osLogos.windows;
+		return el("section", { className: "site-server-group windows-site-group" },
+			el("div", { className: "site-server-head" }, icon, el("strong", { textContent: server.name }),
+				el("span", { className: "site-server-count", textContent: String(sites.length) }),
+				el("span", { className: "windows-site-share", textContent: server.share, title: server.share }),
+				Object.assign(tonedButton("Read again", "sync", "blue", () => refreshWindowsSites(true)), { className: "windows-site-reread" })),
+			server.error ? el("p", { className: "muted windows-site-error", textContent: server.error })
+				: el("div", { className: "cards" }, ...sites.map((site) => windowsSiteCard(server, site))));
+	}).filter(Boolean);
+}
+// A Windows site's card: its folder, Windows, where it is reached (as noted here), and its files a click away
+function windowsSiteCard(server, site) {
+	const files = () => run(() => openFiles("", `windows:${server.name}/${site.folder}`));
+	const links = el("div", { className: "site-environment-links" });
+	if (site.binding) {
+		const frontend = openLink("Frontend", `https://${site.binding}/`, site.binding, true);
+		frontend.classList.add("frontend");
+		links.append(frontend);
+	}
+	if (site.backend) {
+		const backend = openLink("Backend", site.backend, site.backend, true);
+		backend.classList.add("backend");
+		links.append(backend);
+	}
+	// Its buttons do their own: a click on one does not also open the files, as a click on the card does
+	const own = (button) => { button.addEventListener("click", (event) => event.stopPropagation()); return button; };
+	const emblem = el("span", { className: "site-emblem os-icon" });
+	emblem.innerHTML = osLogos.windows;
+	return el("article", { className: "site windows-site", onclick: files, title: `${site.folder}: its files` },
+		el("div", { className: "site-head" }, emblem,
+			el("div", { className: "site-identity" }, el("h3", { className: "site-title", textContent: site.folder, title: site.folder }),
+				el("div", { className: "badges" }, el("span", { className: "badge windows", textContent: "Windows" }))),
+			el("span", { className: "dot", title: "On Windows: its state is not read" })),
+		el("div", { className: "site-links" },
+			el("div", { className: "site-link-group" },
+				el("div", { className: "site-environment-head" }, site.binding ? el("span", { className: "windows-site-binding", textContent: site.binding })
+					: el("span", { className: "muted", textContent: "No binding noted" })),
+				links),
+			el("div", { className: "windows-site-actions" },
+				own(Object.assign(tonedButton("Files", "folder", "blue", files), { title: `The files of ${site.folder}` })),
+				own(Object.assign(tonedButton("Edit…", "pencil", "amber", () => editWindowsSite(server, site)), { title: "Its binding and backend, as noted here" })))));
+}
+// Where a Windows site is reached, noted here only: its binding and its backend's address (nothing on Windows changes)
+function editWindowsSite(server, site) {
+	const binding = el("input", { name: "binding", value: site.binding, placeholder: "www.example.com", autocomplete: "off", spellcheck: false, maxLength: 253 });
+	const backend = el("input", { name: "backend", type: "url", value: site.backend, placeholder: "https://www.example.com/umbraco", autocomplete: "off", spellcheck: false, maxLength: 500 });
+	openFormDialog({ icon: "pencil", title: `Edit ${site.folder}`, text: `On ${server.name}. Only noted in Harbor: IIS and the site are not changed.`,
+		fields: [el("div", { className: "ns-grid" }, el("label", {}, "Binding", binding), el("label", {}, "Backend", backend)),
+			el("p", { className: "hint", textContent: "The binding opens as Frontend (https://), the backend's address as Backend. Leave both empty to forget them." })],
+		ok: "Save", submit: async () => {
+			const saved = await api(`/api/windows-sites/${encodeURIComponent(server.name)}/${encodeURIComponent(site.folder)}`,
+				{ method: "PUT", json: { binding: binding.value.trim(), backend: backend.value.trim() } });
+			Object.assign(site, saved);
+			renderSites();
+		} });
 }
 
 function updateSiteActivity() {
@@ -4486,7 +4594,7 @@ function showSiteServerChoice() {
 	}
 	// An administrator's every member; a user's those they may make sites on
 	const members = (currentUser.admin && currentUser.master ? joinedMembers() : !currentUser.admin ? currentUser.create_on || [] : [])
-		.filter((name) => !(currentUser.members_no_web || []).includes(name));
+		.filter((name) => !takesNoSites(name));
 	siteServerChosen = members.length > 0;
 	box.hidden = !members.length;
 	if (!members.length) return box.replaceChildren();
@@ -5022,8 +5130,9 @@ function openCreateProdDialog(site, moveEnv, copying = false) {
 	const siteServer = site?.harbor_server || serverContext;
 	const master = !currentUser.admin && (currentUser.members || []).length > 0;
 	const elsewhere = master && (currentUser.env_hosts || []).some((name) => name !== siteServer);
-	// Here: always for an administrator or a server's own user; a master's user where this server hosts their environments
-	const here = !master || (currentUser.env_hosts || []).includes(siteServer);
+	// Here: always for an administrator or a server's own user; a master's user where this server hosts their environments.
+	// Never on a server that takes no new site (it keeps its own, or hosts none)
+	const here = (!master || (currentUser.env_hosts || []).includes(siteServer)) && !takesNoSites(siteServer);
 	const anywhere = Boolean(currentUser.admin) || elsewhere;
 	if (anywhere) refreshServerPickers();
 	prodForm.reset();
@@ -5078,7 +5187,7 @@ function openCreateProdDialog(site, moveEnv, copying = false) {
 	prodForm.dataset.mainBinding = binding;
 	forgetProdSuggestion();
 	// Here, unless a master's user's environments are not hosted here: then the first server that hosts them
-	prodForm.elements.target.value = moveEnv?.mode === "remote" ? "same" : !here && elsewhere ? "remote" : "local";
+	prodForm.elements.target.value = moveEnv?.mode === "remote" ? "same" : !here && (elsewhere || currentUser.admin) ? "remote" : "local";
 	setProdHttps(main && main.scheme === "http" ? "n" : "y");
 	prodMoveContext = moveEnv ? { site, moveEnv, binding } : null;
 	if (moveEnv) {
@@ -6711,6 +6820,7 @@ function focusEditor(offset = null) {
 // The site a file in the editor belongs to: by the site it was opened for (site or site@target), or by the folder it is in
 function siteOfFile(path, remoteSite) {
 	const ref = remoteSite ?? remoteFilesSite;
+	if (ref?.startsWith("windows:")) return null;
 	if (ref) return allSites.find((site) => site.name === ref.split("@")[0]) || null;
 	// Folders under /var/www are compared as the API gives them, relative to it
 	const relative = (folder) => folder.replace(/^\/var\/www\//, "").replace(/^\/+|\/+$/g, "");
@@ -6930,7 +7040,7 @@ async function insertSnippet(key) {
 
 async function editFile(path, remoteSite = null) {
 	if (!(await discardOk())) return;
-	const base = remoteSite === null ? fsUrl("") : remoteSite ? "/api/remote-fs/" + encodeURIComponent(remoteSite) + "/" : "/api/fs/";
+	const base = remoteSite === null ? fsUrl("") : remoteSite ? remoteFsBase(remoteSite) : "/api/fs/";
 	const saveUrl = base + "save";
 	const data = await api(base + "read?path=" + encodeURIComponent(path));
 	openFileSite = siteOfFile(path, remoteSite);
@@ -9808,7 +9918,9 @@ function askConvert(item, connections) {
 			el("span", { className: "server-card-icon engine-" + engineOf(connection) }, svgIcon("database")),
 			el("span", { className: "server-card-text" }, el("strong", { textContent: connection.name }),
 				// Its kind and where, a line each, as From and To have them
-				el("small", { textContent: ENGINE_NAMES[engineOf(connection)] }), el("small", { textContent: address(connection), title: address(connection) })),
+				// One lent by the database server itself (its own connection, none made here) says so
+				el("small", { textContent: ENGINE_NAMES[engineOf(connection)] + (connection.lent_by ? ` · ${connection.lent_by}'s own` : "") }),
+				el("small", { textContent: address(connection), title: address(connection) })),
 			el("span", { className: "server-card-check" }, svgIcon("check")));
 	}));
 	// One server is no choice: the To line says which, and no cards take the room
@@ -12618,9 +12730,11 @@ let windowsServerCount = 0;
 function showWindowsMenu() {
 	const copy = allSites.some((site) => (site.environments || []).some((env) => env.mode === "windows"));
 	$("#settings-windows-move").hidden = !copy;
-	$("#settings-windows-import").hidden = !windowsServerCount;
+	// A master hosts nothing: it imports no site (its Windows servers list theirs on Web Server)
+	const imports = Boolean(windowsServerCount) && !(currentUser.master && !serverContext);
+	$("#settings-windows-import").hidden = !imports;
 	// Windows is a part of Settings, there while there is something to do with it
-	$("#server-tab-windows").hidden = !copy && !windowsServerCount;
+	$("#server-tab-windows").hidden = !copy && !imports;
 	if (serverTabOpen("windows")) openWindowsSettings();
 }
 // The admin site of the server Settings are of: this one's, or the member's chosen at the top
@@ -14688,6 +14802,8 @@ function fillUserAccess(access, owner, asTemplate = false) {
 	$("#dlg-user").classList.toggle("on-master-access", !userServer && Boolean((usersData?.members || []).length));
 	// A member that hosts no sites (a SQL Server's): its SQL Server alone
 	$("#dlg-user").classList.toggle("no-web-access", Boolean(userServer) && (currentUser.members_no_web || []).includes(userServer));
+	// One that keeps its sites: theirs there stay theirs, and they make no new one there
+	$("#dlg-user").classList.toggle("closed-access", Boolean(userServer) && (currentUser.members_closed || []).includes(userServer));
 	// Once this server's sites are drawn: whether it may make environments for them
 	syncCreateEnvs();
 	// The servers above, their dots from what is filled in now (Cloudflare is set before this, the rest here)
@@ -14906,7 +15022,8 @@ function saveUserForm(close) {
 		userDrafts[userServer] = { ...(userDrafts[userServer] || {}), ...serverAccess(shown) };
 		const own = userServer ? { ...shown, ...serverAccess(userDrafts[""] || {}) } : shown;
 		// On a member that hosts no sites, no Web Server is kept (its part is not shown there)
-		const noWeb = (name, access) => (currentUser.members_no_web || []).includes(name) ? { ...access, web: false, create_sites: false, create_envs: false, sftp: false, sites: {} } : access;
+		const noWeb = (name, access) => (currentUser.members_no_web || []).includes(name) ? { ...access, web: false, create_sites: false, create_envs: false, sftp: false, sites: {} }
+			: (currentUser.members_closed || []).includes(name) ? { ...access, create_sites: false, create_envs: false } : access;
 		const servers = Object.fromEntries(Object.entries(userDrafts).filter(([name]) => name).map(([name, access]) => [name, serverAccess(noWeb(name, access))]));
 		const body = { username: userForm.elements.handle.value.trim(), name: userForm.elements.name.value.trim(), email: userForm.email.value.trim(), disabled: userForm.disabled.checked, ...own,
 			...((usersData.members || []).length ? { servers } : {}) };
@@ -16434,12 +16551,14 @@ async function openServers() {
 		const addLinux = addFirstCard(currentUser.master && !serverContext ? "Add a member" : "Add a Linux server",
 			currentUser.master && !serverContext ? "A Linux server: Harbor is installed there, and it joins this master at once" : "Harbor installs and updates it from here, over SSH",
 			() => askAddServer({ kind: "linux" }));
-		const addWindows = addFirstCard("Add a Windows server", "A share and its login, to import and copy sites from", () => askAddServer({ kind: "windows" }));
-		// A master's own: its members are Linux servers; Windows shares are for importing sites, which a member does
+		// A master's own: its members are Linux servers; a Windows server there lists its sites on Web Server (importing
+		// and copying them is a member's, which hosts them)
 		const master = currentUser.master && !serverContext;
+		const addWindows = addFirstCard("Add a Windows server", master ? "A share and its login, to list its sites on Web Server" : "A share and its login, to import, copy or list sites",
+			() => askAddServer({ kind: "windows" }));
 		list.replaceChildren(...group("server", "Linux", master ? "Its members, and the servers Harbor installs and updates from here"
 			: pickedServer ? "The other members, made known here by Harbor Master, and the servers of its own" : "Harbor runs there: it installs and updates it from here", linux), addLinux,
-			...(master ? [] : [...group("windows", "Windows", "Shares and their logins, to import and copy sites from", windows), addWindows]));
+			...group("windows", "Windows", master ? "Shares and their logins: their sites listed on Web Server" : "Shares and their logins, to import, copy or list sites from", windows), addWindows);
 	} catch (error) {
 		list.replaceChildren(el("div", { className: "server-tools-loading", textContent: error.message }));
 	} finally {
@@ -16482,8 +16601,12 @@ function serverCard(item, release) {
 		const card = toolCard({ icon: "server", tone: item.reachable ? "blue" : "amber", title: item.name, detail: item.share,
 			state: item.reachable ? "Share opens" : "Not reachable", stateClass: item.reachable ? "ok" : "bad",
 			rows: [toolRow("Login", (item.domain ? item.domain + "\\" : "") + item.user),
+				// Its sites on Web Server, where they are: with how many folders are left out
+				toolRow("Sites", item.list_sites ? "Listed on Web Server" + (item.exclude?.length ? ` · ${item.exclude.length} folder${item.exclude.length === 1 ? "" : "s"} left out` : "")
+					: "Not listed", { on: Boolean(item.list_sites) }),
 				...(item.reachable ? [] : [toolRow("Error", (item.error || []).join(" ") || "No answer")])],
-			actions: [toolButton("Edit…", () => askEditServer(item)), remove] });
+			actions: [...(item.reachable ? [tonedButton("List sites…", "globe", "green", () => run(() => askWindowsSites(item)))] : []),
+				toolButton("Edit…", () => askEditServer(item)), remove] });
 		card.querySelector(".tool-icon").innerHTML = osLogos.windows;
 		card.querySelector(".tool-icon").classList.add("os-icon");
 		return card;
@@ -16499,7 +16622,8 @@ function serverCard(item, release) {
 	const rows = item.reachable ? [
 		...(item.member ? [toolRow("Member", "Its sites are shown and administered here", { on: true })] : []),
 		...(fellow ? [toolRow("Member", "Of Harbor Master too, which made it known here and updates it", { on: true })] : []),
-		...(item.member ? [toolRow("Web Server", item.no_web ? "Hosts no sites: its SQL Server only" : "Hosts sites", { on: !item.no_web })] : []),
+		...(item.member ? [toolRow("Web Server", item.no_web ? "Hosts no sites: its SQL Server only" : item.closed ? "Keeps its sites: no new site or environment" : "Hosts sites",
+			{ on: !item.no_web })] : []),
 		// The system's own state too: lit where it can run Harbor (its Ubuntu and Python), as Member and Harbor are lit
 		toolRow("System", `${item.os || "—"} · Python ${item.python || "—"}`, { on: Boolean(item.compatible) }),
 		toolRow("Harbor", harbor || "Not installed", { on: Boolean(harbor) }),
@@ -16533,14 +16657,8 @@ function serverCard(item, release) {
 		title: `The admin of ${item.name}, in a new tab` }, svgIcon("external"), "Open admin"));
 	// A member of this master (phase 13): its sites shown here. Joined once it runs this server's Harbor, which answers
 	if (item.member) {
-		// Whether it hosts sites: a SQL Server's does not, and is then no place for a site, an environment or a user's
-		// Web Server
-		actions.push(item.no_web
-			? tonedButton("Host sites…", "globe", "green", () => run(() => confirmServers(`${item.name} hosts sites?`,
-				`New sites and environments can be made on ${item.name} again, and users given its Web Server.`, "Host sites", { action: "web", name: item.name, hosts: true })))
-			: tonedButton("Host no sites…", "database", "blue", () => run(() => confirmServers(`${item.name} hosts no sites?`,
-				`As a SQL Server's: no site or environment is made on ${item.name}, from here or from the other members, and no user has a Web Server there (it is taken off them). Sites there now keep running.`,
-				"Host no sites", { action: "web", name: item.name, hosts: false }))));
+		// Whether it hosts sites: all it is given, only those it has (no new one), or none (a SQL Server's)
+		actions.push(tonedButton("Web Server…", "globe", "green", () => askWebState(item)));
 		actions.push(tonedButton("Leave…", "x", "amber", () => run(async () => {
 			if (!(await ask({ title: `${item.name} no longer a member?`, message: `Its sites are no longer shown here. Nothing changes on ${item.name}: its sites keep running.`,
 				input: false, ok: "Leave" }))) return;
@@ -16603,6 +16721,8 @@ function askServerOrder() {
 async function runServers(payload) {
 	const t = await openTask({ kind: "servers", ...payload });
 	if (t) t.afterTask = async () => {
+		// A Windows server's sites listed or left out: Web Server's list as it is now
+		if (payload.action === "windows_sites") refreshWindowsSites(true);
 		await membersChanged();
 		// A member updated keeps the master's users by its own new rules: they are sent to it again
 		if (["install", "install_all"].includes(payload.action) && currentUser.master && !serverContext && t.taskState !== "failed") {
@@ -16629,6 +16749,48 @@ async function membersChanged() {
 	await loadSites();
 }
 
+// Whether a member hosts sites, as cards: on, keeping the sites it has and taking no new one, or none (a SQL Server's)
+function askWebState(item) {
+	const now = item.no_web ? "off" : item.closed ? "closed" : "on";
+	let state = now;
+	const choices = [
+		["on", "Hosts sites", "New sites and environments can be made here, from here and from the other members"],
+		["closed", "Keeps its sites", "Its sites stay listed and run as now; no new site, environment, copy or import lands here"],
+		["off", "Hosts no sites", "A SQL Server's: no site is made here, and no user has a Web Server here"],
+	];
+	const cards = el("div", { className: "type-cards web-state-cards", role: "radiogroup", ariaLabel: "Web Server" }, ...choices.map(([value, title, text]) =>
+		el("label", { className: "type-card" }, el("input", { type: "radio", name: "web_state", value, checked: value === now, onchange: () => { state = value; } }),
+			el("span", { className: "tc-title", textContent: title }), el("span", { className: "tc-sub", textContent: text }))));
+	openFormDialog({ icon: "globe", title: `Web Server on ${item.name}`, text: "Sites there now keep running whatever is chosen.", fields: [cards], ok: "Save",
+		submit: async () => {
+			if (state === now) return;
+			await runServers({ action: "web", name: item.name, state });
+		} });
+	document.activeElement?.blur();
+}
+// A Windows server's sites on Web Server, where they are: listed or not, as cards, and each folder in its share a chip,
+// chosen where it is shown (one left out is not)
+async function askWindowsSites(item) {
+	const folders = (await api(`/api/windows-sites/${encodeURIComponent(item.name)}/folders`)).folders;
+	// Opened to list them: Listed is chosen, as it is for one listed already
+	let on = true;
+	const choices = el("div", { className: "type-cards" }, ...[[true, "Listed", "Its sites are shown on Web Server: their files, binding and backend"],
+		[false, "Not listed", "Its share stays for import and copy only"]].map(([value, title, text]) => el("label", { className: "type-card" },
+		el("input", { type: "radio", name: "list_sites", checked: value === on, onchange: () => { on = value; chips.hidden = !on; } }),
+		el("span", { className: "tc-title", textContent: title }), el("span", { className: "tc-sub", textContent: text }))));
+	const chips = el("div", { className: "samba-field windows-site-folders", hidden: !on },
+		el("div", { className: "ns-section", textContent: `Sites shown (${folders.length} folders in ${item.share})` }),
+		folders.length ? el("div", { className: "samba-chips" }, ...folders.map((folder) => el("label", { className: "samba-chip" },
+			el("input", { type: "checkbox", name: "shown", value: folder.folder, checked: !folder.excluded }), svgIcon("check"), el("span", { textContent: folder.folder }))))
+			: el("p", { className: "muted", textContent: "The share has no folders." }),
+		el("p", { className: "hint", textContent: "A folder not chosen is left out: its site is not shown." }));
+	openFormDialog({ icon: "globe", title: `Sites of ${item.name}`, text: "Listed where they are: nothing on Windows changes but the files edited in Files.",
+		fields: [choices, chips], ok: "Save", submit: async (form) => {
+			const exclude = [...form.querySelectorAll('input[name="shown"]')].filter((input) => !input.checked).map((input) => input.value);
+			await runServers({ action: "windows_sites", name: item.name, on, exclude });
+		} });
+	document.activeElement?.blur();
+}
 async function confirmServers(title, message, ok, payload) {
 	if (await ask({ title, message, input: false, ok, danger: true })) await runServers(payload);
 }
