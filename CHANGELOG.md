@@ -2,6 +2,18 @@
 
 All notable changes to VNS Harbor are listed here, newest first.
 
+## [1.0.112] - Unreleased
+
+### Features
+
+- A member's SQL Server can keep its databases: SQL Server… on its card in the master's Servers chooses between Takes new databases and Keeps its databases. Kept, no database is converted, moved or copied to it (Convert, Move and Copy leave it out, and the server refuses it), so a database never ends up on a server it does not belong on; its databases are still read from, and Create database on its SQL Server page is still there. harbor servers sql NAME on|closed; harbor server sql on|closed on the server itself.
+- A Windows site's Edit… suggests the folder's name as its binding, and /umbraco on it as its backend where the folder has an umbraco folder.
+
+### Fixes
+
+- A Windows server's sites on Web Server were drawn squeezed, their names a letter a line: their cards shared a class with Import from Windows' rows. Their files and Edit… are now a row of the card, as an environment's links are.
+- Export Site: a long site name ran out of its card and under the check; it is cut with … on one line (all of it on hover).
+
 ## [1.0.111] - 2026-11-28
 
 ### Features

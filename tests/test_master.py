@@ -236,6 +236,25 @@ class MasterTests(unittest.TestCase):
         entry = json.loads((self.root / "var/lib/harbor/servers.json").read_text())["old"]
         self.assertEqual((entry.get("no_web"), entry.get("closed")), (True, None))
 
+    def test_a_members_sql_server_keeps_its_databases(self):
+        """A member's SQL Server set to keep its databases: it is told so itself, and the other members mark it so"""
+        self.servers({"sql": {"host": "10.0.0.5", "user": "root", "port": "22", "member": True},
+                      "web": {"host": "10.0.0.6", "user": "root", "port": "22", "member": True}})
+        system = self.system()
+        self.assertEqual(main(["servers", "sql", "sql", "closed"], system), 0, system.said)
+        commands = " ".join(system.commands)
+        self.assertIn("root@10.0.0.5 python3 /opt/harbor/current/bin/harbor server sql closed", commands)
+        self.assertIn("root@10.0.0.6 python3 /opt/harbor/current/bin/harbor servers sql sql closed --here", commands)
+        self.assertTrue(json.loads((self.root / "var/lib/harbor/servers.json").read_text())["sql"]["sql_closed"])
+        main(["servers", "sql", "sql", "on"], self.system())
+        self.assertNotIn("sql_closed", json.loads((self.root / "var/lib/harbor/servers.json").read_text())["sql"])
+        from harbor.server import servers
+        own = self.system()
+        main(["server", "sql", "closed"], own)
+        self.assertEqual(servers.sql_state(own), "closed")
+        main(["server", "sql", "on"], own)
+        self.assertEqual(servers.sql_state(own), "on")
+
     def test_a_server_keeps_its_sites_on_its_own(self):
         from harbor.server import servers
         system = self.system()

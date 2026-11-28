@@ -2812,7 +2812,9 @@ dialog.newsite label.sync-option.action-option { flex-direction: row; align-item
 .export-actions { display: flex; flex: none; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-left: auto; }
 /* What goes: the environments as option cards, two side by side where there is room */
 .export-envs { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; margin: 0 0 16px; }
-.export-envs .sync-option { margin: 0; }
+.export-envs .sync-option { min-width: 0; margin: 0; padding-right: 36px; }
+.export-envs .sync-option-title { min-width: 0; }
+.export-env-name { display: block; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .export-lifetime { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 16px; }
 .export-databases { margin-top: 10px; }
 .export-databases[hidden] { display: none; }
@@ -4098,17 +4100,18 @@ input[type="search"]::-webkit-credentials-auto-fill-button, input[type="search"]
 /* Each server's own grid or list, at the end of its head */
 .site-server-head .site-server-layout { margin-left: auto; }
 /* A Windows server's sites, listed where they are: its logo, its share, and Read again at the right */
-.windows-site-group .site-server-icon { background: rgba(76, 194, 255, .12); }
+.winlist-group .site-server-icon { background: rgba(76, 194, 255, .12); }
 .site-server-icon.os-icon svg { width: 15px; height: 15px; }
-.windows-site-share { min-width: 0; overflow: hidden; color: var(--muted); font-size: 12.5px; text-overflow: ellipsis; white-space: nowrap; }
-.windows-site-reread { flex: none; margin-left: auto; }
-.windows-site-error { margin: 10px 0 0; }
+.winlist-share { min-width: 0; overflow: hidden; color: var(--muted); font-size: 12.5px; text-overflow: ellipsis; white-space: nowrap; }
+.winlist-reread { flex: none; margin-left: auto; }
+.winlist-error { margin: 10px 0 0; }
 .site-emblem.os-icon { border-color: rgba(76, 194, 255, .3); background: linear-gradient(135deg, rgba(76, 194, 255, .14), rgba(88, 166, 255, .1)); }
 .site-emblem.os-icon svg { width: 22px; height: 22px; }
 .badge.windows { background: #0078d4; color: #fff; }
-.windows-site-binding { min-width: 0; overflow: hidden; color: var(--text); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
-.windows-site-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
-.windows-site { cursor: pointer; }
+.winlist-binding { min-width: 0; overflow: hidden; color: var(--text); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.winlist-actions { flex-wrap: wrap; justify-content: flex-end; }
+.winlist-actions > button { padding: 5px 12px; font-size: 12.5px; }
+.winlist-site { cursor: pointer; }
 /* A master's own Usage, Convert DB and Export Site: a section a member, its head over that member's part, the whole row */
 .member-pane { grid-column: 1 / -1; display: grid; gap: 12px; min-width: 0; }
 .member-pane + .member-pane { margin-top: 14px; }

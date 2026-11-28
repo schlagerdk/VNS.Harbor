@@ -61,8 +61,11 @@ def folders(system, name, everything=False):
 	entry = entry_of(system, name)
 	excluded = {folder.lower() for folder in entry.get("exclude") or []}
 	root = open_share(system, name)
-	names = [line.rstrip("/") for line in root.rclone("lsf", root.target, "--dirs-only", "--max-depth", "1", capture=True).stdout.splitlines() if line.strip()]
-	found = [{"folder": folder, "excluded": folder.lower() in excluded} for folder in sorted(names, key=str.lower)]
+	# Two levels in one listing: the folders, and which of them has an umbraco folder (its backoffice is /umbraco)
+	paths = [line.strip().rstrip("/") for line in root.rclone("lsf", root.target, "--dirs-only", "--max-depth", "2", capture=True).stdout.splitlines() if line.strip()]
+	names = [path for path in paths if "/" not in path]
+	umbraco = {path.split("/", 1)[0].lower() for path in paths if path.count("/") == 1 and path.split("/", 1)[1].lower() == "umbraco"}
+	found = [{"folder": folder, "excluded": folder.lower() in excluded, "umbraco": folder.lower() in umbraco} for folder in sorted(names, key=str.lower)]
 	return found if everything else [item for item in found if not item["excluded"]]
 
 

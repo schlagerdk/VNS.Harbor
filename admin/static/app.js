@@ -1810,12 +1810,12 @@ function windowsSiteGroups() {
 		if (!sites.length && !server.error) return null;
 		const icon = el("span", { className: "site-server-icon os-icon" });
 		icon.innerHTML = osLogos.windows;
-		return el("section", { className: "site-server-group windows-site-group" },
+		return el("section", { className: "site-server-group winlist-group" },
 			el("div", { className: "site-server-head" }, icon, el("strong", { textContent: server.name }),
 				el("span", { className: "site-server-count", textContent: String(sites.length) }),
-				el("span", { className: "windows-site-share", textContent: server.share, title: server.share }),
-				Object.assign(tonedButton("Read again", "sync", "blue", () => refreshWindowsSites(true)), { className: "windows-site-reread" })),
-			server.error ? el("p", { className: "muted windows-site-error", textContent: server.error })
+				el("span", { className: "winlist-share", textContent: server.share, title: server.share }),
+				Object.assign(tonedButton("Read again", "sync", "blue", () => refreshWindowsSites(true)), { className: "winlist-reread" })),
+			server.error ? el("p", { className: "muted winlist-error", textContent: server.error })
 				: el("div", { className: "cards" }, ...sites.map((site) => windowsSiteCard(server, site))));
 	}).filter(Boolean);
 }
@@ -1837,24 +1837,39 @@ function windowsSiteCard(server, site) {
 	const own = (button) => { button.addEventListener("click", (event) => event.stopPropagation()); return button; };
 	const emblem = el("span", { className: "site-emblem os-icon" });
 	emblem.innerHTML = osLogos.windows;
-	return el("article", { className: "site windows-site", onclick: files, title: `${site.folder}: its files` },
+	return el("article", { className: "site winlist-site", onclick: files, title: `${site.folder}: its files` },
 		el("div", { className: "site-head" }, emblem,
 			el("div", { className: "site-identity" }, el("h3", { className: "site-title", textContent: site.folder, title: site.folder }),
 				el("div", { className: "badges" }, el("span", { className: "badge windows", textContent: "Windows" }))),
 			el("span", { className: "dot", title: "On Windows: its state is not read" })),
 		el("div", { className: "site-links" },
 			el("div", { className: "site-link-group" },
-				el("div", { className: "site-environment-head" }, site.binding ? el("span", { className: "windows-site-binding", textContent: site.binding })
+				el("div", { className: "site-environment-head" }, site.binding ? el("span", { className: "winlist-binding", textContent: site.binding })
 					: el("span", { className: "muted", textContent: "No binding noted" })),
 				links),
-			el("div", { className: "windows-site-actions" },
-				own(Object.assign(tonedButton("Files", "folder", "blue", files), { title: `The files of ${site.folder}` })),
-				own(Object.assign(tonedButton("Edit…", "pencil", "amber", () => editWindowsSite(server, site)), { title: "Its binding and backend, as noted here" })))));
+			// Its files and its note, a row of their own as an environment's are
+			el("div", { className: "site-link-group" },
+				el("div", { className: "site-environment-head" }, el("span", { className: "muted", textContent: "On Windows, over SMB" })),
+				el("div", { className: "site-environment-links winlist-actions" },
+					own(Object.assign(tonedButton("Files", "folder", "blue", files), { title: `The files of ${site.folder}` })),
+					own(Object.assign(tonedButton("Edit…", "pencil", "amber", () => editWindowsSite(server, site)), { title: "Its binding and backend, as noted here" }))))));
 }
 // Where a Windows site is reached, noted here only: its binding and its backend's address (nothing on Windows changes)
 function editWindowsSite(server, site) {
-	const binding = el("input", { name: "binding", value: site.binding, placeholder: "www.example.com", autocomplete: "off", spellcheck: false, maxLength: 253 });
-	const backend = el("input", { name: "backend", type: "url", value: site.backend, placeholder: "https://www.example.com/umbraco", autocomplete: "off", spellcheck: false, maxLength: 500 });
+	// Nothing noted yet: the folder's name is suggested as its binding (an IIS site's folder is named so, as a rule), and
+	// /umbraco on it as its backend where the folder has an umbraco folder
+	const named = /^[a-z0-9-]+(\.[a-z0-9-]+)+$/i.test(site.folder) ? site.folder.toLowerCase() : "";
+	const fresh = !site.binding && !site.backend;
+	const binding = el("input", { name: "binding", value: fresh ? named : site.binding, placeholder: "www.example.com", autocomplete: "off", spellcheck: false, maxLength: 253 });
+	const backend = el("input", { name: "backend", type: "url", value: fresh && named && site.umbraco ? `https://${named}/umbraco` : site.backend,
+		placeholder: "https://www.example.com/umbraco", autocomplete: "off", spellcheck: false, maxLength: 500 });
+	// The backend follows the binding while it is the suggestion: a binding changed moves it along
+	let suggested = backend.value;
+	binding.addEventListener("input", () => {
+		if (!site.umbraco || backend.value !== suggested) return;
+		const host = binding.value.trim().toLowerCase();
+		backend.value = suggested = host ? `https://${host}/umbraco` : "";
+	});
 	openFormDialog({ icon: "pencil", title: `Edit ${site.folder}`, text: `On ${server.name}. Only noted in Harbor: IIS and the site are not changed.`,
 		fields: [el("div", { className: "ns-grid" }, el("label", {}, "Binding", binding), el("label", {}, "Backend", backend)),
 			el("p", { className: "hint", textContent: "The binding opens as Frontend (https://), the backend's address as Backend. Leave both empty to forget them." })],
@@ -8646,7 +8661,8 @@ async function askSqlTransfer(database, mode) {
 		formDialog.addEventListener("close", () => { sqlTransferInfo = null; }, { once: true });
 	}
 	const shared = mode === "move" && users.length > 1;
-	const others = convertConns().filter((item) => engineOf(item) === engine && item.id !== connection);
+	// Copied or moved to another server of its kind: not one whose SQL Server keeps its databases
+	const others = convertConns().filter((item) => engineOf(item) === engine && item.id !== connection && !item.closed);
 	const here = { id: "", name: current?.name || "This server", host: current?.host, port: current?.port, files: true, here: true };
 	const choices = mode === "copy" ? [here, ...others] : others;
 	const engineName = DATABASE_ENGINES[engine];
@@ -9388,7 +9404,8 @@ $("#convert-filter-clear").onclick = () => { $("#convert-filter").value = ""; ap
 // Umbraco); from a server, that engine's
 function convertTargets(item, connections) {
 	if (!item.convertible) return [];
-	if (item.engine === "sqlite") return connections.filter((connection) => engineOf(connection) === "mssql" || (!item.umbraco && engineOf(connection) === "postgres"));
+	// To a server: never one whose SQL Server keeps its databases (Servers, SQL Server…)
+	if (item.engine === "sqlite") return connections.filter((connection) => !connection.closed && (engineOf(connection) === "mssql" || (!item.umbraco && engineOf(connection) === "postgres")));
 	// From a server: read where it is, by this server's connection to it (none: one is added, its host filled in; one
 	// added since is found by its host and port)
 	const where = databaseHost(item);
@@ -9645,6 +9662,9 @@ function askExport(site) {
 		const remote = env.mode === "remote";
 		const card = checkOption("env_" + env.target, env.unit, remote ? `${env.label} · copied from ${env.where}` : `${env.label} · here`, true,
 			remote ? "server" : env.target === "main" ? "globe" : "corner", remote ? "teal" : "purple");
+		// Its name on one line, cut with … when it is longer than the card (all of it on hover), clear of the check
+		const title = card.querySelector(".sync-option-title");
+		title.replaceChildren(el("span", { className: "export-env-name", textContent: env.unit, title: env.unit }));
 		if (remote) {
 			card.classList.add("export-env-remote");
 			card.querySelector(".sync-option-title").append(el("span", { className: "export-env-where", title: `Runs on ${env.where}: copied from there over SSH` },
@@ -9776,7 +9796,8 @@ async function askMoveRead(item) {
 	Object.assign(item, { engine: found.engine, ...(item.database ? {} : { database: found.database, server: found.server || `${found.host}${found.port ? "," + found.port : ""}`,
 		login: found.login, ...(found.umbraco !== undefined && found.umbraco !== null ? { umbraco: found.umbraco } : {}) }), ...(found.source ? { source: found.source } : {}) });
 	const engineName = DATABASE_ENGINES[found.engine];
-	const connections = convertConns().filter((connection) => engineOf(connection) === found.engine && connection.id !== found.source);
+	// Moved to another server of its kind: not one whose SQL Server keeps its databases
+	const connections = convertConns().filter((connection) => engineOf(connection) === found.engine && connection.id !== found.source && !connection.closed);
 	// What Move lacks here, said on a card with Add connection: the dialog still opens, Convert to SQLite beside it
 	// Microsoft SQL Server's backup is carried between the servers' backup folders: both must be reached, here or by SSH
 	const reaches = (id) => found.engine !== "mssql" || convertConns().find((connection) => connection.id === id)?.files !== false;
@@ -16624,6 +16645,8 @@ function serverCard(item, release) {
 		...(fellow ? [toolRow("Member", "Of Harbor Master too, which made it known here and updates it", { on: true })] : []),
 		...(item.member ? [toolRow("Web Server", item.no_web ? "Hosts no sites: its SQL Server only" : item.closed ? "Keeps its sites: no new site or environment" : "Hosts sites",
 			{ on: !item.no_web })] : []),
+		...(item.member ? [toolRow("SQL Server", item.sql_closed ? "Keeps its databases: none converted, moved or copied here" : "Takes new databases",
+			{ on: !item.sql_closed })] : []),
 		// The system's own state too: lit where it can run Harbor (its Ubuntu and Python), as Member and Harbor are lit
 		toolRow("System", `${item.os || "—"} · Python ${item.python || "—"}`, { on: Boolean(item.compatible) }),
 		toolRow("Harbor", harbor || "Not installed", { on: Boolean(harbor) }),
@@ -16659,6 +16682,8 @@ function serverCard(item, release) {
 	if (item.member) {
 		// Whether it hosts sites: all it is given, only those it has (no new one), or none (a SQL Server's)
 		actions.push(tonedButton("Web Server…", "globe", "green", () => askWebState(item)));
+		// Whether its SQL Server takes databases from Convert, Move and Copy, or keeps its own
+		actions.push(tonedButton("SQL Server…", "database", "purple", () => askSqlState(item)));
 		actions.push(tonedButton("Leave…", "x", "amber", () => run(async () => {
 			if (!(await ask({ title: `${item.name} no longer a member?`, message: `Its sites are no longer shown here. Nothing changes on ${item.name}: its sites keep running.`,
 				input: false, ok: "Leave" }))) return;
@@ -16778,7 +16803,7 @@ async function askWindowsSites(item) {
 		[false, "Not listed", "Its share stays for import and copy only"]].map(([value, title, text]) => el("label", { className: "type-card" },
 		el("input", { type: "radio", name: "list_sites", checked: value === on, onchange: () => { on = value; chips.hidden = !on; } }),
 		el("span", { className: "tc-title", textContent: title }), el("span", { className: "tc-sub", textContent: text }))));
-	const chips = el("div", { className: "samba-field windows-site-folders", hidden: !on },
+	const chips = el("div", { className: "samba-field winlist-folders", hidden: !on },
 		el("div", { className: "ns-section", textContent: `Sites shown (${folders.length} folders in ${item.share})` }),
 		folders.length ? el("div", { className: "samba-chips" }, ...folders.map((folder) => el("label", { className: "samba-chip" },
 			el("input", { type: "checkbox", name: "shown", value: folder.folder, checked: !folder.excluded }), svgIcon("check"), el("span", { textContent: folder.folder }))))
@@ -16788,6 +16813,24 @@ async function askWindowsSites(item) {
 		fields: [choices, chips], ok: "Save", submit: async (form) => {
 			const exclude = [...form.querySelectorAll('input[name="shown"]')].filter((input) => !input.checked).map((input) => input.value);
 			await runServers({ action: "windows_sites", name: item.name, on, exclude });
+		} });
+	document.activeElement?.blur();
+}
+// Whether a member's SQL Server takes new databases from Convert, Move and Copy, or keeps its own: a database never
+// ends up on a server it does not belong on. Cards, as Web Server…'s
+function askSqlState(item) {
+	const now = item.sql_closed ? "closed" : "on";
+	let state = now;
+	const cards = el("div", { className: "type-cards", role: "radiogroup", ariaLabel: "SQL Server" }, ...[
+		["on", "Takes new databases", "Convert, Move and Copy offer it as a server to put a database on"],
+		["closed", "Keeps its databases", "Its databases stay and are used as now; none is converted, moved or copied to it"],
+	].map(([value, title, text]) => el("label", { className: "type-card" },
+		el("input", { type: "radio", name: "sql_state", value, checked: value === now, onchange: () => { state = value; } }),
+		el("span", { className: "tc-title", textContent: title }), el("span", { className: "tc-sub", textContent: text }))));
+	openFormDialog({ icon: "database", title: `SQL Server on ${item.name}`, text: "Create database on its SQL Server page is still there: one made by hand is meant to be there.",
+		fields: [cards], ok: "Save", submit: async () => {
+			if (state === now) return;
+			await runServers({ action: "sql", name: item.name, state });
 		} });
 	document.activeElement?.blur();
 }

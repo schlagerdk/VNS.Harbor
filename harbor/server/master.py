@@ -295,6 +295,9 @@ def introduce(system, only=None):
             elif item.get("no_web") or item.get("closed"):
                 # One that hosts no sites, or takes no new one, is no place for one there either
                 remote(system, entry, f"{REMOTE_HARBOR} servers web {shlex.quote(other)} {'off' if item.get('no_web') else 'closed'} --here", check=False)
+            if added.ok and item.get("sql_closed"):
+                # One whose SQL Server keeps its databases is no place to convert, move or copy one to there either
+                remote(system, entry, f"{REMOTE_HARBOR} servers sql {shlex.quote(other)} closed --here", check=False)
     for line in said:
         system.warn(line)
     return said
@@ -331,6 +334,44 @@ def adds_environments(user):
     server makes environments for them, whatever was saved before"""
     grants = [user.get("sites") or {}] + [(access or {}).get("sites") or {} for access in (user.get("servers") or {}).values() if isinstance(access, dict)]
     return any("create_env" in (grant.get("actions") or []) for sites in grants for grant in sites.values() if isinstance(grant, dict))
+
+
+def tell(system, name, own, others):
+    """A member told something of itself (own, a harbor command run there), and every other member what it marks of it
+    (others, run there): [what could not be told]"""
+    found = members(system)
+    said = []
+
+    def why(result):
+        """What a member that could not be told said: one on an older Harbor does not know the command"""
+        lines = (result.stderr or result.stdout or "").strip().splitlines()
+        if any("invalid choice" in line or "argument" in line for line in lines):
+            return "its Harbor is older: update it (Servers, Update all), then set this again"
+        return lines[-1] if lines else "no answer"
+    told = system.run(*ssh(system, found[name]), *on(found[name], f"{REMOTE_HARBOR} {own}"), check=False, capture=True)
+    if not told.ok:
+        said.append(f"{name} itself could not be told: {why(told)}")
+    for other, entry in found.items():
+        if other == name:
+            continue
+        sent = system.run(*ssh(system, entry), *on(entry, f"{REMOTE_HARBOR} {others}"), check=False, capture=True)
+        if not sent.ok:
+            said.append(f"{other} could not be told: {why(sent)}")
+    return said
+
+
+def sql(system, name, state):
+    """A member's SQL Server set to take new databases (on), or to keep its own (closed): marked here, told to the member
+    itself (its own connections are then no place to convert, move or copy a database to) and to every other member
+    (whose connections to it, or that it lends, are not either)"""
+    from harbor.server.servers import set_entry_sql
+    if name not in members(system):
+        raise Stop(f"{name} is not a member.")
+    set_entry_sql(system, name, state)
+    for line in tell(system, name, f"server sql {state}", f"servers sql {shlex.quote(name)} {state} --here"):
+        system.warn(line)
+    system.say(f"{name}'s SQL Server takes new databases." if state == "on"
+               else f"{name}'s SQL Server keeps its databases: none is converted, moved or copied there.")
 
 
 def web(system, name, state):

@@ -4036,6 +4036,12 @@ def servers_command(data):
         # A Windows server's share and login, kept for Import from Windows; the password in the task's environment
         share, user, domain = windows_login(data)
         return f"Add Windows server {name}", harbor + ["add-windows", name, share, "--user", user, *(["--domain", domain] if domain else [])], {"VNS_SMB_PASSWORD": data["password"]}
+    if action == "sql":
+        # Its SQL Server takes new databases from Convert, Move and Copy, or keeps its own
+        state = data.get("state")
+        if state not in ("on", "closed"):
+            abort(400, "Choose whether its SQL Server takes new databases")
+        return (f"{name}'s SQL Server takes new databases" if state == "on" else f"{name}'s SQL Server keeps its databases"), harbor + ["sql", name, state], {}
     if action == "windows_sites":
         # Its sites listed on Web Server, where they are (the folders in its share), with the folders left out
         exclude = data.get("exclude") or []
@@ -8136,6 +8142,34 @@ def borrowed_connection(engine, host, port, identifier=""):
     return None
 
 
+# This server's SQL Server keeps its databases and takes no new one from Convert, Move or Copy (harbor server sql)
+SQL_CLOSED = "/var/lib/harbor/no-new-databases"
+
+
+def keeps_its_databases(connection):
+    """Whether a connection's server takes no new database from Convert, Move or Copy: this server's own when it is so
+    set, or a server in Servers marked so (one it lends, or one this admin connects to)"""
+    host = convert_host((connection or {}).get("host"))
+    if host in CONVERT_LOCAL_HOSTS or host in _sql_module.own_addresses():
+        return os.path.exists(SQL_CLOSED)
+    from harbor.core.system import System
+    from harbor.server import servers
+    try:
+        known = servers.servers(System(), "linux")
+    except (OSError, ValueError):
+        return False
+    if (connection or {}).get("lent_by") in known:
+        return bool(known[connection["lent_by"]].get("sql_closed"))
+    return any(entry.get("sql_closed") and same_host(entry.get("host"), host) for entry in known.values())
+
+
+def refuse_closed(connection, what):
+    """Refused where a database would end up on a server whose SQL Server keeps its own"""
+    if keeps_its_databases(connection):
+        abort(400, f"{connection.get('name') or connection.get('host')} keeps its databases: {what} to another server "
+                   "(Settings, Servers: SQL Server…)")
+
+
 def convert_settings(identifier):
     """A connection Convert uses, chosen by its id: one here, or one another server lends"""
     if not isinstance(identifier, str):
@@ -8302,6 +8336,7 @@ def convert_move_command(data, unit, remote, run, where):
         target = None
     if not target:
         abort(400, "Choose the server to move it to")
+    refuse_closed(target, "move it")
     if _sql_module.engine(target) != item["engine"]:
         abort(400, "Move it to a server of its own kind: Convert changes its kind")
     if target.get("id") == source.get("id"):
@@ -8429,13 +8464,17 @@ def convert_connections_public():
         except (KeyError, ValueError):
             public["files"] = False
         found.append(public)
+    for public in found:
+        # Whether its server keeps its databases: no place to convert, move or copy one to (it is still read from)
+        public["closed"] = keeps_its_databases(public)
     # The database servers' own, lent by the servers in Servers (one this admin has a connection to is not twice): Move
     # does not carry backups with them
     for item in borrowed_connections():
         if any((entry.get("engine") or "mssql") == item.get("engine", "mssql") and same_host(entry.get("host"), item["host"])
                and str(entry.get("port") or "") == str(item.get("port") or "") for entry in found):
             continue
-        found.append({**{key: item[key] for key in ("id", "name", "host", "port", "engine") if key in item}, "files": False, "lent_by": item["lent_by"]})
+        found.append({**{key: item[key] for key in ("id", "name", "host", "port", "engine") if key in item}, "files": False, "lent_by": item["lent_by"],
+                      "closed": keeps_its_databases(item)})
     return found
 
 
@@ -8516,6 +8555,7 @@ def sql_transfer_command(data):
         abort(400, "That is the server it is on")
     if _sql_module.engine(source) != _sql_module.engine(target):
         abort(400, "Copy it to a server of its own kind")
+    refuse_closed(target, "copy it")
     database, name, login, password = data.get("database"), data.get("name"), data.get("login"), data.get("password")
     try:
         _sql_module.identifier(database or "")
@@ -8976,6 +9016,8 @@ def convert_command(data):
         abort(400, "Choose a connection")
     if to != "sqlite" and _sql_module.engine(settings) != to:
         abort(400, "The connection is not the server chosen")
+    if to != "sqlite":
+        refuse_closed(settings, "convert it")
     if remote and convert_host(settings.get("host")) in CONVERT_LOCAL_HOSTS:
         # This server's own SQL Server: the other server reaches it by this server's address
         address = convert_address_for(next(entry for entry in convert_remote_units() if entry[5] == remote[3] and entry[2] == remote[2])[6][0])
@@ -9068,7 +9110,7 @@ def api_windows_sites():
         sites, why = answers[name]
         mine = notes.get(name) if isinstance(notes.get(name), dict) else {}
         found.append({"name": name, "share": entry.get("share", ""), "error": why,
-                      "sites": [{"folder": item["folder"], "binding": (mine.get(item["folder"]) or {}).get("binding", ""),
+                      "sites": [{"folder": item["folder"], "umbraco": bool(item.get("umbraco")), "binding": (mine.get(item["folder"]) or {}).get("binding", ""),
                                  "backend": (mine.get(item["folder"]) or {}).get("backend", "")} for item in sites]})
     return jsonify(servers=found)
 

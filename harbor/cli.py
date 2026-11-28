@@ -409,6 +409,14 @@ def _servers(args, system):
         else:
             servers.set_entry_web(system, args.name, args.state)
             system.say(f"{args.name} {({'on': 'hosts sites', 'closed': 'keeps its sites and takes no new one', 'off': 'hosts no sites'})[args.state]} here.")
+    elif args.command == "sql":
+        entry = servers.servers(system).get(args.name) or {}
+        if entry.get("member") and not args.here:
+            from harbor.server import master
+            master.sql(system, args.name, args.state)
+        else:
+            servers.set_entry_sql(system, args.name, args.state)
+            system.say(f"{args.name}'s SQL Server {'takes new databases' if args.state == 'on' else 'keeps its databases'} here.")
     elif args.command == "set-host":
         servers.set_host(system, args.name, args.host)
     elif args.command == "rename":
@@ -584,6 +592,11 @@ def _server_crontab(args, system):
         except ValueError:
             raise Stop("The crontab comes as JSON on stdin.") from None
         crontab_save(system, entries if isinstance(entries, list) else [])
+
+
+def _server_sql(args, system):
+    from harbor.server.servers import set_sql_state
+    set_sql_state(system, args.state)
 
 
 def _server_web(args, system):
@@ -839,6 +852,9 @@ def parser():
     command = server.add_parser("web", help="whether this server hosts sites (on), keeps its own and takes no new one (closed), or hosts none (off: a SQL Server's, say)")
     command.add_argument("state", choices=("on", "closed", "off"))
     command.set_defaults(handler=_server_web)
+    command = server.add_parser("sql", help="whether this server's SQL Server takes new databases from Convert, Move and Copy (on) or keeps its own (closed)")
+    command.add_argument("state", choices=("on", "closed"))
+    command.set_defaults(handler=_server_sql)
     command = server.add_parser("ssh-root", help="how root may log in over SSH: yes (a password or a key), prohibit-password (a key only) or no")
     command.add_argument("mode", choices=("yes", "prohibit-password", "no"))
     command.set_defaults(handler=_server_ssh_root)
@@ -1190,6 +1206,11 @@ def parser():
     command.add_argument("share", help="//server/share/folder")
     command.add_argument("--user", required=True)
     command.add_argument("--domain", default="")
+    command.set_defaults(handler=_servers)
+    command = other.add_parser("sql", help="whether a server's SQL Server takes new databases (on) or keeps its own (closed): on a master, told to it and the other members too")
+    command.add_argument("name")
+    command.add_argument("state", choices=("on", "closed"))
+    command.add_argument("--here", action="store_true", help="only in this server's own Servers (as the master tells a member)")
     command.set_defaults(handler=_servers)
     command = other.add_parser("windows-sites", help="a Windows server's sites listed here (on), with folders left out, or not (off)")
     command.add_argument("name")

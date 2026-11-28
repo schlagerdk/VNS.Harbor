@@ -15,7 +15,7 @@ APP = ROOT / "admin/app.py"
 
 
 FUNCTIONS = ("convert_command", "convert_move_command", "convert_remote_unit", "convert_kept_item", "convert_connection", "convert_host",
-             "same_host", "host_addresses", "borrowed_connection", "convert_settings")
+             "same_host", "host_addresses", "borrowed_connection", "convert_settings", "keeps_its_databases", "refuse_closed")
 # What a name resolves to in these tests: sql-01 is 10.0.0.21, sql-03 (a server in Servers) 10.0.0.23
 RESOLVED = {"sql-01": "10.0.0.21", "sql-03": "10.0.0.23"}
 # sql-03's own connection, lent by its admin: this admin has none to it
@@ -48,7 +48,7 @@ def lifted(remote_kept=None):
 	      "convert_remote_info": lambda site, target, units: ({"sites": [], "kept": remote_kept or []}, ""),
 	      "convert_address_for": lambda host: "10.0.0.1", "convert_own_addresses": lambda: {"10.0.0.1"},
 	      "convert_source": lambda data, remote: ({"engine": "mssql", "database": "site"}, {"id": "c1", "host": "."}, ".", ""),
-	      "me": lambda: {"name": "Admin"}, "borrowed_connections": lambda: [LENT]}
+	      "me": lambda: {"name": "Admin"}, "borrowed_connections": lambda: [LENT], "SQL_CLOSED": "/nonexistent/no-new-databases"}
 	exec(compile(ast.Module(body=nodes, type_ignores=[]), str(APP), "exec"), ns)
 	lifted.ns = ns
 	return ns["convert_command"]
@@ -138,6 +138,23 @@ class MoveTests(unittest.TestCase):
 			lifted()({"kind": "convert_move", "unit": "example.com", "connection": "c1", "database": "site", "keep_login": True})
 
 
+class KeptDatabasesTests(unittest.TestCase):
+	def test_no_database_is_put_on_a_server_that_keeps_its_own(self):
+		"""A server whose SQL Server keeps its databases (sql_closed in Servers) is no place to convert one to; one is
+		still read from it, to convert it to SQLite"""
+		command = lifted()
+		known = {"sql-03": {"host": "10.0.0.23", "sql_closed": True}, "other": {"host": "10.0.0.50"}}
+		with mock.patch("harbor.server.servers.servers", return_value=known):
+			self.assertTrue(lifted.ns["keeps_its_databases"](LENT))
+			self.assertTrue(lifted.ns["keeps_its_databases"]({"host": "sql-03"}))
+			self.assertFalse(lifted.ns["keeps_its_databases"]({"host": "SQL.example.com"}))
+			with self.assertRaises(BadRequest):
+				command({"kind": "convert_site", "where": "prod-host", "unit": "example.com", "to": "mssql", "connection": LENT["id"],
+				         "database": "site", "login": "site", "password": "login secret"})
+			_title, _argv, env = command({"kind": "convert_site", "where": "prod-host", "unit": "example.com", "to": "sqlite", "connection": LENT["id"]})
+			self.assertIn("VNS_CONVERT_CONNECTION", env)
+
+
 class ConnectionTests(unittest.TestCase):
 	def test_a_server_named_in_a_connection_string_is_the_connection_to_its_address(self):
 		"""A site's Server=sql-01 and a connection saved as 10.0.0.21 are the same server: Convert and Move use it, never
@@ -191,13 +208,18 @@ class SqlTransferTests(unittest.TestCase):
 		sql = mock.Mock(connection=lambda store, identifier: found[identifier] if identifier in found else (_ for _ in ()).throw(ValueError("Unknown")),
 		                engine=lambda item: item.get("engine", "mssql"), identifier=lambda name: name, backup_file_access=lambda item: True)
 		ns = {"re": re, "json": json, "abort": flask.abort, "HARBOR_COMMAND": "/opt/harbor/current/bin/harbor", "SQL_LOCK": mock.MagicMock(),
-		      "SQL_CONNECTIONS": "/x", "_sql_module": sql, "sql_database_usage": lambda identifier: usage or {}}
+		      "SQL_CONNECTIONS": "/x", "_sql_module": sql, "sql_database_usage": lambda identifier: usage or {}, "refuse_closed": lambda connection, what: self.refused.append(connection)}
 		exec(compile(ast.Module(body=nodes, type_ignores=[]), str(APP), "exec"), ns)
 		return ns["sql_transfer_command"]
+
+	def setUp(self):
+		# What was checked for a server that keeps its databases: the target, never the source
+		self.refused = []
 
 	def test_both_servers_and_the_password_in_its_environment(self):
 		title, argv, env = self.lifted()({"connection": "a", "target": "b", "database": "shop", "name": "shop", "login": "shop", "password": "long enough", "move": True})
 		self.assertEqual(title, "Move shop to Other")
+		self.assertEqual([item["id"] for item in self.refused], ["b"])
 		self.assertEqual(argv[2:], ["site", "convert-transfer", "shop", "--name", "shop", "--login", "shop", "--move"])
 		self.assertNotIn("secret", " ".join(argv))
 		self.assertEqual((json.loads(env["VNS_CONVERT_SOURCE"])["id"], json.loads(env["VNS_CONVERT_CONNECTION"])["id"]), ("a", "b"))

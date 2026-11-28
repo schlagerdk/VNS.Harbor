@@ -24,7 +24,7 @@ class WindowsSitesTests(unittest.TestCase):
 		                            "web": {"host": "10.0.0.6", "user": "root", "port": "22"}}))
 
 	def system(self):
-		return RecordingSystem(root=self.root, answers={"rclone lsf :smb:sites --dirs-only": "Alpha/\nold-backup/\nbeta/\n"})
+		return RecordingSystem(root=self.root, answers={"rclone lsf :smb:sites --dirs-only": "Alpha/\nAlpha/Umbraco/\nAlpha/bin/\nold-backup/\nbeta/\nbeta/wwwroot/\n"})
 
 	def entry(self):
 		return json.loads((self.root / "var/lib/harbor/servers.json").read_text())["iis"]
@@ -34,6 +34,8 @@ class WindowsSitesTests(unittest.TestCase):
 		self.assertEqual((self.entry()["list_sites"], self.entry()["exclude"]), (True, ["old-backup"]))
 		system = self.system()
 		self.assertEqual([item["folder"] for item in windows_sites.folders(system, "iis")], ["Alpha", "beta"])
+		# One with an umbraco folder says so: its backend is suggested as /umbraco
+		self.assertEqual([item["umbraco"] for item in windows_sites.folders(system, "iis")], [True, False])
 		# Every folder, for choosing: the one left out marked
 		self.assertEqual([(item["folder"], item["excluded"]) for item in windows_sites.folders(system, "iis", everything=True)],
 		                 [("Alpha", False), ("beta", False), ("old-backup", True)])

@@ -574,7 +574,7 @@ def status(system, name):
     entry = server(system, name)
     result = remote(system, entry, "python3 -", input=STATUS, check=False)
     if not result.ok:
-        return {"name": name, **{key: entry[key] for key in ("host", "user", "port")}, "member": bool(entry.get("member")), "no_web": bool(entry.get("no_web")), "closed": bool(entry.get("closed")), "reachable": False,
+        return {"name": name, **{key: entry[key] for key in ("host", "user", "port")}, "member": bool(entry.get("member")), "no_web": bool(entry.get("no_web")), "closed": bool(entry.get("closed")), "sql_closed": bool(entry.get("sql_closed")), "reachable": False,
                 "error": (result.stderr or result.stdout).strip().splitlines()[-1:] or ["no answer"]}
     try:
         found = json.loads(result.stdout.strip().splitlines()[-1])
@@ -582,7 +582,7 @@ def status(system, name):
         found = {}
     remember_public(system, name, found.get("public", ""), found.get("fqdn"), found.get("admin_names"))
     # Why Harbor must stay there, for Remove: sites of its own, or SQL connections here that reach it
-    return {"name": name, **{key: entry[key] for key in ("host", "user", "port")}, "member": bool(entry.get("member")), "no_web": bool(entry.get("no_web")), "closed": bool(entry.get("closed")), "reachable": True, **judged(found),
+    return {"name": name, **{key: entry[key] for key in ("host", "user", "port")}, "member": bool(entry.get("member")), "no_web": bool(entry.get("no_web")), "closed": bool(entry.get("closed")), "sql_closed": bool(entry.get("sql_closed")), "reachable": True, **judged(found),
             "keep_harbor": uninstall_blockers(system, name, entry, found)}
 
 
@@ -704,4 +704,42 @@ def set_entry_web(system, name, state):
         raise Stop(f"No server {name}.")
     entry = {key: value for key, value in found[name].items() if key not in ("no_web", "closed")}
     found[name] = {**entry, **({"no_web": True} if state == "off" else {"closed": True} if state == "closed" else {})}
+    write_json(system.path(SERVERS), found)
+
+
+# A server's SQL Server (Microsoft SQL Server and PostgreSQL) that keeps its databases and takes no new one from a
+# conversion, a move or a copy: a database never ends up on a server it does not belong on. On the server itself a
+# marker its admin reads; in each Servers that knows it, a flag on its entry (sql_closed). Create database on its SQL
+# Server page is still there: one made by hand is meant to be there
+SQL_CLOSED = "/var/lib/harbor/no-new-databases"
+SQL_STATES = ("on", "closed")
+
+
+def sql_state(system):
+    """Whether this server's SQL Server takes new databases (on) or keeps its own only (closed)"""
+    return "closed" if system.path(SQL_CLOSED).exists() else "on"
+
+
+def set_sql_state(system, state):
+    if state not in SQL_STATES:
+        raise Stop(f"Choose {', '.join(SQL_STATES)}.")
+    marker = system.path(SQL_CLOSED)
+    if state == "closed":
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text("This server's SQL Server takes no new database from Convert, Move or Copy (Harbor: harbor server sql on to change it).\n")
+        system.say("This server's SQL Server keeps its databases: none is converted, moved or copied here.")
+    else:
+        marker.unlink(missing_ok=True)
+        system.say("This server's SQL Server takes new databases.")
+
+
+def set_entry_sql(system, name, state):
+    """A server in Servers marked as taking new databases (on) or keeping its own (closed), here"""
+    if state not in SQL_STATES:
+        raise Stop(f"Choose {', '.join(SQL_STATES)}.")
+    found = read_json(system.path(SERVERS)) or {}
+    if name not in found:
+        raise Stop(f"No server {name}.")
+    entry = {key: value for key, value in found[name].items() if key != "sql_closed"}
+    found[name] = {**entry, "sql_closed": True} if state == "closed" else entry
     write_json(system.path(SERVERS), found)
